@@ -1,0 +1,12 @@
+[package]
+name = "richter"
+version = "0.1.0"
+authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
+
+[dependencies]
+"byteorder" = "*"
+"env_logger" = "0.3.4"
+"glium" = "*"
+"lazy_static" = "*"
+"log" = "0.3"
+"regex" = "*"
