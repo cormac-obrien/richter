@@ -353,7 +353,7 @@ impl Mdl {
                 _ => return Err(MdlError::Value),
             });
 
-            for i in 0..3 {
+            for _ in 0..3 {
                 let c = try!(file.read_i32::<LittleEndian>());
                 if c < 0 {
                     return Err(MdlError::Value);

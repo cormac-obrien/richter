@@ -18,13 +18,6 @@ use glium::program::{Program, ProgramCreationInput};
 use glium::index::NoIndices;
 use mdl::Mdl;
 
-#[derive(Copy, Clone)]
-struct Vertex {
-    pos: [f32; 3],
-    texcoord: [f32; 2],
-}
-implement_vertex!(Vertex, pos, texcoord);
-
 const PI: f32 = 3.14159265;
 
 static IDENTITY_MATRIX: [[f32; 4]; 4] = [[1.0, 0.0, 0.0, 0.0],
@@ -82,6 +75,28 @@ fn perspective_matrix(target: &Frame, fov: f32) -> [[f32; 4]; 4] {
 }
 
 fn main() {
+    let draw_parameters: glium::draw_parameters::DrawParameters<'static> = DrawParameters {
+        depth: glium::Depth {
+            test: glium::DepthTest::IfMore,
+            write: true,
+            range: (0.0, 1.0),
+            clamp: glium::draw_parameters::DepthClamp::NoClamp,
+            },
+        stencil: glium::draw_parameters::Stencil::default(),
+        blend: glium::Blend::default(),
+        color_mask: (true, true, true, true),
+        line_width: Some(1.0),
+        point_size: Some(1.0),
+        backface_culling: glium::draw_parameters::BackfaceCullingMode::CullCounterClockwise,
+        polygon_mode: glium::draw_parameters::PolygonMode::Fill,
+        multisampling: true,
+        dithering: true,
+        viewport: None,
+        scissor: None,
+        draw_primitives: true,
+        .. Default::default()
+    };
+
     env_logger::init().unwrap();
     info!("Richter v0.0.1");
 
@@ -150,15 +165,28 @@ fn main() {
         target.clear_depth(1.0);
 
         let vertex_buffer = glium::VertexBuffer::new(&window, &[
-            Vertex { pos: [-0.5,  0.5, 0.0], texcoord: [0.0,  0.0] }, // tl
-            Vertex { pos: [-0.5, -0.5, 0.0], texcoord: [0.0,  1.0] }, // bl
-            Vertex { pos: [ 0.5, -0.5, 0.0], texcoord: [1.0,  1.0] }, // br
-            Vertex { pos: [-0.5,  0.5, 0.0], texcoord: [0.0,  0.0] }, // tl
-            Vertex { pos: [ 0.5,  0.5, 0.0], texcoord: [1.0,  0.0] }, // tr
-            Vertex { pos: [ 0.5, -0.5, 0.0], texcoord: [1.0,  1.0] }, // br
+            gl::Vertex { pos: [-0.5,  0.5, 0.0] }, // tl
+            gl::Vertex { pos: [-0.5, -0.5, 0.0] }, // bl
+            gl::Vertex { pos: [ 0.5, -0.5, 0.0] }, // br
+            gl::Vertex { pos: [-0.5,  0.5, 0.0] }, // tl
+            gl::Vertex { pos: [ 0.5,  0.5, 0.0] }, // tr
+            gl::Vertex { pos: [ 0.5, -0.5, 0.0] }, // br
         ]).unwrap();
 
-        target.draw(&vertex_buffer, &NoIndices(glium::index::PrimitiveType::TrianglesList), &program, &uniforms, &DrawParameters::default());
+        let texcoord_buffer = glium::VertexBuffer::new(&window, &[
+            gl::TexCoord { texcoord: [0.0,  0.0] },
+            gl::TexCoord { texcoord: [0.0,  1.0] },
+            gl::TexCoord { texcoord: [1.0,  1.0] },
+            gl::TexCoord { texcoord: [0.0,  0.0] },
+            gl::TexCoord { texcoord: [1.0,  0.0] },
+            gl::TexCoord { texcoord: [1.0,  1.0] },
+        ]).unwrap();
+
+        target.draw((&vertex_buffer, &texcoord_buffer),
+                    &NoIndices(glium::index::PrimitiveType::TrianglesList),
+                    &program,
+                    &uniforms,
+                    &DrawParameters::default());
 
         target.finish();
 
