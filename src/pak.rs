@@ -32,15 +32,25 @@ const PAK_MAGIC: [u8; 4] = [b'P', b'A', b'C', b'K'];
 const PAK_ENTRY_SIZE: usize = 64;
 
 struct Header {
+    // Should equal PAK_MAGIC, the ASCII string 'PACK'
     pub magic: [u8; 4],
-    pub offset: i32,
-    pub size: i32,
+
+    // Offset in bytes of the file table
+    pub offset: u32,
+
+    // Size in bytes of the file table. This will be 64 bytes * the number of files.
+    pub size: u32,
 }
 
 struct Entry {
+    // The virtual path to the file.
     pub path: [u8; 56],
-    pub offset: i32,
-    pub size: i32,
+
+    // The actual position of the file data.
+    pub offset: u32,
+
+    // The size of the file data.
+    pub size: u32,
 }
 
 #[derive(Debug)]
@@ -91,6 +101,7 @@ struct FileData {
     data: Vec<u8>,
 }
 
+// TODO: make this a HashMap or similar
 pub struct Pak {
     children: Vec<FileData>,
 }
@@ -112,15 +123,21 @@ impl Pak {
             return Err(PakError::Other);
         }
 
-        header.offset = try!(infile.read_i32::<LittleEndian>().map_err(PakError::Io));
-        if header.offset <= 0 {
-            return Err(PakError::Other);
-        }
+        header.offset = {
+            let _offset = try!(infile.read_i32::<LittleEndian>().map_err(PakError::Io));
+            if _offset <= 0 {
+                return Err(PakError::Other);
+            }
+            _offset as u32
+        };
 
-        header.size = try!(infile.read_i32::<LittleEndian>().map_err(PakError::Io));
-        if header.size <= 0 {
-            return Err(PakError::Other);
-        }
+        header.size = {
+            let _size = try!(infile.read_i32::<LittleEndian>().map_err(PakError::Io));
+            if _size <= 0 {
+                return Err(PakError::Other);
+            }
+            _size as u32
+        };
 
         let mut result: Pak = Pak { children: Vec::new() };
 
@@ -136,13 +153,29 @@ impl Pak {
             try!(infile.seek(SeekFrom::Start(entry_offset)).map_err(PakError::Io));
             try!(infile.read(&mut entry.path).map_err(PakError::Io));
 
-            entry.offset = try!(infile.read_i32::<LittleEndian>().map_err(PakError::Io));
-            entry.size = try!(infile.read_i32::<LittleEndian>().map_err(PakError::Io));
+            entry.offset = {
+                let _offset = try!(infile.read_i32::<LittleEndian>().map_err(PakError::Io));
+                if _offset <= 0 {
+                    return Err(PakError::Other);
+                }
+                _offset as u32
+            };
 
-            let mut last: usize = 0;
-            while entry.path[last] != 0 {
-                last += 1;
-            }
+            entry.size = {
+                let _size = try!(infile.read_i32::<LittleEndian>().map_err(PakError::Io));
+                if _size <= 0 {
+                    return Err(PakError::Other);
+                }
+                _size as u32
+            };
+
+            let last = {
+                let mut _last: usize = 0;
+                while entry.path[_last] != 0 {
+                    _last += 1;
+                }
+                _last
+            };
 
             let path = try!(String::from_utf8(entry.path[0..last].to_vec())
                                 .map_err(PakError::Utf8));

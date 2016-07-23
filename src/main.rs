@@ -34,7 +34,7 @@ layout(location = 1) in vec2 texcoord;
 
 out vec2 Texcoord;
 
-// uniform mat4 perspective;
+uniform mat4 perspective;
 // uniform mat4 view;
 // uniform mat4 model;
 
@@ -43,7 +43,7 @@ void main() {
     // vec4 model_pos = vec4(pos.x, pos.y, pos.z, 1.0f);
     // vec4 world_pos = view * model_pos;
     // gl_Position = perspective * world_pos;
-    gl_Position = vec4(pos.x, pos.y, pos.z, 1.0f);
+    gl_Position = perspective * vec4(pos.x, pos.y, pos.z, 1.0f);
 }
 "#;
 
@@ -69,32 +69,19 @@ fn perspective_matrix(target: &Frame, fov: f32) -> [[f32; 4]; 4] {
     let zfar = 1024.0;
     let f = 1.0 / (fov / 2.0).tan();
 
-    [[f / aspect, 0.0,                                    0.0,  0.0],
-     [       0.0,   f,                                    0.0,  0.0],
-     [       0.0, 0.0,        (zfar + znear) / (zfar - znear), -1.0],
-     [       0.0, 0.0, -(2.0 * zfar * znear) / (zfar - znear),  0.0]]
+    [[f / aspect, 0.0,                                   0.0,  0.0],
+     [       0.0,   f,                                   0.0,  0.0],
+     [       0.0, 0.0,       (zfar + znear) / (zfar - znear), -1.0],
+     [       0.0, 0.0, (2.0 * zfar * znear) / (zfar - znear),  0.0]]
 }
 
 fn main() {
     let draw_parameters: glium::draw_parameters::DrawParameters<'static> = DrawParameters {
         depth: glium::Depth {
-            test: glium::DepthTest::IfMore,
+            test: glium::DepthTest::IfLessOrEqual,
             write: true,
-            range: (0.0, 1.0),
-            clamp: glium::draw_parameters::DepthClamp::NoClamp,
+            .. Default::default()
             },
-        stencil: glium::draw_parameters::Stencil::default(),
-        blend: glium::Blend::default(),
-        color_mask: (true, true, true, true),
-        line_width: Some(1.0),
-        point_size: Some(1.0),
-        backface_culling: glium::draw_parameters::BackfaceCullingMode::CullCounterClockwise,
-        polygon_mode: glium::draw_parameters::PolygonMode::Fill,
-        multisampling: true,
-        dithering: true,
-        viewport: None,
-        scissor: None,
-        draw_primitives: true,
         .. Default::default()
     };
 
@@ -128,7 +115,7 @@ fn main() {
         }
     };
 
-    let gl_mdl = gl::GlMdl::from_mdl(&window, &mdl);
+    let gl_mdl = gl::GlMdl::load(&window, "armor.mdl").unwrap();
 
     let program = match Program::new(&window,
         ProgramCreationInput::SourceCode {
@@ -153,10 +140,10 @@ fn main() {
         let perspective = perspective_matrix(&target, 2.0 * (PI / 3.0));
 
         let uniforms = uniform! {
-            // perspective: perspective,
+            perspective: perspective,
             // view: IDENTITY_MATRIX,
             // model: IDENTITY_MATRIX,
-            tex: match gl_mdl.skins[0] {
+            tex: match gl_mdl.skins[2] {
                 gl::GlMdlSkin::Single(ref s) => &s.texture,
                 _ => panic!("asdf"),
             },
@@ -166,12 +153,12 @@ fn main() {
         target.clear_depth(1.0);
 
         let vertex_buffer = glium::VertexBuffer::new(&window, &[
-            gl::Vertex { pos: [-0.5,  0.5, 0.0] }, // tl
-            gl::Vertex { pos: [-0.5, -0.5, 0.0] }, // bl
-            gl::Vertex { pos: [ 0.5, -0.5, 0.0] }, // br
-            gl::Vertex { pos: [-0.5,  0.5, 0.0] }, // tl
-            gl::Vertex { pos: [ 0.5,  0.5, 0.0] }, // tr
-            gl::Vertex { pos: [ 0.5, -0.5, 0.0] }, // br
+            gl::Vertex { pos: [-0.5,  0.25, -0.5] }, // tl
+            gl::Vertex { pos: [-0.5, -0.25, -0.5] }, // bl
+            gl::Vertex { pos: [ 0.5, -0.25, -0.5] }, // br
+            gl::Vertex { pos: [-0.5,  0.25, -0.5] }, // tl
+            gl::Vertex { pos: [ 0.5,  0.25, -0.5] }, // tr
+            gl::Vertex { pos: [ 0.5, -0.25, -0.5] }, // br
         ]).unwrap();
 
         let texcoord_buffer = glium::VertexBuffer::new(&window, &[
@@ -183,17 +170,28 @@ fn main() {
             gl::TexCoord { texcoord: [1.0,  1.0] },
         ]).unwrap();
 
-        target.draw((&vertex_buffer, &texcoord_buffer),
-                    &NoIndices(glium::index::PrimitiveType::TrianglesList),
-                    &program,
-                    &uniforms,
-                    &DrawParameters::default());
+        let draw_status = target.draw(
+            (&vertex_buffer, &texcoord_buffer),
+            &NoIndices(glium::index::PrimitiveType::TrianglesList),
+            &program,
+            &uniforms,
+            &draw_parameters);
 
-        target.finish();
+        if draw_status.is_err() {
+            error!("Draw failed: {}", draw_status.err().unwrap());
+            exit(1);
+        }
+
+        let finish_status = target.finish();
+        if finish_status.is_err() {
+            error!("Frame finish failed: {}", finish_status.err().unwrap());
+            exit(1);
+        }
 
         for event in window.poll_events() {
             match event {
                 Event::Closed => {
+                    debug!("Caught Event::Closed, exiting.");
                     break 'outer;
                 }
                 _ => (),

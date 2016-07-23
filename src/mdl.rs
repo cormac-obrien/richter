@@ -9,8 +9,8 @@ use std::string::FromUtf8Error;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 
-const MAGIC: i32 = 0x4F504449;
-const VERSION: i32 = 6;
+pub const MAGIC: i32 = 0x4F504449;
+pub const VERSION: i32 = 6;
 
 // TODO: create more informative errors
 #[derive(Debug)]
@@ -87,10 +87,10 @@ pub struct Header {
     pub skin_count: i32,
 
     // The width in pixels of each skin.
-    pub skin_w: i32,
+    pub skin_w: u32,
 
     // The height in pixels of each skin.
-    pub skin_h: i32,
+    pub skin_h: u32,
     pub vertex_count: i32,
     pub triangle_count: i32,
     pub frame_count: i32,
@@ -141,14 +141,12 @@ pub struct Texcoord {
     pub t: u32,
 }
 
-pub struct Texcoords {
-    pub seams: Vec<bool>,
-    pub texcoords: Vec<u32>,
-}
+pub struct Triangle {
+    // Whether or not this triangle faces the front of the model.
+    pub front: bool,
 
-pub struct Triangles {
-    pub fronts: Vec<bool>,
-    pub indices: Vec<u32>,
+    // The indices of this polygon's vertices.
+    pub indices: [u32; 3],
 }
 
 // A packed vertex.
@@ -213,7 +211,7 @@ pub struct Mdl {
     pub header: Header,
     pub skins: Vec<Skin>,
     pub texcoords: Vec<Texcoord>,
-    pub triangles: Triangles,
+    pub triangles: Vec<Triangle>,
     pub frames: Vec<Frame>,
 }
 
@@ -258,9 +256,7 @@ impl Mdl {
         Ok(())
     }
 
-    fn load_skins(header: &Header,
-                  file: &mut File)
-                  -> Result<Vec<Skin>, MdlError> {
+    fn load_skins(header: &Header, file: &mut File) -> Result<Vec<Skin>, MdlError> {
         let pixel_count = (header.skin_h * header.skin_w) as usize;
         let mut skins: Vec<Skin> = Vec::with_capacity(header.skin_count as usize);
         for _ in 0..header.skin_count {
@@ -340,26 +336,29 @@ impl Mdl {
         Ok(texcoords)
     }
 
-    fn load_triangles(header: &Header, file: &mut File) -> Result<Triangles, MdlError> {
-        let mut triangles = Triangles {
-            fronts: Vec::with_capacity(header.triangle_count as usize),
-            indices: Vec::with_capacity((header.triangle_count * 3) as usize),
-        };
+    fn load_triangles(header: &Header, file: &mut File) -> Result<Vec<Triangle>, MdlError> {
+        let mut triangles = Vec::with_capacity(header.triangle_count as usize);
 
         for _ in 0..header.triangle_count {
-            triangles.fronts.push(match try!(file.read_i32::<LittleEndian>()) {
-                0 => false,
-                1 => true,
-                _ => return Err(MdlError::Value),
-            });
+            triangles.push(Triangle {
+                front: match try!(file.read_i32::<LittleEndian>()) {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(MdlError::Value),
+                },
 
-            for _ in 0..3 {
-                let c = try!(file.read_i32::<LittleEndian>());
-                if c < 0 {
-                    return Err(MdlError::Value);
-                }
-                triangles.indices.push(c as u32);
-            }
+                indices: {
+                    let mut _indices = [0u32; 3];
+                    for i in 0..3 {
+                        let c = try!(file.read_i32::<LittleEndian>());
+                        if c < 0 {
+                            return Err(MdlError::Value);
+                        }
+                        _indices[i] = c as u32;
+                    }
+                    _indices
+                },
+            });
         }
 
         Ok(triangles)
@@ -475,8 +474,20 @@ impl Mdl {
                    try!(mdl_file.read_f32::<LittleEndian>()),
                    try!(mdl_file.read_f32::<LittleEndian>())],
             skin_count: try!(mdl_file.read_i32::<LittleEndian>()),
-            skin_w: try!(mdl_file.read_i32::<LittleEndian>()),
-            skin_h: try!(mdl_file.read_i32::<LittleEndian>()),
+            skin_w: {
+                let _skin_w = try!(mdl_file.read_i32::<LittleEndian>());
+                if _skin_w <= 0 {
+                    return Err(MdlError::Value);
+                }
+                _skin_w as u32
+            },
+            skin_h: {
+                let _skin_h = try!(mdl_file.read_i32::<LittleEndian>());
+                if _skin_h <= 0 {
+                    return Err(MdlError::Value);
+                }
+                _skin_h as u32
+            },
             vertex_count: try!(mdl_file.read_i32::<LittleEndian>()),
             triangle_count: try!(mdl_file.read_i32::<LittleEndian>()),
             frame_count: try!(mdl_file.read_i32::<LittleEndian>()),
