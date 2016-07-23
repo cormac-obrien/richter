@@ -1,7 +1,9 @@
 set -eo pipefail
 
 main() {
-    local pakfile="$PWD/pak0.pak"
+    cd "$(dirname "$0")"
+    local pakdir=$(pwd)
+    local pakfile="$pakdir/pak0.pak"
     local paksum="85fc9cee2035b66290da1e33be2ac86b"
 
     if ! [[ -f "$pakfile" ]]; then
@@ -11,15 +13,17 @@ main() {
     # verify MD5
     if command -v 'md5sum' >/dev/null; then
         # probably GNU environment
-        if ! [[ "$paksum" == $(md5sum "$pakfile")[0] ]]; then
-            echo "Bad checksum on $pakfile."
+        local actual="$(md5sum "$pakfile" | cut -c -32)"
+        if ! [[ "$paksum" == "$actual" ]]; then
+            printf "Bad checksum on $pakfile (was %s, should be %s)" "$actual" "$paksum"
             exit
         fi
 
     elif command -v 'md5' >/dev/null; then
         # probably OS X
-        if ! [[ "$paksum" == $(md5 -q "$pakfile") ]]; then
-            echo "Bad checksum on $pakfile."
+        local actual="$(md5 -q "$pakfile")"
+        if ! [[ "$paksum" == "$actual" ]]; then
+            printf "Bad checksum on $pakfile (was %s, should be %s)" "$actual" "$paksum"
             exit
         fi
 

@@ -24,7 +24,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::io::{Cursor, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::string;
 use byteorder::{LittleEndian, ReadBytesExt};
 
@@ -97,6 +97,7 @@ pub struct Pak {
 
 impl Pak {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, PakError> {
+        println!("Opening {}", path.as_ref().to_str().unwrap());
         let mut infile = try!(fs::File::open(path).map_err(PakError::Io));
 
         let mut header = Header {
@@ -192,6 +193,8 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
 
+    use pak::Pak;
+
     lazy_static! {
         static ref RESOURCE_DIR: PathBuf = {
             let mut _res = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -208,10 +211,14 @@ mod tests {
             _setup_path
         };
 
-        Command::new("sh")
-                .arg(setup_path)
-                .status()
-                .expect("Setup failed.");
+        let setup_status = Command::new("sh")
+                                   .arg(setup_path)
+                                   .status()
+                                   .expect("Setup failed.");
+
+        if !setup_status.success() {
+            panic!("Setup script failed.");
+        }
     }
 
     fn teardown() {
@@ -224,7 +231,10 @@ mod tests {
         let pak0_path = {
             let mut _pak0_path = RESOURCE_DIR.to_owned();
             _pak0_path.push("pak0.pak");
+            _pak0_path
         };
+
+        let pak0 = Pak::load(pak0_path).expect("pak0 load failed!");
 
         teardown();
     }
