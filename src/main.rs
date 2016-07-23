@@ -9,6 +9,7 @@ pub mod bsp;
 pub mod engine;
 pub mod gl;
 pub mod mdl;
+pub mod pak;
 
 use std::process::exit;
 use glium::{Frame, Surface};

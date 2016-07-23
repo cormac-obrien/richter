@@ -19,12 +19,12 @@
 
 extern crate byteorder;
 
-use std::path::Path;
 use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io;
 use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 use std::string;
 use byteorder::{LittleEndian, ReadBytesExt};
 
@@ -183,5 +183,49 @@ impl<'f> File<'f> {
 impl<'f> Read for File<'f> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.cursor.read(buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    lazy_static! {
+        static ref RESOURCE_DIR: PathBuf = {
+            let mut _res = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            _res.push("res");
+            _res.push("test");
+            _res
+        };
+    }
+
+    fn setup() {
+        let setup_path = {
+            let mut _setup_path = RESOURCE_DIR.to_owned();
+            _setup_path.push("setup.sh");
+            _setup_path
+        };
+
+        Command::new("sh")
+                .arg(setup_path)
+                .status()
+                .expect("Setup failed.");
+    }
+
+    fn teardown() {
+    }
+
+    #[test]
+    fn test_pak0() {
+        setup();
+
+        let pak0_path = {
+            let mut _pak0_path = RESOURCE_DIR.to_owned();
+            _pak0_path.push("pak0.pak");
+        };
+
+        teardown();
     }
 }
