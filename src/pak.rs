@@ -19,6 +19,7 @@
 
 extern crate byteorder;
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -30,28 +31,6 @@ use byteorder::{LittleEndian, ReadBytesExt};
 
 const PAK_MAGIC: [u8; 4] = [b'P', b'A', b'C', b'K'];
 const PAK_ENTRY_SIZE: usize = 64;
-
-struct Header {
-    // Should equal PAK_MAGIC, the ASCII string 'PACK'
-    pub magic: [u8; 4],
-
-    // Offset in bytes of the file table
-    pub offset: u32,
-
-    // Size in bytes of the file table. This will be 64 bytes * the number of files.
-    pub size: u32,
-}
-
-struct Entry {
-    // The virtual path to the file.
-    pub path: [u8; 56],
-
-    // The actual position of the file data.
-    pub offset: u32,
-
-    // The size of the file data.
-    pub size: u32,
-}
 
 #[derive(Debug)]
 pub enum PakError {
@@ -96,127 +75,94 @@ impl From<string::FromUtf8Error> for PakError {
     }
 }
 
-struct FileData {
-    name: String,
-    data: Vec<u8>,
-}
-
-// TODO: make this a HashMap or similar
-pub struct Pak {
-    children: Vec<FileData>,
-}
+/// A virtual file tree loaded from a PAK archive.
+pub struct Pak(HashMap<String, Vec<u8>>);
 
 impl Pak {
+    /// Attempts to load a virtual file tree from a PAK archive.
+    ///
+    /// # Examples
+    /// ```
+    /// use pak::Pak;
+    ///
+    /// let pak0 = Pak::load("pak0.pak");
+    /// ```
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, PakError> {
-        println!("Opening {}", path.as_ref().to_str().unwrap());
-        let mut infile = try!(fs::File::open(path).map_err(PakError::Io));
+        debug!("Opening {}", path.as_ref().to_str().unwrap());
+        let mut infile = try!(fs::File::open(path));
 
-        let mut header = Header {
-            magic: [0; 4],
-            offset: 0,
-            size: 0,
-        };
+        let mut magic = [0u8; 4];
+        try!(infile.read(&mut magic));
 
-        try!(infile.read(&mut header.magic).map_err(PakError::Io));
-
-        if header.magic != PAK_MAGIC {
+        if magic != PAK_MAGIC {
             return Err(PakError::Other);
         }
 
-        header.offset = {
-            let _offset = try!(infile.read_i32::<LittleEndian>().map_err(PakError::Io));
-            if _offset <= 0 {
-                return Err(PakError::Other);
-            }
-            _offset as u32
+        // Locate the file table
+
+        let wad_offset = match try!(infile.read_i32::<LittleEndian>()) {
+            o if o <= 0 => return Err(PakError::Other),
+            o => o as u32
         };
 
-        header.size = {
-            let _size = try!(infile.read_i32::<LittleEndian>().map_err(PakError::Io));
-            if _size <= 0 {
-                return Err(PakError::Other);
-            }
-            _size as u32
+        let wad_size = match try!(infile.read_i32::<LittleEndian>()) {
+            s if s <= 0 => return Err(PakError::Other),
+            s => s as u32
         };
 
-        let mut result: Pak = Pak { children: Vec::new() };
+        let mut result = HashMap::with_capacity(wad_size as usize / PAK_ENTRY_SIZE);
 
-        // Create a pak::FileData for each entry
-        for i in 0..(header.size as usize / PAK_ENTRY_SIZE) {
-            let mut entry = Entry {
-                path: [0; 56],
-                offset: 0,
-                size: 0,
+        for i in 0..(wad_size as usize / PAK_ENTRY_SIZE) {
+            let entry_offset = wad_offset as u64 + (i * PAK_ENTRY_SIZE) as u64;
+            try!(infile.seek(SeekFrom::Start(entry_offset)));
+
+            let mut path_bytes = [0u8; 56];
+            try!(infile.read(&mut path_bytes));
+
+            let file_offset = match try!(infile.read_i32::<LittleEndian>()) {
+                o if o <= 0 => return Err(PakError::Other),
+                o => o as u32
             };
 
-            let entry_offset = header.offset as u64 + (i * PAK_ENTRY_SIZE) as u64;
-            try!(infile.seek(SeekFrom::Start(entry_offset)).map_err(PakError::Io));
-            try!(infile.read(&mut entry.path).map_err(PakError::Io));
-
-            entry.offset = {
-                let _offset = try!(infile.read_i32::<LittleEndian>().map_err(PakError::Io));
-                if _offset <= 0 {
-                    return Err(PakError::Other);
-                }
-                _offset as u32
-            };
-
-            entry.size = {
-                let _size = try!(infile.read_i32::<LittleEndian>().map_err(PakError::Io));
-                if _size <= 0 {
-                    return Err(PakError::Other);
-                }
-                _size as u32
+            let file_size = match try!(infile.read_i32::<LittleEndian>()) {
+                s if s <= 0 => return Err(PakError::Other),
+                s => s as u32
             };
 
             let last = {
                 let mut _last: usize = 0;
-                while entry.path[_last] != 0 {
+                while path_bytes[_last] != 0 {
                     _last += 1;
                 }
                 _last
             };
 
-            let path = try!(String::from_utf8(entry.path[0..last].to_vec())
-                                .map_err(PakError::Utf8));
+            let path = try!(String::from_utf8(path_bytes[0..last].to_vec()));
 
-            try!(infile.seek(SeekFrom::Start(entry.offset as u64)).map_err(PakError::Io));
+            try!(infile.seek(SeekFrom::Start(file_offset as u64)));
 
-            let mut f: FileData = FileData {
-                name: path.clone(),
-                data: Vec::with_capacity(entry.size as usize),
-            };
+            let mut data: Vec<u8> = Vec::with_capacity(file_size as usize);
+            try!((&mut infile).take(file_size as u64).read_to_end(&mut data));
 
-            let mut indata = Read::by_ref(&mut infile).take(entry.size as u64);
-            try!(indata.read_to_end(&mut f.data).map_err(PakError::Io));
-
-            result.children.push(f);
+            result.insert(path, data);
         }
-        result.children.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(result)
+        Ok(Pak(result))
     }
 
-    pub fn open(&self, path: &str) -> Option<File> {
-        match self.children.binary_search_by(|a| a.name.as_str().cmp(path)) {
-            Err(_) => None,
-            Ok(i) => Some(File::new(&self.children[i])),
+    /// Opens a file in the file tree for reading.
+    ///
+    /// # Examples
+    /// ```
+    /// use pak::Pak;
+    ///
+    /// let pak0 = Pak::load("pak0.pak");
+    /// let progs_dat = pak0.open("progs.dat");
+    /// ```
+    pub fn open(&self, path: &str) -> Option<Cursor<&Vec<u8>>> {
+        match self.0.get(path) {
+            Some(data) => Some(Cursor::new(data)),
+            None => None
         }
-    }
-}
-
-pub struct File<'f> {
-    cursor: Cursor<&'f Vec<u8>>,
-}
-
-impl<'f> File<'f> {
-    fn new(fd: &'f FileData) -> File {
-        File { cursor: Cursor::new(&fd.data) }
-    }
-}
-
-impl<'f> Read for File<'f> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.cursor.read(buf)
     }
 }
 
@@ -268,6 +214,7 @@ mod tests {
         };
 
         let pak0 = Pak::load(pak0_path).expect("pak0 load failed!");
+        assert!(pak0.open("progs.dat").is_some());
 
         teardown();
     }
