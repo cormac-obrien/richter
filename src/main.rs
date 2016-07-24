@@ -7,7 +7,7 @@ extern crate regex;
 
 pub mod bsp;
 pub mod engine;
-pub mod gl;
+pub mod math;
 pub mod mdl;
 pub mod pak;
 
@@ -16,10 +16,6 @@ use glium::{Frame, Surface};
 use glium::draw_parameters::DrawParameters;
 use glium::glutin::Event;
 use glium::program::{Program, ProgramCreationInput};
-use glium::index::NoIndices;
-use mdl::Mdl;
-
-const PI: f32 = 3.14159265;
 
 static IDENTITY_MATRIX: [[f32; 4]; 4] = [[1.0, 0.0, 0.0, 0.0],
                                          [0.0, 1.0, 0.0, 0.0],
@@ -35,15 +31,13 @@ layout(location = 1) in vec2 texcoord;
 out vec2 Texcoord;
 
 uniform mat4 perspective;
-// uniform mat4 view;
-// uniform mat4 model;
+uniform mat4 view;
+uniform mat4 world;
 
 void main() {
     Texcoord = texcoord;
-    // vec4 model_pos = vec4(pos.x, pos.y, pos.z, 1.0f);
-    // vec4 world_pos = view * model_pos;
-    // gl_Position = perspective * world_pos;
-    gl_Position = perspective * vec4(pos.x, pos.y, pos.z, 1.0f);
+    // gl_Position = perspective * view * world * vec4(pos, 1.0f);
+    gl_Position = perspective * view * world * vec4(pos, 1.0f);
 }
 "#;
 
@@ -78,24 +72,16 @@ fn perspective_matrix(target: &Frame, fov: f32) -> [[f32; 4]; 4] {
 fn main() {
     let draw_parameters: glium::draw_parameters::DrawParameters<'static> = DrawParameters {
         depth: glium::Depth {
-            test: glium::DepthTest::IfLessOrEqual,
+            test: glium::DepthTest::IfMoreOrEqual,
             write: true,
             .. Default::default()
-            },
+        },
+        backface_culling: glium::BackfaceCullingMode::CullCounterClockwise,
         .. Default::default()
     };
 
     env_logger::init().unwrap();
     info!("Richter v0.0.1");
-
-    let mdl = match Mdl::open("armor.mdl") {
-        Err(why) => {
-            println!("MDL load failed: {}", why);
-            exit(1);
-        }
-
-        Ok(m) => m,
-    };
 
     use glium::DisplayBuild;
 
@@ -115,7 +101,7 @@ fn main() {
         }
     };
 
-    let gl_mdl = gl::GlMdl::load(&window, "armor.mdl").unwrap();
+    let mdl = mdl::Mdl::load(&window, "armor.mdl").unwrap();
 
     let program = match Program::new(&window,
         ProgramCreationInput::SourceCode {
@@ -137,42 +123,32 @@ fn main() {
 
     'outer: loop {
         let mut target = window.draw();
-        let perspective = perspective_matrix(&target, 2.0 * (PI / 3.0));
+        let perspective = perspective_matrix(&target, 2.0 * (math::PI / 3.0));
 
         let uniforms = uniform! {
             perspective: perspective,
-            // view: IDENTITY_MATRIX,
-            // model: IDENTITY_MATRIX,
-            tex: match gl_mdl.skins[2] {
-                gl::GlMdlSkin::Single(ref s) => &s.texture,
+            view: *math::Mat4::translation(0.0, 0.0, -50.0),
+            world: *(math::Mat4::rotation_y(90.0f32.to_radians()) * math::Mat4::rotation_x(-90.0f32.to_radians())),
+            tex: match mdl.skins[0] {
+                mdl::Skin::Single(ref s) => s.texture.sampled()
+                                                          .magnify_filter(glium::uniforms::MagnifySamplerFilter::Nearest)
+                                                          .minify_filter(glium::uniforms::MinifySamplerFilter::LinearMipmapLinear)
+                                                          .wrap_function(glium::uniforms::SamplerWrapFunction::Clamp),
                 _ => panic!("asdf"),
             },
         };
 
         target.clear_color(0.0, 0.0, 0.0, 1.0);
-        target.clear_depth(1.0);
+        target.clear_depth(0.0);
 
-        let vertex_buffer = glium::VertexBuffer::new(&window, &[
-            gl::Vertex { pos: [-0.5,  0.25, -0.5] }, // tl
-            gl::Vertex { pos: [-0.5, -0.25, -0.5] }, // bl
-            gl::Vertex { pos: [ 0.5, -0.25, -0.5] }, // br
-            gl::Vertex { pos: [-0.5,  0.25, -0.5] }, // tl
-            gl::Vertex { pos: [ 0.5,  0.25, -0.5] }, // tr
-            gl::Vertex { pos: [ 0.5, -0.25, -0.5] }, // br
-        ]).unwrap();
-
-        let texcoord_buffer = glium::VertexBuffer::new(&window, &[
-            gl::TexCoord { texcoord: [0.0,  0.0] },
-            gl::TexCoord { texcoord: [0.0,  1.0] },
-            gl::TexCoord { texcoord: [1.0,  1.0] },
-            gl::TexCoord { texcoord: [0.0,  0.0] },
-            gl::TexCoord { texcoord: [1.0,  0.0] },
-            gl::TexCoord { texcoord: [1.0,  1.0] },
-        ]).unwrap();
+        let vertices = match mdl.frames[0] {
+            mdl::Frame::Single(ref s) => &s.vertices,
+            _ => panic!("asdf")
+        };
 
         let draw_status = target.draw(
-            (&vertex_buffer, &texcoord_buffer),
-            &NoIndices(glium::index::PrimitiveType::TrianglesList),
+            (vertices, &mdl.texcoords),
+            &mdl.indices,
             &program,
             &uniforms,
             &draw_parameters);
