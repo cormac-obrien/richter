@@ -15,11 +15,19 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use std::fmt;
+
 #[derive(Copy, Clone)]
 pub struct Vertex {
     pub pos: [f32; 3],
 }
 implement_vertex!(Vertex, pos);
+
+impl fmt::Display for Vertex {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{{{}, {}, {}}}", self.pos[0], self.pos[1], self.pos[2])
+    }
+}
 
 #[derive(Copy, Clone)]
 pub struct TexCoord {

@@ -34,6 +34,7 @@ use std::process::exit;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use engine;
+use gfx::Vertex;
 use glium::Texture2d;
 use glium::backend::glutin_backend::GlutinFacade as Display;
 use regex::Regex;
@@ -104,19 +105,6 @@ struct BoundsShort {
 struct Texture {
     name: String,
     tex: Texture2d,
-}
-
-#[deprecated(note="this will be replaced by the Vertex type used for VBOs")]
-struct Vertex {
-    x: f32,
-    y: f32,
-    z: f32,
-}
-
-impl fmt::Display for Vertex {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{{{:.4}, {:.4}, {:.4}}}", self.x, self.y, self.z)
-    }
 }
 
 struct Surface {
@@ -476,9 +464,9 @@ impl Bsp {
         let mut vertices = Vec::with_capacity(vertex_count);
         for _ in 0..vertex_count {
             vertices.push(Vertex {
-                x: bspreader.read_f32::<LittleEndian>().unwrap(),
-                y: bspreader.read_f32::<LittleEndian>().unwrap(),
-                z: bspreader.read_f32::<LittleEndian>().unwrap(),
+                pos: [bspreader.read_f32::<LittleEndian>().unwrap(),
+                      bspreader.read_f32::<LittleEndian>().unwrap(),
+                      bspreader.read_f32::<LittleEndian>().unwrap()],
             });
         }
 
