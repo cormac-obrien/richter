@@ -17,11 +17,6 @@ use glium::draw_parameters::DrawParameters;
 use glium::glutin::Event;
 use glium::program::{Program, ProgramCreationInput};
 
-static IDENTITY_MATRIX: [[f32; 4]; 4] = [[1.0, 0.0, 0.0, 0.0],
-                                         [0.0, 1.0, 0.0, 0.0],
-                                         [0.0, 0.0, 1.0, 0.0],
-                                         [0.0, 0.0, 0.0, 1.0]];
-
 static VERTEX_SHADER: &'static str = r#"
 #version 330
 
@@ -85,7 +80,7 @@ fn main() {
 
     use glium::DisplayBuild;
 
-    let window = match glium::glutin::WindowBuilder::new()
+    let display = match glium::glutin::WindowBuilder::new()
                      .with_dimensions(1024, 768)
                      .with_title(format!("Richter"))
                      .build_glium() {
@@ -101,9 +96,11 @@ fn main() {
         }
     };
 
-    let mdl = mdl::Mdl::load(&window, "armor.mdl").unwrap();
+    let mdl = mdl::Mdl::load(&display, "armor.mdl").unwrap();
+    let mut bspfile = std::fs::File::open("pak0/maps/e1m1.bsp").unwrap();
+    let bsp = bsp::Bsp::load(&display, &mut bspfile);
 
-    let program = match Program::new(&window,
+    let program = match Program::new(&display,
         ProgramCreationInput::SourceCode {
             vertex_shader: VERTEX_SHADER,
             tessellation_control_shader: None,
@@ -122,7 +119,7 @@ fn main() {
     };
 
     'outer: loop {
-        let mut target = window.draw();
+        let mut target = display.draw();
         let perspective = perspective_matrix(&target, 2.0 * (math::PI / 3.0));
 
         let uniforms = uniform! {
@@ -164,7 +161,7 @@ fn main() {
             exit(1);
         }
 
-        for event in window.poll_events() {
+        for event in display.poll_events() {
             match event {
                 Event::Closed => {
                     debug!("Caught Event::Closed, exiting.");
