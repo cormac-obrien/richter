@@ -87,3 +87,20 @@ impl Mat4 {
               [  x,   y,   z, 1.0]])
     }
 }
+
+pub struct Vec3([f32; 3]);
+
+impl std::ops::Index<usize> for Vec3 {
+    type Output = f32;
+
+    fn index(&self, i: usize) -> &f32 {
+        &self.0[i]
+    }
+}
+
+impl Vec3 {
+    pub fn dot<V>(&self, other: V) -> Vec3 where V: AsRef<Vec3> {
+        let o = other.as_ref();
+        Vec3 ([self[0] * o[0], self[1] * o[1], self[2] * o[2]])
+    }
+}
