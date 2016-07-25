@@ -22,7 +22,37 @@
 
 //! The binary space partitioning (BSP) tree is the central data structure in Quake maps.
 //!
+//! # Overview
+//! The primary purpose of the BSP tree is to describe a hierarchy between the geometric facets
+//! of a level. Each of the tree's nodes store a hyperplane in point-normal form, which allows
+//! the leaf containing a desired point to be located in log(n) time.
 //!
+//! # Entities
+//! The entity dictionary (*edict*) stores information about dynamic functionality in the level,
+//! such as spawn points, dynamic lighting and moving geometry.
+//!
+//! # Planes
+//! The planes are the primary method of navigation in the BSP tree. Given a point *p*, a plane
+//! normal *n* and the distance *d* from the map origin, it is possible to calculate the point's
+//! relative position to the plane with the formula
+//!
+//! > p &middot; n - d
+//!
+//! A positive result indicates that the point is in front of the plane, and a negative result is
+//! behind. This allows quick traversal of a complex physical space to determine which leaf
+//! contains a given point.
+//!
+//! # Visibility Lists
+//! For each leaf *l* in the BSP tree, there exists a visibility list (*vislist*) *v* that describes which
+//! other leaves are visible from *l*. The vislists are stored as partially run-length encoded bit
+//! vectors. For each byte in the vislist:
+//!
+//! - If the byte is nonzero (i.e. one or more bits set), it is interpreted as-is.
+//! - If the byte is zero, then the byte following it is interpreted as a count of zeroed bytes.
+//!
+//! # Nodes
+//! The internal nodes of the tree are responsible for maintaining the hierarchy between
+//! hyperplanes, containing the next level down in front and back of each plane. 
 
 use std;
 use std::collections::HashMap;
@@ -46,7 +76,7 @@ const ENTITY_ENTRY: usize = 0;
 const PLANE_ENTRY: usize = 1;
 const MIPTEX_ENTRY: usize = 2;
 const VERTEX_ENTRY: usize = 3;
-const VISILIST_ENTRY: usize = 4;
+const VISLIST_ENTRY: usize = 4;
 const NODE_ENTRY: usize = 5;
 const SURFACE_ENTRY: usize = 6;
 const FACE_ENTRY: usize = 7;
@@ -273,7 +303,7 @@ pub struct Bsp {
     planes: Vec<Plane>,
     textures: Vec<Texture>,
     vertices: Vec<Vertex>,
-    visilists: Vec<u8>,
+    vislists: Vec<u8>,
     nodes: Vec<InternalNode>,
     surfaces: Vec<Surface>,
     faces: Vec<Face>,
@@ -477,11 +507,11 @@ impl Bsp {
         vertices
     }
 
-    fn load_visilists(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<u8> {
+    fn load_vislists(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<u8> {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
-        let mut visilists: Vec<u8> = Vec::with_capacity(entry.size);
-        bspreader.take(entry.size as u64).read_to_end(&mut visilists).unwrap();
-        visilists
+        let mut vislists: Vec<u8> = Vec::with_capacity(entry.size);
+        bspreader.take(entry.size as u64).read_to_end(&mut vislists).unwrap();
+        vislists
     }
 
     fn load_nodes(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<InternalNode> {
@@ -723,7 +753,7 @@ impl Bsp {
             planes: Bsp::load_planes(&entries[PLANE_ENTRY], &mut bspreader),
             textures: Bsp::load_textures(&display, &entries[MIPTEX_ENTRY], &mut bspreader),
             vertices: Bsp::load_vertices(&entries[VERTEX_ENTRY], &mut bspreader),
-            visilists: Bsp::load_visilists(&entries[VISILIST_ENTRY], &mut bspreader),
+            vislists: Bsp::load_vislists(&entries[VISLIST_ENTRY], &mut bspreader),
             nodes: Bsp::load_nodes(&entries[NODE_ENTRY], &mut bspreader),
             surfaces: Bsp::load_surfaces(&entries[SURFACE_ENTRY], &mut bspreader),
             faces: Bsp::load_faces(&entries[FACE_ENTRY], &mut bspreader),
@@ -734,6 +764,17 @@ impl Bsp {
             edges: Bsp::load_edges(&entries[EDGE_ENTRY], &mut bspreader),
             edgelist: Bsp::load_edgelist(&entries[EDGELIST_ENTRY], &mut bspreader),
             models: Bsp::load_models(&entries[MODEL_ENTRY], &mut bspreader),
+        }
+    }
+
+    fn get_visible_leaves(&self, leaf: &LeafNode) -> Vec<&LeafNode> {
+        match leaf.vislist_id {
+            -1 => self.leaves.iter().collect(),
+            v => {
+                let mut leaves = Vec::with_capacity(self.leaves.len());
+                leaves.shrink_to_fit();
+                leaves
+            }
         }
     }
 }
