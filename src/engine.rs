@@ -2,9 +2,8 @@ extern crate glium;
 
 use std::fs::File;
 use std::io::Read;
-use std::sync::Mutex;
 
-use glium::{Display, DisplayBuild, Surface, Texture2d};
+use glium::Texture2d;
 use glium::backend::glutin_backend::GlutinFacade as Window;
 use glium::texture::RawImage2d;
 
