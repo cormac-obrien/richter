@@ -7,11 +7,13 @@ extern crate regex;
 
 pub mod bsp;
 pub mod engine;
+pub mod gfx;
 pub mod math;
 pub mod mdl;
 pub mod pak;
 
 use std::process::exit;
+use gfx::{TexCoord, Vertex};
 use glium::{Frame, Surface};
 use glium::draw_parameters::DrawParameters;
 use glium::glutin::Event;

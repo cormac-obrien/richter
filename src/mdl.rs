@@ -6,24 +6,13 @@ use engine;
 use mdl;
 
 use byteorder::{LittleEndian, ReadBytesExt};
+use gfx::{TexCoord, Vertex};
 use glium;
 use glium::Texture2d;
 use glium::backend::glutin_backend::GlutinFacade as Display;
 
 pub const MAGIC: i32 = 0x4F504449;
 pub const VERSION: i32 = 6;
-
-#[derive(Copy, Clone)]
-pub struct Vertex {
-    pub pos: [f32; 3],
-}
-implement_vertex!(Vertex, pos);
-
-#[derive(Copy, Clone)]
-pub struct TexCoord {
-    pub texcoord: [f32; 2],
-}
-implement_vertex!(TexCoord, texcoord);
 
 pub struct SkinSingle {
     pub texture: Texture2d,
