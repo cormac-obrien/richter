@@ -449,7 +449,7 @@ fn parse_edict(entstring: &str) -> Option<Vec<HashMap<String, String>>> {
 }
 
 impl Bsp {
-    fn load_entities(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<HashMap<String, String>> {
+    fn load_entities<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<HashMap<String, String>> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         let entstring: String = {
             let mut _entstring: Vec<u8> = Vec::with_capacity(MAX_ENTSTRING);
@@ -468,7 +468,7 @@ impl Bsp {
         }
     }
 
-    fn load_planes(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<Plane> {
+    fn load_planes<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<Plane> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % PLANE_SIZE == 0);
         let plane_count = entry.size / PLANE_SIZE;
@@ -497,7 +497,7 @@ impl Bsp {
         _planes
     }
 
-    fn load_textures(display: &Display, entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<Texture> {
+    fn load_textures<R>(display: &Display, entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<Texture> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         let tex_count = match bspreader.read_i32::<LittleEndian>().unwrap() {
             t if t <= 0 => panic!("Invalid texture count {}", t),
@@ -568,7 +568,7 @@ impl Bsp {
         textures
     }
 
-    fn load_vertices(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<Vertex> {
+    fn load_vertices<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<Vertex> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % (std::mem::size_of::<f32>() * 3) == 0);
         let vertex_count = entry.size / 12;
@@ -590,7 +590,7 @@ impl Bsp {
         vertices
     }
 
-    fn load_vislists(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<u8> {
+    fn load_vislists<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<u8> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         let mut vislists: Vec<u8> = Vec::with_capacity(entry.size);
         bspreader.take(entry.size as u64).read_to_end(&mut vislists).unwrap();
@@ -598,7 +598,7 @@ impl Bsp {
         vislists
     }
 
-    fn load_nodes(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<InternalNode> {
+    fn load_nodes<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<InternalNode> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         let node_count = entry.size / NODE_SIZE;
         let mut nodes = Vec::with_capacity(node_count);
@@ -623,7 +623,7 @@ impl Bsp {
         nodes
     }
 
-    fn load_surfaces(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<Surface> {
+    fn load_surfaces<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<Surface> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % SURFACE_SIZE == 0);
 
@@ -651,7 +651,7 @@ impl Bsp {
         surfaces
     }
 
-    fn load_faces(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<Face> {
+    fn load_faces<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<Face> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % FACE_SIZE == 0);
 
@@ -691,7 +691,7 @@ impl Bsp {
         faces
     }
 
-    fn load_lightmaps(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<u8> {
+    fn load_lightmaps<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<u8> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         let mut lightmaps = Vec::with_capacity(entry.size);
         bspreader.take(entry.size as u64).read_to_end(&mut lightmaps).unwrap();
@@ -699,7 +699,7 @@ impl Bsp {
         lightmaps
     }
 
-    fn load_clipnodes(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<ClipNode> {
+    fn load_clipnodes<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<ClipNode> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % CLIPNODE_SIZE == 0);
 
@@ -716,7 +716,7 @@ impl Bsp {
         clipnodes
     }
 
-    fn load_leaves(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<LeafNode> {
+    fn load_leaves<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<LeafNode> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % LEAF_SIZE == 0);
 
@@ -771,7 +771,7 @@ impl Bsp {
         leaves
     }
 
-    fn load_facelist(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<u16> {
+    fn load_facelist<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<u16> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % FACELIST_SIZE == 0);
 
@@ -784,7 +784,7 @@ impl Bsp {
         facelist
     }
 
-    fn load_edges(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<Edge> {
+    fn load_edges<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<Edge> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % EDGE_SIZE == 0);
         let edge_count = entry.size / EDGE_SIZE;
@@ -804,7 +804,7 @@ impl Bsp {
         edges
     }
 
-    fn load_edgelist(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<i32> {
+    fn load_edgelist<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<i32> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % EDGELIST_SIZE == 0);
 
@@ -826,7 +826,7 @@ impl Bsp {
         edgelist
     }
 
-    fn load_models(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<Model> {
+    fn load_models<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<Model> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % MODEL_SIZE == 0);
 
@@ -860,7 +860,7 @@ impl Bsp {
         models
     }
 
-    pub fn load(display: &Display, bspfile: &mut File) -> Bsp {
+    pub fn load<R>(display: &Display, bspfile: &mut R) -> Bsp where R: Read + Seek {
         let mut bspreader = BufReader::new(bspfile);
         let version = bspreader.read_i32::<LittleEndian>().unwrap();
         assert_eq!(version, VERSION);

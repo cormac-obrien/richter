@@ -80,9 +80,12 @@ fn main() {
         }
     };
 
-    let mdl = mdl::Mdl::load(&display, "armor.mdl").unwrap();
-    let mut bspfile = std::fs::File::open("pak0/maps/e1m1.bsp").unwrap();
-    let bsp = bsp::Bsp::load(&display, &mut bspfile);
+    let pak0 = pak::Pak::load("pak0.pak").unwrap();
+    let mut mdl_data = pak0.open("progs/armor.mdl").unwrap();
+    let mdl = mdl::Mdl::load(&display, &mut mdl_data).unwrap();
+
+    let mut bsp_data = pak0.open("maps/e1m1.bsp").unwrap();
+    let bsp = bsp::Bsp::load(&display, &mut bsp_data);
 
     let program = match Program::new(&display, gfx::get_shader_source()) {
         Err(why) => {

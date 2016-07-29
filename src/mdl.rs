@@ -74,54 +74,52 @@ pub struct Mdl {
 }
 
 impl Mdl {
-    pub fn load<P: AsRef<Path>>(display: &Display, path: P) -> Result<Mdl, ()> {
-        let mut mdl_file = File::open(path).unwrap();
-
-        match mdl_file.read_i32::<LittleEndian>().unwrap() {
+    pub fn load<R: Read + Seek>(display: &Display, mut mdl_data: &mut R) -> Result<Mdl, ()> {
+        match mdl_data.read_i32::<LittleEndian>().unwrap() {
             mdl::MAGIC => debug!("Verified MDL magic number"),
             _ => panic!("Bad magic number"),
         }
 
-        match mdl_file.read_i32::<LittleEndian>().unwrap() {
+        match mdl_data.read_i32::<LittleEndian>().unwrap() {
             mdl::VERSION => debug!("Verified MDL version"),
             _ => panic!("Bad version number"),
         }
 
-        let scale = [mdl_file.read_f32::<LittleEndian>().unwrap(),
-                     mdl_file.read_f32::<LittleEndian>().unwrap(),
-                     mdl_file.read_f32::<LittleEndian>().unwrap()];
+        let scale = [mdl_data.read_f32::<LittleEndian>().unwrap(),
+                     mdl_data.read_f32::<LittleEndian>().unwrap(),
+                     mdl_data.read_f32::<LittleEndian>().unwrap()];
 
-        let origin = [mdl_file.read_f32::<LittleEndian>().unwrap(),
-                      mdl_file.read_f32::<LittleEndian>().unwrap(),
-                      mdl_file.read_f32::<LittleEndian>().unwrap()];
+        let origin = [mdl_data.read_f32::<LittleEndian>().unwrap(),
+                      mdl_data.read_f32::<LittleEndian>().unwrap(),
+                      mdl_data.read_f32::<LittleEndian>().unwrap()];
 
         debug!("origin is {}, {}, {}", origin[0], origin[1], origin[2]);
 
-        let radius = mdl_file.read_f32::<LittleEndian>().unwrap();
+        let radius = mdl_data.read_f32::<LittleEndian>().unwrap();
 
         // discard eye positions
         for _ in 0..3 {
-            mdl_file.read_f32::<LittleEndian>().unwrap();
+            mdl_data.read_f32::<LittleEndian>().unwrap();
         }
 
-        let skin_count = mdl_file.read_i32::<LittleEndian>().unwrap();
-        let skin_w = mdl_file.read_i32::<LittleEndian>().unwrap();
-        let skin_h = mdl_file.read_i32::<LittleEndian>().unwrap();
-        let vertex_count = mdl_file.read_i32::<LittleEndian>().unwrap();
-        let poly_count = mdl_file.read_i32::<LittleEndian>().unwrap();
-        let frame_count = mdl_file.read_i32::<LittleEndian>().unwrap();
-        let sync_type = mdl_file.read_i32::<LittleEndian>().unwrap();
-        let flags = mdl_file.read_i32::<LittleEndian>().unwrap();
-        let size = mdl_file.read_i32::<LittleEndian>().unwrap();
+        let skin_count = mdl_data.read_i32::<LittleEndian>().unwrap();
+        let skin_w = mdl_data.read_i32::<LittleEndian>().unwrap();
+        let skin_h = mdl_data.read_i32::<LittleEndian>().unwrap();
+        let vertex_count = mdl_data.read_i32::<LittleEndian>().unwrap();
+        let poly_count = mdl_data.read_i32::<LittleEndian>().unwrap();
+        let frame_count = mdl_data.read_i32::<LittleEndian>().unwrap();
+        let sync_type = mdl_data.read_i32::<LittleEndian>().unwrap();
+        let flags = mdl_data.read_i32::<LittleEndian>().unwrap();
+        let size = mdl_data.read_i32::<LittleEndian>().unwrap();
 
         let mut skins: Vec<Skin> = Vec::with_capacity(skin_count as usize);
 
         for _ in 0..skin_count {
-            let skin = match mdl_file.read_i32::<LittleEndian>().unwrap() {
+            let skin = match mdl_data.read_i32::<LittleEndian>().unwrap() {
                 // Static
                 0 => {
                     let mut indexed: Vec<u8> = Vec::with_capacity((skin_w * skin_h) as usize);
-                    (&mut mdl_file).take((skin_w * skin_h) as u64).read_to_end(&mut indexed).unwrap();
+                    (&mut mdl_data).take((skin_w * skin_h) as u64).read_to_end(&mut indexed).unwrap();
                     Skin::Single(SkinSingle {
                         texture: engine::tex_from_indexed(display, &indexed, skin_w as u32, skin_h as u32),
                     })
@@ -129,7 +127,7 @@ impl Mdl {
 
                 // Animated
                 1 => {
-                    let count = mdl_file.read_i32::<LittleEndian>().unwrap();
+                    let count = mdl_data.read_i32::<LittleEndian>().unwrap();
                     panic!("UNIMPLEMENTED");
                     // for _ in 0..count {
                     //
@@ -146,7 +144,7 @@ impl Mdl {
             skins.push(skin);
         }
 
-        debug!("Loaded skins. Current position in file is 0x{:X}", mdl_file.seek(SeekFrom::Current(0)).unwrap());
+        debug!("Loaded skins. Current position in file is 0x{:X}", mdl_data.seek(SeekFrom::Current(0)).unwrap());
 
         // NOTE:
         // For the time being, texture coordinate adjustment for vertices which are
@@ -159,34 +157,34 @@ impl Mdl {
         let mut _texcoords: Vec<TexCoord> = Vec::with_capacity(vertex_count as usize);
         // let mut seams: Vec<bool> = Vec::with_capacity(vertex_count as usize);
         for _ in 0..vertex_count {
-            // seams.push(match mdl_file.read_i32::<LittleEndian>().unwrap() {
+            // seams.push(match mdl_data.read_i32::<LittleEndian>().unwrap() {
             //     0 => false,
             //     0x20 => true,
             //     _ => panic!("bad seam value"),
             // });
-            mdl_file.read_i32::<LittleEndian>().unwrap();
+            mdl_data.read_i32::<LittleEndian>().unwrap();
 
             _texcoords.push(TexCoord {
-                texcoord: [mdl_file.read_i32::<LittleEndian>().unwrap() as f32 / skin_w as f32,
-                           mdl_file.read_i32::<LittleEndian>().unwrap() as f32 / skin_h as f32],
+                texcoord: [mdl_data.read_i32::<LittleEndian>().unwrap() as f32 / skin_w as f32,
+                           mdl_data.read_i32::<LittleEndian>().unwrap() as f32 / skin_h as f32],
             });
         }
         let texcoords = glium::VertexBuffer::new(display, &_texcoords).unwrap();
 
-        debug!("Loaded texcoords. Current position in file is 0x{:X}", mdl_file.seek(SeekFrom::Current(0)).unwrap());
+        debug!("Loaded texcoords. Current position in file is 0x{:X}", mdl_data.seek(SeekFrom::Current(0)).unwrap());
 
         // let mut poly_facings: Vec<bool> = Vec::with_capacity(poly_count as usize);
         let mut _indices: Vec<u32> = Vec::with_capacity(3 * poly_count as usize);
         for _ in 0..poly_count {
-            // poly_facings.push(match mdl_file.read_i32::<LittleEndian>().unwrap() {
+            // poly_facings.push(match mdl_data.read_i32::<LittleEndian>().unwrap() {
             //     0 => false,
             //     1 => true,
             //     _ => panic!("bad front value"),
             // });
-            mdl_file.read_i32::<LittleEndian>().unwrap();
+            mdl_data.read_i32::<LittleEndian>().unwrap();
 
             for _ in 0..3 {
-                _indices.push(mdl_file.read_i32::<LittleEndian>().unwrap() as u32);
+                _indices.push(mdl_data.read_i32::<LittleEndian>().unwrap() as u32);
             }
         }
         let indices = glium::IndexBuffer::new(display, glium::index::PrimitiveType::TrianglesList, &_indices).unwrap();
@@ -195,27 +193,27 @@ impl Mdl {
 
         let mut frames: Vec<Frame> = Vec::with_capacity(frame_count as usize);
         for _ in 0..frame_count {
-            frames.push(match mdl_file.read_i32::<LittleEndian>().unwrap() {
+            frames.push(match mdl_data.read_i32::<LittleEndian>().unwrap() {
                 0 => {
                     let min = Vertex {
-                        pos: [mdl_file.read_u8().unwrap() as f32 * scale[0] + origin[0],
-                              mdl_file.read_u8().unwrap() as f32 * scale[1] + origin[1],
-                              mdl_file.read_u8().unwrap() as f32 * scale[2] + origin[2]],
+                        pos: [mdl_data.read_u8().unwrap() as f32 * scale[0] + origin[0],
+                              mdl_data.read_u8().unwrap() as f32 * scale[1] + origin[1],
+                              mdl_data.read_u8().unwrap() as f32 * scale[2] + origin[2]],
                     };
 
-                    mdl_file.read_u8().unwrap(); // discard vertex normal
+                    mdl_data.read_u8().unwrap(); // discard vertex normal
 
                     let max = Vertex {
-                        pos: [mdl_file.read_u8().unwrap() as f32 * scale[0] + origin[0],
-                              mdl_file.read_u8().unwrap() as f32 * scale[1] + origin[1],
-                              mdl_file.read_u8().unwrap() as f32 * scale[2] + origin[2]],
+                        pos: [mdl_data.read_u8().unwrap() as f32 * scale[0] + origin[0],
+                              mdl_data.read_u8().unwrap() as f32 * scale[1] + origin[1],
+                              mdl_data.read_u8().unwrap() as f32 * scale[2] + origin[2]],
                     };
 
-                    mdl_file.read_u8().unwrap(); // discard vertex normal
+                    mdl_data.read_u8().unwrap(); // discard vertex normal
 
                     let name = {
                         let mut bytes: [u8; 16] = [0; 16];
-                        mdl_file.read(&mut bytes).unwrap();
+                        mdl_data.read(&mut bytes).unwrap();
                         let len = {
                             let mut _len = 0;
                             for i in 0..bytes.len() {
@@ -234,12 +232,12 @@ impl Mdl {
                     let mut _vertices: Vec<Vertex> = Vec::with_capacity(vertex_count as usize);
                     for _ in 0..vertex_count {
                         _vertices.push(Vertex{
-                            pos: [mdl_file.read_u8().unwrap() as f32 * scale[0] + origin[0],
-                                  mdl_file.read_u8().unwrap() as f32 * scale[1] + origin[1],
-                                  mdl_file.read_u8().unwrap() as f32 * scale[2] + origin[2]],
+                            pos: [mdl_data.read_u8().unwrap() as f32 * scale[0] + origin[0],
+                                  mdl_data.read_u8().unwrap() as f32 * scale[1] + origin[1],
+                                  mdl_data.read_u8().unwrap() as f32 * scale[2] + origin[2]],
                         });
                         println!("{{{}, {}, {}}}", _vertices.last().unwrap().pos[0], _vertices.last().unwrap().pos[1], _vertices.last().unwrap().pos[2]);
-                        mdl_file.read_u8().unwrap(); // discard vertex normal
+                        mdl_data.read_u8().unwrap(); // discard vertex normal
                     }
 
                     let vertices = glium::VertexBuffer::new(display, &_vertices).unwrap();
@@ -256,7 +254,7 @@ impl Mdl {
             });
         }
 
-        assert!(mdl_file.seek(SeekFrom::Current(0)).unwrap() == mdl_file.metadata().unwrap().len());
+        assert!(mdl_data.seek(SeekFrom::Current(0)).unwrap() == mdl_data.seek(SeekFrom::End(0)).unwrap());
 
         Result::Ok(Mdl {
             origin: origin,
