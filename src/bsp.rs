@@ -16,9 +16,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 // TODO:
-// - Replace bsp::Vertex with standard Vertex type
 // - Inline parse_edict()?
 // - Create project-wide Wad and WadEntry types
+// - Replace index fields with direct references where possible
 
 //! The binary space partitioning (BSP) tree is the central data structure in Quake maps.
 //!
@@ -43,16 +43,16 @@
 //! contains a given point.
 //!
 //! # Visibility Lists
-//! For each leaf *l* in the BSP tree, there exists a visibility list (*vislist*) *v* that describes which
-//! other leaves are visible from *l*. The vislists are stored as partially run-length encoded bit
-//! vectors. For each byte in the vislist:
+//! For each leaf *l* in the BSP tree, there exists a visibility list (*vislist*) *v* that
+//! describes which other leaves are visible from *l*. The vislists are stored as partially
+//! run-length encoded bit vectors. For each byte in the vislist:
 //!
 //! - If the byte is nonzero (i.e. one or more bits set), it is interpreted as-is.
 //! - If the byte is zero, then the byte following it is interpreted as a count of zeroed bytes.
 //!
 //! # Nodes
 //! The internal nodes of the tree are responsible for maintaining the hierarchy between
-//! hyperplanes, containing the next level down in front and back of each plane. 
+//! hyperplanes, containing the next level down in front and back of each plane.
 
 use std;
 use std::collections::HashMap;
@@ -65,12 +65,13 @@ use std::process::exit;
 use byteorder::{LittleEndian, ReadBytesExt};
 use engine;
 use gfx::Vertex;
-use glium::Texture2d;
+use glium::{IndexBuffer, Texture2d, VertexBuffer};
+use glium::index::PrimitiveType;
 use glium::backend::glutin_backend::GlutinFacade as Display;
+use math::Vec3;
 use regex::Regex;
 
 const VERSION: i32 = 29;
-const MAX_ENTSTRING: usize = 65536;
 
 const ENTITY_ENTRY: usize = 0;
 const PLANE_ENTRY: usize = 1;
@@ -96,9 +97,29 @@ const FACE_SIZE: usize = 20;
 const CLIPNODE_SIZE: usize = 8;
 const FACELIST_SIZE: usize = 2;
 const EDGE_SIZE: usize = 4;
-const EDGELIST_SIZE: usize = 8;
+const EDGELIST_SIZE: usize = 4;
 const MODEL_SIZE: usize = 64;
 const TEX_NAME_MAX: usize = 16;
+
+// As defined in bspfile.h
+const MAX_MODELS: usize = 256;
+const MAX_LEAVES: usize = 32767;
+const MAX_BRUSHES: usize = 4096;
+const MAX_ENTITIES: usize = 1024;
+const MAX_ENTSTRING: usize = 65536;
+const MAX_PLANES: usize = 8192;
+const MAX_NODES: usize = 32767;
+const MAX_CLIPNODES: usize = 32767;
+const MAX_VERTICES: usize = 65535;
+const MAX_FACES: usize = 65535;
+const MAX_MARKSURFACES: usize = 65535;
+const MAX_SURFACES: usize = 4096;
+const MAX_EDGES: usize = 256000;
+const MAX_SURFEDGES: usize = 512000;
+const MAX_TEXTURES: usize = 0x200000;
+const MAX_LIGHTMAP: usize = 0x100000;
+const MAX_VISLIST: usize = 0x100000;
+
 
 struct Entry {
     offset: usize,
@@ -116,7 +137,7 @@ enum PlaneKind {
 
 /// One of the hyperplanes partitioning the map.
 struct Plane {
-    normal: [f32; 3],
+    normal: Vec3,
     offset: f32,
     kind: PlaneKind,
 }
@@ -129,6 +150,14 @@ struct BoundsFloat {
 struct BoundsShort {
     min: [i16; 3],
     max: [i16; 3],
+}
+
+impl fmt::Debug for BoundsShort {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "min: {{{}, {}, {}}}, max: {{{}, {}, {}}}",
+            self.min[0], self.min[1], self.min[2],
+            self.max[0], self.max[1], self.max[2])
+    }
 }
 
 /// A named texture.
@@ -152,14 +181,12 @@ enum FaceSide {
     Back,
 }
 
-impl fmt::Display for FaceSide {
+impl fmt::Debug for FaceSide {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f,
-               "{}",
-               match *self {
-                   FaceSide::Front => "Front",
-                   FaceSide::Back => "Back",
-               })
+        write!(f, "{}", match *self {
+           FaceSide::Front => "Front",
+           FaceSide::Back => "Back",
+        })
     }
 }
 
@@ -171,17 +198,15 @@ enum FaceLightKind {
     Disabled,
 }
 
-impl fmt::Display for FaceLightKind {
+impl fmt::Debug for FaceLightKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f,
-               "{}",
-               match *self {
-                   FaceLightKind::Normal => "Normal",
-                   FaceLightKind::FastPulse => "Fast Pulse",
-                   FaceLightKind::SlowPulse => "Slow Pulse",
-                   FaceLightKind::Disabled => "Disabled",
-                   FaceLightKind::Custom(id) => "Custom",
-               })
+        write!(f, "{}", match *self {
+            FaceLightKind::Normal => "Normal",
+            FaceLightKind::FastPulse => "Fast Pulse",
+            FaceLightKind::SlowPulse => "Slow Pulse",
+            FaceLightKind::Disabled => "Disabled",
+            FaceLightKind::Custom(_) => "Custom",
+        })
     }
 }
 
@@ -198,17 +223,17 @@ struct Face {
     lightmap_off: i32,
 }
 
-impl fmt::Display for Face {
+impl fmt::Debug for Face {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Plane #{}:\n\
-                  ----------\n\
-                  Direction: {}\n\
-                  Edge list ID: {}\n\
-                  Edge list length: {}\n\
-                  Surface ID: {}\n\
-                  Light kind: {}\n\
-                  Base light level: {}\n\
-                  Lightmap offset: {}",
+        write!(f, "Plane #: {} | \
+                  Dir'n: {:?} | \
+                  Edge index: {} | \
+                  Edge count: {:?} | \
+                  Surface ID: {} | \
+                  Light kind: {:?} | \
+                  Light level: {:?} | \
+                  Light info: {}, {} | \
+                  Lightmap offset: {:?}",
                  self.plane_id,
                  self.side,
                  self.edge_id,
@@ -216,6 +241,7 @@ impl fmt::Display for Face {
                  self.surface_id,
                  self.light_kind,
                  self.base_light,
+                 self.misc_light[0], self.misc_light[1],
                  self.lightmap_off)
     }
 }
@@ -232,10 +258,20 @@ struct InternalNode {
 
 enum LeafType {
     Normal,
-    Solid,
+
+    // Nothing is drawn.
+    Void,
+
+    // Screen tinted brown
     Water,
+
+    // Screen tinted green, player takes minor damage
     Acid,
+
+    // Screen tinted red, player takes major damage
     Lava,
+
+    // Scrolling textures, no perspective applied
     Sky,
 }
 
@@ -243,12 +279,25 @@ impl From<i32> for LeafType {
     fn from(src: i32) -> LeafType {
         match src {
             -1 => LeafType::Normal,
-            -2 => LeafType::Solid,
+            -2 => LeafType::Void,
             -4 => LeafType::Acid,
             -5 => LeafType::Lava,
             -6 => LeafType::Sky,
             _ => LeafType::Water
         }
+    }
+}
+
+impl fmt::Debug for LeafType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", match *self {
+            LeafType::Normal => "Normal",
+            LeafType::Void => "Void",
+            LeafType::Water => "Water",
+            LeafType::Acid => "Acid",
+            LeafType::Lava => "Lava",
+            LeafType::Sky => "Sky",
+        })
     }
 }
 
@@ -259,6 +308,13 @@ struct LeafSound {
     lava: u8,
 }
 
+impl fmt::Debug for LeafSound {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Water@{:X}, Sky@{:X}, Acid@{:X}, Lava@{:X}",
+            self.water, self.sky, self.acid, self.lava)
+    }
+}
+
 /// A leaf node of the BSP tree.
 struct LeafNode {
     leaftype: LeafType,
@@ -267,6 +323,14 @@ struct LeafNode {
     facelist_id: u16,
     face_count: u16,
     sound: LeafSound,
+}
+
+impl fmt::Debug for LeafNode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Type: {:?} | Vislist index: {} | Bounds: {:?} | Facelist index: {} | \
+                   Face count: {} | Sound: {:?}", self.leaftype, self.vislist_id, self.bounds,
+                    self.facelist_id, self.face_count, self.sound)
+    }
 }
 
 enum Node {
@@ -287,6 +351,21 @@ struct Edge {
     end: u16,
 }
 
+impl Edge {
+    fn reverse(&self) -> Edge {
+        Edge {
+            start: self.end,
+            end: self.start,
+        }
+    }
+}
+
+impl fmt::Debug for Edge {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} -> {}", self.start, self.end)
+    }
+}
+
 /// A relatively static part of the level geometry.
 struct Model {
     bounds: BoundsFloat,
@@ -302,7 +381,7 @@ pub struct Bsp {
     entities: Vec<HashMap<String, String>>,
     planes: Vec<Plane>,
     textures: Vec<Texture>,
-    vertices: Vec<Vertex>,
+    vertices: VertexBuffer<Vertex>,
     vislists: Vec<u8>,
     nodes: Vec<InternalNode>,
     surfaces: Vec<Surface>,
@@ -312,7 +391,7 @@ pub struct Bsp {
     leaves: Vec<LeafNode>,
     facelist: Vec<u16>,
     edges: Vec<Edge>,
-    edgelist: Vec<i16>,
+    edgelist: Vec<i32>,
     models: Vec<Model>,
 }
 
@@ -361,8 +440,7 @@ fn parse_edict(entstring: &str) -> Option<Vec<HashMap<String, String>>> {
             let val = groups.at(2).unwrap().to_string();
 
             debug!("\tInserting {{ \"{}\" : \"{}\" }}", key, val);
-            entity.insert(groups.at(1).unwrap().to_string(),
-                          groups.at(2).unwrap().to_string());
+            entity.insert(key, val);
         }
     }
 
@@ -379,6 +457,8 @@ impl Bsp {
             String::from_utf8(_entstring).unwrap()
         };
 
+        assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
+
         match parse_edict(&entstring) {
             None => {
                 error!("Couldn't parse entity dictionary.");
@@ -394,9 +474,9 @@ impl Bsp {
         let plane_count = entry.size / PLANE_SIZE;
         let mut _planes: Vec<Plane> = Vec::with_capacity(plane_count);
         for _ in 0..plane_count {
-            let normal: [f32; 3] = [bspreader.read_f32::<LittleEndian>().unwrap(),
+            let normal = Vec3::new([bspreader.read_f32::<LittleEndian>().unwrap(),
                                     bspreader.read_f32::<LittleEndian>().unwrap(),
-                                    bspreader.read_f32::<LittleEndian>().unwrap()];
+                                    bspreader.read_f32::<LittleEndian>().unwrap()]);
             let offset = bspreader.read_f32::<LittleEndian>().unwrap();
             let kind = bspreader.read_i32::<LittleEndian>().unwrap();
             _planes.push(Plane {
@@ -413,6 +493,7 @@ impl Bsp {
                 },
             });
         }
+        assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
         _planes
     }
 
@@ -428,6 +509,7 @@ impl Bsp {
 
             for _ in 0..tex_count {
                 _tex_offsets.push(match bspreader.read_i32::<LittleEndian>().unwrap() {
+                    -1 => continue,
                     t if t < 0 => panic!("Invalid texture count {}", t),
                     t => t as usize
                 });
@@ -468,7 +550,7 @@ impl Bsp {
             let texoff = bspreader.read_u32::<LittleEndian>().unwrap();
 
             // discard other mipmap offsets, we'll let the GPU generate the mipmaps
-            for i in 0..3 {
+            for _ in 0..3 {
                 bspreader.read_u32::<LittleEndian>().unwrap();
             }
 
@@ -504,6 +586,7 @@ impl Bsp {
             debug!("{}", v);
         }
 
+        assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
         vertices
     }
 
@@ -511,6 +594,7 @@ impl Bsp {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         let mut vislists: Vec<u8> = Vec::with_capacity(entry.size);
         bspreader.take(entry.size as u64).read_to_end(&mut vislists).unwrap();
+        assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
         vislists
     }
 
@@ -535,6 +619,7 @@ impl Bsp {
                 face_count: bspreader.read_u16::<LittleEndian>().unwrap(),
             });
         }
+        assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
         nodes
     }
 
@@ -562,6 +647,7 @@ impl Bsp {
             });
         }
 
+        assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
         surfaces
     }
 
@@ -572,7 +658,7 @@ impl Bsp {
         let face_count = entry.size / FACE_SIZE;
         let mut faces = Vec::with_capacity(face_count);
         for i in 0..face_count {
-            faces.push(Face {
+            let face = Face {
                 plane_id: bspreader.read_u16::<LittleEndian>().unwrap(),
                 side: match bspreader.read_u16::<LittleEndian>().unwrap() {
                     0 => FaceSide::Front,
@@ -597,8 +683,11 @@ impl Bsp {
                 base_light: bspreader.read_u8().unwrap(),
                 misc_light: [bspreader.read_u8().unwrap(), bspreader.read_u8().unwrap()],
                 lightmap_off: bspreader.read_i32::<LittleEndian>().unwrap(),
-            });
+            };
+            debug!("Face {}: {:?}", i, face);
+            faces.push(face);
         }
+        assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
         faces
     }
 
@@ -606,6 +695,7 @@ impl Bsp {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         let mut lightmaps = Vec::with_capacity(entry.size);
         bspreader.take(entry.size as u64).read_to_end(&mut lightmaps).unwrap();
+        assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
         lightmaps
     }
 
@@ -622,17 +712,39 @@ impl Bsp {
                 back: bspreader.read_i16::<LittleEndian>().unwrap(),
             });
         }
+        assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
         clipnodes
     }
 
     fn load_leaves(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<LeafNode> {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % LEAF_SIZE == 0);
+
         let leaf_count = entry.size / LEAF_SIZE;
+        assert!(leaf_count < MAX_LEAVES);
 
         let mut leaves = Vec::with_capacity(leaf_count);
-        for _ in 0..leaf_count {
-            leaves.push(LeafNode {
+
+        // Leaf 0 represents all space outside the level geometry and is not drawn
+        leaves.push(LeafNode {
+            leaftype: LeafType::Void,
+            vislist_id: -1,
+            bounds: BoundsShort{
+                min: [0, 0, 0],
+                max: [0, 0, 0],
+            },
+            facelist_id: 0,
+            face_count: 0,
+            sound: LeafSound {
+                water: 0,
+                sky: 0,
+                acid: 0,
+                lava: 0,
+            },
+        });
+
+        for i in 0..leaf_count {
+            let leaf = LeafNode {
                 leaftype: LeafType::from(bspreader.read_i32::<LittleEndian>().unwrap()),
                 vislist_id: bspreader.read_i32::<LittleEndian>().unwrap(),
                 bounds: BoundsShort {
@@ -651,8 +763,11 @@ impl Bsp {
                     acid: bspreader.read_u8().unwrap(),
                     lava: bspreader.read_u8().unwrap(),
                 }
-            })
+            };
+            debug!("Leaf {}: {:?}", i, leaf);
+            leaves.push(leaf);
         }
+        assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
         leaves
     }
 
@@ -665,6 +780,7 @@ impl Bsp {
         for _ in 0..facelist_count {
             facelist.push(bspreader.read_u16::<LittleEndian>().unwrap());
         }
+        assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
         facelist
     }
 
@@ -679,18 +795,34 @@ impl Bsp {
                 end: bspreader.read_u16::<LittleEndian>().unwrap(),
             });
         }
+
+        assert!(edges[0].start == 0 && edges[0].end == 0);
+
+        debug!("Edge count is {}", edges.len());
+
+        assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
         edges
     }
 
-    fn load_edgelist(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<i16> {
+    fn load_edgelist(entry: &Entry, bspreader: &mut BufReader<&mut File>) -> Vec<i32> {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % EDGELIST_SIZE == 0);
 
         let edgelist_count = entry.size / EDGELIST_SIZE;
         let mut edgelist = Vec::with_capacity(edgelist_count);
-        for _ in 0..edgelist_count {
-            edgelist.push(bspreader.read_i16::<LittleEndian>().unwrap());
+
+        for i in 0..edgelist_count {
+            let edge_entry = bspreader.read_i32::<LittleEndian>().unwrap();
+            debug!("Edge table {}: {}", i + 1, edge_entry);
+            edgelist.push(edge_entry);
         }
+
+        let expected = bspreader.seek(SeekFrom::Current(0)).unwrap();
+        debug!("Expected {}", expected);
+
+        let actual = bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap();
+        debug!("Got {}", actual);
+        assert!(expected == actual);
         edgelist
     }
 
@@ -699,6 +831,8 @@ impl Bsp {
         assert!(entry.size % MODEL_SIZE == 0);
 
         let model_count = entry.size / MODEL_SIZE;
+        assert!(model_count < MAX_MODELS);
+
         let mut models = Vec::with_capacity(model_count);
         for _ in 0..model_count {
             models.push(Model {
@@ -722,6 +856,7 @@ impl Bsp {
                 face_count: bspreader.read_i32::<LittleEndian>().unwrap(),
             });
         }
+        assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
         models
     }
 
@@ -748,11 +883,13 @@ impl Bsp {
             _entries
         };
 
-        Bsp {
+
+
+        let result = Bsp {
             entities: Bsp::load_entities(&entries[ENTITY_ENTRY], &mut bspreader),
             planes: Bsp::load_planes(&entries[PLANE_ENTRY], &mut bspreader),
             textures: Bsp::load_textures(&display, &entries[MIPTEX_ENTRY], &mut bspreader),
-            vertices: Bsp::load_vertices(&entries[VERTEX_ENTRY], &mut bspreader),
+            vertices: VertexBuffer::new(display, &Bsp::load_vertices(&entries[VERTEX_ENTRY], &mut bspreader)).unwrap(),
             vislists: Bsp::load_vislists(&entries[VISLIST_ENTRY], &mut bspreader),
             nodes: Bsp::load_nodes(&entries[NODE_ENTRY], &mut bspreader),
             surfaces: Bsp::load_surfaces(&entries[SURFACE_ENTRY], &mut bspreader),
@@ -764,16 +901,70 @@ impl Bsp {
             edges: Bsp::load_edges(&entries[EDGE_ENTRY], &mut bspreader),
             edgelist: Bsp::load_edgelist(&entries[EDGELIST_ENTRY], &mut bspreader),
             models: Bsp::load_models(&entries[MODEL_ENTRY], &mut bspreader),
+        };
+
+        for (i, face) in result.faces.iter().enumerate() {
+            debug!("Face {}:", i);
+            result.gen_face_indices(display, face);
         }
+        result
     }
 
+    fn gen_face_indices(&self, display: &Display, face: &Face) -> IndexBuffer<u32> {
+        for i in face.edge_id..face.edge_id + face.edge_count as u32 {
+            match self.edgelist[i as usize] {
+                x if x < 0 => debug!("Edge {}: {:?}", i, self.edges[-x as usize].reverse()),
+                x if x > 0 => debug!("Edge {}: {:?}", i, self.edges[x as usize]),
+                _ => (),
+            }
+        }
+        IndexBuffer::empty(display, PrimitiveType::TrianglesList, 10).unwrap()
+    }
+
+    fn find_leaf<V>(&self, point: V) -> &LeafNode where V: AsRef<Vec3> {
+        let mut node_index = 0;
+
+        while node_index & (1 << 15) == 0 {
+            let node = &self.nodes[node_index];
+            let plane = &self.planes[node.plane_id as usize];
+
+            if point.as_ref().dot(&plane.normal) - plane.offset < 0.0 {
+                node_index = node.front as usize;
+            } else {
+                node_index = node.back as usize;
+            }
+        }
+
+        &self.leaves[node_index]
+    }
+
+    /// Decompress the visibility list for a given leaf and return a list of references to the
+    /// leaves that are visible from it.
+    // TODO: return an Option<Vec<&LeafNode>>?
     fn get_visible_leaves(&self, leaf: &LeafNode) -> Vec<&LeafNode> {
         match leaf.vislist_id {
             -1 => self.leaves.iter().collect(),
             v => {
-                let mut leaves = Vec::with_capacity(self.leaves.len());
-                leaves.shrink_to_fit();
-                leaves
+                let mut to_draw = Vec::with_capacity(self.leaves.len());
+                let vislist = &self.vislists[v as usize ..];
+
+                let mut byte = 0;
+                loop {
+                    match vislist[byte] {
+                        0 => {
+                            // if this byte is 0, then the next byte is the number of bytes to skip
+                            byte += 1;
+                            byte += vislist[byte] as usize;
+                        },
+                        x => for shift in (0..8).rev() {
+                            if x >> shift & 1 == 1 {
+                                to_draw.push(&self.leaves[byte * 8 + x as usize])
+                            }
+                        }
+                    }
+                }
+                to_draw.shrink_to_fit();
+                to_draw
             }
         }
     }
