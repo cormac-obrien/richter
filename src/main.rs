@@ -30,45 +30,10 @@ pub mod mdl;
 pub mod pak;
 
 use std::process::exit;
-use gfx::{TexCoord, Vertex};
 use glium::{Frame, Surface};
 use glium::draw_parameters::DrawParameters;
 use glium::glutin::Event;
-use glium::program::{Program, ProgramCreationInput};
-
-static VERTEX_SHADER: &'static str = r#"
-#version 330
-
-layout(location = 0) in vec3 pos;
-layout(location = 1) in vec2 texcoord;
-
-out vec2 Texcoord;
-
-uniform mat4 perspective;
-uniform mat4 view;
-uniform mat4 world;
-
-void main() {
-    Texcoord = texcoord;
-    // gl_Position = perspective * view * world * vec4(pos, 1.0f);
-    gl_Position = perspective * view * world * vec4(pos, 1.0f);
-}
-"#;
-
-static FRAGMENT_SHADER: &'static str = r#"
-#version 330
-
-in vec2 Texcoord;
-
-out vec4 color;
-
-uniform sampler2D tex;
-
-void main() {
-    color = texture(tex, Texcoord);
-}
-
-"#;
+use glium::program::Program;
 
 fn perspective_matrix(target: &Frame, fov: f32) -> [[f32; 4]; 4] {
     let (w, h) = target.get_dimensions();
@@ -119,17 +84,7 @@ fn main() {
     let mut bspfile = std::fs::File::open("pak0/maps/e1m1.bsp").unwrap();
     let bsp = bsp::Bsp::load(&display, &mut bspfile);
 
-    let program = match Program::new(&display,
-        ProgramCreationInput::SourceCode {
-            vertex_shader: VERTEX_SHADER,
-            tessellation_control_shader: None,
-            tessellation_evaluation_shader: None,
-            geometry_shader: None,
-            fragment_shader: FRAGMENT_SHADER,
-            outputs_srgb: false,
-            uses_point_size: false,
-            transform_feedback_varyings: None,
-        }) {
+    let program = match Program::new(&display, gfx::get_shader_source()) {
         Err(why) => {
             println!("Error while compiling shader program: {}", why);
             exit(1);
@@ -146,10 +101,7 @@ fn main() {
             view: *math::Mat4::translation(0.0, 0.0, -50.0),
             world: *(math::Mat4::rotation_y(90.0f32.to_radians()) * math::Mat4::rotation_x(-90.0f32.to_radians())),
             tex: match mdl.skins[0] {
-                mdl::Skin::Single(ref s) => s.texture.sampled()
-                                                          .magnify_filter(glium::uniforms::MagnifySamplerFilter::Nearest)
-                                                          .minify_filter(glium::uniforms::MinifySamplerFilter::LinearMipmapLinear)
-                                                          .wrap_function(glium::uniforms::SamplerWrapFunction::Clamp),
+                mdl::Skin::Single(ref s) => gfx::sample(&s.texture),
                 _ => panic!("asdf"),
             },
         };
