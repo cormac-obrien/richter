@@ -53,6 +53,7 @@ impl Mat4 {
               [0.0, 0.0, 0.0, 1.0]])
     }
 
+    /// Performs a rotation about the x-axis.
     pub fn rotation_x(theta: f32) -> Self {
         let s = theta.sin();
         let c = theta.cos();
@@ -62,6 +63,7 @@ impl Mat4 {
               [0.0, 0.0, 0.0, 1.0]])
     }
 
+    /// Performs a rotation about the y-axis.
     pub fn rotation_y(theta: f32) -> Self {
         let s = theta.sin();
         let c = theta.cos();
@@ -71,6 +73,7 @@ impl Mat4 {
               [0.0, 0.0, 0.0, 1.0]])
     }
 
+    /// Performs a rotation about the z-axis.
     pub fn rotation_z(theta: f32) -> Self {
         let s = theta.sin();
         let c = theta.cos();
@@ -90,6 +93,12 @@ impl Mat4 {
 
 pub struct Vec3([f32; 3]);
 
+impl Vec3 {
+    pub fn new(components: [f32; 3]) -> Vec3 {
+        Vec3(components)
+    }
+}
+
 impl std::ops::Index<usize> for Vec3 {
     type Output = f32;
 
@@ -98,9 +107,15 @@ impl std::ops::Index<usize> for Vec3 {
     }
 }
 
+impl std::convert::AsRef<[f32; 3]> for Vec3 {
+    fn as_ref(&self) -> &[f32; 3] {
+        &self.0
+    }
+}
+
 impl Vec3 {
-    pub fn dot<V>(&self, other: V) -> Vec3 where V: AsRef<Vec3> {
+    pub fn dot<V>(&self, other: V) -> f32 where V: AsRef<[f32; 3]> {
         let o = other.as_ref();
-        Vec3 ([self[0] * o[0], self[1] * o[1], self[2] * o[2]])
+        self[0] * o[0] + self[1] * o[1] + self[2] * o[2]
     }
 }
