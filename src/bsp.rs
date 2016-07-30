@@ -16,7 +16,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 // TODO:
-// - Inline parse_edict()?
+// - Inline parse_edicts()?
 // - Create project-wide Wad and WadEntry types
 // - Replace index fields with direct references where possible
 
@@ -74,6 +74,12 @@
 //! # Nodes
 //! The internal nodes of the tree are responsible for maintaining the hierarchy between
 //! hyperplanes, containing the next level down in front and back of each plane.
+//!
+//! # Edges
+//! The indexing system of the BSP format seems somewhat bizarre. Instead of the individual faces
+//! being stored as a set of vertex indices, they are expressed as a set of edges&mdash;pairs of
+//! indices forming a line segment. This results in nearly 100% redundancy in the vertex indices.
+//! It turns out that this edge system is integral to Quake's software renderer.
 
 use std;
 use std::collections::HashMap;
@@ -120,6 +126,7 @@ const FACELIST_SIZE: usize = 2;
 const EDGE_SIZE: usize = 4;
 const EDGELIST_SIZE: usize = 4;
 const MODEL_SIZE: usize = 64;
+const VERTEX_SIZE: usize = 12;
 const TEX_NAME_MAX: usize = 16;
 
 // As defined in bspfile.h
@@ -246,23 +253,11 @@ struct Face {
 
 impl fmt::Debug for Face {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Plane #: {} | \
-                  Dir'n: {:?} | \
-                  Edge index: {} | \
-                  Edge count: {:?} | \
-                  Surface ID: {} | \
-                  Light kind: {:?} | \
-                  Light level: {:?} | \
-                  Light info: {}, {} | \
-                  Lightmap offset: {:?}",
-                 self.plane_id,
-                 self.side,
-                 self.edge_id,
-                 self.edge_count,
-                 self.surface_id,
-                 self.light_kind,
-                 self.base_light,
-                 self.misc_light[0], self.misc_light[1],
+        write!(f, "Plane #: {} | Dir'n: {:?} | Edge index: {} | Edge count: {:?} | \
+                   Surface ID: {} | Light kind: {:?} | Light level: {:?} | \
+                   Light info: {}, {} | Lightmap offset: {:?}",
+                 self.plane_id, self.side, self.edge_id, self.edge_count, self.surface_id,
+                 self.light_kind, self.base_light, self.misc_light[0], self.misc_light[1],
                  self.lightmap_off)
     }
 }
@@ -416,7 +411,8 @@ pub struct Bsp {
     models: Vec<Model>,
 }
 
-fn parse_edict(entstring: &str) -> Option<Vec<HashMap<String, String>>> {
+/// Parse the entity dictionaries out of their serialized form into a list of hashmaps.
+fn parse_edicts(entstring: &str) -> Option<Vec<HashMap<String, String>>> {
     lazy_static! {
         // match strings of the form "KEY": "VALUE", capturing KEY and VALUE
         static ref KEYVAL_REGEX: Regex = Regex::new(r#"^"([a-z]+)"\s+"(.+)"$"#).unwrap();
@@ -470,6 +466,7 @@ fn parse_edict(entstring: &str) -> Option<Vec<HashMap<String, String>>> {
 }
 
 impl Bsp {
+    /// Load the serialized entity dictionaries and parse them into edicts.
     fn load_entities<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<HashMap<String, String>> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         let entstring: String = {
@@ -480,7 +477,7 @@ impl Bsp {
 
         assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
 
-        match parse_edict(&entstring) {
+        match parse_edicts(&entstring) {
             None => {
                 error!("Couldn't parse entity dictionary.");
                 exit(1);
@@ -489,21 +486,17 @@ impl Bsp {
         }
     }
 
-    fn load_planes<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<Plane> where R: Read + Seek {
+    fn load_planes<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<Plane>
+            where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % PLANE_SIZE == 0);
         let plane_count = entry.size / PLANE_SIZE;
         let mut _planes: Vec<Plane> = Vec::with_capacity(plane_count);
         for _ in 0..plane_count {
-            let normal = Vec3::new([bspreader.read_f32le(),
-                                    bspreader.read_f32le(),
-                                    bspreader.read_f32le()]);
-            let offset = bspreader.read_f32le();
-            let kind = bspreader.read_i32le();
             _planes.push(Plane {
-                normal: normal,
-                offset: offset,
-                kind: match kind {
+                normal: Vec3::new([bspreader.read_f32le(), bspreader.read_f32le(), bspreader.read_f32le()]),
+                offset: bspreader.read_f32le(),
+                kind: match bspreader.read_i32le() {
                     0 => PlaneKind::AxialX,
                     1 => PlaneKind::AxialY,
                     2 => PlaneKind::AxialZ,
@@ -542,32 +535,21 @@ impl Bsp {
 
         for off in tex_offsets {
             bspreader.seek(SeekFrom::Start((entry.offset + off) as u64)).unwrap();
-            let texname = {
-                let mut bytes = [0u8; TEX_NAME_MAX];
-                bspreader.read(&mut bytes).unwrap();
-                let len = {
-                    let mut _len = 0;
-                    for (pos, i) in (0..TEX_NAME_MAX).enumerate() {
-                        if bytes[i] == 0x00 {
-                            _len = pos;
-                            break;
-                        }
-                    }
-                    _len
-                };
-                assert!(len != 0);
-                let _texname = String::from_utf8(bytes[..len].to_vec()).unwrap();
-                _texname
-            };
+
+            let mut bytes = [0u8; TEX_NAME_MAX];
+            bspreader.read(&mut bytes).unwrap();
+
+            let mut len = 0;
+            while bytes[len] != b'\0' {
+                len += 1
+            }
+            assert!(len != 0);
+            let texname = String::from_utf8(bytes[..len].to_vec()).unwrap();
 
             debug!("Loading \"{}\"", texname);
 
-            let texwidth = bspreader.read_u32le() as usize;
-            assert!(texwidth % 8 == 0);
-
-            let texheight = bspreader.read_u32le() as usize;
-            assert!(texwidth % 8 == 0);
-
+            let texwidth = bspreader.read_u32le() as usize;  assert!(texwidth % 8 == 0);
+            let texheight = bspreader.read_u32le() as usize; assert!(texheight % 8 == 0);
             let texoff = bspreader.read_u32le();
 
             // discard other mipmap offsets, we'll let the GPU generate the mipmaps
@@ -582,24 +564,21 @@ impl Bsp {
             textures.push(Texture {
                 name: texname,
                 tex: tex,
-            })
+            });
         }
 
-        debug!("=== Texture loading complete. ===");
         textures
     }
 
     fn load_vertices<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<Vertex> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % (std::mem::size_of::<f32>() * 3) == 0);
-        let vertex_count = entry.size / 12;
+        let vertex_count = entry.size / VERTEX_SIZE;
 
         let mut vertices = Vec::with_capacity(vertex_count);
         for _ in 0..vertex_count {
             vertices.push(Vertex {
-                pos: [bspreader.read_f32le(),
-                      bspreader.read_f32le(),
-                      bspreader.read_f32le()],
+                pos: [bspreader.read_f32le(), bspreader.read_f32le(), bspreader.read_f32le()],
             });
         }
 
@@ -629,12 +608,8 @@ impl Bsp {
                 front: bspreader.read_u16le(),
                 back: bspreader.read_u16le(),
                 bounds: BoundsShort {
-                    min: [bspreader.read_i16le(),
-                          bspreader.read_i16le(),
-                          bspreader.read_i16le()],
-                    max: [bspreader.read_i16le(),
-                          bspreader.read_i16le(),
-                          bspreader.read_i16le()],
+                    min: [bspreader.read_i16le(), bspreader.read_i16le(), bspreader.read_i16le()],
+                    max: [bspreader.read_i16le(), bspreader.read_i16le(), bspreader.read_i16le()],
                 },
                 face_id: bspreader.read_u16le(),
                 face_count: bspreader.read_u16le(),
@@ -652,19 +627,12 @@ impl Bsp {
         let mut surfaces = Vec::with_capacity(surface_count);
         for _ in 0..surface_count {
             surfaces.push(Surface {
-                s_vector: [bspreader.read_f32le(),
-                           bspreader.read_f32le(),
-                           bspreader.read_f32le()],
+                s_vector: [bspreader.read_f32le(), bspreader.read_f32le(), bspreader.read_f32le()],
                 s_offset: bspreader.read_f32le(),
-                t_vector: [bspreader.read_f32le(),
-                           bspreader.read_f32le(),
-                           bspreader.read_f32le()],
+                t_vector: [bspreader.read_f32le(), bspreader.read_f32le(), bspreader.read_f32le()],
                 t_offset: bspreader.read_f32le(),
                 tex_id: bspreader.read_u32le(),
-                animated: match bspreader.read_u32le() {
-                    0 => false,
-                    _ => true,
-                },
+                animated: bspreader.read_u32le() != 0,
             });
         }
 
@@ -769,12 +737,8 @@ impl Bsp {
                 leaftype: LeafType::from(bspreader.read_i32le()),
                 vislist_id: bspreader.read_i32le(),
                 bounds: BoundsShort {
-                    min: [bspreader.read_i16le(),
-                          bspreader.read_i16le(),
-                          bspreader.read_i16le()],
-                    max: [bspreader.read_i16le(),
-                          bspreader.read_i16le(),
-                          bspreader.read_i16le()],
+                    min: [bspreader.read_i16le(), bspreader.read_i16le(), bspreader.read_i16le()],
+                    max: [bspreader.read_i16le(), bspreader.read_i16le(), bspreader.read_i16le()],
                 },
                 facelist_id: bspreader.read_u16le(),
                 face_count: bspreader.read_u16le(),
@@ -858,20 +822,12 @@ impl Bsp {
         for _ in 0..model_count {
             models.push(Model {
                 bounds: BoundsFloat {
-                    min: [bspreader.read_f32le(),
-                          bspreader.read_f32le(),
-                          bspreader.read_f32le()],
-                    max: [bspreader.read_f32le(),
-                          bspreader.read_f32le(),
-                          bspreader.read_f32le()],
+                    min: [bspreader.read_f32le(), bspreader.read_f32le(), bspreader.read_f32le()],
+                    max: [bspreader.read_f32le(), bspreader.read_f32le(), bspreader.read_f32le()],
                 },
-                origin: [bspreader.read_f32le(),
-                         bspreader.read_f32le(),
-                         bspreader.read_f32le()],
-                node_ids: [bspreader.read_i32le(),
-                           bspreader.read_i32le(),
-                           bspreader.read_i32le(),
-                           bspreader.read_i32le()],
+                origin: [bspreader.read_f32le(), bspreader.read_f32le(), bspreader.read_f32le()],
+                node_ids: [bspreader.read_i32le(), bspreader.read_i32le(),
+                           bspreader.read_i32le(), bspreader.read_i32le()],
                 leaf_count: bspreader.read_i32le(),
                 face_id: bspreader.read_i32le(),
                 face_count: bspreader.read_i32le(),
@@ -903,8 +859,6 @@ impl Bsp {
             }
             _entries
         };
-
-
 
         let result = Bsp {
             entities: Bsp::load_entities(&entries[ENTITY_ENTRY], &mut bspreader),
