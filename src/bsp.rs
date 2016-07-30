@@ -25,11 +25,14 @@
 //! # Overview
 //! The primary purpose of the BSP tree is to describe a hierarchy between the geometric facets
 //! of a level. Each of the tree's nodes store a hyperplane in point-normal form, which allows
-//! the leaf containing a desired point to be located in log(n) time.
+//! the leaf containing a desired point to be located in log(n) time. Additionally, each leaf
+//! stores information about what can be seen from within that leaf, allowing most of the level
+//! geometry to be excluded from collision detection and rendering.
 //!
 //! # Entities
 //! The entity dictionary (*edict*) stores information about dynamic functionality in the level,
-//! such as spawn points, dynamic lighting and moving geometry.
+//! such as spawn points, dynamic lighting and moving geometry. The precise function of each entity
+//! is defined in `progs.dat`, which is compiled QuakeC bytecode.
 //!
 //! # Planes
 //! The planes are the primary method of navigation in the BSP tree. Given a point *p*, a plane
@@ -43,12 +46,30 @@
 //! contains a given point.
 //!
 //! # Visibility Lists
-//! For each leaf *l* in the BSP tree, there exists a visibility list (*vislist*) *v* that
+//! For each leaf *l* in the BSP tree, there exists a visibility list ('vislist') *v* that
 //! describes which other leaves are visible from *l*. The vislists are stored as partially
 //! run-length encoded bit vectors. For each byte in the vislist:
 //!
-//! - If the byte is nonzero (i.e. one or more bits set), it is interpreted as-is.
-//! - If the byte is zero, then the byte following it is interpreted as a count of zeroed bytes.
+//! - If the byte is nonzero (i.e. one or more bits set), it is interpreted as a list of boolean
+//!   values (1 = visible, 0 = not visible).
+//! - If the byte is zero, then the byte following it is interpreted as a count of zeroed bytes,
+//!   and each of those zeroed bytes denotes 8 leaves that are not visible. Note that the count
+//!   *includes the initial zero byte*.
+//!
+//! Thus, a packed vislist of the form
+//!
+//!     0x6B     0x00     0x0B     0x12
+//!     01101011 00000000 00001011 00010010
+//!
+//! Expands to
+//!
+//!     01101011 00000000 00000000 00000000
+//!     00000000 00000000 00000000 00000000
+//!     00000000 00000000 00000000 00000000
+//!     00001011 00010010
+//!
+//! The vislists are left packed in memory and only decompressed on a byte-by-byte basis when a
+//! leaf needs to be rendered.
 //!
 //! # Nodes
 //! The internal nodes of the tree are responsible for maintaining the hierarchy between
@@ -62,12 +83,12 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::process::exit;
 
-use byteorder::{LittleEndian, ReadBytesExt};
 use engine;
 use gfx::Vertex;
 use glium::{IndexBuffer, Texture2d, VertexBuffer};
 use glium::index::PrimitiveType;
 use glium::backend::glutin_backend::GlutinFacade as Display;
+use load::Load;
 use math::Vec3;
 use regex::Regex;
 
@@ -474,11 +495,11 @@ impl Bsp {
         let plane_count = entry.size / PLANE_SIZE;
         let mut _planes: Vec<Plane> = Vec::with_capacity(plane_count);
         for _ in 0..plane_count {
-            let normal = Vec3::new([bspreader.read_f32::<LittleEndian>().unwrap(),
-                                    bspreader.read_f32::<LittleEndian>().unwrap(),
-                                    bspreader.read_f32::<LittleEndian>().unwrap()]);
-            let offset = bspreader.read_f32::<LittleEndian>().unwrap();
-            let kind = bspreader.read_i32::<LittleEndian>().unwrap();
+            let normal = Vec3::new([bspreader.read_f32le(),
+                                    bspreader.read_f32le(),
+                                    bspreader.read_f32le()]);
+            let offset = bspreader.read_f32le();
+            let kind = bspreader.read_i32le();
             _planes.push(Plane {
                 normal: normal,
                 offset: offset,
@@ -499,7 +520,7 @@ impl Bsp {
 
     fn load_textures<R>(display: &Display, entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<Texture> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
-        let tex_count = match bspreader.read_i32::<LittleEndian>().unwrap() {
+        let tex_count = match bspreader.read_i32le() {
             t if t <= 0 => panic!("Invalid texture count {}", t),
             t => t as usize
         };
@@ -508,7 +529,7 @@ impl Bsp {
             let mut _tex_offsets: Vec<usize> = Vec::with_capacity(tex_count);
 
             for _ in 0..tex_count {
-                _tex_offsets.push(match bspreader.read_i32::<LittleEndian>().unwrap() {
+                _tex_offsets.push(match bspreader.read_i32le() {
                     -1 => continue,
                     t if t < 0 => panic!("Invalid texture count {}", t),
                     t => t as usize
@@ -541,17 +562,17 @@ impl Bsp {
 
             debug!("Loading \"{}\"", texname);
 
-            let texwidth = bspreader.read_u32::<LittleEndian>().unwrap() as usize;
+            let texwidth = bspreader.read_u32le() as usize;
             assert!(texwidth % 8 == 0);
 
-            let texheight = bspreader.read_u32::<LittleEndian>().unwrap() as usize;
+            let texheight = bspreader.read_u32le() as usize;
             assert!(texwidth % 8 == 0);
 
-            let texoff = bspreader.read_u32::<LittleEndian>().unwrap();
+            let texoff = bspreader.read_u32le();
 
             // discard other mipmap offsets, we'll let the GPU generate the mipmaps
             for _ in 0..3 {
-                bspreader.read_u32::<LittleEndian>().unwrap();
+                bspreader.read_u32le();
             }
 
             bspreader.seek(SeekFrom::Start(texoff as u64)).unwrap();
@@ -576,9 +597,9 @@ impl Bsp {
         let mut vertices = Vec::with_capacity(vertex_count);
         for _ in 0..vertex_count {
             vertices.push(Vertex {
-                pos: [bspreader.read_f32::<LittleEndian>().unwrap(),
-                      bspreader.read_f32::<LittleEndian>().unwrap(),
-                      bspreader.read_f32::<LittleEndian>().unwrap()],
+                pos: [bspreader.read_f32le(),
+                      bspreader.read_f32le(),
+                      bspreader.read_f32le()],
             });
         }
 
@@ -604,19 +625,19 @@ impl Bsp {
         let mut nodes = Vec::with_capacity(node_count);
         for _ in 0..node_count {
             nodes.push(InternalNode {
-                plane_id: bspreader.read_i32::<LittleEndian>().unwrap(),
-                front: bspreader.read_u16::<LittleEndian>().unwrap(),
-                back: bspreader.read_u16::<LittleEndian>().unwrap(),
+                plane_id: bspreader.read_i32le(),
+                front: bspreader.read_u16le(),
+                back: bspreader.read_u16le(),
                 bounds: BoundsShort {
-                    min: [bspreader.read_i16::<LittleEndian>().unwrap(),
-                          bspreader.read_i16::<LittleEndian>().unwrap(),
-                          bspreader.read_i16::<LittleEndian>().unwrap()],
-                    max: [bspreader.read_i16::<LittleEndian>().unwrap(),
-                          bspreader.read_i16::<LittleEndian>().unwrap(),
-                          bspreader.read_i16::<LittleEndian>().unwrap()],
+                    min: [bspreader.read_i16le(),
+                          bspreader.read_i16le(),
+                          bspreader.read_i16le()],
+                    max: [bspreader.read_i16le(),
+                          bspreader.read_i16le(),
+                          bspreader.read_i16le()],
                 },
-                face_id: bspreader.read_u16::<LittleEndian>().unwrap(),
-                face_count: bspreader.read_u16::<LittleEndian>().unwrap(),
+                face_id: bspreader.read_u16le(),
+                face_count: bspreader.read_u16le(),
             });
         }
         assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
@@ -631,16 +652,16 @@ impl Bsp {
         let mut surfaces = Vec::with_capacity(surface_count);
         for _ in 0..surface_count {
             surfaces.push(Surface {
-                s_vector: [bspreader.read_f32::<LittleEndian>().unwrap(),
-                           bspreader.read_f32::<LittleEndian>().unwrap(),
-                           bspreader.read_f32::<LittleEndian>().unwrap()],
-                s_offset: bspreader.read_f32::<LittleEndian>().unwrap(),
-                t_vector: [bspreader.read_f32::<LittleEndian>().unwrap(),
-                           bspreader.read_f32::<LittleEndian>().unwrap(),
-                           bspreader.read_f32::<LittleEndian>().unwrap()],
-                t_offset: bspreader.read_f32::<LittleEndian>().unwrap(),
-                tex_id: bspreader.read_u32::<LittleEndian>().unwrap(),
-                animated: match bspreader.read_u32::<LittleEndian>().unwrap() {
+                s_vector: [bspreader.read_f32le(),
+                           bspreader.read_f32le(),
+                           bspreader.read_f32le()],
+                s_offset: bspreader.read_f32le(),
+                t_vector: [bspreader.read_f32le(),
+                           bspreader.read_f32le(),
+                           bspreader.read_f32le()],
+                t_offset: bspreader.read_f32le(),
+                tex_id: bspreader.read_u32le(),
+                animated: match bspreader.read_u32le() {
                     0 => false,
                     _ => true,
                 },
@@ -659,19 +680,19 @@ impl Bsp {
         let mut faces = Vec::with_capacity(face_count);
         for i in 0..face_count {
             let face = Face {
-                plane_id: bspreader.read_u16::<LittleEndian>().unwrap(),
-                side: match bspreader.read_u16::<LittleEndian>().unwrap() {
+                plane_id: bspreader.read_u16le(),
+                side: match bspreader.read_u16le() {
                     0 => FaceSide::Front,
                     _ => FaceSide::Back,
                 },
-                edge_id: match bspreader.read_i32::<LittleEndian>().unwrap() {
+                edge_id: match bspreader.read_i32le() {
                     e if e < 0 => panic!("Edge index below zero. (Face at index {}, offset 0x{:X})", i, bspreader.seek(SeekFrom::Current(0)).unwrap()),
                     e => e as u32,
                 },
-                edge_count: bspreader.read_u16::<LittleEndian>().unwrap(),
-                surface_id: bspreader.read_u16::<LittleEndian>().unwrap(),
+                edge_count: bspreader.read_u16le(),
+                surface_id: bspreader.read_u16le(),
                 light_kind: {
-                    match bspreader.read_u8().unwrap() {
+                    match bspreader.read_u8() {
                         0 => FaceLightKind::Normal,
                         1 => FaceLightKind::FastPulse,
                         2 => FaceLightKind::SlowPulse,
@@ -680,9 +701,9 @@ impl Bsp {
                         _ => FaceLightKind::Disabled,
                     }
                 },
-                base_light: bspreader.read_u8().unwrap(),
-                misc_light: [bspreader.read_u8().unwrap(), bspreader.read_u8().unwrap()],
-                lightmap_off: bspreader.read_i32::<LittleEndian>().unwrap(),
+                base_light: bspreader.read_u8(),
+                misc_light: [bspreader.read_u8(), bspreader.read_u8()],
+                lightmap_off: bspreader.read_i32le(),
             };
             debug!("Face {}: {:?}", i, face);
             faces.push(face);
@@ -707,9 +728,9 @@ impl Bsp {
         let mut clipnodes = Vec::with_capacity(clipnode_count);
         for _ in 0..clipnode_count {
             clipnodes.push(ClipNode {
-                plane_id: bspreader.read_u32::<LittleEndian>().unwrap(),
-                front: bspreader.read_i16::<LittleEndian>().unwrap(),
-                back: bspreader.read_i16::<LittleEndian>().unwrap(),
+                plane_id: bspreader.read_u32le(),
+                front: bspreader.read_i16le(),
+                back: bspreader.read_i16le(),
             });
         }
         assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
@@ -745,23 +766,23 @@ impl Bsp {
 
         for i in 0..leaf_count {
             let leaf = LeafNode {
-                leaftype: LeafType::from(bspreader.read_i32::<LittleEndian>().unwrap()),
-                vislist_id: bspreader.read_i32::<LittleEndian>().unwrap(),
+                leaftype: LeafType::from(bspreader.read_i32le()),
+                vislist_id: bspreader.read_i32le(),
                 bounds: BoundsShort {
-                    min: [bspreader.read_i16::<LittleEndian>().unwrap(),
-                          bspreader.read_i16::<LittleEndian>().unwrap(),
-                          bspreader.read_i16::<LittleEndian>().unwrap()],
-                    max: [bspreader.read_i16::<LittleEndian>().unwrap(),
-                          bspreader.read_i16::<LittleEndian>().unwrap(),
-                          bspreader.read_i16::<LittleEndian>().unwrap()],
+                    min: [bspreader.read_i16le(),
+                          bspreader.read_i16le(),
+                          bspreader.read_i16le()],
+                    max: [bspreader.read_i16le(),
+                          bspreader.read_i16le(),
+                          bspreader.read_i16le()],
                 },
-                facelist_id: bspreader.read_u16::<LittleEndian>().unwrap(),
-                face_count: bspreader.read_u16::<LittleEndian>().unwrap(),
+                facelist_id: bspreader.read_u16le(),
+                face_count: bspreader.read_u16le(),
                 sound: LeafSound {
-                    water: bspreader.read_u8().unwrap(),
-                    sky: bspreader.read_u8().unwrap(),
-                    acid: bspreader.read_u8().unwrap(),
-                    lava: bspreader.read_u8().unwrap(),
+                    water: bspreader.read_u8(),
+                    sky: bspreader.read_u8(),
+                    acid: bspreader.read_u8(),
+                    lava: bspreader.read_u8(),
                 }
             };
             debug!("Leaf {}: {:?}", i, leaf);
@@ -778,7 +799,7 @@ impl Bsp {
         let facelist_count = entry.size / FACELIST_SIZE;
         let mut facelist = Vec::with_capacity(facelist_count);
         for _ in 0..facelist_count {
-            facelist.push(bspreader.read_u16::<LittleEndian>().unwrap());
+            facelist.push(bspreader.read_u16le());
         }
         assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
         facelist
@@ -791,8 +812,8 @@ impl Bsp {
         let mut edges = Vec::with_capacity(edge_count);
         for _ in 0..edge_count {
             edges.push(Edge {
-                start: bspreader.read_u16::<LittleEndian>().unwrap(),
-                end: bspreader.read_u16::<LittleEndian>().unwrap(),
+                start: bspreader.read_u16le(),
+                end: bspreader.read_u16le(),
             });
         }
 
@@ -812,7 +833,7 @@ impl Bsp {
         let mut edgelist = Vec::with_capacity(edgelist_count);
 
         for i in 0..edgelist_count {
-            let edge_entry = bspreader.read_i32::<LittleEndian>().unwrap();
+            let edge_entry = bspreader.read_i32le();
             debug!("Edge table {}: {}", i + 1, edge_entry);
             edgelist.push(edge_entry);
         }
@@ -837,23 +858,23 @@ impl Bsp {
         for _ in 0..model_count {
             models.push(Model {
                 bounds: BoundsFloat {
-                    min: [bspreader.read_f32::<LittleEndian>().unwrap(),
-                          bspreader.read_f32::<LittleEndian>().unwrap(),
-                          bspreader.read_f32::<LittleEndian>().unwrap()],
-                    max: [bspreader.read_f32::<LittleEndian>().unwrap(),
-                          bspreader.read_f32::<LittleEndian>().unwrap(),
-                          bspreader.read_f32::<LittleEndian>().unwrap()],
+                    min: [bspreader.read_f32le(),
+                          bspreader.read_f32le(),
+                          bspreader.read_f32le()],
+                    max: [bspreader.read_f32le(),
+                          bspreader.read_f32le(),
+                          bspreader.read_f32le()],
                 },
-                origin: [bspreader.read_f32::<LittleEndian>().unwrap(),
-                         bspreader.read_f32::<LittleEndian>().unwrap(),
-                         bspreader.read_f32::<LittleEndian>().unwrap()],
-                node_ids: [bspreader.read_i32::<LittleEndian>().unwrap(),
-                           bspreader.read_i32::<LittleEndian>().unwrap(),
-                           bspreader.read_i32::<LittleEndian>().unwrap(),
-                           bspreader.read_i32::<LittleEndian>().unwrap()],
-                leaf_count: bspreader.read_i32::<LittleEndian>().unwrap(),
-                face_id: bspreader.read_i32::<LittleEndian>().unwrap(),
-                face_count: bspreader.read_i32::<LittleEndian>().unwrap(),
+                origin: [bspreader.read_f32le(),
+                         bspreader.read_f32le(),
+                         bspreader.read_f32le()],
+                node_ids: [bspreader.read_i32le(),
+                           bspreader.read_i32le(),
+                           bspreader.read_i32le(),
+                           bspreader.read_i32le()],
+                leaf_count: bspreader.read_i32le(),
+                face_id: bspreader.read_i32le(),
+                face_count: bspreader.read_i32le(),
             });
         }
         assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
@@ -862,19 +883,19 @@ impl Bsp {
 
     pub fn load<R>(display: &Display, bspfile: &mut R) -> Bsp where R: Read + Seek {
         let mut bspreader = BufReader::new(bspfile);
-        let version = bspreader.read_i32::<LittleEndian>().unwrap();
+        let version = bspreader.read_i32le();
         assert_eq!(version, VERSION);
 
         let entries: Vec<Entry> = {
             let mut _entries = Vec::with_capacity(15);
             for _ in 0..15 {
                 _entries.push(Entry {
-                    offset: match bspreader.read_i32::<LittleEndian>().unwrap() {
+                    offset: match bspreader.read_i32le() {
                         o if o < 0 => panic!("Invalid offset ({})", o),
                         o => o as usize,
                     },
 
-                    size: match bspreader.read_i32::<LittleEndian>().unwrap() {
+                    size: match bspreader.read_i32le() {
                         s if s < 0 => panic!("Invalid size value {}", s),
                         s => s as usize,
                     },
