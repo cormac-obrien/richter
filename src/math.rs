@@ -19,6 +19,7 @@ use std;
 
 pub use std::f32::consts::PI as PI;
 
+/// A 4x4 matrix.
 pub struct Mat4(pub [[f32; 4]; 4]);
 
 impl std::ops::Deref for Mat4 {
@@ -46,6 +47,7 @@ impl std::ops::Mul for Mat4 {
 }
 
 impl Mat4 {
+    /// Returns a 4x4 identity matrix.
     pub fn identity() -> Self {
         Mat4([[1.0, 0.0, 0.0, 0.0],
               [0.0, 1.0, 0.0, 0.0],
@@ -91,11 +93,19 @@ impl Mat4 {
     }
 }
 
+/// A 3-component vector.
 pub struct Vec3([f32; 3]);
 
 impl Vec3 {
+    /// Constructs a new Vec3 from its components.
     pub fn new(components: [f32; 3]) -> Vec3 {
         Vec3(components)
+    }
+}
+
+impl std::fmt::Display for Vec3 {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{{{}, {}, {}}}", self[0], self[1], self[2])
     }
 }
 
@@ -113,7 +123,64 @@ impl std::convert::AsRef<[f32; 3]> for Vec3 {
     }
 }
 
+impl std::ops::Mul<f32> for Vec3 {
+    type Output = Self;
+
+    fn mul(self, scalar: f32) -> Vec3 {
+        Vec3([self[0] * scalar, self[1] * scalar, self[2] * scalar])
+    }
+}
+
+impl<'a> std::ops::Mul<f32> for &'a Vec3 {
+    type Output = Vec3;
+
+    fn mul(self, scalar: f32) -> Vec3 {
+        Vec3([self[0] * scalar, self[1] * scalar, self[2] * scalar])
+    }
+}
+
+impl<'a> std::ops::Mul<&'a Vec3> for f32 {
+    type Output = Vec3;
+
+    fn mul(self, vec: &'a Vec3) -> Vec3 {
+        vec * self
+    }
+}
+
+impl<'a> std::ops::Add<&'a Vec3> for Vec3 {
+    type Output = Vec3;
+
+    fn add(self, other: &'a Vec3) -> Vec3 {
+        Vec3([self[0] + other[0], self[1] + other[1], self[2] + other[2]])
+    }
+}
+
+impl<'a, 'b> std::ops::Add<&'a Vec3> for &'b Vec3 {
+    type Output = Vec3;
+
+    fn add(self, other: &'a Vec3) -> Vec3 {
+        Vec3([self[0] + other[0], self[1] + other[1], self[2] + other[2]])
+    }
+}
+
+impl<'a> std::ops::Sub<&'a Vec3> for Vec3 {
+    type Output = Vec3;
+
+    fn sub(self, other: &'a Vec3) -> Vec3 {
+        Vec3([self[0] - other[0], self[1] - other[1], self[2] - other[2]])
+    }
+}
+
+impl<'a, 'b> std::ops::Sub<&'a Vec3> for &'b Vec3 {
+    type Output = Vec3;
+
+    fn sub(self, other: &'a Vec3) -> Vec3 {
+        Vec3([self[0] - other[0], self[1] - other[1], self[2] - other[2]])
+    }
+}
+
 impl Vec3 {
+    /// Calculates the dot product of this Vec3 and another.
     pub fn dot<V>(&self, other: V) -> f32 where V: AsRef<[f32; 3]> {
         let o = other.as_ref();
         self[0] * o[0] + self[1] * o[1] + self[2] * o[2]
