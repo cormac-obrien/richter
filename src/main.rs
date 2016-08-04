@@ -25,6 +25,7 @@ extern crate regex;
 pub mod bsp;
 pub mod engine;
 pub mod gfx;
+pub mod load;
 pub mod math;
 pub mod mdl;
 pub mod pak;
