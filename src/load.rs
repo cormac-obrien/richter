@@ -14,34 +14,39 @@
 // NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-use std::io::{BufReader, Read};
+
+use std::convert::AsRef;
+use std::io::{BufReader, Cursor, Read, Seek};
 use byteorder::{LittleEndian, ReadBytesExt};
 
-pub trait Load: ReadBytesExt {
-    fn read_u8(&mut self) -> u8 {
+pub trait Load: ReadBytesExt + Seek {
+    fn load_u8(&mut self) -> u8 {
         ReadBytesExt::read_u8(self).unwrap()
     }
 
-    fn read_u16le(&mut self) -> u16 {
+    fn load_u16le(&mut self) -> u16 {
         self.read_u16::<LittleEndian>().unwrap()
     }
 
-    fn read_i16le(&mut self) -> i16 {
+    fn load_i16le(&mut self) -> i16 {
         self.read_i16::<LittleEndian>().unwrap()
     }
 
-    fn read_u32le(&mut self) -> u32 {
+    fn load_u32le(&mut self) -> u32 {
         self.read_u32::<LittleEndian>().unwrap()
     }
 
-    fn read_i32le(&mut self) -> i32 {
+    fn load_i32le(&mut self) -> i32 {
         self.read_i32::<LittleEndian>().unwrap()
     }
 
-    fn read_f32le(&mut self) -> f32 {
+    fn load_f32le(&mut self) -> f32 {
         self.read_f32::<LittleEndian>().unwrap()
     }
 }
 
-impl<R> Load for BufReader<R> where R: Read {
+impl<R> Load for BufReader<R> where R: Read + Seek {
+}
+
+impl<T> Load for Cursor<T> where T: AsRef<[u8]> {
 }
