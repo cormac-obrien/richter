@@ -94,6 +94,7 @@ impl Mat4 {
 }
 
 /// A 3-component vector.
+#[derive(Copy, Clone)]
 pub struct Vec3([f32; 3]);
 
 impl Vec3 {
