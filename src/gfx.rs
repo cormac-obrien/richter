@@ -21,6 +21,7 @@ use std::ops;
 use glium;
 use glium::uniforms::{MinifySamplerFilter, MagnifySamplerFilter, SamplerWrapFunction};
 use glium::program::ProgramCreationInput;
+use glium::draw_parameters::DrawParameters;
 
 const MAGNIFY_FILTER: MagnifySamplerFilter = MagnifySamplerFilter::Nearest;
 const MINIFY_FILTER: MinifySamplerFilter = MinifySamplerFilter::Nearest;
@@ -60,6 +61,44 @@ void main() {
 
 "#;
 
+pub static BSP_VERTEX_SHADER: &'static str = r#"
+#version 330
+
+in vec3 pos;
+
+out vec2 texcoord;
+
+uniform mat4 perspective;
+uniform mat4 view;
+uniform mat4 world;
+uniform vec3 s_vector;
+uniform float s_offset;
+uniform float tex_width;
+uniform vec3 t_vector;
+uniform float t_offset;
+uniform float tex_height;
+
+void main() {
+    texcoord = vec2((dot(pos, s_vector) + s_offset) / tex_width,
+                    (dot(pos, t_vector) + t_offset) / tex_height);
+    gl_Position = perspective * view * world * vec4(pos, 1.0f);
+}
+"#;
+
+pub static BSP_FRAGMENT_SHADER: &'static str = r#"
+#version 330
+
+in vec2 texcoord;
+
+out vec4 color;
+
+uniform sampler2D tex;
+
+void main() {
+    color = texture(tex, texcoord);
+}
+
+"#;
 
 #[derive(Copy, Clone)]
 pub struct Vertex {
@@ -126,5 +165,31 @@ pub fn get_shader_source<'a>() -> ProgramCreationInput<'a> {
         outputs_srgb: false,
         uses_point_size: false,
         transform_feedback_varyings: None,
+    }
+}
+
+pub fn get_bsp_shader_source<'a>() -> ProgramCreationInput<'a> {
+    ProgramCreationInput::SourceCode {
+        vertex_shader: &BSP_VERTEX_SHADER,
+        tessellation_control_shader: None,
+        tessellation_evaluation_shader: None,
+        geometry_shader: None,
+        fragment_shader: &BSP_FRAGMENT_SHADER,
+        outputs_srgb: false,
+        uses_point_size: false,
+        transform_feedback_varyings: None,
+    }
+}
+
+pub fn get_draw_parameters<'a>() -> DrawParameters<'static> {
+    DrawParameters {
+        depth: glium::Depth {
+            test: glium::DepthTest::IfMoreOrEqual,
+            write: true,
+            .. Default::default()
+        },
+        backface_culling: glium::BackfaceCullingMode::CullCounterClockwise,
+        //backface_culling: glium::BackfaceCullingMode::CullClockwise,
+        .. Default::default()
     }
 }

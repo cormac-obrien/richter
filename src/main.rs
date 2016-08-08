@@ -21,9 +21,12 @@ extern crate byteorder;
 #[macro_use] extern crate log;
 extern crate env_logger;
 extern crate regex;
+extern crate time;
 
 pub mod bsp;
 pub mod engine;
+pub mod entity;
+pub mod event;
 pub mod gfx;
 pub mod load;
 pub mod math;
@@ -32,34 +35,10 @@ pub mod pak;
 
 use std::process::exit;
 use glium::{Frame, Surface};
-use glium::draw_parameters::DrawParameters;
 use glium::glutin::Event;
 use glium::program::Program;
 
-fn perspective_matrix(target: &Frame, fov: f32) -> [[f32; 4]; 4] {
-    let (w, h) = target.get_dimensions();
-    let aspect = w as f32 / h as f32;
-    let znear = 0.125;
-    let zfar = 1024.0;
-    let f = 1.0 / (fov / 2.0).tan();
-
-    [[f / aspect, 0.0,                                   0.0,  0.0],
-     [       0.0,   f,                                   0.0,  0.0],
-     [       0.0, 0.0,       (zfar + znear) / (zfar - znear), -1.0],
-     [       0.0, 0.0, (2.0 * zfar * znear) / (zfar - znear),  0.0]]
-}
-
 fn main() {
-    let draw_parameters: glium::draw_parameters::DrawParameters<'static> = DrawParameters {
-        depth: glium::Depth {
-            test: glium::DepthTest::IfMoreOrEqual,
-            write: true,
-            .. Default::default()
-        },
-        backface_culling: glium::BackfaceCullingMode::CullCounterClockwise,
-        .. Default::default()
-    };
-
     env_logger::init().unwrap();
     info!("Richter v0.0.1");
 
@@ -96,12 +75,17 @@ fn main() {
         Ok(p) => p,
     };
 
+    let mut key_state = event::KeyState::new();
+    let player = entity::Entity::new();
+    player.set_position(352.0, 88.0, -480.0);
+
     'outer: loop {
+        /*
         let mut target = display.draw();
-        let perspective = perspective_matrix(&target, 2.0 * (math::PI / 3.0));
+        let (w, h) = target.get_dimensions();
 
         let uniforms = uniform! {
-            perspective: perspective,
+            perspective: *math::Mat4::perspective(w as f32, h as f32, 2.0 * (math::PI / 3.0)),
             view: *math::Mat4::translation(0.0, 0.0, -50.0),
             world: *(math::Mat4::rotation_y(90.0f32.to_radians()) * math::Mat4::rotation_x(-90.0f32.to_radians())),
             tex: match mdl.skins[0] {
@@ -123,7 +107,7 @@ fn main() {
             &mdl.indices,
             &program,
             &uniforms,
-            &draw_parameters);
+            &gfx::get_draw_parameters());
 
         if draw_status.is_err() {
             error!("Draw failed: {}", draw_status.err().unwrap());
@@ -135,6 +119,16 @@ fn main() {
             error!("Frame finish failed: {}", finish_status.err().unwrap());
             exit(1);
         }
+        */
+        let pos = player.get_position();
+        let angle = player.get_angle();
+
+        let view_matrix =
+            math::Mat4::rotation_x(angle[0]) *
+            math::Mat4::rotation_y(angle[1]) *
+            math::Mat4::translation(-pos[0], -pos[1], -pos[2]);
+
+        bsp.draw_naive(&display, &view_matrix);
 
         for event in display.poll_events() {
             match event {
@@ -142,8 +136,59 @@ fn main() {
                     debug!("Caught Event::Closed, exiting.");
                     break 'outer;
                 }
+
+                Event::KeyboardInput(state, _, key) => {
+                    debug!("{:?}", event);
+                    if let Some(k) = key {
+                        key_state.update(k, state);
+                    }
+                },
                 _ => (),
             }
+        }
+
+        if key_state.is_pressed(glium::glutin::VirtualKeyCode::W) {
+            let delta = math::Vec3::new(0.0, 0.0, -2.0).rotate_y(player.get_angle()[1]);
+            player.adjust_position(delta[0], delta[1], delta[2]);
+        }
+
+        if key_state.is_pressed(glium::glutin::VirtualKeyCode::S) {
+            let delta = math::Vec3::new(0.0, 0.0, 2.0).rotate_y(player.get_angle()[1]);
+            player.adjust_position(delta[0], delta[1], delta[2]);
+        }
+
+        if key_state.is_pressed(glium::glutin::VirtualKeyCode::A) {
+            let delta = math::Vec3::new(-2.0, 0.0, 0.0).rotate_y(player.get_angle()[1]);
+            player.adjust_position(delta[0], delta[1], delta[2]);
+        }
+
+        if key_state.is_pressed(glium::glutin::VirtualKeyCode::D) {
+            let delta = math::Vec3::new(2.0, 0.0, 0.0).rotate_y(player.get_angle()[1]);
+            player.adjust_position(delta[0], delta[1], delta[2]);
+        }
+
+        if key_state.is_pressed(glium::glutin::VirtualKeyCode::Space) {
+            player.adjust_position(0.0, 2.0, 0.0);
+        }
+
+        if key_state.is_pressed(glium::glutin::VirtualKeyCode::LControl) {
+            player.adjust_position(0.0, -2.0, 0.0);
+        }
+
+        if key_state.is_pressed(glium::glutin::VirtualKeyCode::Left) {
+            player.adjust_angle(0.0, 0.05, 0.0);
+        }
+
+        if key_state.is_pressed(glium::glutin::VirtualKeyCode::Right) {
+            player.adjust_angle(0.0, -0.05, 0.0);
+        }
+
+        if key_state.is_pressed(glium::glutin::VirtualKeyCode::Up) {
+            player.adjust_angle(-0.05, 0.0, 0.0);
+        }
+
+        if key_state.is_pressed(glium::glutin::VirtualKeyCode::Down) {
+            player.adjust_angle(0.05, 0.0, 0.0);
         }
     }
 }

@@ -85,17 +85,20 @@ use std;
 use std::collections::HashMap;
 use std::convert::From;
 use std::fmt;
-use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::process::exit;
 
 use engine;
+use gfx;
 use gfx::Vertex;
-use glium::{IndexBuffer, Texture2d, VertexBuffer};
-use glium::index::PrimitiveType;
+use glium;
+use glium::{IndexBuffer, Program, Texture2d, VertexBuffer};
 use glium::backend::glutin_backend::GlutinFacade as Display;
+use glium::index::{DrawCommandIndices, DrawCommandsIndicesBuffer, PrimitiveType};
+use glium::uniforms::{MagnifySamplerFilter, MinifySamplerFilter, SamplerWrapFunction};
 use load::Load;
-use math::Vec3;
+use math;
+use math::{Mat4, Vec3};
 use regex::Regex;
 
 const VERSION: i32 = 29;
@@ -192,6 +195,8 @@ impl fmt::Debug for BoundsShort {
 struct Texture {
     name: String,
     tex: Texture2d,
+    w: usize,
+    h: usize,
 }
 
 struct Surface {
@@ -242,21 +247,22 @@ impl fmt::Debug for FaceLightKind {
 struct Face {
     plane_id: u16,
     side: FaceSide,
-    edge_id: u32,
-    edge_count: u16,
+    index_first: u32,
+    index_count: u16,
     surface_id: u16,
     light_kind: FaceLightKind,
     base_light: u8,
     misc_light: [u8; 2],
     lightmap_off: i32,
+    draw_command: DrawCommandIndices,
 }
 
 impl fmt::Debug for Face {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Plane #: {} | Dir'n: {:?} | Edge index: {} | Edge count: {:?} | \
+        write!(f, "Plane #: {} | Dir'n: {:?} | First index: {} | Index count: {:?} | \
                    Surface ID: {} | Light kind: {:?} | Light level: {:?} | \
                    Light info: {}, {} | Lightmap offset: {:?}",
-                 self.plane_id, self.side, self.edge_id, self.edge_count, self.surface_id,
+                 self.plane_id, self.side, self.index_first, self.index_count, self.surface_id,
                  self.light_kind, self.base_light, self.misc_light[0], self.misc_light[1],
                  self.lightmap_off)
     }
@@ -332,7 +338,7 @@ impl fmt::Debug for LeafSound {
 }
 
 /// A leaf node of the BSP tree.
-struct LeafNode {
+struct Leaf {
     leaftype: LeafType,
     vislist_id: i32,
     bounds: BoundsShort,
@@ -341,7 +347,7 @@ struct LeafNode {
     sound: LeafSound,
 }
 
-impl fmt::Debug for LeafNode {
+impl fmt::Debug for Leaf {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Type: {:?} | Vislist index: {} | Bounds: {:?} | Facelist index: {} | \
                    Face count: {} | Sound: {:?}", self.leaftype, self.vislist_id, self.bounds,
@@ -351,7 +357,7 @@ impl fmt::Debug for LeafNode {
 
 enum Node {
     Internal(InternalNode),
-    Leaf(LeafNode),
+    Leaf(Leaf),
 }
 
 /// A rough approximation of a BSP node used for preliminary collision detection.
@@ -384,7 +390,7 @@ pub struct Bsp {
     faces: Vec<Face>,
     lightmaps: Vec<u8>,
     clipnodes: Vec<ClipNode>,
-    leaves: Vec<LeafNode>,
+    leaves: Vec<Leaf>,
     facelist: Vec<u16>,
     models: Vec<Model>,
 }
@@ -479,7 +485,7 @@ impl Bsp {
         let mut _planes: Vec<Plane> = Vec::with_capacity(plane_count);
         for _ in 0..plane_count {
             _planes.push(Plane {
-                normal: Vec3::new([bspreader.load_f32le(), bspreader.load_f32le(), bspreader.load_f32le()]),
+                normal: Vec3::new(bspreader.load_f32le(), bspreader.load_f32le(), bspreader.load_f32le()),
                 offset: bspreader.load_f32le(),
                 kind: match bspreader.load_i32le() {
                     0 => PlaneKind::AxialX,
@@ -503,20 +509,16 @@ impl Bsp {
             t => t as usize
         };
 
-        let tex_offsets = {
-            let mut _tex_offsets: Vec<usize> = Vec::with_capacity(tex_count);
+        let mut tex_offsets = Vec::with_capacity(tex_count);
+        for _ in 0..tex_count {
+            tex_offsets.push(match bspreader.load_i32le() {
+                -1 => continue,
+                t if t < 0 => panic!("Invalid texture count {}", t),
+                t => t as usize
+            });
+        }
 
-            for _ in 0..tex_count {
-                _tex_offsets.push(match bspreader.load_i32le() {
-                    -1 => continue,
-                    t if t < 0 => panic!("Invalid texture count {}", t),
-                    t => t as usize
-                });
-            }
-            _tex_offsets
-        };
-
-        let mut textures: Vec<Texture> = Vec::with_capacity(tex_count);
+        let mut textures = Vec::with_capacity(tex_count);
 
         for off in tex_offsets {
             bspreader.seek(SeekFrom::Start((entry.offset + off) as u64)).unwrap();
@@ -542,13 +544,16 @@ impl Bsp {
                 bspreader.load_u32le();
             }
 
-            bspreader.seek(SeekFrom::Start(texoff as u64)).unwrap();
+            bspreader.seek(SeekFrom::Current(texoff as i64)).unwrap();
             let mut indices = Vec::with_capacity(texwidth * texheight);
             bspreader.take((texwidth * texheight) as u64).read_to_end(&mut indices).unwrap();
+            assert!(indices.len() == (texwidth * texheight) as usize);
             let tex = engine::tex_from_indexed(display, &indices, texwidth as u32, texheight as u32);
             textures.push(Texture {
                 name: texname,
                 tex: tex,
+                w: texwidth,
+                h: texheight,
             });
         }
 
@@ -562,9 +567,23 @@ impl Bsp {
 
         let mut vertices = Vec::with_capacity(vertex_count);
         for _ in 0..vertex_count {
+            // Quake uses a different coordinate system than OpenGL:
+            //
+            //   | +z
+            //   |
+            //   |____ +y
+            //   /
+            //  /
+            // / +x
+            let z = -bspreader.load_f32le();
+            let x = -bspreader.load_f32le();
+            let y = bspreader.load_f32le();
+            vertices.push(Vertex { pos: [x, y, z], });
+            /*
             vertices.push(Vertex {
                 pos: [bspreader.load_f32le(), bspreader.load_f32le(), bspreader.load_f32le()],
             });
+            */
         }
 
         for v in vertices.iter() {
@@ -632,36 +651,56 @@ impl Bsp {
         let face_count = entry.size / FACE_SIZE;
         let mut faces = Vec::with_capacity(face_count);
         for i in 0..face_count {
+            let plane_id = bspreader.load_u16le();
+            let side = match bspreader.load_u16le() {
+                0 => FaceSide::Front,
+                _ => FaceSide::Back,
+            };
+
+            let index_first = match bspreader.load_i32le() {
+                e if e < 0 => panic!("Edge index below zero. (Face at index {}, offset 0x{:X})", i, bspreader.seek(SeekFrom::Current(0)).unwrap()),
+                e => e as u32,
+            };
+            let index_count = bspreader.load_u16le();
+            let draw_command = DrawCommandIndices {
+                count: index_count as u32,
+                instance_count: 1,
+                first_index: index_first as u32,
+                base_vertex: 0,
+                base_instance: 0,
+            };
+
+            let surface_id = bspreader.load_u16le();
+            let light_kind = match bspreader.load_u8() {
+                0 => FaceLightKind::Normal,
+                1 => FaceLightKind::FastPulse,
+                2 => FaceLightKind::SlowPulse,
+                l @ 3...64 => FaceLightKind::Custom(l),
+                255 => FaceLightKind::Disabled,
+                _ => FaceLightKind::Disabled,
+            };
+
+            let base_light = bspreader.load_u8();
+            let misc_light = [bspreader.load_u8(), bspreader.load_u8()];
+            let lightmap_off = bspreader.load_i32le();
+
             let face = Face {
-                plane_id: bspreader.load_u16le(),
-                side: match bspreader.load_u16le() {
-                    0 => FaceSide::Front,
-                    _ => FaceSide::Back,
-                },
-                edge_id: match bspreader.load_i32le() {
-                    e if e < 0 => panic!("Edge index below zero. (Face at index {}, offset 0x{:X})", i, bspreader.seek(SeekFrom::Current(0)).unwrap()),
-                    e => e as u32,
-                },
-                edge_count: bspreader.load_u16le(),
-                surface_id: bspreader.load_u16le(),
-                light_kind: {
-                    match bspreader.load_u8() {
-                        0 => FaceLightKind::Normal,
-                        1 => FaceLightKind::FastPulse,
-                        2 => FaceLightKind::SlowPulse,
-                        l @ 3...64 => FaceLightKind::Custom(l),
-                        255 => FaceLightKind::Disabled,
-                        _ => FaceLightKind::Disabled,
-                    }
-                },
-                base_light: bspreader.load_u8(),
-                misc_light: [bspreader.load_u8(), bspreader.load_u8()],
-                lightmap_off: bspreader.load_i32le(),
+                plane_id: plane_id,
+                side: side,
+                index_first: index_first,
+                index_count: index_count,
+                surface_id: surface_id,
+                light_kind: light_kind,
+                base_light: base_light,
+                misc_light: misc_light,
+                lightmap_off: lightmap_off,
+                draw_command: draw_command,
             };
             debug!("Face {}: {:?}", i, face);
             faces.push(face);
         }
         assert!(bspreader.seek(SeekFrom::Current(0)).unwrap() == bspreader.seek(SeekFrom::Start((entry.offset + entry.size) as u64)).unwrap());
+        faces.sort_by(|f1, f2| f1.surface_id.cmp(&f2.surface_id));
         faces
     }
 
@@ -690,7 +729,7 @@ impl Bsp {
         clipnodes
     }
 
-    fn load_leaves<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<LeafNode> where R: Read + Seek {
+    fn load_leaves<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<Leaf> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % LEAF_SIZE == 0);
 
@@ -700,7 +739,7 @@ impl Bsp {
         let mut leaves = Vec::with_capacity(leaf_count);
 
         // Leaf 0 represents all space outside the level geometry and is not drawn
-        leaves.push(LeafNode {
+        leaves.push(Leaf {
             leaftype: LeafType::Void,
             vislist_id: -1,
             bounds: BoundsShort{
@@ -718,7 +757,7 @@ impl Bsp {
         });
 
         for i in 0..leaf_count {
-            let leaf = LeafNode {
+            let leaf = Leaf {
                 leaftype: LeafType::from(bspreader.load_i32le()),
                 vislist_id: bspreader.load_i32le(),
                 bounds: BoundsShort {
@@ -757,10 +796,12 @@ impl Bsp {
     fn load_edges<R>(entry: &Entry, bspreader: &mut BufReader<&mut R>) -> Vec<(u16, u16)> where R: Read + Seek {
         bspreader.seek(SeekFrom::Start(entry.offset as u64)).unwrap();
         assert!(entry.size % EDGE_SIZE == 0);
-        let edge_count = entry.size / EDGE_SIZE;
-        let mut edges = Vec::with_capacity(edge_count);
-        for _ in 0..edge_count {
-            edges.push((bspreader.load_u16le(), bspreader.load_u16le()));
+        let index_count = entry.size / EDGE_SIZE;
+        let mut edges = Vec::with_capacity(index_count);
+        for i in 0..index_count {
+            let edge = (bspreader.load_u16le(), bspreader.load_u16le());
+            debug!("Edge {}: {} -> {}", i, edge.0, edge.1);
+            edges.push(edge);
         }
 
         assert!(edges[0] == (0, 0));
@@ -778,7 +819,7 @@ impl Bsp {
 
         for i in 0..edgelist_count {
             let edge_entry = bspreader.load_i32le();
-            debug!("Edge table {}: {}", i + 1, edge_entry);
+            debug!("Edge table {}: {}", i, edge_entry);
             edgelist.push(edge_entry);
         }
 
@@ -842,19 +883,34 @@ impl Bsp {
 
         let edges = Bsp::load_edges(&entries[EDGE_ENTRY], &mut bspreader);
         let edgelist = Bsp::load_edgelist(&entries[EDGELIST_ENTRY], &mut bspreader);
+        /*
         let indices: Vec<u16> = edgelist.iter().map(|i|
             if *i < 0 {
                 edges[-*i as usize].1
             } else {
                 edges[*i as usize].0
             }).collect();
+        */
+
+        let mut indices = Vec::with_capacity(edgelist.len());
+        for (i, e) in edgelist.iter().enumerate() {
+            if *e < 0 {
+                let x = edges[-*e as usize].1;
+                debug!("Index {}: {}", i, -*e);
+                indices.push(x);
+            } else {
+                let x = edges[*e as usize].0;
+                debug!("Index {}: {}", i, *e);
+                indices.push(x);
+            }
+        }
 
         let result = Bsp {
             entities: Bsp::load_entities(&entries[ENTITY_ENTRY], &mut bspreader),
             planes: Bsp::load_planes(&entries[PLANE_ENTRY], &mut bspreader),
             textures: Bsp::load_textures(&display, &entries[MIPTEX_ENTRY], &mut bspreader),
             vertices: VertexBuffer::new(display, &Bsp::load_vertices(&entries[VERTEX_ENTRY], &mut bspreader)).unwrap(),
-            indices: IndexBuffer::new(display, PrimitiveType::TriangleStrip, &indices).unwrap(),
+            indices: IndexBuffer::new(display, PrimitiveType::TriangleFan, &indices).unwrap(),
             vislists: Bsp::load_vislists(&entries[VISLIST_ENTRY], &mut bspreader),
             nodes: Bsp::load_nodes(&entries[NODE_ENTRY], &mut bspreader),
             surfaces: Bsp::load_surfaces(&entries[SURFACE_ENTRY], &mut bspreader),
@@ -869,7 +925,70 @@ impl Bsp {
         result
     }
 
-    fn find_leaf<V>(&self, point: V) -> &LeafNode where V: AsRef<Vec3> {
+    pub fn draw_naive(&self, display: &Display, view_matrix: &Mat4) {
+        let program = Program::new(display, gfx::get_bsp_shader_source()).unwrap();
+        let mut target = display.draw();
+        use glium::Surface;
+        target.clear_color(0.0, 0.0, 0.0, 1.0);
+        target.clear_depth(0.0);
+        let (w, h) = target.get_dimensions();
+
+        let mut first_face = 0;
+        while first_face < self.faces.len() {
+            let surface_id = self.faces[first_face].surface_id;
+            let mut face_count = 0;
+
+            while self.faces[first_face + face_count].surface_id == surface_id {
+                face_count += 1;
+
+                if first_face + face_count >= self.faces.len() {
+                    break;
+                }
+            }
+
+            let mut commands = Vec::new();
+            for i in 0..face_count {
+                commands.push(self.faces[first_face + i].draw_command.clone());
+            }
+            commands.shrink_to_fit();
+
+            let command_buffer = DrawCommandsIndicesBuffer::empty(display, commands.len()).unwrap();
+            command_buffer.write(commands.as_slice());
+
+            let surf = &self.surfaces[surface_id as usize];
+            let tex = &self.textures[surf.tex_id as usize];
+
+            let uniforms = uniform! {
+                perspective: *Mat4::perspective(w as f32, h as f32, 2.0 * (math::PI / 3.0)),
+                view: **view_matrix,
+                world: *Mat4::identity(),
+                s_vector: surf.s_vector,
+                s_offset: surf.s_offset,
+                tex_width: tex.w as f32,
+                t_vector: surf.t_vector,
+                t_offset: surf.t_offset,
+                tex_height: tex.h as f32,
+                tex: tex.tex.sampled()
+                            .magnify_filter(MagnifySamplerFilter::Nearest)
+                            .minify_filter(MinifySamplerFilter::LinearMipmapLinear)
+                            .wrap_function(SamplerWrapFunction::Clamp),
+            };
+
+            let indices = command_buffer.with_index_buffer(&self.indices);
+            target.draw(
+                &self.vertices,
+                indices,
+                &program,
+                &uniforms,
+                &gfx::get_draw_parameters()).unwrap();
+
+            first_face += face_count;
+        }
+
+        target.finish().unwrap();
+    }
+
+    fn find_leaf<V>(&self, point: V) -> &Leaf where V: AsRef<Vec3> {
         let mut node_index = 0;
 
         while node_index & (1 << 15) == 0 {
@@ -888,8 +1007,8 @@ impl Bsp {
 
     /// Decompress the visibility list for a given leaf and return a list of references to the
     /// leaves that are visible from it.
-    // TODO: return an Option<Vec<&LeafNode>>?
-    fn get_visible_leaves(&self, leaf: &LeafNode) -> Vec<&LeafNode> {
+    // TODO: return an Option<Vec<&Leaf>>?
+    fn get_visible_leaves(&self, leaf: &Leaf) -> Vec<&Leaf> {
         match leaf.vislist_id {
             -1 => self.leaves.iter().collect(),
             v => {

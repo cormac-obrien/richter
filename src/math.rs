@@ -91,6 +91,18 @@ impl Mat4 {
               [0.0, 0.0, 1.0, 0.0],
               [  x,   y,   z, 1.0]])
     }
+
+    pub fn perspective(w: f32, h: f32, fov: f32) -> Self {
+        let aspect = w / h;
+        let znear = 0.125;
+        let zfar = 4096.0;
+        let f = 1.0 / (fov / 2.0).tan();
+
+        Mat4([[f / aspect, 0.0,                                   0.0,  0.0],
+              [       0.0,   f,                                   0.0,  0.0],
+              [       0.0, 0.0,       (zfar + znear) / (zfar - znear), -1.0],
+              [       0.0, 0.0, (2.0 * zfar * znear) / (zfar - znear),  0.0]])
+    }
 }
 
 /// A 3-component vector.
@@ -99,8 +111,32 @@ pub struct Vec3([f32; 3]);
 
 impl Vec3 {
     /// Constructs a new Vec3 from its components.
-    pub fn new(components: [f32; 3]) -> Vec3 {
+    pub fn new(x: f32, y: f32, z: f32) -> Self {
+        Vec3([x, y, z])
+    }
+
+    /// Constructs a new Vec3 from an array of components.
+    pub fn from_components(components: [f32; 3]) -> Self {
         Vec3(components)
+    }
+
+    // Constructs a new Vec3 by rotating `self` about the x-axis by `theta` radians
+    pub fn rotate_x(&self, theta: f32) -> Self {
+        Vec3([self[0],
+              self[1] * theta.cos() - self[2] * theta.sin(),
+              self[1] * theta.sin() + self[2] * theta.cos()])
+    }
+
+    pub fn rotate_y(&self, theta: f32) -> Self {
+        Vec3([self[0] * theta.cos() + self[2] * theta.sin(),
+              self[1],
+             -self[0] * theta.sin() + self[2] * theta.cos()])
+    }
+
+    pub fn rotate_z(&self, theta: f32) -> Self {
+        Vec3([self[0] * theta.cos() - self[1] * theta.sin(),
+              self[0] * theta.sin() + self[1] * theta.cos(),
+              self[2]])
     }
 }
 
@@ -115,6 +151,12 @@ impl std::ops::Index<usize> for Vec3 {
 
     fn index(&self, i: usize) -> &f32 {
         &self.0[i]
+    }
+}
+
+impl std::ops::IndexMut<usize> for Vec3 {
+    fn index_mut<'a>(&'a mut self, i: usize) -> &'a mut f32 {
+        &mut self.0[i]
     }
 }
 
