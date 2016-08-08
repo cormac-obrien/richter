@@ -631,9 +631,19 @@ impl Bsp {
         let mut surfaces = Vec::with_capacity(surface_count);
         for _ in 0..surface_count {
             surfaces.push(Surface {
-                s_vector: [bspreader.load_f32le(), bspreader.load_f32le(), bspreader.load_f32le()],
+                s_vector: {
+                    let z = -bspreader.load_f32le();
+                    let x = -bspreader.load_f32le();
+                    let y =  bspreader.load_f32le();
+                    [x, y, z]
+                },
                 s_offset: bspreader.load_f32le(),
-                t_vector: [bspreader.load_f32le(), bspreader.load_f32le(), bspreader.load_f32le()],
+                t_vector: {
+                    let z = -bspreader.load_f32le();
+                    let x = -bspreader.load_f32le();
+                    let y =  bspreader.load_f32le();
+                    [x, y, z]
+                },
                 t_offset: bspreader.load_f32le(),
                 tex_id: bspreader.load_u32le(),
                 animated: bspreader.load_u32le() != 0,
@@ -959,7 +969,7 @@ impl Bsp {
             let tex = &self.textures[surf.tex_id as usize];
 
             let uniforms = uniform! {
-                perspective: *Mat4::perspective(w as f32, h as f32, 2.0 * (math::PI / 3.0)),
+                perspective: *Mat4::perspective(w as f32, h as f32, math::PI / 2.0),
                 view: **view_matrix,
                 world: *Mat4::identity(),
                 s_vector: surf.s_vector,
@@ -971,7 +981,7 @@ impl Bsp {
                 tex: tex.tex.sampled()
                             .magnify_filter(MagnifySamplerFilter::Nearest)
                             .minify_filter(MinifySamplerFilter::LinearMipmapLinear)
-                            .wrap_function(SamplerWrapFunction::Clamp),
+                            .wrap_function(SamplerWrapFunction::Repeat),
             };
 
             let indices = command_buffer.with_index_buffer(&self.indices);

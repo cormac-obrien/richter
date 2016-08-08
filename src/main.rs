@@ -80,46 +80,6 @@ fn main() {
     player.set_position(352.0, 88.0, -480.0);
 
     'outer: loop {
-        /*
-        let mut target = display.draw();
-        let (w, h) = target.get_dimensions();
-
-        let uniforms = uniform! {
-            perspective: *math::Mat4::perspective(w as f32, h as f32, 2.0 * (math::PI / 3.0)),
-            view: *math::Mat4::translation(0.0, 0.0, -50.0),
-            world: *(math::Mat4::rotation_y(90.0f32.to_radians()) * math::Mat4::rotation_x(-90.0f32.to_radians())),
-            tex: match mdl.skins[0] {
-                mdl::Skin::Single(ref s) => gfx::sample(&s.texture),
-                _ => panic!("asdf"),
-            },
-        };
-
-        target.clear_color(0.0, 0.0, 0.0, 1.0);
-        target.clear_depth(0.0);
-
-        let vertices = match mdl.frames[0] {
-            mdl::Frame::Single(ref s) => &s.vertices,
-            _ => panic!("asdf")
-        };
-
-        let draw_status = target.draw(
-            (vertices, &mdl.texcoords),
-            &mdl.indices,
-            &program,
-            &uniforms,
-            &gfx::get_draw_parameters());
-
-        if draw_status.is_err() {
-            error!("Draw failed: {}", draw_status.err().unwrap());
-            exit(1);
-        }
-
-        let finish_status = target.finish();
-        if finish_status.is_err() {
-            error!("Frame finish failed: {}", finish_status.err().unwrap());
-            exit(1);
-        }
-        */
         let pos = player.get_position();
         let angle = player.get_angle();
 

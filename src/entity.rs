@@ -58,10 +58,10 @@ impl Entity {
 
     fn clamp_angle(&self) {
         let mut angle = self.angle.borrow_mut();
-        if angle[0] < -math::PI {
-            angle[0] = 0.0;
-        } else if angle[0] > math::PI {
-            angle[0] = math::PI;
+        if angle[0] < -math::PI / 2.0 {
+            angle[0] = -math::PI / 2.0;
+        } else if angle[0] > math::PI / 2.0 {
+            angle[0] = math::PI / 2.0;
         }
     }
 
