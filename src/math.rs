@@ -138,6 +138,11 @@ impl Vec3 {
               self[0] * theta.sin() + self[1] * theta.cos(),
               self[2]])
     }
+
+    /// Calculates the dot product of this Vec3 and another.
+    pub fn dot(&self, other: Vec3) -> f32 {
+        self[0] * other[0] + self[1] * other[1] + self[2] * other[2]
+    }
 }
 
 impl std::fmt::Display for Vec3 {
@@ -145,6 +150,18 @@ impl std::fmt::Display for Vec3 {
         write!(f, "{{{}, {}, {}}}", self[0], self[1], self[2])
     }
 }
+
+// Vec3 Dereferencing
+
+impl std::ops::Deref for Vec3 {
+    type Target = [f32; 3];
+
+    fn deref(&self) -> &[f32; 3] {
+        &self.0
+    }
+}
+
+// Vec3 Index Operations
 
 impl std::ops::Index<usize> for Vec3 {
     type Output = f32;
@@ -160,11 +177,15 @@ impl std::ops::IndexMut<usize> for Vec3 {
     }
 }
 
-impl std::convert::AsRef<[f32; 3]> for Vec3 {
-    fn as_ref(&self) -> &[f32; 3] {
-        &self.0
+// Vec3 Conversion Traits
+
+impl std::convert::From<[f32; 3]> for Vec3 {
+    fn from(__arg_0: [f32; 3]) -> Self {
+        Vec3(__arg_0)
     }
 }
+
+// Vec3 Arithmetic Operations
 
 impl std::ops::Mul<f32> for Vec3 {
     type Output = Self;
@@ -219,13 +240,5 @@ impl<'a, 'b> std::ops::Sub<&'a Vec3> for &'b Vec3 {
 
     fn sub(self, other: &'a Vec3) -> Vec3 {
         Vec3([self[0] - other[0], self[1] - other[1], self[2] - other[2]])
-    }
-}
-
-impl Vec3 {
-    /// Calculates the dot product of this Vec3 and another.
-    pub fn dot<V>(&self, other: V) -> f32 where V: AsRef<[f32; 3]> {
-        let o = other.as_ref();
-        self[0] * o[0] + self[1] * o[1] + self[2] * o[2]
     }
 }
