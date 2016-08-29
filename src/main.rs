@@ -24,17 +24,18 @@ extern crate regex;
 extern crate time;
 
 pub mod bsp;
+pub mod bspload;
 pub mod engine;
 pub mod entity;
 pub mod event;
 pub mod gfx;
 pub mod load;
+pub mod lump;
 pub mod math;
 pub mod mdl;
 pub mod pak;
 
 use std::process::exit;
-use glium::{Frame, Surface};
 use glium::glutin::Event;
 use glium::program::Program;
 
@@ -61,19 +62,8 @@ fn main() {
     };
 
     let pak0 = pak::Pak::load("pak0.pak").unwrap();
-    let mut mdl_data = pak0.open("progs/armor.mdl").unwrap();
-    let mdl = mdl::Mdl::load(&display, &mut mdl_data).unwrap();
-
     let mut bsp_data = pak0.open("maps/e1m1.bsp").unwrap();
-    let bsp = bsp::Bsp::load(&display, &mut bsp_data);
-
-    let program = match Program::new(&display, gfx::get_shader_source()) {
-        Err(why) => {
-            println!("Error while compiling shader program: {}", why);
-            exit(1);
-        }
-        Ok(p) => p,
-    };
+    let bsp = bsp::Bsp::from_disk(&display, bspload::DiskBsp::load(&mut bsp_data));
 
     let mut key_state = event::KeyState::new();
     let player = entity::Entity::new();

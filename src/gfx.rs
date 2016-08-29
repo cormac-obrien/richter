@@ -15,6 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use std::convert::From;
 use std::fmt;
 use std::ops;
 
@@ -22,9 +23,10 @@ use glium;
 use glium::uniforms::{MinifySamplerFilter, MagnifySamplerFilter, SamplerWrapFunction};
 use glium::program::ProgramCreationInput;
 use glium::draw_parameters::DrawParameters;
+use math::Vec3;
 
 const MAGNIFY_FILTER: MagnifySamplerFilter = MagnifySamplerFilter::Nearest;
-const MINIFY_FILTER: MinifySamplerFilter = MinifySamplerFilter::Nearest;
+const MINIFY_FILTER: MinifySamplerFilter = MinifySamplerFilter::NearestMipmapNearest;
 const WRAP_FUNCTION: SamplerWrapFunction = SamplerWrapFunction::Repeat;
 
 static VERTEX_SHADER: &'static str = r#"
@@ -64,38 +66,31 @@ void main() {
 pub static BSP_VERTEX_SHADER: &'static str = r#"
 #version 330
 
-in vec3 pos;
-
-out vec2 texcoord;
+in vec3 position;
+in vec2 texcoord;
+out vec2 Texcoord;
 
 uniform mat4 perspective;
 uniform mat4 view;
 uniform mat4 world;
-uniform vec3 s_vector;
-uniform float s_offset;
-uniform float tex_width;
-uniform vec3 t_vector;
-uniform float t_offset;
-uniform float tex_height;
 
 void main() {
-    texcoord = vec2((dot(pos, s_vector) + s_offset) / tex_width,
-                    (dot(pos, t_vector) + t_offset) / tex_height);
-    gl_Position = perspective * view * world * vec4(pos, 1.0f);
+    Texcoord = texcoord;
+    gl_Position = perspective * view * world * vec4(position, 1.0f);
 }
 "#;
 
 pub static BSP_FRAGMENT_SHADER: &'static str = r#"
 #version 330
 
-in vec2 texcoord;
+in vec2 Texcoord;
 
 out vec4 color;
 
 uniform sampler2D tex;
 
 void main() {
-    color = texture(tex, texcoord);
+    color = texture(tex, Texcoord);
 }
 
 "#;
@@ -105,6 +100,20 @@ pub struct Vertex {
     pub pos: [f32; 3],
 }
 implement_vertex!(Vertex, pos);
+
+impl<'a> From<&'a Vec3> for Vertex {
+    fn from(__arg_0: &'a Vec3) -> Vertex {
+        Vertex {
+            pos: [__arg_0[0], __arg_0[1], __arg_0[2]],
+        }
+    }
+}
+
+impl From<Vec3> for Vertex {
+    fn from(__arg_0: Vec3) -> Vertex {
+        Vertex::from(&__arg_0)
+    }
+}
 
 impl ops::Index<usize> for Vertex {
     type Output = f32;
