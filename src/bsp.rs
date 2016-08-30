@@ -612,7 +612,7 @@ impl Bsp {
                 world: *Mat4::identity(),
                 tex: tex.tex.sampled()
                             .magnify_filter(MagnifySamplerFilter::Nearest)
-                            .minify_filter(MinifySamplerFilter::LinearMipmapLinear)
+                            .minify_filter(MinifySamplerFilter::NearestMipmapNearest)
                             .wrap_function(SamplerWrapFunction::Repeat),
             };
 

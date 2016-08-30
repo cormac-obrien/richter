@@ -243,14 +243,6 @@ impl<'a, 'b> std::ops::Sub<&'a Vec3> for &'b Vec3 {
     }
 }
 
-impl Vec3 {
-    /// Calculates the dot product of this Vec3 and another.
-    pub fn dot<V>(&self, other: V) -> f32 where V: AsRef<[f32; 3]> {
-        let o = other.as_ref();
-        self[0] * o[0] + self[1] * o[1] + self[2] * o[2]
-    }
-}
-
 pub struct Radians(pub f32);
 
 impl std::convert::From<Degrees> for Radians {
