@@ -106,7 +106,7 @@ impl Mat4 {
 }
 
 /// A 3-component vector.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct Vec3([f32; 3]);
 
 impl Vec3 {
@@ -185,8 +185,13 @@ impl std::convert::From<[f32; 3]> for Vec3 {
     }
 }
 
-// Vec3 Arithmetic Operations
+impl std::convert::Into<[f32; 3]> for Vec3 {
+    fn into(self) -> [f32; 3] {
+        self.0
+    }
+}
 
+// Vec3 Arithmetic Operations
 impl std::ops::Mul<f32> for Vec3 {
     type Output = Self;
 
@@ -211,12 +216,19 @@ impl<'a> std::ops::Mul<&'a Vec3> for f32 {
     }
 }
 
+impl std::ops::Add<Vec3> for Vec3 {
+    type Output = Vec3;
+    fn add(self, other: Vec3) -> Vec3 { &self - &other }
+}
+
 impl<'a> std::ops::Add<&'a Vec3> for Vec3 {
     type Output = Vec3;
+    fn add(self, other: &'a Vec3) -> Vec3 { &self - other }
+}
 
-    fn add(self, other: &'a Vec3) -> Vec3 {
-        Vec3([self[0] + other[0], self[1] + other[1], self[2] + other[2]])
-    }
+impl<'a> std::ops::Add<Vec3> for &'a Vec3 {
+    type Output = Vec3;
+    fn add(self, other: Vec3) -> Vec3 { self - &other }
 }
 
 impl<'a, 'b> std::ops::Add<&'a Vec3> for &'b Vec3 {
@@ -227,12 +239,19 @@ impl<'a, 'b> std::ops::Add<&'a Vec3> for &'b Vec3 {
     }
 }
 
+impl std::ops::Sub<Vec3> for Vec3 {
+    type Output = Vec3;
+    fn sub(self, other: Vec3) -> Vec3 { &self - &other }
+}
+
 impl<'a> std::ops::Sub<&'a Vec3> for Vec3 {
     type Output = Vec3;
+    fn sub(self, other: &Vec3) -> Vec3 { &self - other }
+}
 
-    fn sub(self, other: &'a Vec3) -> Vec3 {
-        Vec3([self[0] - other[0], self[1] - other[1], self[2] - other[2]])
-    }
+impl<'a> std::ops::Sub<Vec3> for &'a Vec3 {
+    type Output = Vec3;
+    fn sub(self, other: Vec3) -> Vec3 { self - &other }
 }
 
 impl<'a, 'b> std::ops::Sub<&'a Vec3> for &'b Vec3 {
