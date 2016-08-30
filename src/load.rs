@@ -16,10 +16,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use std::convert::AsRef;
+use std::fs::File;
 use std::io::{BufReader, Cursor, Read, Seek};
 use byteorder::{LittleEndian, ReadBytesExt};
 
-pub trait Load: ReadBytesExt + Seek {
+pub trait Load: ReadBytesExt {
     fn load_u8(&mut self) -> u8 {
         ReadBytesExt::read_u8(self).unwrap()
     }
@@ -45,8 +46,7 @@ pub trait Load: ReadBytesExt + Seek {
     }
 }
 
-impl<R> Load for BufReader<R> where R: Read + Seek {
-}
-
-impl<T> Load for Cursor<T> where T: AsRef<[u8]> {
-}
+impl<R> Load for BufReader<R> where R: Read {}
+impl<T> Load for Cursor<T> where T: AsRef<[u8]> {}
+impl Load for File {}
+impl<'a> Load for &'a [u8] {}
