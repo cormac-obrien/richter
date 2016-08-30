@@ -242,3 +242,50 @@ impl<'a, 'b> std::ops::Sub<&'a Vec3> for &'b Vec3 {
         Vec3([self[0] - other[0], self[1] - other[1], self[2] - other[2]])
     }
 }
+
+impl Vec3 {
+    /// Calculates the dot product of this Vec3 and another.
+    pub fn dot<V>(&self, other: V) -> f32 where V: AsRef<[f32; 3]> {
+        let o = other.as_ref();
+        self[0] * o[0] + self[1] * o[1] + self[2] * o[2]
+    }
+}
+
+pub struct Radians(pub f32);
+
+impl std::convert::From<Degrees> for Radians {
+    fn from(__arg_0: Degrees) -> Self {
+        Radians(__arg_0.0.to_radians())
+    }
+}
+
+pub struct Degrees(pub f32);
+
+impl std::convert::From<Radians> for Degrees {
+    fn from(__arg_0: Radians) -> Self {
+        Degrees(__arg_0.0.to_degrees())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use math::{Degrees, PI, Radians};
+
+    #[test]
+    fn test_deg2rad() {
+        let d = Degrees(180.0);
+        match Radians::from(d).0 {
+            r if r > PI - 0.1 && r < PI + 0.1 => (),
+            r => panic!("Got {}, expected {}", r, PI),
+        }
+    }
+
+    #[test]
+    fn test_rad2deg() {
+        let r = Radians(PI);
+        match Degrees::from(r).0 {
+            d if d > 179.9 && d < 180.1 => (),
+            d => panic!("Got {}, expected {}", d, 180.0),
+        }
+    }
+}
