@@ -25,6 +25,7 @@ extern crate time;
 
 pub mod bsp;
 pub mod bspload;
+pub mod client;
 pub mod engine;
 pub mod entity;
 pub mod event;
@@ -33,15 +34,46 @@ pub mod load;
 pub mod lump;
 pub mod math;
 pub mod mdl;
+pub mod net;
 pub mod pak;
+pub mod progs;
+pub mod protocol;
+// pub mod sprite;
 
+use std::error::Error;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::process::exit;
 use glium::glutin::Event;
-use glium::program::Program;
+use client::{Client, CxnStatus};
+
+fn frame(cl: &Client) {
+    // TODO: handle key input
+    // TODO: handle mouse/controller input
+    // TODO: run console/script commands
+
+    cl.read_packets();
+
+    if cl.get_cxn_status() == CxnStatus::Disconnected {
+        // TODO: resend connection request
+        cl.retry_connect();
+    } else {
+        // TODO: send commands to server
+    }
+
+    // TODO: client-side prediction
+    // TODO: refresh entity list
+}
 
 fn main() {
     env_logger::init().unwrap();
     info!("Richter v0.0.1");
+
+    let cl = Client::connect(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 27500));
+    loop {
+        frame(&cl);
+    }
+
+    exit(0);
 
     use glium::DisplayBuild;
 
@@ -61,9 +93,22 @@ fn main() {
         }
     };
 
-    let pak0 = pak::Pak::load("pak0.pak").unwrap();
+    let pak0 = match pak::Pak::load("pak0.pak") {
+        Ok(p) => p,
+        Err(why) => {
+            let mut e = why.cause();
+            while let Some(c) = e {
+                println!("{:?}", c);
+                e = c.cause();
+            }
+            panic!("End of error trace.");
+        }
+    };
+
     let mut bsp_data = pak0.open("maps/e1m1.bsp").unwrap();
     let bsp = bsp::Bsp::from_disk(&display, bspload::DiskBsp::load(&mut bsp_data));
+
+    let progs = progs::Progs::load(pak0.open("progs.dat").unwrap());
 
     let mut key_state = event::KeyState::new();
     let player = entity::Entity::new();

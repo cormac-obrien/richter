@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 
 [dependencies]
+"bitflags" = "0.7.0"
 "byteorder" = "*"
 "env_logger" = "0.3.4"
 "glium" = "*"

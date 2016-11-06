@@ -55,6 +55,11 @@ enum DefType {
     QPointer = 7,
 }
 
+struct StackFrame {
+    instr_id: i32,
+    func_id: u32,
+}
+
 #[derive(Copy, Clone)]
 struct Lump {
     offset: usize,
@@ -70,37 +75,35 @@ struct Statement {
 struct Function {
 }
 
-struct Progs {
+pub struct Progs {
     text: Box<[Statement]>,
     data: Box<[u8]>,
 }
 
 impl Progs {
-    fn load<P>(&self, path: P) -> Progs
-            where P: AsRef<Path> {
-        let mut f = File::open(path).unwrap();
-
-        assert!(f.load_i32le() == VERSION);
-        assert!(f.load_i32le() == CRC);
+    pub fn load<R>(mut src: R) -> Progs
+            where R: Load + Seek {
+        assert!(src.load_i32le() == VERSION);
+        assert!(src.load_i32le() == CRC);
 
         let mut lumps = [Lump { offset: 0, count: 0 }; LUMP_COUNT];
         for i in 0..LUMP_COUNT {
             lumps[i] = Lump {
-                offset: f.load_i32le() as usize,
-                count: f.load_i32le() as usize,
+                offset: src.load_i32le() as usize,
+                count: src.load_i32le() as usize,
             };
         }
 
-        let field_count = f.load_i32le() as usize;
+        let field_count = src.load_i32le() as usize;
 
         let statement_lump = &lumps[LumpId::Statements as usize];
-        f.seek(SeekFrom::Start(statement_lump.offset as u64)).unwrap();
+        src.seek(SeekFrom::Start(statement_lump.offset as u64)).unwrap();
         let mut statement_vec = Vec::with_capacity(statement_lump.count);
         for _ in 0..statement_lump.count {
-            let op = f.load_u16le();
+            let op = src.load_u16le();
             let mut args = [0; 3];
             for i in 0..args.len() {
-                args[i] = f.load_i16le();
+                args[i] = src.load_i16le();
             }
             statement_vec.push(Statement {
                 op: op,
@@ -109,7 +112,7 @@ impl Progs {
         }
 
         let globaldef_lump = &lumps[LumpId::GlobalDefs as usize];
-        f.seek(SeekFrom::Start(globaldef_lump.offset as u64)).unwrap();
+        src.seek(SeekFrom::Start(globaldef_lump.offset as u64)).unwrap();
         //let mut globaldef_vec = Vec::with_capacity(globaldef_lump.count);
         for _ in 0..globaldef_lump.count {
         }
@@ -118,14 +121,6 @@ impl Progs {
             text: Default::default(),
             data: Default::default(),
         }
-    }
-
-    fn load_u(&self, addr: u16) -> u32 {
-        (&self.data[addr as usize..]).load_u32le()
-    }
-
-    fn store_u(&mut self, val: u32, addr: u16) {
-        (&mut self.data[addr as usize..]).write_u32::<LittleEndian>(val);
     }
 
     fn load_f(&self, addr: u16) -> f32 {
@@ -156,7 +151,7 @@ impl Progs {
     // ADD_F: Float addition
     fn add_f(&mut self, f1_addr: u16, f2_addr: u16, sum_addr: u16) {
         let f1 = self.load_f(f1_addr);
-        let f2 = self.load_f(f1_addr);
+        let f2 = self.load_f(f2_addr);
         self.store_f(f1 + f2, sum_addr);
     }
 
@@ -217,17 +212,17 @@ impl Progs {
     }
 
     // BITAND: Bitwise AND
-    fn bitand(&mut self, u1_addr: u16, u2_addr: u16, and_addr: u16) {
-        let u1 = self.load_u(u1_addr);
-        let u2 = self.load_u(u2_addr);
-        self.store_u(u1 & u2, and_addr);
+    fn bitand(&mut self, f1_addr: u16, f2_addr: u16, and_addr: u16) {
+        let i1 = self.load_f(f1_addr) as i32;
+        let i2 = self.load_f(f2_addr) as i32;
+        self.store_f((i1 & i2) as f32, and_addr);
     }
 
     // BITOR: Bitwise OR
-    fn bitor(&mut self, u1_addr: u16, u2_addr: u16, or_addr: u16) {
-        let u1 = self.load_u(u1_addr);
-        let u2 = self.load_u(u2_addr);
-        self.store_u(u1 | u2, or_addr);
+    fn bitor(&mut self, f1_addr: u16, f2_addr: u16, or_addr: u16) {
+        let i1 = self.load_f(f1_addr) as i32;
+        let i2 = self.load_f(f2_addr) as i32;
+        self.store_f((i1 | i2) as f32, or_addr);
     }
 
     // GE: Greater than or equal to comparison
@@ -442,5 +437,25 @@ mod test {
         progs.store_f(term2, t2_addr);
         progs.div_f(t1_addr as u16, t2_addr as u16, quot_addr as u16);
         assert!(progs.load_f(quot_addr) == term1 / term2);
+    }
+
+    #[test]
+    fn test_progs_bitand() {
+        let f32_size = size_of::<f32>() as u16;
+        let term1: f32 = 0xFFFFFFFF as f32;
+        let t1_addr = 0 * f32_size;
+        let term2: f32 = 0xF0F0F0F0 as f32;
+        let t2_addr = 1 * f32_size;
+        let result_addr = 2 * f32_size;
+
+        let mut progs = Progs {
+            data: vec![0; 12].into_boxed_slice(),
+            text: Default::default(),
+        };
+
+        progs.store_f(term1, t1_addr);
+        progs.store_f(term2, t2_addr);
+        progs.bitand(t1_addr as u16, t2_addr as u16, result_addr as u16);
+        assert_eq!(progs.load_f(result_addr) as i32, term1 as i32 & term2 as i32);
     }
 }
