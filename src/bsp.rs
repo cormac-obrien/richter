@@ -88,7 +88,6 @@ use std::fmt;
 use bspload;
 use engine;
 use gfx;
-use gfx::Vertex;
 use glium::{Program, Texture2d, VertexBuffer};
 use glium::backend::glutin_backend::GlutinFacade as Display;
 use glium::index::{DrawCommandNoIndices, DrawCommandsNoIndicesBuffer, PrimitiveType};
@@ -98,6 +97,7 @@ use math::{Mat4, Vec3};
 use regex::Regex;
 
 pub const MAX_LIGHTSTYLE_COUNT: usize = 4;
+pub const MAX_TEXTURE_FRAMES: usize = 10;
 
 // Quake uses a different coordinate system than OpenGL:
 //
@@ -162,12 +162,16 @@ impl Plane {
     }
 }
 
-/// A named texture.
+/// A named texture. Analogous to `texture_t`, see
+/// https://github.com/id-Software/Quake/blob/master/WinQuake/gl_model.h#L76
 struct Texture {
     name: String,
     tex: Texture2d,
-    w: usize,
-    h: usize,
+    frame_count: usize,
+    time_start: u32, // TODO: might change type based on usage w/ engine ticks
+    time_end: u32,
+    next: Option<usize>, // None if non-animated
+    alt: Option<usize>,
 }
 
 impl Texture {
@@ -195,8 +199,11 @@ impl Texture {
         Texture {
             name: name,
             tex: tex,
-            w: w,
-            h: h,
+            frame_count: 0,
+            time_start: 0,
+            time_end: 0,
+            next: None,
+            alt: None,
         }
     }
 }
@@ -456,9 +463,130 @@ impl Bsp {
                 .map(|p| Plane::from_disk(p))
                 .collect();
 
-        let textures: Vec<Texture> = src.textures.iter()
-                .map(|t| Texture::from_disk(display, t))
-                .collect();
+        // Holds the sequence of frames for the texture's primary animation
+        let mut anims: [Option<usize>; MAX_TEXTURE_FRAMES] = [None; MAX_TEXTURE_FRAMES];
+
+        // Holds the sequence of frames for the texture's secondary animation
+        let mut alt_anims: [Option<usize>; MAX_TEXTURE_FRAMES] = [None; MAX_TEXTURE_FRAMES];
+
+        let mut textures: Vec<Texture> = src.textures.iter().map(|t| Texture::from_disk(display, t)).collect();
+
+        // Sequence texture animations. See
+        // https://github.com/id-Software/Quake/blob/master/WinQuake/gl_model.c#L397
+        for i in 0..src.textures.len() {
+            // Skip if texture isn't animated or is already linked
+            if !textures[i].name.starts_with("+") || textures[i].next.is_some() {
+                continue;
+            }
+
+            println!("Sequencing {}", textures[i].name);
+
+            for i in 0..MAX_TEXTURE_FRAMES {
+                anims[i] = None;
+                alt_anims[i] = None;
+            }
+
+            let mut frame_max = 0;
+            let mut altframe_max = 0;
+
+            const ASCII_0: usize = '0' as usize;
+            const ASCII_9: usize = '9' as usize;
+            const ASCII_A: usize = 'A' as usize;
+            const ASCII_J: usize = 'J' as usize;
+            const ASCII_a: usize = 'a' as usize;
+            const ASCII_j: usize = 'j' as usize;
+
+            let mut frame_char = textures[i].name.chars().nth(1).unwrap() as usize;
+            match frame_char {
+                ASCII_0...ASCII_9 => {
+                    frame_max = frame_char - '0' as usize;
+                    altframe_max = 0;
+                    anims[frame_max] = Some(i);
+                    frame_max += 1;
+                },
+
+                ASCII_A...ASCII_J | ASCII_a...ASCII_j => {
+                    // capitalize if lowercase
+                    if frame_char >= 'a' as usize && frame_char <= 'z' as usize {
+                        frame_char -= 'a' as usize - 'A' as usize;
+                    }
+
+                    altframe_max = frame_char - 'A' as usize;
+                    frame_max = 0;
+                    alt_anims[altframe_max as usize] = Some(i);
+                    altframe_max += 1;
+                },
+
+                _ => panic!("Bad frame specifier in animated texture ('{}')", frame_max),
+            }
+
+            for j in i + 1..textures.len() {
+                let mut tex2 = &textures[j];
+
+                if !textures[j].name.starts_with("+") || textures[j].name[2..] != textures[i].name[2..] {
+                    continue;
+                }
+
+                println!("  {}", textures[j].name);
+
+                let mut num = textures[j].name.chars().nth(1).unwrap() as usize;
+
+                // capitalize if lowercase
+                if num >= 'a' as usize && num <= 'z' as usize {
+                    num -= 'a' as usize - 'A' as usize;
+                }
+
+                if num >= '0' as usize && num <= '9' as usize {
+                    num -= '0' as usize;
+                    anims[num as usize] = Some(j);
+                    if num + 1 > frame_max {
+                        frame_max = num + 1;
+                    }
+                } else if num >= 'A' as usize && num <= 'J' as usize {
+                    num = num - 'A' as usize;
+                    alt_anims[num as usize] = Some(j);
+                    if num + 1 > altframe_max {
+                        altframe_max = num + 1;
+                    }
+                } else {
+                    panic!("Bad frame specifier in animated texture ('{}')", frame_max);
+                }
+            }
+
+            const ANIM_CYCLE: usize = 2;
+
+            for j in 0..frame_max as usize {
+                let mut t2 = match anims[j] {
+                    Some(t) => t,
+                    None => panic!("Missing frame {} of {}", j, textures[i].name),
+                };
+
+                textures[t2].frame_count = frame_max * ANIM_CYCLE;
+                textures[t2].time_start = (j * ANIM_CYCLE) as u32;
+                textures[t2].time_end = ((j + 1) * ANIM_CYCLE) as u32;
+                textures[t2].next = Some(anims[(j + 1) % frame_max].unwrap());
+
+                if altframe_max != 0 {
+                    textures[t2].alt = Some(alt_anims[0].unwrap());
+                }
+            }
+
+            for j in 0..altframe_max as usize {
+                let t2 = match alt_anims[j] {
+                    Some(t) => t,
+                    None => panic!("Missing frame {} of {}", j, textures[i].name),
+                };
+
+                textures[t2].frame_count = altframe_max * ANIM_CYCLE;
+                textures[t2].time_start = (j * ANIM_CYCLE) as u32;
+                textures[t2].time_end = ((j + 1) * ANIM_CYCLE) as u32;
+                textures[t2].next = Some(alt_anims[(j + 1) % altframe_max].unwrap());
+
+                if frame_max != 0 {
+                    textures[t2].alt = Some(anims[0].unwrap());
+                }
+            }
+        }
 
         let mut faces = Vec::with_capacity(src.faces.len());
         let mut vertices = Vec::new();
@@ -604,7 +732,27 @@ impl Bsp {
             command_buffer.write(commands.as_slice());
 
             let surf = &self.texinfo[surface_id as usize];
-            let tex = &self.textures[surf.tex_id as usize];
+            let base_tex = &self.textures[surf.tex_id as usize];
+
+            // Find proper frame for animated textures. See R_TextureAnimation,
+            // https://github.com/id-Software/Quake/blob/master/WinQuake/r_surf.c#L213
+            let tex = match base_tex.next {
+                Some(bt) => {
+                    let time = 0; // TODO: set relative to engine clock
+                    let mut t = bt;
+
+                    while self.textures[t].time_start > time || self.textures[t].time_end <= time {
+                        t = match self.textures[t].next {
+                            Some(nt) => nt,
+                            None => panic!("broken cycle"),
+                        };
+                    }
+
+                    &self.textures[t]
+                },
+
+                None => base_tex,
+            };
 
             let uniforms = uniform! {
                 perspective: *Mat4::perspective(w as f32, h as f32, math::PI / 2.0),
