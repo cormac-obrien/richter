@@ -25,7 +25,7 @@ use std::io::{Cursor, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
 use std::str::{self, FromStr};
 use time::{Duration, PreciseTime};
-use proto::{self, SvCmd, UserInfo};
+use proto::{self, ClCmd, SvCmd, UserInfo};
 use net::{Message, NetworkBuffer, NetworkChannel};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
@@ -221,8 +221,10 @@ impl Client {
 
                 let mut msg: Vec<u8> = Vec::new();
                 let mut cursor = Cursor::new(msg);
+                cursor.write_u8(ClCmd::StringCmd as u8).unwrap();
                 cursor.write("new".as_bytes()).unwrap();
                 cursor.write_u8(0).unwrap();
+                self.netchannel.transmit(cursor.get_ref());
             }
 
             'k' => {
