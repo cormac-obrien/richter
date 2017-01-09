@@ -432,7 +432,7 @@ fn parse_edicts(entstring: &str) -> Option<Vec<HashMap<String, String>>> {
                 Some(g) => g,
             };
 
-            let key = groups.at(1).unwrap().to_string();
+            let key = groups[1].to_string();
 
             // keys beginning with an underscore are treated as comments, see
             // https://github.com/id-Software/Quake/blob/master/QW/server/pr_edict.c#L843-L844
@@ -440,7 +440,7 @@ fn parse_edicts(entstring: &str) -> Option<Vec<HashMap<String, String>>> {
                 continue;
             }
 
-            let val = groups.at(2).unwrap().to_string();
+            let val = groups[2].to_string();
 
             debug!("\tInserting {{ \"{}\" : \"{}\" }}", key, val);
             entity.insert(key, val);

@@ -13,5 +13,5 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 "png" = "0.5.2"
 "lazy_static" = "*"
 "log" = "0.3"
-"regex" = "*"
+"regex" = "0.2"
 "time" = "0.1.35"
