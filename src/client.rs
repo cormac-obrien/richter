@@ -25,7 +25,7 @@ use std::io::{Cursor, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
 use std::str::{self, FromStr};
 use time::{Duration, PreciseTime};
-use protocol::{self, SvCmd, UserInfo};
+use proto::{self, SvCmd, UserInfo};
 use net::{Message, NetworkBuffer, NetworkChannel};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
@@ -59,8 +59,8 @@ impl Client {
 
         let client = Client {
             netchannel: NetworkChannel::new(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1),
-                                                              protocol::PORT_SERVER),
-                                            protocol::PORT_CLIENT),
+                                                              proto::PORT_SERVER),
+                                            proto::PORT_CLIENT),
             challenge: Cell::new(0),
             userinfo: UserInfo::default(),
             cxn_status: Cell::new(CxnStatus::Disconnected),
@@ -76,14 +76,14 @@ impl Client {
     /// Connection messages are out-band-messages of the form:
     ///
     /// ```
-    /// connect <protocol> <qport> <challenge> <userinfo>
+    /// connect <proto> <qport> <challenge> <userinfo>
     /// ```
     ///
     /// If all goes well, the server will reply with an out-of-band message
     /// containing a single 'j'.
     pub fn send_connect(&self) {
         self.netchannel.out_of_band(format!("connect {} {} {} \"{}\"",
-                                            protocol::VERSION,
+                                            proto::VERSION,
                                             27001,
                                             self.challenge.get(),
                                             self.userinfo.serialize())
@@ -142,7 +142,7 @@ impl Client {
     ///
     /// Server data is sent in the following format:
     /// ```
-    /// protocol version: u32
+    /// proto version: u32
     /// server count: u32
     /// game directory: null-terminated string
     /// player number: u8
@@ -160,7 +160,7 @@ impl Client {
     pub fn parse_serverdata(&self, msg: &mut NetworkBuffer) {
         let proto = msg.read_u32::<LittleEndian>().unwrap();
 
-        if proto != protocol::VERSION {
+        if proto != proto::VERSION {
             // TODO: allow demo playback on versions 26-29
             // otherwise end the game
             panic!("Bad version handler unimplemented");

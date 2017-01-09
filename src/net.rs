@@ -22,7 +22,6 @@ use std::cell::{Cell, RefMut, RefCell};
 use std::io::{self, Cursor, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
-use protocol;
 
 const MAX_MESSAGE: usize = 1450;
 const HEADER_SIZE: usize = 8;

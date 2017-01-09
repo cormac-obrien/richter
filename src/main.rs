@@ -45,7 +45,7 @@ pub mod mdl;
 pub mod net;
 pub mod pak;
 pub mod progs;
-pub mod protocol;
+pub mod proto;
 // pub mod sprite;
 
 use std::error::Error;
