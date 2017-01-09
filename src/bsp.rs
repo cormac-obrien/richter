@@ -94,6 +94,7 @@ use glium::index::{DrawCommandNoIndices, DrawCommandsNoIndicesBuffer, PrimitiveT
 use glium::uniforms::{MagnifySamplerFilter, MinifySamplerFilter, SamplerWrapFunction};
 use math;
 use math::{Mat4, Vec3};
+use num::FromPrimitive;
 use regex::Regex;
 
 pub const MAX_LIGHTSTYLE_COUNT: usize = 4;
@@ -122,27 +123,14 @@ struct BspVertex {
 }
 implement_vertex!(BspVertex, position, texcoord);
 
+#[derive(FromPrimitive)]
 enum PlaneKind {
-    X,
-    Y,
-    Z,
-    AnyX,
-    AnyY,
-    AnyZ,
-}
-
-impl PlaneKind {
-    fn from_disk(val: i32) -> PlaneKind {
-        match val {
-            0 => PlaneKind::X,
-            1 => PlaneKind::Y,
-            2 => PlaneKind::Z,
-            3 => PlaneKind::AnyX,
-            4 => PlaneKind::AnyY,
-            5 => PlaneKind::AnyZ,
-            x => panic!("Bad plane kind value ({})", x),
-        }
-    }
+    X = 0,
+    Y = 1,
+    Z = 2,
+    AnyX = 3,
+    AnyY = 4,
+    AnyZ = 5,
 }
 
 /// One of the hyperplanes partitioning the map.
@@ -157,7 +145,7 @@ impl Plane {
         Plane {
             normal: convert_coords(p.normal),
             distance: p.dist,
-            kind: PlaneKind::from_disk(p.kind),
+            kind: PlaneKind::from_i32(p.kind).unwrap(),
         }
     }
 }
