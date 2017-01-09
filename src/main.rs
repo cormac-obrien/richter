@@ -15,11 +15,19 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+#![feature(custom_derive, proc_macro)]
+
 extern crate byteorder;
-#[macro_use] extern crate glium;
-#[macro_use] extern crate lazy_static;
-#[macro_use] extern crate log;
 extern crate env_logger;
+#[macro_use]
+extern crate glium;
+#[macro_use]
+extern crate lazy_static;
+#[macro_use]
+extern crate log;
+extern crate num;
+#[macro_use]
+extern crate num_derive;
 extern crate regex;
 extern crate time;
 
@@ -78,9 +86,9 @@ fn main() {
     use glium::DisplayBuild;
 
     let display = match glium::glutin::WindowBuilder::new()
-                     .with_dimensions(1024, 768)
-                     .with_title(format!("Richter"))
-                     .build_glium() {
+                            .with_dimensions(1024, 768)
+                            .with_title(format!("Richter"))
+                            .build_glium() {
         Ok(w) => w,
         Err(why) => {
             use std::error::Error;
@@ -118,10 +126,8 @@ fn main() {
         let pos = player.get_position();
         let angle = player.get_angle();
 
-        let view_matrix =
-            math::Mat4::rotation_x(angle[0]) *
-            math::Mat4::rotation_y(angle[1]) *
-            math::Mat4::translation(-pos[0], -pos[1], -pos[2]);
+        let view_matrix = math::Mat4::rotation_x(angle[0]) * math::Mat4::rotation_y(angle[1]) *
+                          math::Mat4::translation(-pos[0], -pos[1], -pos[2]);
 
         bsp.draw_naive(&display, &view_matrix);
 
@@ -137,7 +143,7 @@ fn main() {
                     if let Some(k) = key {
                         key_state.update(k, state);
                     }
-                },
+                }
                 _ => (),
             }
         }

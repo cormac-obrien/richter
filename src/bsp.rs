@@ -182,19 +182,15 @@ impl Texture {
         }
         let name = String::from_utf8(t.name[0..len].to_owned()).unwrap();
 
-        let w: usize;
         if t.width <= 0 {
             panic!("Invalid texture width.");
         }
-        w = t.width as usize;
 
-        let h: usize;
         if t.height <= 0 {
             panic!("Invalid texture height.");
         }
-        h = t.height as usize;
 
-        let tex = engine::tex_from_indexed(display, &t.mipmaps[0], w as u32, h as u32);
+        let tex = engine::tex_from_indexed(display, &t.mipmaps[0], t.width as u32, t.height as u32);
 
         Texture {
             name: name,
