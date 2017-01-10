@@ -15,10 +15,46 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use std::convert::From;
+use std::error::Error;
+use std::fmt;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use bsp;
 use load::Load;
 use lump::Lump;
+
+#[derive(Debug)]
+pub enum BspLoadError {
+    Io(::std::io::Error),
+}
+
+impl fmt::Display for BspLoadError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            BspLoadError::Io(ref err) => write!(f, "I/O error: {}", err),
+        }
+    }
+}
+
+impl Error for BspLoadError {
+    fn description(&self) -> &str {
+        match *self {
+            BspLoadError::Io(ref err) => err.description(),
+        }
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        match *self {
+            BspLoadError::Io(ref err) => Some(err),
+        }
+    }
+}
+
+impl ::std::convert::From<::std::io::Error> for BspLoadError {
+    fn from(err: ::std::io::Error) -> Self {
+        BspLoadError::Io(err)
+    }
+}
 
 // As defined in bspfile.h
 const VERSION: i32 = 29;
