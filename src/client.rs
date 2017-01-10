@@ -18,18 +18,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use arrayvec::ArrayVec;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use math::Vec3;
+use net::{Message, NetworkBuffer, NetworkChannel};
+use proto::{self, ClCmd, PacketEntities, SvCmd, UserCmd, UserInfo};
 use std;
-use std::cell::Cell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::default::Default;
 use std::io::{Cursor, Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::str::{self, FromStr};
 use time::{Duration, PreciseTime};
-use proto::{self, ClCmd, SvCmd, UserInfo};
-use net::{Message, NetworkBuffer, NetworkChannel};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 const RETRY_INTERVAL: i64 = 5;
+const MAX_CLIENTS: usize = 32;
+const MAX_QUEUED_UPDATES: usize = 64;
 
 #[derive(Copy, Clone, PartialEq, PartialOrd)]
 pub enum CxnStatus {
@@ -40,6 +44,52 @@ pub enum CxnStatus {
     Active = 4,
 }
 
+#[derive(Copy, Clone)]
+pub struct PlayerState {
+    message: usize,
+    time: PreciseTime,
+    cmd: UserCmd,
+    origin: Vec3,
+    angles: Vec3,
+    velocity: Vec3, // TODO: finish this up
+}
+
+pub struct Update {
+    // main content of the update
+    cmd: UserCmd,
+
+    // when this update was initially sent
+    time_sent: Duration,
+
+    // sequence number to delta from, or None if full update
+    delta: Option<usize>,
+
+    // when this update was received, or None if it hasn't been
+    time_received: Option<Duration>,
+
+    // last updated position of each player
+    player_state: [Option<PlayerState>; MAX_CLIENTS],
+
+    packet_entities: PacketEntities,
+
+    // whether the packet_entities delta was valid
+    valid: bool,
+}
+
+impl Default for Update {
+    fn default() -> Update {
+        Update {
+            cmd: UserCmd::default(),
+            time_sent: Duration::zero(),
+            delta: None,
+            time_received: None,
+            player_state: [None; MAX_CLIENTS],
+            packet_entities: Box::default(),
+            valid: false,
+        }
+    }
+}
+
 pub struct Client {
     netchannel: NetworkChannel,
     challenge: Cell<i32>,
@@ -47,24 +97,29 @@ pub struct Client {
 
     /// The last time this client sent a connection request to the server.
     cxn_time: Cell<Option<PreciseTime>>,
-    userinfo: UserInfo,
+    user_info: UserInfo,
+
+    /// The last MAX_QUEUED_UPDATES updates the client received.
+    updates: ArrayVec<[RefCell<Update>; MAX_QUEUED_UPDATES]>,
 }
 
 impl Client {
     /// Create a new `Client` by initiating a connection to `server`. The client
     /// will request a challenge from the server and then begin normal operation.
-    pub fn connect<A>(server: A) -> Client
-        where A: ToSocketAddrs
-    {
+    pub fn connect(server: Ipv4Addr) -> Client {
+        let mut updates = ArrayVec::new();
+        for _ in 0..MAX_QUEUED_UPDATES {
+            updates.push(RefCell::new(Update::default()));
+        }
 
         let client = Client {
-            netchannel: NetworkChannel::new(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1),
-                                                              proto::PORT_SERVER),
+            netchannel: NetworkChannel::new(SocketAddrV4::new(server, proto::PORT_SERVER),
                                             proto::PORT_CLIENT),
             challenge: Cell::new(0),
-            userinfo: UserInfo::default(),
             cxn_status: Cell::new(CxnStatus::Disconnected),
             cxn_time: Cell::new(None),
+            user_info: UserInfo::default(),
+            updates: updates,
         };
 
         client.netchannel.out_of_band("getchallenge\n".as_bytes());
@@ -86,7 +141,7 @@ impl Client {
                                             proto::VERSION,
                                             27001,
                                             self.challenge.get(),
-                                            self.userinfo.serialize())
+                                            self.user_info.serialize())
                                         .as_bytes());
         self.cxn_time.set(Some(PreciseTime::now()));
     }
@@ -219,12 +274,26 @@ impl Client {
                 debug!("Server accepted connection request");
                 self.cxn_status.set(CxnStatus::Connected);
 
-                let mut msg: Vec<u8> = Vec::new();
-                let mut cursor = Cursor::new(msg);
-                cursor.write_u8(ClCmd::StringCmd as u8).unwrap();
-                cursor.write("new".as_bytes()).unwrap();
-                cursor.write_u8(0).unwrap();
-                self.netchannel.transmit(cursor.get_ref());
+                {
+                    let mut message_buf = self.netchannel.get_message_buffer();
+                    message_buf.write_u8(ClCmd::StringCmd as u8).unwrap();
+                    message_buf.write("new".as_bytes()).unwrap();
+                    message_buf.write_u8(0).unwrap();
+                    message_buf.write_u8(ClCmd::Move as u8).unwrap();
+                    for _ in 0..9 {
+                        message_buf.write_u8(0).unwrap();
+                    }
+                }
+                self.netchannel.transmit(&[]);
+                {
+                    let mut message_buf = self.netchannel.get_message_buffer();
+                    message_buf.write_u8(ClCmd::Move as u8).unwrap();
+                    for _ in 0..9 {
+                        message_buf.write_u8(0).unwrap();
+                    }
+                }
+                self.netchannel.transmit(&[]);
+
             }
 
             'k' => {

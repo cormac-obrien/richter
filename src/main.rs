@@ -17,6 +17,7 @@
 
 #![feature(custom_derive, proc_macro)]
 
+extern crate arrayvec;
 extern crate byteorder;
 extern crate env_logger;
 #[macro_use]
@@ -49,7 +50,7 @@ pub mod proto;
 // pub mod sprite;
 
 use std::error::Error;
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::Ipv4Addr;
 use std::process::exit;
 use glium::glutin::Event;
 use client::{Client, CxnStatus};
@@ -76,7 +77,7 @@ fn main() {
     env_logger::init().unwrap();
     info!("Richter v0.0.1");
 
-    let cl = Client::connect(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 27500));
+    let cl = Client::connect(Ipv4Addr::new(127, 0, 0, 1));
     loop {
         frame(&cl);
     }

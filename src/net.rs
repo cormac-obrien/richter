@@ -20,7 +20,7 @@
 
 use std::cell::{Cell, RefMut, RefCell};
 use std::io::{self, Cursor, Read, Write};
-use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddrV4, ToSocketAddrs, UdpSocket};
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 
 const MAX_MESSAGE: usize = 1450;
@@ -61,6 +61,10 @@ impl NetworkBuffer {
     fn get_mut(&mut self) -> &mut [u8] {
         self.buf.get_mut()
     }
+
+    fn position(&self) -> u64 {
+        self.buf.position()
+    }
 }
 
 impl Read for NetworkBuffer {
@@ -81,7 +85,7 @@ impl Write for NetworkBuffer {
 
 pub struct NetworkChannel {
     sock: UdpSocket,
-    serv: SocketAddrV4,
+    dest: SocketAddrV4,
     qport: u16,
 
     // TODO: try to find the clearest possible naming scheme for the sequence number variables
@@ -121,7 +125,7 @@ pub struct NetworkChannel {
 }
 
 impl NetworkChannel {
-    pub fn new(serv: SocketAddrV4, local_port: u16) -> NetworkChannel {
+    pub fn new(dest: SocketAddrV4, local_port: u16) -> NetworkChannel {
         let sock = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), local_port))
                        .unwrap();
 
@@ -129,7 +133,7 @@ impl NetworkChannel {
 
         NetworkChannel {
             sock: sock,
-            serv: serv,
+            dest: dest,
             qport: 0,
 
             incoming_sequence: Cell::new(0),
@@ -156,12 +160,16 @@ impl NetworkChannel {
     pub fn out_of_band(&self, data: &[u8]) {
         let mut send_buf = self.send_buf.borrow_mut();
         send_buf.clear();
-        send_buf.write_i32::<LittleEndian>(-1);
-        send_buf.write(data);
-        self.sock.send_to(send_buf.get_ref(), &self.serv);
+        send_buf.write_i32::<LittleEndian>(-1).unwrap();
+        send_buf.write(data).unwrap();
+        self.sock.send_to(send_buf.get_ref(), &self.dest).unwrap();
     }
 
     pub fn transmit(&self, data: &[u8]) {
+        println!("message: {:?}\nsend: {:?}",
+                 self.message_buf.borrow().get_ref(),
+                 self.send_buf.borrow().get_ref());
+        self.message_buf.borrow_mut().rewind();
         // we can send a reliable message if...
         let mut should_send_reliable = self.incoming_ack > self.previous_reliable_sequence &&
                                        self.incoming_ack_is_reliable !=
@@ -170,9 +178,11 @@ impl NetworkChannel {
         // if we're not waiting on a reliable message to be acknowledged and there's a message
         // waiting, copy it to the reliable buffer
         if self.reliable_buf.borrow().is_empty() && !self.message_buf.borrow().is_empty() {
-            self.reliable_buf.borrow_mut().write(self.message_buf.borrow().get_ref());
+            self.reliable_buf.borrow_mut().write(self.message_buf.borrow().get_ref()).unwrap();
+            println!("reliable: {:?}", self.reliable_buf.borrow().get_ref());
             self.message_buf.borrow_mut().clear();
             self.outgoing_sequence_is_reliable.set(!self.outgoing_sequence_is_reliable.get());
+            should_send_reliable = true;
         }
 
         {
@@ -190,29 +200,42 @@ impl NetworkChannel {
                 w2 |= 1 << 31;
             }
 
-            send_buf.write_u32::<LittleEndian>(w1);
-            send_buf.write_u32::<LittleEndian>(w2);
+            self.outgoing_sequence.set(self.outgoing_sequence.get() + 1);
+
+            send_buf.write_u32::<LittleEndian>(w1).unwrap();
+            send_buf.write_u32::<LittleEndian>(w2).unwrap();
+
+            println!("send: {:?}", send_buf.get_ref());
 
             // TODO:
             // if client {
-            send_buf.write_u16::<LittleEndian>(self.qport);
+            //     send_buf.write_u16::<LittleEndian>(self.qport).unwrap();
             // }
 
             if should_send_reliable {
-                send_buf.write(self.reliable_buf.borrow().get_ref());
+                send_buf.write(self.reliable_buf.borrow().get_ref()).unwrap();
                 self.previous_reliable_sequence.set(self.outgoing_sequence.get());
             }
 
             // TODO: write in the unreliable part if there's space left.
             // we'll need NetworkBuffer to have a constant maximum size
+            println!("message: {:?}", self.message_buf.borrow().get_ref());
 
+            if HEADER_SIZE + MAX_MESSAGE - send_buf.get_ref().len() <
+               self.message_buf.borrow().position() as usize {
+                send_buf.write(self.message_buf.borrow().get_ref()).unwrap();
+            }
         } // finished writing to send_buf
+
+        println!("send: {:?}", self.send_buf.borrow().get_ref());
 
         // TODO: do bandwidth calculations
 
-        self.sock.send(self.send_buf.borrow().get_ref()).unwrap();
+        self.send_buf.borrow_mut().rewind();
+        self.sock.send_to(self.send_buf.borrow().get_ref(), self.dest).unwrap();
 
         // TODO: time updates and stuff
+        self.message_buf.borrow_mut().clear();
     }
 
     pub fn process(&self) -> Option<Message> {
@@ -227,7 +250,7 @@ impl NetworkChannel {
 
         let mut recv_buf = self.recv_buf.borrow_mut();
         recv_buf.clear();
-        recv_buf.write(&recv_array[..len]);
+        recv_buf.write(&recv_array[..len]).unwrap();
         recv_buf.rewind();
 
         let mut msg_sequence = recv_buf.read_u32::<LittleEndian>().unwrap();
@@ -270,5 +293,13 @@ impl NetworkChannel {
         }
 
         Some(Message::InBand(self.recv_buf.borrow_mut()))
+    }
+
+    pub fn get_message_buffer(&self) -> RefMut<NetworkBuffer> {
+        self.message_buf.borrow_mut()
+    }
+
+    pub fn get_outgoing_sequence(&self) -> u32 {
+        self.outgoing_sequence.get()
     }
 }

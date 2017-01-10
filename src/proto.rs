@@ -1,6 +1,10 @@
+use math::Vec3;
 use num::FromPrimitive;
 use std::collections::HashMap;
 use std::default::Default;
+
+/// The maximum number of entities per packet, excluding nails.
+pub const MAX_PACKET_ENTITIES: usize = 64;
 
 /// The maximum allowed size of a UDP packet.
 pub const PACKET_MAX: usize = 8192;
@@ -117,3 +121,45 @@ impl Default for UserInfo {
         UserInfo(map)
     }
 }
+
+// TODO: this is a straight translation of the original struct,
+// make it nicer. Also see if we can avoid making it Copy/Clone
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct UserCmd {
+    msec: u8,
+    angles: Vec3,
+    fwd: i16,
+    side: i16,
+    back: i16,
+    buttons: u8,
+    impulse: u8,
+}
+
+impl Default for UserCmd {
+    fn default() -> UserCmd {
+        UserCmd {
+            msec: 0,
+            angles: Vec3::new(0.0, 0.0, 0.0),
+            fwd: 0,
+            side: 0,
+            back: 0,
+            buttons: 0,
+            impulse: 0,
+        }
+    }
+}
+
+pub struct EntityState {
+    edict_id: usize,
+    flags: u32,
+    origin: Vec3,
+    angles: Vec3,
+    model_id: usize,
+    frame: usize,
+    colormap: u32,
+    skin_count: usize,
+    effects: u32,
+}
+
+pub type PacketEntities = Box<[EntityState]>;
