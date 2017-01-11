@@ -15,45 +15,24 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#![feature(custom_derive, proc_macro)]
-
-extern crate arrayvec;
-extern crate byteorder;
 extern crate env_logger;
-#[macro_use]
 extern crate glium;
 #[macro_use]
-extern crate lazy_static;
-#[macro_use]
 extern crate log;
-extern crate num;
-#[macro_use]
-extern crate num_derive;
-extern crate regex;
-extern crate time;
-
-pub mod bsp;
-pub mod bspload;
-pub mod client;
-pub mod engine;
-pub mod entity;
-pub mod event;
-pub mod gfx;
-pub mod load;
-pub mod lump;
-pub mod math;
-pub mod mdl;
-pub mod net;
-pub mod pak;
-pub mod progs;
-pub mod proto;
-// pub mod sprite;
+extern crate richter;
 
 use std::error::Error;
 use std::net::Ipv4Addr;
 use std::process::exit;
 use glium::glutin::Event;
-use client::{Client, CxnStatus};
+use richter::bsp;
+use richter::bspload;
+use richter::client::{Client, CxnStatus};
+use richter::entity;
+use richter::event;
+use richter::math;
+use richter::pak;
+use richter::progs;
 
 fn frame(cl: &Client) {
     // TODO: handle key input
@@ -115,7 +94,7 @@ fn main() {
     };
 
     let mut bsp_data = pak0.open("maps/e1m1.bsp").unwrap();
-    let bsp = bsp::Bsp::from_disk(&display, bspload::DiskBsp::load(&mut bsp_data));
+    let bsp = bsp::Bsp::from_disk(&display, bspload::DiskBsp::load(&mut bsp_data).unwrap());
 
     let progs = progs::Progs::load(pak0.open("progs.dat").unwrap());
 
