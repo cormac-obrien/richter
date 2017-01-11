@@ -80,6 +80,75 @@ pub struct Progs {
     data: Box<[u8]>,
 }
 
+enum Opcodes {
+    Done = 0,
+    MulF = 1,
+    MulV = 2,
+    MulFV = 3,
+    MulVF = 4,
+    Div = 5,
+    AddF = 6,
+    AddV = 7,
+    SubF = 8,
+    SubV = 9,
+    EqF = 10,
+    EqV = 11,
+    EqS = 12,
+    EqE = 13,
+    EqFnc = 14,
+    NeF = 15,
+    NeV = 16,
+    NeS = 17,
+    NeE = 18,
+    NeFnc = 19,
+    Le = 20,
+    Ge = 21,
+    Lt = 22,
+    Gt = 23,
+    Indirect0 = 24,
+    Indirect1 = 25,
+    Indirect2 = 26,
+    Indirect3 = 27,
+    Indirect4 = 28,
+    Indirect5 = 29,
+    Address = 30,
+    StoreF = 31,
+    StoreV = 32,
+    StoreS = 33,
+    StoreEnt = 34,
+    StoreFld = 35,
+    StoreFnc = 36,
+    StorePF = 37,
+    StorePV = 38,
+    StorePS = 39,
+    StorePEnt = 40,
+    StorePFld = 41,
+    StorePFnc = 42,
+    Return = 43,
+    NotF = 44,
+    NotV = 45,
+    NotS = 46,
+    NotEnt = 47,
+    NotFnc = 48,
+    If = 49,
+    IfNot = 50,
+    Call0 = 51,
+    Call1 = 52,
+    Call2 = 53,
+    Call3 = 54,
+    Call4 = 55,
+    Call5 = 56,
+    Call6 = 57,
+    Call7 = 58,
+    Call8 = 59,
+    State = 60,
+    Goto = 61,
+    And = 62,
+    Or = 63,
+    BitAnd = 64,
+    BitOr = 65,
+}
+
 impl Progs {
     pub fn load<R>(mut src: R) -> Progs
             where R: Load + Seek {
@@ -292,6 +361,65 @@ impl Progs {
             true => 1.0,
             false => 0.0,
         }, not_addr);
+    }
+
+    // NOT_V: Compare vec to { 0.0, 0.0, 0.0 }
+    fn not_v(&mut self, v_addr: u16, not_addr: u16) {
+        let v = self.load_v(v_addr);
+        const zero_vec = Vec3::new(0.0, 0.0, 0.0);
+        self.store_v(match v == zero_vec {
+            true => 1.0,
+            false => 0.0,
+        }, not_addr);
+    }
+
+    // TODO
+    // NOT_S: Compare string to ???
+
+    // TODO
+    // NOT_FNC: Compare function to ???
+
+    // TODO
+    // NOT_ENT: Compare entity to ???
+
+    // EQ_F: Test equality of two floats
+    fn eq_f(&mut self, f1_addr: u16, f2_addr: u16, eq_addr: u16) {
+        let f1 = self.load_f(f1_addr);
+        let f2 = self.load_f(f2_addr);
+        self.store_f(match f1 == f2 {
+            true => 1.0,
+            false => 0.0,
+        }, eq_addr);
+    }
+
+    // EQ_V: Test equality of two vectors
+    fn eq_v(&mut self, v1_addr: u16, v2_addr: u16, eq_addr: u16) {
+        let v1 = self.load_v(v1_addr);
+        let v2 = self.load_v(v2_addr);
+        self.store_f(match v1 == v2 {
+            true => 1.0,
+            false => 0.0,
+        }, eq_addr);
+    }
+
+    // NE_F: Test inequality of two floats
+    fn ne_f(&mut self, f1_addr: u16, f2_addr: u16, ne_addr: u16) {
+        let f1 = self.load_f(f1_addr);
+        let f2 = self.load_f(f2_addr);
+        self.store_f(match f1 != f2 {
+            true => 1.0,
+            false => 0.0,
+        }, ne_addr);
+    }
+
+    // NE_V: Test inequality of two vectors
+    fn ne_v(&mut self, v1_addr: u16, v2_addr: u16, ne_addr: u16) {
+        let v1 = self.load_v(v1_addr);
+        let v2 = self.load_v(v2_addr);
+        self.store_f(match v1 != v2 {
+            true => 1.0,
+            false => 0.0,
+        }, ne_addr);
     }
 }
 
