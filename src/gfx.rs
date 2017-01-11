@@ -101,11 +101,15 @@ pub struct Vertex {
 }
 implement_vertex!(Vertex, pos);
 
+impl Vertex {
+    pub fn new(pos: [f32; 3]) -> Vertex {
+        Vertex { pos: pos }
+    }
+}
+
 impl<'a> From<&'a Vec3> for Vertex {
     fn from(__arg_0: &'a Vec3) -> Vertex {
-        Vertex {
-            pos: [__arg_0[0], __arg_0[1], __arg_0[2]],
-        }
+        Vertex { pos: [__arg_0[0], __arg_0[1], __arg_0[2]] }
     }
 }
 
@@ -195,10 +199,10 @@ pub fn get_draw_parameters<'a>() -> DrawParameters<'static> {
         depth: glium::Depth {
             test: glium::DepthTest::IfMoreOrEqual,
             write: true,
-            .. Default::default()
+            ..Default::default()
         },
         backface_culling: glium::BackfaceCullingMode::CullCounterClockwise,
-        //backface_culling: glium::BackfaceCullingMode::CullClockwise,
-        .. Default::default()
+        // backface_culling: glium::BackfaceCullingMode::CullClockwise,
+        ..Default::default()
     }
 }
