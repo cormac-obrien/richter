@@ -151,11 +151,15 @@ enum Opcodes {
 
 impl Progs {
     pub fn load<R>(mut src: R) -> Progs
-            where R: Load + Seek {
+        where R: Load + Seek
+    {
         assert!(src.load_i32le() == VERSION);
         assert!(src.load_i32le() == CRC);
 
-        let mut lumps = [Lump { offset: 0, count: 0 }; LUMP_COUNT];
+        let mut lumps = [Lump {
+            offset: 0,
+            count: 0,
+        }; LUMP_COUNT];
         for i in 0..LUMP_COUNT {
             lumps[i] = Lump {
                 offset: src.load_i32le() as usize,
@@ -182,7 +186,7 @@ impl Progs {
 
         let globaldef_lump = &lumps[LumpId::GlobalDefs as usize];
         src.seek(SeekFrom::Start(globaldef_lump.offset as u64)).unwrap();
-        //let mut globaldef_vec = Vec::with_capacity(globaldef_lump.count);
+        // let mut globaldef_vec = Vec::with_capacity(globaldef_lump.count);
         for _ in 0..globaldef_lump.count {
         }
 
@@ -299,9 +303,10 @@ impl Progs {
         let f1 = self.load_f(f1_addr);
         let f2 = self.load_f(f2_addr);
         self.store_f(match f1 >= f2 {
-            true => 1.0,
-            false => 0.0,
-        }, ge_addr);
+                         true => 1.0,
+                         false => 0.0,
+                     },
+                     ge_addr);
     }
 
     // LE: Less than or equal to comparison
@@ -309,9 +314,10 @@ impl Progs {
         let f1 = self.load_f(f1_addr);
         let f2 = self.load_f(f2_addr);
         self.store_f(match f1 <= f2 {
-            true => 1.0,
-            false => 0.0,
-        }, le_addr);
+                         true => 1.0,
+                         false => 0.0,
+                     },
+                     le_addr);
     }
 
     // GE: Greater than comparison
@@ -319,9 +325,10 @@ impl Progs {
         let f1 = self.load_f(f1_addr);
         let f2 = self.load_f(f2_addr);
         self.store_f(match f1 > f2 {
-            true => 1.0,
-            false => 0.0,
-        }, gt_addr);
+                         true => 1.0,
+                         false => 0.0,
+                     },
+                     gt_addr);
     }
 
     // LT: Less than comparison
@@ -329,9 +336,10 @@ impl Progs {
         let f1 = self.load_f(f1_addr);
         let f2 = self.load_f(f2_addr);
         self.store_f(match f1 < f2 {
-            true => 1.0,
-            false => 0.0,
-        }, lt_addr);
+                         true => 1.0,
+                         false => 0.0,
+                     },
+                     lt_addr);
     }
 
     // AND: Logical AND
@@ -339,9 +347,10 @@ impl Progs {
         let f1 = self.load_f(f1_addr);
         let f2 = self.load_f(f2_addr);
         self.store_f(match f1 != 0.0 && f2 != 0.0 {
-            true => 1.0,
-            false => 0.0,
-        }, and_addr);
+                         true => 1.0,
+                         false => 0.0,
+                     },
+                     and_addr);
     }
 
     // OR: Logical OR
@@ -349,28 +358,31 @@ impl Progs {
         let f1 = self.load_f(f1_addr);
         let f2 = self.load_f(f2_addr);
         self.store_f(match f1 != 0.0 || f2 != 0.0 {
-            true => 1.0,
-            false => 0.0,
-        }, or_addr);
+                         true => 1.0,
+                         false => 0.0,
+                     },
+                     or_addr);
     }
 
     // NOT_F: Compare float to 0.0
     fn not_f(&mut self, f_addr: u16, not_addr: u16) {
         let f = self.load_f(f_addr);
         self.store_f(match f == 0.0 {
-            true => 1.0,
-            false => 0.0,
-        }, not_addr);
+                         true => 1.0,
+                         false => 0.0,
+                     },
+                     not_addr);
     }
 
     // NOT_V: Compare vec to { 0.0, 0.0, 0.0 }
     fn not_v(&mut self, v_addr: u16, not_addr: u16) {
         let v = self.load_v(v_addr);
-        const zero_vec = Vec3::new(0.0, 0.0, 0.0);
+        let zero_vec = Vec3::new(0.0, 0.0, 0.0);
         self.store_v(match v == zero_vec {
-            true => 1.0,
-            false => 0.0,
-        }, not_addr);
+                         true => Vec3::new(1.0, 1.0, 1.0),
+                         false => zero_vec,
+                     },
+                     not_addr);
     }
 
     // TODO
@@ -387,9 +399,10 @@ impl Progs {
         let f1 = self.load_f(f1_addr);
         let f2 = self.load_f(f2_addr);
         self.store_f(match f1 == f2 {
-            true => 1.0,
-            false => 0.0,
-        }, eq_addr);
+                         true => 1.0,
+                         false => 0.0,
+                     },
+                     eq_addr);
     }
 
     // EQ_V: Test equality of two vectors
@@ -397,9 +410,10 @@ impl Progs {
         let v1 = self.load_v(v1_addr);
         let v2 = self.load_v(v2_addr);
         self.store_f(match v1 == v2 {
-            true => 1.0,
-            false => 0.0,
-        }, eq_addr);
+                         true => 1.0,
+                         false => 0.0,
+                     },
+                     eq_addr);
     }
 
     // NE_F: Test inequality of two floats
@@ -407,9 +421,10 @@ impl Progs {
         let f1 = self.load_f(f1_addr);
         let f2 = self.load_f(f2_addr);
         self.store_f(match f1 != f2 {
-            true => 1.0,
-            false => 0.0,
-        }, ne_addr);
+                         true => 1.0,
+                         false => 0.0,
+                     },
+                     ne_addr);
     }
 
     // NE_V: Test inequality of two vectors
@@ -417,9 +432,10 @@ impl Progs {
         let v1 = self.load_v(v1_addr);
         let v2 = self.load_v(v2_addr);
         self.store_f(match v1 != v2 {
-            true => 1.0,
-            false => 0.0,
-        }, ne_addr);
+                         true => 1.0,
+                         false => 0.0,
+                     },
+                     ne_addr);
     }
 }
 
@@ -482,6 +498,7 @@ mod test {
             data: vec![0; 12].into_boxed_slice(),
             text: Default::default(),
         };
+
 
         progs.store_v(to_store, 0);
         assert!(progs.load_v(0) == to_store);
@@ -584,6 +601,7 @@ mod test {
         progs.store_f(term1, t1_addr);
         progs.store_f(term2, t2_addr);
         progs.bitand(t1_addr as u16, t2_addr as u16, result_addr as u16);
-        assert_eq!(progs.load_f(result_addr) as i32, term1 as i32 & term2 as i32);
+        assert_eq!(progs.load_f(result_addr) as i32,
+                   term1 as i32 & term2 as i32);
     }
 }
