@@ -1,7 +1,10 @@
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use math::Vec3;
 use num::FromPrimitive;
 use std::collections::HashMap;
 use std::default::Default;
+use std::io::{Cursor, Read, Write};
+use std::str::FromStr;
 
 /// The maximum number of entities per packet, excluding nails.
 pub const MAX_PACKET_ENTITIES: usize = 64;
@@ -87,6 +90,132 @@ pub enum ClCmd {
     Delta = 5,
     TMove = 6,
     Upload = 7,
+}
+
+const PROTOCOL_FTE: u32 = ('F' as u32) << 0 | ('T' as u32) << 8 | ('E' as u32) << 16 |
+                          ('X' as u32) << 24;
+
+// FTE extensions, https://github.com/mdeguzis/ftequake/blob/master/engine/common/protocol.h#L21
+bitflags! {
+    pub flags FteExtensions: u32 {
+        const FTE_SETVIEW           = 0x00000001,
+        const FTE_SCALE             = 0x00000002,
+        const FTE_LIGHTSTYLECOL     = 0x00000004,
+        const FTE_TRANS             = 0x00000008,
+        const FTE_VIEW2             = 0x00000010,
+        // const FTE_BULLETENS      = 0x00000020,
+        const FTE_ACCURATETIMINGS   = 0x00000040,
+        const FTE_SOUNDDBL          = 0x00000080,
+        const FTE_FATNESS           = 0x00000100,
+        const FTE_HLBSP             = 0x00000200,
+        const FTE_TE_BULLET         = 0x00000400,
+        const FTE_HULLSIZE          = 0x00000800,
+        const FTE_MODELDBL          = 0x00001000,
+        const FTE_ENTITYDBL         = 0x00002000,
+        const FTE_ENTITYDBL2        = 0x00004000,
+        const FTE_FLOATCOORDS       = 0x00008000,
+        // const FTE_VWEAP          = 0x00010000,
+        const FTE_Q2BSP             = 0x00020000,
+        const FTE_Q3BSP             = 0x00040000,
+        const FTE_COLOURMOD         = 0x00080000,
+        const FTE_SPLITSCREEN       = 0x00100000,
+        const FTE_HEXEN2            = 0x00200000,
+        const FTE_SPAWNSTATIC2      = 0x00400000,
+        const FTE_CUSTOMTEMPEFFECTS = 0x00800000,
+        const FTE_256PACKETENTITIES = 0x01000000,
+        // const FTE_NEVERUSED      = 0x02000000,
+        const FTE_SHOWPIC           = 0x04000000,
+        const FTE_SETATTACHMENT     = 0x08000000,
+        // const FTE_NEVERUSED      = 0x10000000,
+        const FTE_CHUNKEDDOWNLOADS  = 0x20000000,
+        const FTE_CSQC              = 0x40000000,
+        const FTE_DPFLAGS           = 0x80000000,
+        const FTE_BIGUSERINFOS      = 0xffffffff,
+    }
+}
+
+const PROTOCOL_FTE2: u32 = ('F' as u32) << 0 | ('T' as u32) << 8 | ('E' as u32) << 16 |
+                           ('2' as u32) << 24;
+
+// FTE2 extensions, https://github.com/mdeguzis/ftequake/blob/master/engine/common/protocol.h#L73
+bitflags! {
+    pub flags Fte2Extensions: u32 {
+        const FTE2_PRYDONCURSOR      = 0x00000001,
+        const FTE2_VOICECHAT         = 0x00000002,
+        const FTE2_SETANGLEDELTA     = 0x00000004,
+        const FTE2_REPLACEMENTDELTAS = 0x00000008,
+        const FTE2_MAXPLAYERS        = 0x00000010,
+        const FTE2_PREDINFO          = 0x00000020,
+        const FTE2_NEWSIZEENCODING   = 0x00000040,
+    }
+}
+
+pub struct Challenge {
+    pub challenge: i32,
+    pub fte_extensions: Option<FteExtensions>,
+    pub fte2_extensions: Option<Fte2Extensions>,
+}
+
+impl Challenge {
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut result = Cursor::new(Vec::new());
+        result.write(&self.challenge.to_string().into_bytes()).unwrap();
+
+        if let Some(fte) = self.fte_extensions {
+            result.write_u32::<LittleEndian>(fte.bits()).unwrap();
+        }
+
+        if let Some(fte2) = self.fte2_extensions {
+            result.write_u32::<LittleEndian>(fte2.bits()).unwrap();
+        }
+
+        result.into_inner()
+    }
+
+    pub fn deserialize<A>(data: A) -> Challenge
+        where A: AsRef<[u8]>
+    {
+        let mut result = Challenge {
+            challenge: 0,
+            fte_extensions: None,
+            fte2_extensions: None,
+        };
+
+        let data = data.as_ref();
+        let mut i: usize = 0;
+
+        if data[i] == '-' as u8 {
+            i += 1;
+        }
+
+        while i < data.len() && data[i] >= '0' as u8 && data[i] <= '9' as u8 {
+            i += 1;
+        }
+
+        result.challenge = i32::from_str(::std::str::from_utf8(&data[..i]).unwrap()).unwrap();
+
+        assert!(data[i..].len() <= 16);
+        assert!(data[i..].len() % 8 == 0);
+        let mut curs = Cursor::new(&data[i..]);
+
+        while let Ok(n) = curs.read_u32::<LittleEndian>() {
+            match n {
+                PROTOCOL_FTE => {
+                    result.fte_extensions =
+                        Some(FteExtensions::from_bits(curs.read_u32::<LittleEndian>().unwrap())
+                                 .unwrap())
+                }
+                PROTOCOL_FTE2 => {
+                    result.fte2_extensions =
+                        Some(Fte2Extensions::from_bits(curs.read_u32::<LittleEndian>().unwrap())
+                                 .unwrap())
+                }
+                _ => panic!("Unrecognized sequence in challenge packet"),
+            }
+        }
+
+        result
+    }
 }
 
 pub struct UserInfo(HashMap<String, String>);
