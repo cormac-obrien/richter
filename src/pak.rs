@@ -19,6 +19,7 @@
 
 extern crate byteorder;
 
+use std::collections::hash_map::Iter;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -36,6 +37,7 @@ const PAK_ENTRY_SIZE: usize = 64;
 pub enum PakError {
     Io(io::Error),
     Utf8(string::FromUtf8Error),
+    Invalid,
     Other,
 }
 
@@ -48,8 +50,9 @@ impl fmt::Display for PakError {
 impl Error for PakError {
     fn description(&self) -> &str {
         match *self {
-            PakError::Io(_) => "I/O error",
-            PakError::Utf8(_) => "Utf-8 decoding error",
+            PakError::Io(ref e) => e.description(),
+            PakError::Utf8(ref e) => e.description(),
+            PakError::Invalid => "Not a valid PAK file",
             PakError::Other => "Unknown error",
         }
     }
@@ -58,6 +61,7 @@ impl Error for PakError {
         match *self {
             PakError::Io(ref i) => Some(i),
             PakError::Utf8(ref i) => Some(i),
+            PakError::Invalid => None,
             PakError::Other => None,
         }
     }
@@ -95,19 +99,19 @@ impl Pak {
         try!(infile.read(&mut magic));
 
         if magic != PAK_MAGIC {
-            return Err(PakError::Other);
+            return Err(PakError::Invalid);
         }
 
         // Locate the file table
 
         let wad_offset = match try!(infile.read_i32::<LittleEndian>()) {
-            o if o <= 0 => return Err(PakError::Other),
-            o => o as u32
+            o if o <= 0 => return Err(PakError::Invalid),
+            o => o as u32,
         };
 
         let wad_size = match try!(infile.read_i32::<LittleEndian>()) {
-            s if s <= 0 => return Err(PakError::Other),
-            s => s as u32
+            s if s <= 0 => return Err(PakError::Invalid),
+            s => s as u32,
         };
 
         let mut result = HashMap::with_capacity(wad_size as usize / PAK_ENTRY_SIZE);
@@ -120,13 +124,13 @@ impl Pak {
             try!(infile.read(&mut path_bytes));
 
             let file_offset = match try!(infile.read_i32::<LittleEndian>()) {
-                o if o <= 0 => return Err(PakError::Other),
-                o => o as u32
+                o if o <= 0 => return Err(PakError::Invalid),
+                o => o as u32,
             };
 
             let file_size = match try!(infile.read_i32::<LittleEndian>()) {
-                s if s <= 0 => return Err(PakError::Other),
-                s => s as u32
+                s if s <= 0 => return Err(PakError::Invalid),
+                s => s as u32,
             };
 
             let last = {
@@ -161,8 +165,12 @@ impl Pak {
     pub fn open(&self, path: &str) -> Option<Cursor<&Vec<u8>>> {
         match self.0.get(path) {
             Some(data) => Some(Cursor::new(data)),
-            None => None
+            None => None,
         }
+    }
+
+    pub fn iter<'a>(&self) -> Iter<String, Vec<u8>> {
+        self.0.iter()
     }
 }
 
@@ -191,17 +199,16 @@ mod tests {
         };
 
         let setup_status = Command::new("sh")
-                                   .arg(setup_path)
-                                   .status()
-                                   .expect("Setup failed.");
+                               .arg(setup_path)
+                               .status()
+                               .expect("Setup failed.");
 
         if !setup_status.success() {
             panic!("Setup script failed.");
         }
     }
 
-    fn teardown() {
-    }
+    fn teardown() {}
 
     #[test]
     fn test_pak0() {
