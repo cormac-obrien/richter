@@ -10,7 +10,7 @@ use richter::pak::{Pak, PakError};
 use std::env;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 
 #[derive(RustcDecodable)]
@@ -29,9 +29,10 @@ Usage: unpak <source>
        unpak <source> <dest>
 
 Options:
-    -h, --help     Show this message.
     -v, --verbose  Produce detailed output.
-        --version  Print version information.
+
+    -h, --help     Show this message and exit.
+        --version  Print version information and exit.
 ";
 
 fn main() {
@@ -48,7 +49,13 @@ fn main() {
     };
 
     for (k, v) in pak.iter() {
-        let path = Path::new(k);
+        let mut path = PathBuf::new();
+
+        if let Some(ref d) = args.arg_dest {
+            path.push(d);
+        }
+
+        path.push(k);
 
         if let Some(p) = path.parent() {
             if !p.exists() {
@@ -59,15 +66,15 @@ fn main() {
             }
         }
 
-        let mut f = match File::create(k) {
+        let mut file = match File::create(&path) {
             Ok(f) => f,
             Err(why) => {
-                println!("Couldn't open {}: {}", k, why);
+                println!("Couldn't open {}: {}", path.to_str().unwrap(), why);
                 exit(1);
             }
         };
 
-        let mut writer = BufWriter::new(f);
+        let mut writer = BufWriter::new(file);
         writer.write_all(v);
     }
 }
