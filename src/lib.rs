@@ -18,6 +18,8 @@
 #![feature(custom_derive)]
 
 extern crate arrayvec;
+#[macro_use]
+extern crate bitflags;
 extern crate byteorder;
 extern crate env_logger;
 #[macro_use]
@@ -29,6 +31,7 @@ extern crate log;
 extern crate num;
 #[macro_use]
 extern crate num_derive;
+extern crate rand;
 extern crate regex;
 extern crate time;
 
