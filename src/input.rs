@@ -15,6 +15,62 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use std::cell::Cell;
+
 pub struct InputState {
-    
+    pub forward: bool,
+    pub back: bool,
+    pub moveleft: bool,
+    pub moveright: bool,
+
+    pub moveup: bool,
+    pub movedown: bool,
+
+    pub left: bool,
+    pub right: bool,
+    pub lookup: bool,
+    pub lookdown: bool,
+
+    pub speed: bool,
+    pub jump: bool,
+    pub strafe: bool,
+    pub attack: bool,
+    pub use_: bool,
+
+    pub klook: bool,
+    pub mlook: bool,
+
+    pub showscores: bool,
+    pub showteamscores: bool,
+}
+
+impl InputState {
+    pub fn new() -> Self {
+        InputState {
+            forward: false,
+            back: false,
+            moveleft: false,
+            moveright: false,
+
+            moveup: false,
+            movedown: false,
+
+            left: false,
+            right: false,
+            lookup: false,
+            lookdown: false,
+
+            speed: false,
+            jump: false,
+            strafe: false,
+            attack: false,
+            use_: false,
+
+            klook: false,
+            mlook: false,
+
+            showscores: false,
+            showteamscores: false,
+        }
+    }
 }
