@@ -24,15 +24,40 @@ extern crate richter;
 use std::error::Error;
 use std::net::Ipv4Addr;
 use std::process::exit;
+use glium::Surface;
 use glium::glutin::Event;
 use richter::bsp;
 use richter::bspload;
 use richter::client::{Client, CxnStatus};
+use richter::console::Console;
 use richter::entity;
 use richter::event;
 use richter::math;
 use richter::pak;
 use richter::progs;
+
+static POP: [u8; 256] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x00, 0x00, 0x00,
+                         0x00, 0x00, 0x00, 0x00, 0x66, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66,
+                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x67, 0x00, 0x00,
+                         0x00, 0x00, 0x66, 0x65, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                         0x00, 0x65, 0x66, 0x00, 0x00, 0x63, 0x65, 0x61, 0x00, 0x00, 0x00, 0x00,
+                         0x00, 0x00, 0x00, 0x00, 0x00, 0x61, 0x65, 0x63, 0x00, 0x64, 0x65, 0x61,
+                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x61, 0x65, 0x64,
+                         0x00, 0x64, 0x65, 0x64, 0x00, 0x00, 0x64, 0x69, 0x69, 0x69, 0x64, 0x00,
+                         0x00, 0x64, 0x65, 0x64, 0x00, 0x63, 0x65, 0x68, 0x62, 0x00, 0x00, 0x64,
+                         0x68, 0x64, 0x00, 0x00, 0x62, 0x68, 0x65, 0x63, 0x00, 0x00, 0x65, 0x67,
+                         0x69, 0x63, 0x00, 0x64, 0x67, 0x64, 0x00, 0x63, 0x69, 0x67, 0x65, 0x00,
+                         0x00, 0x00, 0x62, 0x66, 0x67, 0x69, 0x6a, 0x68, 0x67, 0x68, 0x6a, 0x69,
+                         0x67, 0x66, 0x62, 0x00, 0x00, 0x00, 0x00, 0x62, 0x65, 0x66, 0x66, 0x66,
+                         0x66, 0x66, 0x66, 0x66, 0x65, 0x62, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                         0x00, 0x62, 0x63, 0x64, 0x66, 0x64, 0x63, 0x62, 0x00, 0x00, 0x00, 0x00,
+                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x66, 0x62, 0x00, 0x00,
+                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x61,
+                         0x66, 0x61, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                         0x00, 0x00, 0x00, 0x00, 0x65, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x00,
+                         0x00, 0x00, 0x00, 0x00];
 
 fn frame(cl: &Client) {
     // TODO: handle key input
@@ -56,15 +81,6 @@ fn main() {
     env_logger::init().unwrap();
     info!("Richter v0.0.1");
 
-    let cl = Client::connect(Ipv4Addr::new(127, 0, 0, 1));
-    loop {
-        frame(&cl);
-    }
-
-    exit(0);
-
-    use glium::DisplayBuild;
-
     let display = match glium::glutin::WindowBuilder::new()
                             .with_dimensions(1024, 768)
                             .with_title(format!("Richter"))
@@ -81,8 +97,90 @@ fn main() {
         }
     };
 
-    let pak0 = match pak::Pak::load("pak0.pak") {
-        Ok(p) => p,
+    let mut con = Console::new();
+    con.add_cvar("show_fps", "0", false, false).unwrap();
+    con.add_cvar("host_speeds", "0", false, false).unwrap();
+    con.add_cvar("developer", "0", false, false).unwrap();
+    con.add_cvar("cl_warncmd", "0", false, false).unwrap();
+    con.add_cvar("cl_upspeed", "200", false, false).unwrap();
+    con.add_cvar("cl_forwardspeed", "200", true, false).unwrap();
+    con.add_cvar("cl_backspeed", "200", true, false).unwrap();
+    con.add_cvar("cl_sidespeed", "350", false, false).unwrap();
+    con.add_cvar("cl_movespeedkey", "2.0", false, false).unwrap();
+    con.add_cvar("cl_yawspeed", "140", false, false).unwrap();
+    con.add_cvar("cl_pitchspeed", "150", false, false).unwrap();
+    con.add_cvar("cl_anglespeedkey", "1.5", false, false).unwrap();
+    con.add_cvar("cl_shownet", "0", false, false).unwrap();
+    con.add_cvar("cl_sbar", "0", true, false).unwrap();
+    con.add_cvar("cl_hudswap", "0", true, false).unwrap();
+    con.add_cvar("cl_maxfps", "0", true, false).unwrap();
+    con.add_cvar("lookspring", "0", true, false).unwrap();
+    con.add_cvar("lookstrafe", "0", true, false).unwrap();
+    con.add_cvar("sensitivity", "3", true, false).unwrap();
+    con.add_cvar("m_pitch", "0.022", true, false).unwrap();
+    con.add_cvar("m_yaw", "0.022", false, false).unwrap();
+    con.add_cvar("m_forward", "1", false, false).unwrap();
+    con.add_cvar("m_side", "0.8", false, false).unwrap();
+    con.add_cvar("rcon_password", "", false, false).unwrap();
+    con.add_cvar("rcon_address", "", false, false).unwrap();
+    con.add_cvar("entlatency", "20", false, false).unwrap();
+    con.add_cvar("cl_predict_players2", "1", false, false).unwrap();
+    con.add_cvar("cl_predict_players", "1", false, false).unwrap();
+    con.add_cvar("cl_solid_players", "1", false, false).unwrap();
+    con.add_cvar("localid", "", false, false).unwrap();
+    con.add_cvar("baseskin", "base", false, false).unwrap();
+    con.add_cvar("noskins", "0", false, false).unwrap();
+
+    // userinfo cvars
+    con.add_cvar("name", "unnamed", true, true).unwrap();
+    con.add_cvar("password", "", false, true).unwrap();
+    con.add_cvar("spectator", "", false, true).unwrap();
+    con.add_cvar("skin", "", true, true).unwrap();
+    con.add_cvar("team", "", true, true).unwrap();
+    con.add_cvar("topcolor", "0", true, true).unwrap();
+    con.add_cvar("bottomcolor", "0", true, true).unwrap();
+    con.add_cvar("rate", "2500", true, true).unwrap();
+    con.add_cvar("msg", "1", true, true).unwrap();
+    con.add_cvar("noaim", "0", true, true).unwrap();
+
+    loop {
+        for event in display.poll_events() {
+            match event {
+                Event::ReceivedCharacter(c) => {
+                    info!("Got char {}", c);
+                }
+
+                Event::Closed => {
+                    exit(0);
+                }
+
+                _ => (),
+            }
+
+            {
+                let mut frame = display.draw();
+                frame.clear_color(0.0, 0.0, 0.0, 0.0);
+                frame.clear_depth(0.0);
+            }
+
+            display.finish();
+            display.swap_buffers().unwrap();
+        }
+    }
+
+    let cl = Client::connect(Ipv4Addr::new(127, 0, 0, 1));
+
+    loop {
+        frame(&cl);
+    }
+
+    exit(0);
+
+    use glium::DisplayBuild;
+
+    let mut pak = pak::Pak::new();
+    match pak.add("pak0.pak") {
+        Ok(_) => (),
         Err(why) => {
             let mut e = why.cause();
             while let Some(c) = e {
@@ -91,12 +189,12 @@ fn main() {
             }
             panic!("End of error trace.");
         }
-    };
+    }
 
-    let mut bsp_data = pak0.open("maps/e1m1.bsp").unwrap();
+    let mut bsp_data = pak.open("maps/e1m1.bsp").unwrap();
     let bsp = bsp::Bsp::from_disk(&display, bspload::DiskBsp::load(&mut bsp_data).unwrap());
 
-    let progs = progs::Progs::load(pak0.open("progs.dat").unwrap());
+    let progs = progs::Progs::load(pak.open("progs.dat").unwrap());
 
     let mut key_state = event::KeyState::new();
     let player = entity::Entity::new();

@@ -38,6 +38,7 @@ extern crate time;
 pub mod bsp;
 pub mod bspload;
 pub mod client;
+pub mod console;
 pub mod engine;
 pub mod entity;
 pub mod event;
