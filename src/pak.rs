@@ -83,6 +83,10 @@ impl From<string::FromUtf8Error> for PakError {
 pub struct Pak(HashMap<String, Vec<u8>>);
 
 impl Pak {
+    pub fn new() -> Pak {
+        Pak(HashMap::new())
+    }
+
     /// Attempts to load a virtual file tree from a PAK archive.
     ///
     /// # Examples
@@ -91,8 +95,9 @@ impl Pak {
     ///
     /// let pak0 = Pak::load("pak0.pak");
     /// ```
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, PakError> {
+    pub fn add<P: AsRef<Path>>(&mut self, path: P) -> Result<(), PakError> {
         debug!("Opening {}", path.as_ref().to_str().unwrap());
+
         let mut infile = try!(fs::File::open(path));
 
         let mut magic = [0u8; 4];
@@ -113,8 +118,6 @@ impl Pak {
             s if s <= 0 => return Err(PakError::Invalid),
             s => s as u32,
         };
-
-        let mut result = HashMap::with_capacity(wad_size as usize / PAK_ENTRY_SIZE);
 
         for i in 0..(wad_size as usize / PAK_ENTRY_SIZE) {
             let entry_offset = wad_offset as u64 + (i * PAK_ENTRY_SIZE) as u64;
@@ -148,9 +151,9 @@ impl Pak {
             let mut data: Vec<u8> = Vec::with_capacity(file_size as usize);
             try!((&mut infile).take(file_size as u64).read_to_end(&mut data));
 
-            result.insert(path, data);
+            self.0.insert(path, data);
         }
-        Ok(Pak(result))
+        Ok(())
     }
 
     /// Opens a file in the file tree for reading.
@@ -220,7 +223,8 @@ mod tests {
             _pak0_path
         };
 
-        let pak0 = Pak::load(pak0_path).expect("pak0 load failed!");
+        let mut pak0 = Pak::new();
+        pak0.add(pak0_path).expect("pak0 load failed!");
         assert!(pak0.open("progs.dat").is_some());
 
         teardown();

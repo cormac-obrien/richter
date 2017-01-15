@@ -35,12 +35,29 @@ Options:
         --version  Print version information and exit.
 ";
 
+const VERSION: &'static str = "
+unpak 0.1
+Copyright © 2016 Cormac O'Brien
+Released under the terms of the MIT License
+";
+
 fn main() {
     let args: Args = Docopt::new(USAGE)
                          .and_then(|d| d.decode())
                          .unwrap_or_else(|e| e.exit());
 
-    let pak = match Pak::load(&args.arg_source) {
+    if args.flag_help || args.flag_h {
+        println!("{}", USAGE);
+        exit(0);
+    }
+
+    if args.flag_version {
+        println!("{}", VERSION);
+        exit(0);
+    }
+
+    let mut pak = Pak::new();
+    match pak.add(&args.arg_source) {
         Ok(p) => p,
         Err(why) => {
             println!("Couldn't open {}: {}", &args.arg_source, why);
@@ -66,7 +83,7 @@ fn main() {
             }
         }
 
-        let mut file = match File::create(&path) {
+        let file = match File::create(&path) {
             Ok(f) => f,
             Err(why) => {
                 println!("Couldn't open {}: {}", path.to_str().unwrap(), why);
@@ -75,6 +92,12 @@ fn main() {
         };
 
         let mut writer = BufWriter::new(file);
-        writer.write_all(v);
+        match writer.write_all(v) {
+            Ok(_) => (),
+            Err(why) => {
+                println!("Couldn't write to {}: {}", path.to_str().unwrap(), why);
+                exit(1);
+            }
+        }
     }
 }
