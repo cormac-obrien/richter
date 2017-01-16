@@ -25,13 +25,14 @@ use std::error::Error;
 use std::net::Ipv4Addr;
 use std::process::exit;
 use glium::Surface;
-use glium::glutin::Event;
+use glium::glutin::{ElementState, Event, VirtualKeyCode as Key};
 use richter::bsp;
 use richter::bspload;
 use richter::client::{Client, CxnStatus};
 use richter::console::Console;
 use richter::entity;
 use richter::event;
+use richter::input::InputState;
 use richter::math;
 use richter::pak;
 use richter::progs;
@@ -97,6 +98,7 @@ fn main() {
         }
     };
 
+    let input = InputState::new();
     let mut con = Console::new();
     con.add_cvar("show_fps", "0", false, false).unwrap();
     con.add_cvar("host_speeds", "0", false, false).unwrap();
@@ -143,11 +145,66 @@ fn main() {
     con.add_cvar("msg", "1", true, true).unwrap();
     con.add_cvar("noaim", "0", true, true).unwrap();
 
+    // input commands
+    con.add_cmd("+forward", Box::new(|| input.forward.set(true))).unwrap();
+    con.add_cmd("-forward", Box::new(|| input.forward.set(false))).unwrap();
+    con.add_cmd("+back", Box::new(|| input.back.set(true))).unwrap();
+    con.add_cmd("-back", Box::new(|| input.back.set(false))).unwrap();
+    con.add_cmd("+moveleft", Box::new(|| input.moveleft.set(true))).unwrap();
+    con.add_cmd("-moveleft", Box::new(|| input.moveleft.set(false))).unwrap();
+    con.add_cmd("+moveright", Box::new(|| input.moveright.set(true))).unwrap();
+    con.add_cmd("-moveright", Box::new(|| input.moveright.set(false))).unwrap();
+    con.add_cmd("+moveup", Box::new(|| input.moveup.set(true))).unwrap();
+    con.add_cmd("-moveup", Box::new(|| input.moveup.set(false))).unwrap();
+    con.add_cmd("+movedown", Box::new(|| input.movedown.set(true))).unwrap();
+    con.add_cmd("-movedown", Box::new(|| input.movedown.set(false))).unwrap();
+    con.add_cmd("+left", Box::new(|| input.left.set(true))).unwrap();
+    con.add_cmd("-left", Box::new(|| input.left.set(false))).unwrap();
+    con.add_cmd("+right", Box::new(|| input.right.set(true))).unwrap();
+    con.add_cmd("-right", Box::new(|| input.right.set(false))).unwrap();
+    con.add_cmd("+lookup", Box::new(|| input.lookup.set(true))).unwrap();
+    con.add_cmd("-lookup", Box::new(|| input.lookup.set(false))).unwrap();
+    con.add_cmd("+lookdown", Box::new(|| input.lookdown.set(true))).unwrap();
+    con.add_cmd("-lookdown", Box::new(|| input.lookdown.set(false))).unwrap();
+    con.add_cmd("+speed", Box::new(|| input.speed.set(true))).unwrap();
+    con.add_cmd("-speed", Box::new(|| input.speed.set(false))).unwrap();
+    con.add_cmd("+jump", Box::new(|| input.jump.set(true))).unwrap();
+    con.add_cmd("-jump", Box::new(|| input.jump.set(false))).unwrap();
+    con.add_cmd("+strafe", Box::new(|| input.strafe.set(true))).unwrap();
+    con.add_cmd("-strafe", Box::new(|| input.strafe.set(false))).unwrap();
+    con.add_cmd("+attack", Box::new(|| input.attack.set(true))).unwrap();
+    con.add_cmd("-attack", Box::new(|| input.attack.set(false))).unwrap();
+    con.add_cmd("+use", Box::new(|| input.use_.set(true))).unwrap();
+    con.add_cmd("-use", Box::new(|| input.use_.set(false))).unwrap();
+    con.add_cmd("+klook", Box::new(|| input.klook.set(true))).unwrap();
+    con.add_cmd("-klook", Box::new(|| input.klook.set(false))).unwrap();
+    con.add_cmd("+mlook", Box::new(|| input.mlook.set(true))).unwrap();
+    con.add_cmd("-mlook", Box::new(|| input.mlook.set(false))).unwrap();
+    con.add_cmd("+showscores", Box::new(|| input.showscores.set(true))).unwrap();
+    con.add_cmd("-showscores", Box::new(|| input.showscores.set(false))).unwrap();
+    con.add_cmd("+showteamscores",
+                Box::new(|| input.showteamscores.set(true)))
+       .unwrap();
+    con.add_cmd("-showteamscores",
+                Box::new(|| input.showteamscores.set(false)))
+       .unwrap();
+
     loop {
         for event in display.poll_events() {
             match event {
                 Event::ReceivedCharacter(c) => {
-                    info!("Got char {}", c);
+                    info!("Got char {:?}", c);
+                    con.put_char(c).unwrap();
+                }
+
+                Event::KeyboardInput(ElementState::Pressed, _, Some(key)) => {
+                    match key {
+                        Key::Right | Key::Left | Key::Up | Key::Down => {
+                            con.send_key(key);
+                        }
+
+                        _ => (),
+                    }
                 }
 
                 Event::Closed => {
@@ -157,13 +214,11 @@ fn main() {
                 _ => (),
             }
 
-            {
-                let mut frame = display.draw();
-                frame.clear_color(0.0, 0.0, 0.0, 0.0);
-                frame.clear_depth(0.0);
-            }
+            let mut frame = display.draw();
+            frame.clear_color(0.0, 0.0, 0.0, 0.0);
+            frame.clear_depth(0.0);
+            frame.finish().unwrap();
 
-            display.finish();
             display.swap_buffers().unwrap();
         }
     }

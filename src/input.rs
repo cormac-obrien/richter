@@ -18,59 +18,59 @@
 use std::cell::Cell;
 
 pub struct InputState {
-    pub forward: bool,
-    pub back: bool,
-    pub moveleft: bool,
-    pub moveright: bool,
+    pub forward: Cell<bool>,
+    pub back: Cell<bool>,
+    pub moveleft: Cell<bool>,
+    pub moveright: Cell<bool>,
 
-    pub moveup: bool,
-    pub movedown: bool,
+    pub moveup: Cell<bool>,
+    pub movedown: Cell<bool>,
 
-    pub left: bool,
-    pub right: bool,
-    pub lookup: bool,
-    pub lookdown: bool,
+    pub left: Cell<bool>,
+    pub right: Cell<bool>,
+    pub lookup: Cell<bool>,
+    pub lookdown: Cell<bool>,
 
-    pub speed: bool,
-    pub jump: bool,
-    pub strafe: bool,
-    pub attack: bool,
-    pub use_: bool,
+    pub speed: Cell<bool>,
+    pub jump: Cell<bool>,
+    pub strafe: Cell<bool>,
+    pub attack: Cell<bool>,
+    pub use_: Cell<bool>,
 
-    pub klook: bool,
-    pub mlook: bool,
+    pub klook: Cell<bool>,
+    pub mlook: Cell<bool>,
 
-    pub showscores: bool,
-    pub showteamscores: bool,
+    pub showscores: Cell<bool>,
+    pub showteamscores: Cell<bool>,
 }
 
 impl InputState {
     pub fn new() -> Self {
         InputState {
-            forward: false,
-            back: false,
-            moveleft: false,
-            moveright: false,
+            forward: Cell::new(false),
+            back: Cell::new(false),
+            moveleft: Cell::new(false),
+            moveright: Cell::new(false),
 
-            moveup: false,
-            movedown: false,
+            moveup: Cell::new(false),
+            movedown: Cell::new(false),
 
-            left: false,
-            right: false,
-            lookup: false,
-            lookdown: false,
+            left: Cell::new(false),
+            right: Cell::new(false),
+            lookup: Cell::new(false),
+            lookdown: Cell::new(false),
 
-            speed: false,
-            jump: false,
-            strafe: false,
-            attack: false,
-            use_: false,
+            speed: Cell::new(false),
+            jump: Cell::new(false),
+            strafe: Cell::new(false),
+            attack: Cell::new(false),
+            use_: Cell::new(false),
 
-            klook: false,
-            mlook: false,
+            klook: Cell::new(false),
+            mlook: Cell::new(false),
 
-            showscores: false,
-            showteamscores: false,
+            showscores: Cell::new(false),
+            showteamscores: Cell::new(false),
         }
     }
 }
