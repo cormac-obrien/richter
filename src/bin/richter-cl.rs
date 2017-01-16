@@ -194,7 +194,7 @@ fn main() {
             match event {
                 Event::ReceivedCharacter(c) => {
                     info!("Got char {:?}", c);
-                    con.put_char(c).unwrap();
+                    con.send_char(c).unwrap();
                 }
 
                 Event::KeyboardInput(ElementState::Pressed, _, Some(key)) => {
