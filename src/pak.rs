@@ -80,7 +80,7 @@ impl From<string::FromUtf8Error> for PakError {
 }
 
 /// A virtual file tree loaded from a PAK archive.
-pub struct Pak(HashMap<String, Vec<u8>>);
+pub struct Pak(HashMap<String, Box<[u8]>>);
 
 impl Pak {
     pub fn new() -> Pak {
@@ -151,7 +151,7 @@ impl Pak {
             let mut data: Vec<u8> = Vec::with_capacity(file_size as usize);
             try!((&mut infile).take(file_size as u64).read_to_end(&mut data));
 
-            self.0.insert(path, data);
+            self.0.insert(path, data.into_boxed_slice());
         }
         Ok(())
     }
@@ -165,14 +165,14 @@ impl Pak {
     /// let pak0 = Pak::load("pak0.pak");
     /// let progs_dat = pak0.open("progs.dat");
     /// ```
-    pub fn open(&self, path: &str) -> Option<Cursor<&Vec<u8>>> {
+    pub fn open(&self, path: &str) -> Option<&[u8]> {
         match self.0.get(path) {
-            Some(data) => Some(Cursor::new(data)),
+            Some(data) => Some(&data),
             None => None,
         }
     }
 
-    pub fn iter<'a>(&self) -> Iter<String, Vec<u8>> {
+    pub fn iter<'a>(&self) -> Iter<String, Box<[u8]>> {
         self.0.iter()
     }
 }

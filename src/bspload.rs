@@ -18,7 +18,7 @@
 use std::{fmt, io, string};
 use std::convert::From;
 use std::error::Error;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom};
 use bsp;
 use load::Load;
 use lump::Lump;
@@ -243,10 +243,8 @@ pub struct DiskBsp {
 }
 
 impl DiskBsp {
-    pub fn load<R>(bspfile: &mut R) -> Result<DiskBsp, BspLoadError>
-        where R: Read + Seek
-    {
-        let mut bspreader = BufReader::new(bspfile);
+    pub fn load(data: &[u8]) -> Result<DiskBsp, BspLoadError> {
+        let mut bspreader = BufReader::new(Cursor::new(data));
         let version = bspreader.load_i32le(None).unwrap();
         assert_eq!(version, VERSION);
 

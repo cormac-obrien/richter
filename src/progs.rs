@@ -21,7 +21,7 @@
 //!
 //!
 
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::fs::File;
 use std::path::Path;
 
@@ -150,9 +150,8 @@ enum Opcodes {
 }
 
 impl Progs {
-    pub fn load<R>(mut src: R) -> Progs
-        where R: Load + Seek
-    {
+    pub fn load(data: &[u8]) -> Progs {
+        let mut src = Cursor::new(data);
         assert!(src.load_i32le(None).unwrap() == VERSION);
         assert!(src.load_i32le(None).unwrap() == CRC);
 
