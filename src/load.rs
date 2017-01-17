@@ -17,16 +17,48 @@
 
 use std::collections::Bound;
 use std::collections::range::RangeArgument;
-use std::convert::AsRef;
+use std::convert::{AsRef, From};
 use std::error::Error;
+use std::fmt;
 use std::fs::File;
-use std::io::{BufReader, Cursor, Read};
+use std::io::{BufReader, Cursor, Error as IoError, Read};
 use byteorder::{LittleEndian, ReadBytesExt};
 
 #[derive(Debug)]
 pub enum LoadError {
-    Read,
+    Io(IoError),
     Range,
+}
+
+impl fmt::Display for LoadError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            LoadError::Io(ref err) => write!(f, "I/O error: {}", err),
+            LoadError::Range => write!(f, "Range error"),
+        }
+    }
+}
+
+impl Error for LoadError {
+    fn description(&self) -> &str {
+        match *self {
+            LoadError::Io(ref err) => err.description(),
+            LoadError::Range => "Value out of valid range",
+        }
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        match *self {
+            LoadError::Io(ref err) => Some(err),
+            LoadError::Range => None,
+        }
+    }
+}
+
+impl From<IoError> for LoadError {
+    fn from(err: IoError) -> Self {
+        LoadError::Io(err)
+    }
 }
 
 fn in_range<T>(x: T, range: &RangeArgument<T>) -> bool
@@ -65,11 +97,7 @@ fn in_range<T>(x: T, range: &RangeArgument<T>) -> bool
 
 pub trait Load: ReadBytesExt {
     fn load_u8(&mut self, range: Option<&RangeArgument<u8>>) -> Result<u8, LoadError> {
-        let x = match ReadBytesExt::read_u8(self) {
-            Ok(x) => x,
-            Err(_) => return Err(LoadError::Read),
-        };
-
+        let x = ReadBytesExt::read_u8(self)?;
         if let Some(r) = range {
             if !in_range(x, r) {
                 return Err(LoadError::Range);
@@ -80,10 +108,7 @@ pub trait Load: ReadBytesExt {
     }
 
     fn load_u16le(&mut self, range: Option<&RangeArgument<u16>>) -> Result<u16, LoadError> {
-        let x = match ReadBytesExt::read_u16::<LittleEndian>(self) {
-            Ok(x) => x,
-            Err(_) => return Err(LoadError::Read),
-        };
+        let x = ReadBytesExt::read_u16::<LittleEndian>(self)?;
 
         if let Some(r) = range {
             if !in_range(x, r) {
@@ -95,10 +120,7 @@ pub trait Load: ReadBytesExt {
     }
 
     fn load_i16le(&mut self, range: Option<&RangeArgument<i16>>) -> Result<i16, LoadError> {
-        let x = match ReadBytesExt::read_i16::<LittleEndian>(self) {
-            Ok(x) => x,
-            Err(_) => return Err(LoadError::Read),
-        };
+        let x = ReadBytesExt::read_i16::<LittleEndian>(self)?;
 
         if let Some(r) = range {
             if !in_range(x, r) {
@@ -110,10 +132,7 @@ pub trait Load: ReadBytesExt {
     }
 
     fn load_u32le(&mut self, range: Option<&RangeArgument<u32>>) -> Result<u32, LoadError> {
-        let x = match ReadBytesExt::read_u32::<LittleEndian>(self) {
-            Ok(x) => x,
-            Err(_) => return Err(LoadError::Read),
-        };
+        let x = ReadBytesExt::read_u32::<LittleEndian>(self)?;
 
         if let Some(r) = range {
             if !in_range(x, r) {
@@ -125,10 +144,7 @@ pub trait Load: ReadBytesExt {
     }
 
     fn load_i32le(&mut self, range: Option<&RangeArgument<i32>>) -> Result<i32, LoadError> {
-        let x = match ReadBytesExt::read_i32::<LittleEndian>(self) {
-            Ok(x) => x,
-            Err(_) => return Err(LoadError::Read),
-        };
+        let x = ReadBytesExt::read_i32::<LittleEndian>(self)?;
 
         if let Some(r) = range {
             if !in_range(x, r) {
@@ -140,10 +156,7 @@ pub trait Load: ReadBytesExt {
     }
 
     fn load_f32le(&mut self, range: Option<&RangeArgument<f32>>) -> Result<f32, LoadError> {
-        let x = match ReadBytesExt::read_f32::<LittleEndian>(self) {
-            Ok(x) => x,
-            Err(_) => return Err(LoadError::Read),
-        };
+        let x = ReadBytesExt::read_f32::<LittleEndian>(self)?;
 
         if let Some(r) = range {
             if !in_range(x, r) {
