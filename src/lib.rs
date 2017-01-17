@@ -30,6 +30,8 @@ extern crate glium;
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
+#[macro_use]
+extern crate nom;
 extern crate num;
 #[macro_use]
 extern crate num_derive;
@@ -39,6 +41,7 @@ extern crate time;
 
 pub mod bsp;
 pub mod bspload;
+pub mod bspnom;
 pub mod client;
 pub mod console;
 pub mod engine;
@@ -55,3 +58,4 @@ pub mod pak;
 pub mod progs;
 pub mod proto;
 // pub mod sprite;
+pub mod wad;
