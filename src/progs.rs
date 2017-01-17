@@ -153,8 +153,8 @@ impl Progs {
     pub fn load<R>(mut src: R) -> Progs
         where R: Load + Seek
     {
-        assert!(src.load_i32le() == VERSION);
-        assert!(src.load_i32le() == CRC);
+        assert!(src.load_i32le(None).unwrap() == VERSION);
+        assert!(src.load_i32le(None).unwrap() == CRC);
 
         let mut lumps = [Lump {
             offset: 0,
@@ -162,21 +162,21 @@ impl Progs {
         }; LUMP_COUNT];
         for i in 0..LUMP_COUNT {
             lumps[i] = Lump {
-                offset: src.load_i32le() as usize,
-                count: src.load_i32le() as usize,
+                offset: src.load_i32le(None).unwrap() as usize,
+                count: src.load_i32le(None).unwrap() as usize,
             };
         }
 
-        let field_count = src.load_i32le() as usize;
+        let field_count = src.load_i32le(None).unwrap() as usize;
 
         let statement_lump = &lumps[LumpId::Statements as usize];
         src.seek(SeekFrom::Start(statement_lump.offset as u64)).unwrap();
         let mut statement_vec = Vec::with_capacity(statement_lump.count);
         for _ in 0..statement_lump.count {
-            let op = src.load_u16le();
+            let op = src.load_u16le(None).unwrap();
             let mut args = [0; 3];
             for i in 0..args.len() {
-                args[i] = src.load_i16le();
+                args[i] = src.load_i16le(None).unwrap();
             }
             statement_vec.push(Statement {
                 op: op,
@@ -197,7 +197,7 @@ impl Progs {
     }
 
     fn load_f(&self, addr: u16) -> f32 {
-        (&self.data[addr as usize..]).load_f32le()
+        (&self.data[addr as usize..]).load_f32le(None).unwrap()
     }
 
     fn store_f(&mut self, val: f32, addr: u16) {
@@ -208,7 +208,7 @@ impl Progs {
         let mut components = [0.0; 3];
         let mut src = &self.data[addr as usize..];
         for i in 0..components.len() {
-            components[i] = src.load_f32le();
+            components[i] = src.load_f32le(None).unwrap();
         }
         Vec3::from_components(components)
     }

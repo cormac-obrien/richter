@@ -27,6 +27,7 @@ use lump::Lump;
 pub enum BspLoadError {
     Io(io::Error),
     Utf8(string::FromUtf8Error),
+    Range,
 }
 
 impl fmt::Display for BspLoadError {
@@ -34,6 +35,7 @@ impl fmt::Display for BspLoadError {
         match *self {
             BspLoadError::Io(ref err) => write!(f, "I/O error: {}", err),
             BspLoadError::Utf8(ref err) => write!(f, "UTF-8 parse error: {}", err),
+            BspLoadError::Range => write!(f, "Range error"),
         }
     }
 }
@@ -43,6 +45,7 @@ impl Error for BspLoadError {
         match *self {
             BspLoadError::Io(ref err) => err.description(),
             BspLoadError::Utf8(ref err) => err.description(),
+            BspLoadError::Range => "data not in valid range",
         }
     }
 
@@ -50,6 +53,7 @@ impl Error for BspLoadError {
         match *self {
             BspLoadError::Io(ref err) => Some(err),
             BspLoadError::Utf8(ref err) => Some(err),
+            BspLoadError::Range => None,
         }
     }
 }
@@ -243,14 +247,14 @@ impl DiskBsp {
         where R: Read + Seek
     {
         let mut bspreader = BufReader::new(bspfile);
-        let version = bspreader.load_i32le();
+        let version = bspreader.load_i32le(None).unwrap();
         assert_eq!(version, VERSION);
 
         let mut lumps = Vec::with_capacity(15);
         for _ in 0..15 {
             lumps.push(Lump {
-                offset: bspreader.load_i32le() as usize,
-                size: bspreader.load_i32le() as usize,
+                offset: bspreader.load_i32le(None).unwrap() as usize,
+                size: bspreader.load_i32le(None).unwrap() as usize,
             });
         }
 
@@ -271,9 +275,11 @@ impl DiskBsp {
         let mut planes = Vec::with_capacity(plane_count);
         for _ in 0..plane_count {
             planes.push(DiskPlane {
-                normal: [bspreader.load_f32le(), bspreader.load_f32le(), bspreader.load_f32le()],
-                dist: bspreader.load_f32le(),
-                kind: bspreader.load_i32le(),
+                normal: [bspreader.load_f32le(None).unwrap(),
+                         bspreader.load_f32le(None).unwrap(),
+                         bspreader.load_f32le(None).unwrap()],
+                dist: bspreader.load_f32le(None).unwrap(),
+                kind: bspreader.load_i32le(None).unwrap(),
             });
         }
         assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
@@ -282,22 +288,22 @@ impl DiskBsp {
         // load textures
         lump = &lumps[LumpId::Textures as usize];
         try!(bspreader.seek(SeekFrom::Start(lump.offset as u64)));
-        let tex_count = bspreader.load_i32le() as usize;
+        let tex_count = bspreader.load_i32le(None).unwrap() as usize;
         let mut tex_offsets = Vec::with_capacity(tex_count);
         for _ in 0..tex_count {
-            tex_offsets.push(bspreader.load_i32le() as usize);
+            tex_offsets.push(bspreader.load_i32le(None).unwrap() as usize);
         }
         let mut textures = Vec::with_capacity(tex_count);
         for t in 0..tex_count {
             try!(bspreader.seek(SeekFrom::Start((lump.offset + tex_offsets[t]) as u64)));
             let mut tex_name: [u8; 16] = [0; 16];
             try!(bspreader.read(&mut tex_name));
-            let width = bspreader.load_u32le();
-            let height = bspreader.load_u32le();
+            let width = bspreader.load_u32le(None).unwrap();
+            let height = bspreader.load_u32le(None).unwrap();
             let mut mipmap_vec = Vec::new();
             let mut mip_offsets = [0; MIPLEVELS];
             for m in 0..mip_offsets.len() {
-                mip_offsets[m] = bspreader.load_u32le() as usize;
+                mip_offsets[m] = bspreader.load_u32le(None).unwrap() as usize;
             }
             for m in 0..mip_offsets.len() {
                 let factor = 2usize.pow(m as u32);
@@ -329,7 +335,7 @@ impl DiskBsp {
         for _ in 0..vert_count {
             let mut position = [0.0; 3];
             for i in 0..position.len() {
-                position[i] = bspreader.load_f32le();
+                position[i] = bspreader.load_f32le(None).unwrap();
             }
 
             vertices.push(DiskVertex { position: position });
@@ -352,18 +358,19 @@ impl DiskBsp {
         let node_count = lump.size / NODE_SIZE;
         let mut nodes = Vec::with_capacity(node_count);
         for _ in 0..node_count {
-            let plane_id = bspreader.load_i32le();
-            let children = [bspreader.load_i16le(), bspreader.load_i16le()];
+            let plane_id = bspreader.load_i32le(None).unwrap();
+            let children = [bspreader.load_i16le(None).unwrap(),
+                            bspreader.load_i16le(None).unwrap()];
             let mut mins = [0i16; 3];
             for i in 0..mins.len() {
-                mins[i] = bspreader.load_i16le();
+                mins[i] = bspreader.load_i16le(None).unwrap();
             }
             let mut maxs = [0i16; 3];
             for i in 0..maxs.len() {
-                maxs[i] = bspreader.load_i16le();
+                maxs[i] = bspreader.load_i16le(None).unwrap();
             }
-            let face_id = bspreader.load_u16le();
-            let face_count = bspreader.load_u16le();
+            let face_id = bspreader.load_u16le(None).unwrap();
+            let face_count = bspreader.load_u16le(None).unwrap();
 
             nodes.push(DiskNode {
                 plane_id: plane_id,
@@ -387,11 +394,11 @@ impl DiskBsp {
             let mut vecs = [[0.0; 4]; 2];
             for i in 0..vecs.len() {
                 for j in 0..vecs[0].len() {
-                    vecs[i][j] = bspreader.load_f32le();
+                    vecs[i][j] = bspreader.load_f32le(None).unwrap();
                 }
             }
-            let tex_id = bspreader.load_i32le();
-            let flags = bspreader.load_i32le();
+            let tex_id = bspreader.load_i32le(None).unwrap();
+            let flags = bspreader.load_i32le(None).unwrap();
             texinfos.push(DiskTextureInfo {
                 vecs: vecs,
                 tex_id: tex_id,
@@ -408,17 +415,17 @@ impl DiskBsp {
         let face_count = lump.size / FACE_SIZE;
         let mut faces = Vec::with_capacity(face_count);
         for _ in 0..face_count {
-            let plane_id = bspreader.load_i16le();
-            let side = bspreader.load_i16le();
-            let edge_id = bspreader.load_i32le();
-            let edge_count = bspreader.load_i16le();
+            let plane_id = bspreader.load_i16le(None).unwrap();
+            let side = bspreader.load_i16le(None).unwrap();
+            let edge_id = bspreader.load_i32le(None).unwrap();
+            let edge_count = bspreader.load_i16le(None).unwrap();
             assert!(edge_count >= 3);
-            let texinfo = bspreader.load_i16le();
+            let texinfo = bspreader.load_i16le(None).unwrap();
             let mut styles = [0; bsp::MAX_LIGHTSTYLE_COUNT];
             for i in 0..styles.len() {
-                styles[i] = bspreader.load_u8();
+                styles[i] = bspreader.load_u8(None).unwrap();
             }
-            let light_off = bspreader.load_i32le();
+            let light_off = bspreader.load_i32le(None).unwrap();
             faces.push(DiskFace {
                 plane_id: plane_id,
                 side: side,
@@ -448,8 +455,9 @@ impl DiskBsp {
         let mut clipnodes = Vec::with_capacity(clipnode_count);
         for _ in 0..clipnode_count {
             clipnodes.push(DiskClipNode {
-                plane_id: bspreader.load_i32le(),
-                children: [bspreader.load_i16le(), bspreader.load_i16le()],
+                plane_id: bspreader.load_i32le(None).unwrap(),
+                children: [bspreader.load_i16le(None).unwrap(),
+                           bspreader.load_i16le(None).unwrap()],
             });
         }
         assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
@@ -462,18 +470,18 @@ impl DiskBsp {
         let leaf_count = lump.size / LEAF_SIZE;
         let mut leaves = Vec::with_capacity(leaf_count);
         for _ in 0..leaf_count {
-            let contents = bspreader.load_i32le();
-            let vis_offset = bspreader.load_i32le();
+            let contents = bspreader.load_i32le(None).unwrap();
+            let vis_offset = bspreader.load_i32le(None).unwrap();
             let mut mins = [0i16; 3];
             for i in 0..mins.len() {
-                mins[i] = bspreader.load_i16le();
+                mins[i] = bspreader.load_i16le(None).unwrap();
             }
             let mut maxs = [0i16; 3];
             for i in 0..maxs.len() {
-                maxs[i] = bspreader.load_i16le();
+                maxs[i] = bspreader.load_i16le(None).unwrap();
             }
-            let marksurf_id = bspreader.load_u16le();
-            let marksurf_count = bspreader.load_u16le();
+            let marksurf_id = bspreader.load_u16le(None).unwrap();
+            let marksurf_count = bspreader.load_u16le(None).unwrap();
             let mut sounds = [0u8; NUM_AMBIENTS];
             try!(bspreader.read(&mut sounds));
             leaves.push(DiskLeaf {
@@ -496,7 +504,7 @@ impl DiskBsp {
         let marksurface_count = lump.size / MARKSURFACE_SIZE;
         let mut marksurfaces = Vec::with_capacity(marksurface_count);
         for _ in 0..marksurface_count {
-            marksurfaces.push(bspreader.load_u16le());
+            marksurfaces.push(bspreader.load_u16le(None).unwrap());
         }
         assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
                    try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
@@ -508,7 +516,10 @@ impl DiskBsp {
         let edge_count = lump.size / EDGE_SIZE;
         let mut edges = Vec::with_capacity(edge_count);
         for _ in 0..edge_count {
-            edges.push(DiskEdge { vertex_ids: [bspreader.load_u16le(), bspreader.load_u16le()] });
+            edges.push(DiskEdge {
+                vertex_ids: [bspreader.load_u16le(None).unwrap(),
+                             bspreader.load_u16le(None).unwrap()],
+            });
         }
         assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
                    try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
@@ -520,7 +531,7 @@ impl DiskBsp {
         let surfedge_count = lump.size / SURFEDGE_SIZE;
         let mut surfedges = Vec::with_capacity(surfedge_count);
         for i in 0..surfedge_count {
-            let edge = bspreader.load_i32le();
+            let edge = bspreader.load_i32le(None).unwrap();
             debug!("Edge table {}: {}", i, edge);
             surfedges.push(edge);
         }
@@ -536,23 +547,23 @@ impl DiskBsp {
         for _ in 0..model_count {
             let mut mins = [0.0; 3];
             for i in 0..mins.len() {
-                mins[i] = bspreader.load_f32le();
+                mins[i] = bspreader.load_f32le(None).unwrap();
             }
             let mut maxs = [0.0; 3];
             for i in 0..maxs.len() {
-                maxs[i] = bspreader.load_f32le();
+                maxs[i] = bspreader.load_f32le(None).unwrap();
             }
             let mut origin = [0.0; 3];
             for i in 0..origin.len() {
-                origin[i] = bspreader.load_f32le();
+                origin[i] = bspreader.load_f32le(None).unwrap();
             }
             let mut roots = [0; MAX_HULLS];
             for i in 0..roots.len() {
-                roots[i] = bspreader.load_i32le();
+                roots[i] = bspreader.load_i32le(None).unwrap();
             }
-            let leaf_count = bspreader.load_i32le();
-            let face_id = bspreader.load_i32le();
-            let face_count = bspreader.load_i32le();
+            let leaf_count = bspreader.load_i32le(None).unwrap();
+            let face_id = bspreader.load_i32le(None).unwrap();
+            let face_count = bspreader.load_i32le(None).unwrap();
             models.push(DiskModel {
                 mins: mins,
                 maxs: maxs,

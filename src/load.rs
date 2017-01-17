@@ -15,34 +15,143 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use std::collections::Bound;
+use std::collections::range::RangeArgument;
 use std::convert::AsRef;
+use std::error::Error;
 use std::fs::File;
-use std::io::{BufReader, Cursor, Read, Seek};
+use std::io::{BufReader, Cursor, Read};
 use byteorder::{LittleEndian, ReadBytesExt};
 
+#[derive(Debug)]
+pub enum LoadError {
+    Read,
+    Range,
+}
+
+fn in_range<T>(x: T, range: &RangeArgument<T>) -> bool
+    where T: PartialOrd + Copy
+{
+    match range.start() {
+        Bound::Included(&s) => {
+            if x < s {
+                return false;
+            }
+        }
+        Bound::Excluded(&s) => {
+            if x <= s {
+                return false;
+            }
+        }
+        Bound::Unbounded => (),
+    }
+
+    match range.end() {
+        Bound::Included(&e) => {
+            if x > e {
+                return false;
+            }
+        }
+        Bound::Excluded(&e) => {
+            if x >= e {
+                return false;
+            }
+        }
+        Bound::Unbounded => (),
+    }
+
+    true
+}
+
 pub trait Load: ReadBytesExt {
-    fn load_u8(&mut self) -> u8 {
-        ReadBytesExt::read_u8(self).unwrap()
+    fn load_u8(&mut self, range: Option<&RangeArgument<u8>>) -> Result<u8, LoadError> {
+        let x = match ReadBytesExt::read_u8(self) {
+            Ok(x) => x,
+            Err(_) => return Err(LoadError::Read),
+        };
+
+        if let Some(r) = range {
+            if !in_range(x, r) {
+                return Err(LoadError::Range);
+            }
+        }
+
+        Ok(x)
     }
 
-    fn load_u16le(&mut self) -> u16 {
-        self.read_u16::<LittleEndian>().unwrap()
+    fn load_u16le(&mut self, range: Option<&RangeArgument<u16>>) -> Result<u16, LoadError> {
+        let x = match ReadBytesExt::read_u16::<LittleEndian>(self) {
+            Ok(x) => x,
+            Err(_) => return Err(LoadError::Read),
+        };
+
+        if let Some(r) = range {
+            if !in_range(x, r) {
+                return Err(LoadError::Range);
+            }
+        }
+
+        Ok(x)
     }
 
-    fn load_i16le(&mut self) -> i16 {
-        self.read_i16::<LittleEndian>().unwrap()
+    fn load_i16le(&mut self, range: Option<&RangeArgument<i16>>) -> Result<i16, LoadError> {
+        let x = match ReadBytesExt::read_i16::<LittleEndian>(self) {
+            Ok(x) => x,
+            Err(_) => return Err(LoadError::Read),
+        };
+
+        if let Some(r) = range {
+            if !in_range(x, r) {
+                return Err(LoadError::Range);
+            }
+        }
+
+        Ok(x)
     }
 
-    fn load_u32le(&mut self) -> u32 {
-        self.read_u32::<LittleEndian>().unwrap()
+    fn load_u32le(&mut self, range: Option<&RangeArgument<u32>>) -> Result<u32, LoadError> {
+        let x = match ReadBytesExt::read_u32::<LittleEndian>(self) {
+            Ok(x) => x,
+            Err(_) => return Err(LoadError::Read),
+        };
+
+        if let Some(r) = range {
+            if !in_range(x, r) {
+                return Err(LoadError::Range);
+            }
+        }
+
+        Ok(x)
     }
 
-    fn load_i32le(&mut self) -> i32 {
-        self.read_i32::<LittleEndian>().unwrap()
+    fn load_i32le(&mut self, range: Option<&RangeArgument<i32>>) -> Result<i32, LoadError> {
+        let x = match ReadBytesExt::read_i32::<LittleEndian>(self) {
+            Ok(x) => x,
+            Err(_) => return Err(LoadError::Read),
+        };
+
+        if let Some(r) = range {
+            if !in_range(x, r) {
+                return Err(LoadError::Range);
+            }
+        }
+
+        Ok(x)
     }
 
-    fn load_f32le(&mut self) -> f32 {
-        self.read_f32::<LittleEndian>().unwrap()
+    fn load_f32le(&mut self, range: Option<&RangeArgument<f32>>) -> Result<f32, LoadError> {
+        let x = match ReadBytesExt::read_f32::<LittleEndian>(self) {
+            Ok(x) => x,
+            Err(_) => return Err(LoadError::Read),
+        };
+
+        if let Some(r) = range {
+            if !in_range(x, r) {
+                return Err(LoadError::Range);
+            }
+        }
+
+        Ok(x)
     }
 }
 
