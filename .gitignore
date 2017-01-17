@@ -1,3 +1,5 @@
 target
 *.bak
 *.bk
+*.pak
+*.pak.d
