@@ -27,7 +27,7 @@ use std::mem::transmute;
 use std::path::Path;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use load::Load;
+use load::{Load, LoadError};
 use math::Vec3;
 use num::FromPrimitive;
 
@@ -76,13 +76,12 @@ struct Statement {
 
 #[repr(C)]
 struct Function {
-    text_start: i32,
-    arg_start: i32,
-    locals: i32,
-    profile: i32,
-    name_id: i32,
-    srcfile_id: i32,
-    argc: i32,
+    text_start: usize,
+    arg_start: usize,
+    locals: usize,
+    name_id: usize,
+    srcfile_id: usize,
+    argc: usize,
     argsz: [u8; MAX_ARGS],
 }
 
@@ -96,7 +95,7 @@ pub struct Progs {
     data: Box<[u8]>,
 }
 
-#[derive(FromPrimitive)]
+#[derive(Debug, FromPrimitive)]
 enum Opcode {
     Done = 0,
     MulF = 1,
@@ -167,32 +166,29 @@ enum Opcode {
 }
 
 impl Progs {
-    pub fn load(data: &[u8]) -> Progs {
+    pub fn load(data: &[u8]) -> Result<Progs, LoadError> {
         let mut src = Cursor::new(data);
-        assert!(src.load_i32le(None).unwrap() == VERSION);
-        assert!(src.load_i32le(None).unwrap() == CRC);
+        assert!(src.load_i32le(None)? == VERSION);
+        assert!(src.load_i32le(None)? == CRC);
 
-        let mut lumps = [Lump {
-            offset: 0,
-            count: 0,
-        }; LUMP_COUNT];
+        let mut lumps = Vec::new();
         for i in 0..LUMP_COUNT {
-            lumps[i] = Lump {
-                offset: src.load_i32le(None).unwrap() as usize,
-                count: src.load_i32le(None).unwrap() as usize,
-            };
+            lumps.push(Lump {
+                offset: src.load_i32le(Some(&(0..)))? as usize,
+                count: src.load_i32le(Some(&(0..)))? as usize,
+            });
         }
 
-        let field_count = src.load_i32le(None).unwrap() as usize;
+        let field_count = src.load_i32le(Some(&(0..)))? as usize;
 
         let statement_lump = &lumps[LumpId::Statements as usize];
-        src.seek(SeekFrom::Start(statement_lump.offset as u64)).unwrap();
+        src.seek(SeekFrom::Start(statement_lump.offset as u64))?;
         let mut statement_vec = Vec::with_capacity(statement_lump.count);
         for _ in 0..statement_lump.count {
-            let op = src.load_u16le(None).unwrap();
+            let op = src.load_u16le(None)?;
             let mut args = [0; 3];
             for i in 0..args.len() {
-                args[i] = src.load_i16le(None).unwrap();
+                args[i] = src.load_i16le(None)?;
             }
             statement_vec.push(Statement {
                 op: op,
@@ -200,16 +196,33 @@ impl Progs {
             });
         }
 
+        let function_lump = &lumps[LumpId::Functions as usize];
+        src.seek(SeekFrom::Start(function_lump.offset as u64))?;
+        let mut functions = Vec::with_capacity(function_lump.count);
+        for _ in 0..function_lump.count {
+            functions.push(Function {
+                text_start: src.load_i32le(Some(&(0..)))? as usize,
+                arg_start: src.load_i32le(Some(&(0..)))? as usize,
+                locals: src.load_i32le(Some(&(0..)))? as usize,
+                name_id: src.load_i32le(Some(&(0..)))? as usize,
+                srcfile_id: src.load_i32le(Some(&(0..)))? as usize,
+                argc: src.load_i32le(Some(&(0..)))? as usize,
+                argsz: [src.load_u8(None)?, src.load_u8(None)?, src.load_u8(None)?, src.load_u8(None)?,
+                    src.load_u8(None)?, src.load_u8(None)?, src.load_u8(None)?, src.load_u8(None)?,
+                ]
+            });
+        }
+
         let globaldef_lump = &lumps[LumpId::GlobalDefs as usize];
-        src.seek(SeekFrom::Start(globaldef_lump.offset as u64)).unwrap();
+        src.seek(SeekFrom::Start(globaldef_lump.offset as u64))?;
         // let mut globaldef_vec = Vec::with_capacity(globaldef_lump.count);
         for _ in 0..globaldef_lump.count {
         }
 
-        Progs {
+        Ok(Progs {
             text: Default::default(),
             data: Default::default(),
-        }
+        })
     }
 
     fn get_f(&self, addr: u16) -> f32 {
