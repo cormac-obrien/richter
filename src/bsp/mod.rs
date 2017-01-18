@@ -86,6 +86,7 @@ mod bspload;
 use std;
 use std::collections::HashMap;
 use std::fmt;
+use std::io::Cursor;
 
 use engine;
 use gfx;
@@ -93,6 +94,7 @@ use glium::{Program, Texture2d, VertexBuffer};
 use glium::backend::glutin_backend::GlutinFacade as Display;
 use glium::index::{DrawCommandNoIndices, DrawCommandsNoIndicesBuffer, PrimitiveType};
 use glium::uniforms::{MagnifySamplerFilter, MinifySamplerFilter, SamplerWrapFunction};
+use load::{Load, LoadError};
 use math;
 use math::{Mat4, Vec3};
 use num::FromPrimitive;
@@ -142,6 +144,22 @@ struct Plane {
 }
 
 impl Plane {
+    fn load<L>(data: &mut L) -> Result<Plane, LoadError>
+        where L: Load
+    {
+        let mut normal = [0.0f32; 3];
+        for i in 0..normal.len() {
+            normal[i] = data.load_f32le(None)?;
+        }
+        let dist = data.load_f32le(None)?;
+        let kind = data.load_i32le(Some(&(0..6)))?;
+        Ok(Plane {
+            normal: Vec3::from_components(normal),
+            distance: dist,
+            kind: PlaneKind::from_i32(kind).unwrap(),
+        })
+    }
+
     fn from_disk(p: &bspload::DiskPlane) -> Plane {
         Plane {
             normal: convert_coords(p.normal),
@@ -203,6 +221,33 @@ struct TextureInfo {
 }
 
 impl TextureInfo {
+    fn load<L>(data: L) -> Result<TextureInfo, LoadError>
+        where L: Load
+    {
+        let mut s_vec = [0.0f32; 3];
+        for i in 0..s_vec.len() {
+            s_vec[i] = data.load_f32le(None)?;
+        }
+        let s_off = data.load_f32le(None)?;
+
+        let mut t_vec = [0.0f32; 3];
+        for i in 0..t_vec.len() {
+            t_vec[i] = data.load_f32le(None)?;
+        }
+        let t_off = data.load_f32le(None)?;
+        let tex_id = data.load_i32le(Some(&(0..)))?;
+        let anim = data.load_i32le(Some(&(0..2)))?;
+
+        Ok(TextureInfo {
+            s_vector: s_vec,
+            s_offset: s_off,
+            t_vector: t_vec,
+            t_offset: t_off,
+            tex_id: tex_id,
+            animated: anim == 1,
+        })
+    }
+
     fn from_disk(s: &bspload::DiskTextureInfo) -> TextureInfo {
         let tex_id: u32;
         if s.tex_id < 0 {
