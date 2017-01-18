@@ -40,8 +40,6 @@ extern crate regex;
 extern crate time;
 
 pub mod bsp;
-pub mod bspload;
-pub mod bspnom;
 pub mod client;
 pub mod console;
 pub mod engine;

@@ -27,7 +27,6 @@ use std::process::exit;
 use glium::Surface;
 use glium::glutin::{ElementState, Event, VirtualKeyCode as Key};
 use richter::bsp;
-use richter::bspload;
 use richter::client::{Client, CxnStatus};
 use richter::console::Console;
 use richter::entity;
@@ -246,8 +245,8 @@ fn main() {
         }
     }
 
-    let mut bsp_data = pak.open("maps/e1m1.bsp").unwrap();
-    let bsp = bsp::Bsp::from_disk(&display, bspload::DiskBsp::load(&mut bsp_data).unwrap());
+    let bsp_data = pak.open("maps/e1m1.bsp").unwrap();
+    let bsp = bsp::Bsp::load(&display, bsp_data);
 
     let progs = progs::Progs::load(pak.open("progs.dat").unwrap());
 

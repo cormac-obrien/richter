@@ -81,11 +81,12 @@
 //! indices forming a line segment. This results in nearly 100% redundancy in the vertex indices.
 //! It turns out that this edge system is integral to Quake's software renderer.
 
+mod bspload;
+
 use std;
 use std::collections::HashMap;
 use std::fmt;
 
-use bspload;
 use engine;
 use gfx;
 use glium::{Program, Texture2d, VertexBuffer};
@@ -289,21 +290,23 @@ impl std::convert::From<i32> for LeafType {
             -4 => LeafType::Acid,
             -5 => LeafType::Lava,
             -6 => LeafType::Sky,
-            _ => LeafType::Water
+            _ => LeafType::Water,
         }
     }
 }
 
 impl fmt::Debug for LeafType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", match *self {
-            LeafType::Normal => "Normal",
-            LeafType::Void => "Void",
-            LeafType::Water => "Water",
-            LeafType::Acid => "Acid",
-            LeafType::Lava => "Lava",
-            LeafType::Sky => "Sky",
-        })
+        write!(f,
+               "{}",
+               match *self {
+                   LeafType::Normal => "Normal",
+                   LeafType::Void => "Void",
+                   LeafType::Water => "Water",
+                   LeafType::Acid => "Acid",
+                   LeafType::Lava => "Lava",
+                   LeafType::Sky => "Sky",
+               })
     }
 }
 
@@ -392,12 +395,14 @@ fn parse_edicts(entstring: &str) -> Option<Vec<HashMap<String, String>>> {
     loop {
         match lines.next() {
             None => break,
-            Some(l) => match *l {
-                "\u{0}" => break,
-                "{" => (),
-                _ => {
-                    error!("Entities must begin with '{{' (got {:?})", *l);
-                    return None;
+            Some(l) => {
+                match *l {
+                    "\u{0}" => break,
+                    "{" => (),
+                    _ => {
+                        error!("Entities must begin with '{{' (got {:?})", *l);
+                        return None;
+                    }
                 }
             }
         }
@@ -440,12 +445,14 @@ fn parse_edicts(entstring: &str) -> Option<Vec<HashMap<String, String>>> {
 }
 
 impl Bsp {
-    pub fn from_disk(display: &Display, src: bspload::DiskBsp) -> Bsp {
+    pub fn load(display: &Display, data: &[u8]) -> Bsp {
+        let src = bspload::DiskBsp::load(data).unwrap();
         let entities = parse_edicts(&src.entstring).unwrap();
 
-        let planes: Vec<Plane> = src.planes.iter()
-                .map(|p| Plane::from_disk(p))
-                .collect();
+        let planes: Vec<Plane> = src.planes
+                                    .iter()
+                                    .map(|p| Plane::from_disk(p))
+                                    .collect();
 
         // Holds the sequence of frames for the texture's primary animation
         let mut anims: [Option<usize>; MAX_TEXTURE_FRAMES] = [None; MAX_TEXTURE_FRAMES];
@@ -453,7 +460,10 @@ impl Bsp {
         // Holds the sequence of frames for the texture's secondary animation
         let mut alt_anims: [Option<usize>; MAX_TEXTURE_FRAMES] = [None; MAX_TEXTURE_FRAMES];
 
-        let mut textures: Vec<Texture> = src.textures.iter().map(|t| Texture::from_disk(display, t)).collect();
+        let mut textures: Vec<Texture> = src.textures
+                                            .iter()
+                                            .map(|t| Texture::from_disk(display, t))
+                                            .collect();
 
         // Sequence texture animations. See
         // https://github.com/id-Software/Quake/blob/master/WinQuake/gl_model.c#L397
@@ -487,7 +497,7 @@ impl Bsp {
                     altframe_max = 0;
                     anims[frame_max] = Some(i);
                     frame_max += 1;
-                },
+                }
 
                 ASCII_A...ASCII_J | ASCII_a...ASCII_j => {
                     // capitalize if lowercase
@@ -499,7 +509,7 @@ impl Bsp {
                     frame_max = 0;
                     alt_anims[altframe_max as usize] = Some(i);
                     altframe_max += 1;
-                },
+                }
 
                 _ => panic!("Bad frame specifier in animated texture ('{}')", frame_max),
             }
@@ -507,7 +517,8 @@ impl Bsp {
             for j in i + 1..textures.len() {
                 let mut tex2 = &textures[j];
 
-                if !textures[j].name.starts_with("+") || textures[j].name[2..] != textures[i].name[2..] {
+                if !textures[j].name.starts_with("+") ||
+                   textures[j].name[2..] != textures[i].name[2..] {
                     continue;
                 }
 
@@ -629,17 +640,20 @@ impl Bsp {
             });
         }
 
-        let nodes: Vec<Node> = src.nodes.iter()
-            .map(|n| Node::from_disk(n))
-            .collect();
+        let nodes: Vec<Node> = src.nodes
+                                  .iter()
+                                  .map(|n| Node::from_disk(n))
+                                  .collect();
 
-        let texinfo: Vec<TextureInfo> = src.texinfo.iter()
-            .map(|t| TextureInfo::from_disk(t))
-            .collect();
+        let texinfo: Vec<TextureInfo> = src.texinfo
+                                           .iter()
+                                           .map(|t| TextureInfo::from_disk(t))
+                                           .collect();
 
-        let clipnodes: Vec<ClipNode> = src.clipnodes.iter()
-            .map(|c| ClipNode::from_disk(c))
-            .collect();
+        let clipnodes: Vec<ClipNode> = src.clipnodes
+                                          .iter()
+                                          .map(|c| ClipNode::from_disk(c))
+                                          .collect();
 
         let mut leaves = Vec::with_capacity(src.leaves.len());
         for disk_leaf in src.leaves.iter() {
@@ -663,9 +677,10 @@ impl Bsp {
 
         let vertex_buffer = VertexBuffer::new(display, &vertices).unwrap();
 
-        let models: Vec<Model> = src.models.iter()
-            .map(|m| Model::from_disk(m))
-            .collect();
+        let models: Vec<Model> = src.models
+                                    .iter()
+                                    .map(|m| Model::from_disk(m))
+                                    .collect();
 
         Bsp {
             entities: entities,
@@ -712,7 +727,8 @@ impl Bsp {
             }
             commands.shrink_to_fit();
 
-            let command_buffer = DrawCommandsNoIndicesBuffer::empty(display, commands.len()).unwrap();
+            let command_buffer = DrawCommandsNoIndicesBuffer::empty(display, commands.len())
+                                     .unwrap();
             command_buffer.write(commands.as_slice());
 
             let surf = &self.texinfo[surface_id as usize];
@@ -733,7 +749,7 @@ impl Bsp {
                     }
 
                     &self.textures[t]
-                },
+                }
 
                 None => base_tex,
             };
@@ -748,12 +764,12 @@ impl Bsp {
                             .wrap_function(SamplerWrapFunction::Repeat),
             };
 
-            target.draw(
-                &self.vertex_buffer,
-                command_buffer.with_primitive_type(PrimitiveType::TriangleFan),
-                &program,
-                &uniforms,
-                &gfx::get_draw_parameters()).unwrap();
+            target.draw(&self.vertex_buffer,
+                        command_buffer.with_primitive_type(PrimitiveType::TriangleFan),
+                        &program,
+                        &uniforms,
+                        &gfx::get_draw_parameters())
+                  .unwrap();
 
             first_face += face_count;
         }
@@ -761,7 +777,9 @@ impl Bsp {
         target.finish().unwrap();
     }
 
-    fn find_leaf<V>(&self, point: V) -> &Leaf where V: AsRef<Vec3> {
+    fn find_leaf<V>(&self, point: V) -> &Leaf
+        where V: AsRef<Vec3>
+    {
         let mut node_index = 0;
 
         while node_index & (1 << 15) == 0 {
