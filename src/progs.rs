@@ -23,11 +23,13 @@
 
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::fs::File;
+use std::mem::transmute;
 use std::path::Path;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use load::Load;
 use math::Vec3;
+use num::FromPrimitive;
 
 const VERSION: i32 = 6;
 const CRC: i32 = 5927;
@@ -72,7 +74,21 @@ struct Statement {
     args: [i16; 3],
 }
 
+#[repr(C)]
 struct Function {
+    text_start: i32,
+    arg_start: i32,
+    locals: i32,
+    profile: i32,
+    name_id: i32,
+    srcfile_id: i32,
+    argc: i32,
+    argsz: [u8; MAX_ARGS],
+}
+
+#[repr(C)]
+struct Def {
+    kind: u16,
 }
 
 pub struct Progs {
@@ -80,7 +96,8 @@ pub struct Progs {
     data: Box<[u8]>,
 }
 
-enum Opcodes {
+#[derive(FromPrimitive)]
+enum Opcode {
     Done = 0,
     MulF = 1,
     MulV = 2,
@@ -195,15 +212,15 @@ impl Progs {
         }
     }
 
-    fn load_f(&self, addr: u16) -> f32 {
+    fn get_f(&self, addr: u16) -> f32 {
         (&self.data[addr as usize..]).load_f32le(None).unwrap()
     }
 
-    fn store_f(&mut self, val: f32, addr: u16) {
+    fn put_f(&mut self, val: f32, addr: u16) {
         (&mut self.data[addr as usize..]).write_f32::<LittleEndian>(val);
     }
 
-    fn load_v(&self, addr: u16) -> Vec3 {
+    fn get_v(&self, addr: u16) -> Vec3 {
         let mut components = [0.0; 3];
         let mut src = &self.data[addr as usize..];
         for i in 0..components.len() {
@@ -212,7 +229,7 @@ impl Progs {
         Vec3::from_components(components)
     }
 
-    fn store_v(&mut self, val: Vec3, addr: u16) {
+    fn put_v(&mut self, val: Vec3, addr: u16) {
         let components: [f32; 3] = val.into();
         let mut dst = &mut self.data[addr as usize..];
         for i in 0..components.len() {
@@ -222,166 +239,166 @@ impl Progs {
 
     // ADD_F: Float addition
     fn add_f(&mut self, f1_addr: u16, f2_addr: u16, sum_addr: u16) {
-        let f1 = self.load_f(f1_addr);
-        let f2 = self.load_f(f2_addr);
-        self.store_f(f1 + f2, sum_addr);
+        let f1 = self.get_f(f1_addr);
+        let f2 = self.get_f(f2_addr);
+        self.put_f(f1 + f2, sum_addr);
     }
 
     // ADD_V: Vector addition
     fn add_v(&mut self, v1_addr: u16, v2_addr: u16, sum_addr: u16) {
-        let v1 = self.load_v(v1_addr);
-        let v2 = self.load_v(v2_addr);
-        self.store_v(v1 + v2, sum_addr);
+        let v1 = self.get_v(v1_addr);
+        let v2 = self.get_v(v2_addr);
+        self.put_v(v1 + v2, sum_addr);
     }
 
     // SUB_F: Float subtraction
     fn sub_f(&mut self, f1_addr: u16, f2_addr: u16, diff_addr: u16) {
-        let f1 = self.load_f(f1_addr);
-        let f2 = self.load_f(f2_addr);
-        self.store_f(f1 - f2, diff_addr);
+        let f1 = self.get_f(f1_addr);
+        let f2 = self.get_f(f2_addr);
+        self.put_f(f1 - f2, diff_addr);
     }
 
     // SUB_V: Vector subtraction
     fn sub_v(&mut self, v1_addr: u16, v2_addr: u16, diff_addr: u16) {
-        let v1 = self.load_v(v1_addr);
-        let v2 = self.load_v(v2_addr);
-        self.store_v(v1 - v2, diff_addr);
+        let v1 = self.get_v(v1_addr);
+        let v2 = self.get_v(v2_addr);
+        self.put_v(v1 - v2, diff_addr);
     }
 
     // MUL_F: Float multiplication
     fn mul_f(&mut self, f1_addr: u16, f2_addr: u16, prod_addr: u16) {
-        let f1 = self.load_f(f1_addr);
-        let f2 = self.load_f(f2_addr);
-        self.store_f(f1 * f2, prod_addr);
+        let f1 = self.get_f(f1_addr);
+        let f2 = self.get_f(f2_addr);
+        self.put_f(f1 * f2, prod_addr);
     }
 
     // MUL_V: Vector dot-product
     fn mul_v(&mut self, v1_addr: u16, v2_addr: u16, dot_addr: u16) {
-        let v1 = self.load_v(v1_addr);
-        let v2 = self.load_v(v2_addr);
-        self.store_f(v1.dot(v2), dot_addr);
+        let v1 = self.get_v(v1_addr);
+        let v2 = self.get_v(v2_addr);
+        self.put_f(v1.dot(v2), dot_addr);
     }
 
     // MUL_FV: Component-wise multiplication of vector by scalar
     fn mul_fv(&mut self, f_addr: u16, v_addr: u16, prod_addr: u16) {
-        let f = self.load_f(f_addr);
-        let v = self.load_v(v_addr);
-        self.store_v(v * f, prod_addr);
+        let f = self.get_f(f_addr);
+        let v = self.get_v(v_addr);
+        self.put_v(v * f, prod_addr);
     }
 
     // MUL_VF: Component-wise multiplication of vector by scalar
     fn mul_vf(&mut self, v_addr: u16, f_addr: u16, prod_addr: u16) {
-        let v = self.load_v(v_addr);
-        let f = self.load_f(f_addr);
-        self.store_v(v * f, prod_addr);
+        let v = self.get_v(v_addr);
+        let f = self.get_f(f_addr);
+        self.put_v(v * f, prod_addr);
     }
 
     // DIV: Float division
     fn div_f(&mut self, f1_addr: u16, f2_addr: u16, quot_addr: u16) {
-        let f1 = self.load_f(f1_addr);
-        let f2 = self.load_f(f2_addr);
-        self.store_f(f1 / f2, quot_addr);
+        let f1 = self.get_f(f1_addr);
+        let f2 = self.get_f(f2_addr);
+        self.put_f(f1 / f2, quot_addr);
     }
 
     // BITAND: Bitwise AND
     fn bitand(&mut self, f1_addr: u16, f2_addr: u16, and_addr: u16) {
-        let i1 = self.load_f(f1_addr) as i32;
-        let i2 = self.load_f(f2_addr) as i32;
-        self.store_f((i1 & i2) as f32, and_addr);
+        let i1 = self.get_f(f1_addr) as i32;
+        let i2 = self.get_f(f2_addr) as i32;
+        self.put_f((i1 & i2) as f32, and_addr);
     }
 
     // BITOR: Bitwise OR
     fn bitor(&mut self, f1_addr: u16, f2_addr: u16, or_addr: u16) {
-        let i1 = self.load_f(f1_addr) as i32;
-        let i2 = self.load_f(f2_addr) as i32;
-        self.store_f((i1 | i2) as f32, or_addr);
+        let i1 = self.get_f(f1_addr) as i32;
+        let i2 = self.get_f(f2_addr) as i32;
+        self.put_f((i1 | i2) as f32, or_addr);
     }
 
     // GE: Greater than or equal to comparison
     fn ge(&mut self, f1_addr: u16, f2_addr: u16, ge_addr: u16) {
-        let f1 = self.load_f(f1_addr);
-        let f2 = self.load_f(f2_addr);
-        self.store_f(match f1 >= f2 {
-                         true => 1.0,
-                         false => 0.0,
-                     },
-                     ge_addr);
+        let f1 = self.get_f(f1_addr);
+        let f2 = self.get_f(f2_addr);
+        self.put_f(match f1 >= f2 {
+                       true => 1.0,
+                       false => 0.0,
+                   },
+                   ge_addr);
     }
 
     // LE: Less than or equal to comparison
     fn le(&mut self, f1_addr: u16, f2_addr: u16, le_addr: u16) {
-        let f1 = self.load_f(f1_addr);
-        let f2 = self.load_f(f2_addr);
-        self.store_f(match f1 <= f2 {
-                         true => 1.0,
-                         false => 0.0,
-                     },
-                     le_addr);
+        let f1 = self.get_f(f1_addr);
+        let f2 = self.get_f(f2_addr);
+        self.put_f(match f1 <= f2 {
+                       true => 1.0,
+                       false => 0.0,
+                   },
+                   le_addr);
     }
 
     // GE: Greater than comparison
     fn gt(&mut self, f1_addr: u16, f2_addr: u16, gt_addr: u16) {
-        let f1 = self.load_f(f1_addr);
-        let f2 = self.load_f(f2_addr);
-        self.store_f(match f1 > f2 {
-                         true => 1.0,
-                         false => 0.0,
-                     },
-                     gt_addr);
+        let f1 = self.get_f(f1_addr);
+        let f2 = self.get_f(f2_addr);
+        self.put_f(match f1 > f2 {
+                       true => 1.0,
+                       false => 0.0,
+                   },
+                   gt_addr);
     }
 
     // LT: Less than comparison
     fn lt(&mut self, f1_addr: u16, f2_addr: u16, lt_addr: u16) {
-        let f1 = self.load_f(f1_addr);
-        let f2 = self.load_f(f2_addr);
-        self.store_f(match f1 < f2 {
-                         true => 1.0,
-                         false => 0.0,
-                     },
-                     lt_addr);
+        let f1 = self.get_f(f1_addr);
+        let f2 = self.get_f(f2_addr);
+        self.put_f(match f1 < f2 {
+                       true => 1.0,
+                       false => 0.0,
+                   },
+                   lt_addr);
     }
 
     // AND: Logical AND
     fn and(&mut self, f1_addr: u16, f2_addr: u16, and_addr: u16) {
-        let f1 = self.load_f(f1_addr);
-        let f2 = self.load_f(f2_addr);
-        self.store_f(match f1 != 0.0 && f2 != 0.0 {
-                         true => 1.0,
-                         false => 0.0,
-                     },
-                     and_addr);
+        let f1 = self.get_f(f1_addr);
+        let f2 = self.get_f(f2_addr);
+        self.put_f(match f1 != 0.0 && f2 != 0.0 {
+                       true => 1.0,
+                       false => 0.0,
+                   },
+                   and_addr);
     }
 
     // OR: Logical OR
     fn or(&mut self, f1_addr: u16, f2_addr: u16, or_addr: u16) {
-        let f1 = self.load_f(f1_addr);
-        let f2 = self.load_f(f2_addr);
-        self.store_f(match f1 != 0.0 || f2 != 0.0 {
-                         true => 1.0,
-                         false => 0.0,
-                     },
-                     or_addr);
+        let f1 = self.get_f(f1_addr);
+        let f2 = self.get_f(f2_addr);
+        self.put_f(match f1 != 0.0 || f2 != 0.0 {
+                       true => 1.0,
+                       false => 0.0,
+                   },
+                   or_addr);
     }
 
     // NOT_F: Compare float to 0.0
     fn not_f(&mut self, f_addr: u16, not_addr: u16) {
-        let f = self.load_f(f_addr);
-        self.store_f(match f == 0.0 {
-                         true => 1.0,
-                         false => 0.0,
-                     },
-                     not_addr);
+        let f = self.get_f(f_addr);
+        self.put_f(match f == 0.0 {
+                       true => 1.0,
+                       false => 0.0,
+                   },
+                   not_addr);
     }
 
     // NOT_V: Compare vec to { 0.0, 0.0, 0.0 }
     fn not_v(&mut self, v_addr: u16, not_addr: u16) {
-        let v = self.load_v(v_addr);
+        let v = self.get_v(v_addr);
         let zero_vec = Vec3::new(0.0, 0.0, 0.0);
-        self.store_v(match v == zero_vec {
-                         true => Vec3::new(1.0, 1.0, 1.0),
-                         false => zero_vec,
-                     },
-                     not_addr);
+        self.put_v(match v == zero_vec {
+                       true => Vec3::new(1.0, 1.0, 1.0),
+                       false => zero_vec,
+                   },
+                   not_addr);
     }
 
     // TODO
@@ -395,47 +412,49 @@ impl Progs {
 
     // EQ_F: Test equality of two floats
     fn eq_f(&mut self, f1_addr: u16, f2_addr: u16, eq_addr: u16) {
-        let f1 = self.load_f(f1_addr);
-        let f2 = self.load_f(f2_addr);
-        self.store_f(match f1 == f2 {
-                         true => 1.0,
-                         false => 0.0,
-                     },
-                     eq_addr);
+        let f1 = self.get_f(f1_addr);
+        let f2 = self.get_f(f2_addr);
+        self.put_f(match f1 == f2 {
+                       true => 1.0,
+                       false => 0.0,
+                   },
+                   eq_addr);
     }
 
     // EQ_V: Test equality of two vectors
     fn eq_v(&mut self, v1_addr: u16, v2_addr: u16, eq_addr: u16) {
-        let v1 = self.load_v(v1_addr);
-        let v2 = self.load_v(v2_addr);
-        self.store_f(match v1 == v2 {
-                         true => 1.0,
-                         false => 0.0,
-                     },
-                     eq_addr);
+        let v1 = self.get_v(v1_addr);
+        let v2 = self.get_v(v2_addr);
+        self.put_f(match v1 == v2 {
+                       true => 1.0,
+                       false => 0.0,
+                   },
+                   eq_addr);
     }
 
     // NE_F: Test inequality of two floats
     fn ne_f(&mut self, f1_addr: u16, f2_addr: u16, ne_addr: u16) {
-        let f1 = self.load_f(f1_addr);
-        let f2 = self.load_f(f2_addr);
-        self.store_f(match f1 != f2 {
-                         true => 1.0,
-                         false => 0.0,
-                     },
-                     ne_addr);
+        let f1 = self.get_f(f1_addr);
+        let f2 = self.get_f(f2_addr);
+        self.put_f(match f1 != f2 {
+                       true => 1.0,
+                       false => 0.0,
+                   },
+                   ne_addr);
     }
 
     // NE_V: Test inequality of two vectors
     fn ne_v(&mut self, v1_addr: u16, v2_addr: u16, ne_addr: u16) {
-        let v1 = self.load_v(v1_addr);
-        let v2 = self.load_v(v2_addr);
-        self.store_f(match v1 != v2 {
-                         true => 1.0,
-                         false => 0.0,
-                     },
-                     ne_addr);
+        let v1 = self.get_v(v1_addr);
+        let v2 = self.get_v(v2_addr);
+        self.put_f(match v1 != v2 {
+                       true => 1.0,
+                       false => 0.0,
+                   },
+                   ne_addr);
     }
+
+    fn ne_s(&mut self, s1_addr: u16, s2_addr: u16, ne_addr: u16) {}
 }
 
 #[cfg(test)]
@@ -446,7 +465,7 @@ mod test {
     use progs::Progs;
 
     #[test]
-    fn test_progs_load_f() {
+    fn test_progs_get_f() {
         let to_load = 42.0;
 
         let data: [u8; 4];
@@ -458,11 +477,11 @@ mod test {
             text: Default::default(),
         };
 
-        assert!(progs.load_f(0) == to_load);
+        assert!(progs.get_f(0) == to_load);
     }
 
     #[test]
-    fn test_progs_store_f() {
+    fn test_progs_put_f() {
         let to_store = 365.0;
 
         let mut progs = Progs {
@@ -470,12 +489,12 @@ mod test {
             text: Default::default(),
         };
 
-        progs.store_f(to_store, 0);
-        assert!(progs.load_f(0) == to_store);
+        progs.put_f(to_store, 0);
+        assert!(progs.get_f(0) == to_store);
     }
 
     #[test]
-    fn test_progs_load_v() {
+    fn test_progs_get_v() {
         let to_load = Vec3::new(10.0, -10.0, 0.0);
         let data: [u8; 12];
         unsafe {
@@ -486,11 +505,11 @@ mod test {
             text: Default::default(),
         };
 
-        assert!(progs.load_v(0) == to_load);
+        assert!(progs.get_v(0) == to_load);
     }
 
     #[test]
-    fn test_progs_store_v() {
+    fn test_progs_put_v() {
         let to_store = Vec3::new(245.2, 50327.99, 0.0002);
 
         let mut progs = Progs {
@@ -499,8 +518,8 @@ mod test {
         };
 
 
-        progs.store_v(to_store, 0);
-        assert!(progs.load_v(0) == to_store);
+        progs.put_v(to_store, 0);
+        assert!(progs.get_v(0) == to_store);
     }
 
     #[test]
@@ -517,10 +536,10 @@ mod test {
             text: Default::default(),
         };
 
-        progs.store_f(term1, t1_addr);
-        progs.store_f(term2, t2_addr);
+        progs.put_f(term1, t1_addr);
+        progs.put_f(term2, t2_addr);
         progs.add_f(t1_addr as u16, t2_addr as u16, sum_addr as u16);
-        assert!(progs.load_f(sum_addr) == term1 + term2);
+        assert!(progs.get_f(sum_addr) == term1 + term2);
     }
 
     #[test]
@@ -537,10 +556,10 @@ mod test {
             text: Default::default(),
         };
 
-        progs.store_f(term1, t1_addr);
-        progs.store_f(term2, t2_addr);
+        progs.put_f(term1, t1_addr);
+        progs.put_f(term2, t2_addr);
         progs.sub_f(t1_addr as u16, t2_addr as u16, diff_addr as u16);
-        assert!(progs.load_f(diff_addr) == term1 - term2);
+        assert!(progs.get_f(diff_addr) == term1 - term2);
     }
 
     #[test]
@@ -557,10 +576,10 @@ mod test {
             text: Default::default(),
         };
 
-        progs.store_f(term1, t1_addr);
-        progs.store_f(term2, t2_addr);
+        progs.put_f(term1, t1_addr);
+        progs.put_f(term2, t2_addr);
         progs.mul_f(t1_addr as u16, t2_addr as u16, prod_addr as u16);
-        assert!(progs.load_f(prod_addr) == term1 * term2);
+        assert!(progs.get_f(prod_addr) == term1 * term2);
     }
 
     #[test]
@@ -577,18 +596,18 @@ mod test {
             text: Default::default(),
         };
 
-        progs.store_f(term1, t1_addr);
-        progs.store_f(term2, t2_addr);
+        progs.put_f(term1, t1_addr);
+        progs.put_f(term2, t2_addr);
         progs.div_f(t1_addr as u16, t2_addr as u16, quot_addr as u16);
-        assert!(progs.load_f(quot_addr) == term1 / term2);
+        assert!(progs.get_f(quot_addr) == term1 / term2);
     }
 
     #[test]
     fn test_progs_bitand() {
         let f32_size = size_of::<f32>() as u16;
-        let term1: f32 = 0xFFFFFFFF as f32;
+        let term1: f32 = unsafe { transmute(0xFFFFFFFFu32) };
         let t1_addr = 0 * f32_size;
-        let term2: f32 = 0xF0F0F0F0 as f32;
+        let term2: f32 = unsafe { transmute(0xF0F0F0F0u32) };
         let t2_addr = 1 * f32_size;
         let result_addr = 2 * f32_size;
 
@@ -597,10 +616,9 @@ mod test {
             text: Default::default(),
         };
 
-        progs.store_f(term1, t1_addr);
-        progs.store_f(term2, t2_addr);
+        progs.put_f(term1, t1_addr);
+        progs.put_f(term2, t2_addr);
         progs.bitand(t1_addr as u16, t2_addr as u16, result_addr as u16);
-        assert_eq!(progs.load_f(result_addr) as i32,
-                   term1 as i32 & term2 as i32);
+        assert_eq!(progs.get_f(result_addr) as i32, term1 as i32 & term2 as i32);
     }
 }
