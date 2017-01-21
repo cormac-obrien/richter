@@ -16,7 +16,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #[derive(Debug, FromPrimitive)]
-enum Opcode {
+#[repr(u16)]
+pub enum Opcode {
     Done = 0,
     MulF = 1,
     MulV = 2,
