@@ -59,32 +59,183 @@ impl Ord for Cvar {
     }
 }
 
+pub struct CmdRegistry<'a> {
+    cmd_names: Vec<String>,
+    cmds: Vec<Box<Fn() + 'a>>,
+}
+
+impl<'a> CmdRegistry<'a> {
+    pub fn new() -> CmdRegistry<'a> {
+        CmdRegistry {
+            cmd_names: Vec::new(),
+            cmds: Vec::new(),
+        }
+    }
+
+    /// Registers a new command.
+    pub fn add_cmd<S>(&mut self, name: S, cmd: Box<Fn() + 'a>) -> Result<(), ()>
+        where S: AsRef<str>
+    {
+        let name = name.as_ref().to_owned();
+
+        match self.cmd_names.binary_search(&name) {
+            Ok(_) => return Err(()),
+            Err(n) => {
+                self.cmd_names.insert(n, name);
+                self.cmds.insert(n, cmd);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Executes a command.
+    pub fn exec_cmd<S>(&mut self, name: S, args: Vec<&str>) -> Result<(), ()>
+        where S: AsRef<str>
+    {
+        let name = name.as_ref().to_owned();
+
+        match self.cmd_names.binary_search(&name) {
+            Ok(c) => {
+                debug!("Executing {}", name);
+                (&self.cmds[c])()
+            }
+            Err(_) => return Err(()),
+        }
+
+        Ok(())
+    }
+}
+
+pub struct InputLine {
+    text: Vec<char>,
+    curs: usize,
+}
+
+impl InputLine {
+    pub fn new() -> InputLine {
+        InputLine {
+            text: Vec::new(),
+            curs: 0,
+        }
+    }
+
+    pub fn get_text(&self) -> &Vec<char> {
+        &self.text
+    }
+
+    pub fn set_text(&mut self, text: &Vec<char>) {
+        self.text = text.clone()
+    }
+
+    pub fn insert(&mut self, c: char) {
+        self.text.insert(self.curs, c);
+        self.cursor_right();
+    }
+
+    pub fn cursor_right(&mut self) {
+        if self.curs < self.text.len() {
+            self.curs += 1;
+        }
+    }
+
+    pub fn cursor_left(&mut self) {
+        if self.curs > 0 {
+            self.curs -= 1;
+        }
+    }
+
+    pub fn delete(&mut self) {
+        if self.curs < self.text.len() {
+            self.text.remove(self.curs);
+        }
+    }
+
+    pub fn backspace(&mut self) {
+        if self.curs > 0 {
+            self.text.remove(self.curs - 1);
+            self.curs -= 1;
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.text.clear();
+        self.curs = 0;
+    }
+
+    pub fn debug_string(&self) -> String {
+        format!("{}_{}",
+                String::from_iter(self.text[..self.curs].to_owned().into_iter()),
+                String::from_iter(self.text[self.curs..].to_owned().into_iter()))
+    }
+}
+
+pub struct History {
+    lines: VecDeque<Vec<char>>,
+    curs: usize,
+}
+
+impl History {
+    pub fn new() -> History {
+        History {
+            lines: VecDeque::new(),
+            curs: 0,
+        }
+    }
+
+    pub fn add_line(&mut self, line: &Vec<char>) {
+        self.lines.push_front(line.clone());
+        self.curs = 0;
+    }
+
+    // TODO: handle case where history is empty
+    pub fn line_up(&mut self) -> Vec<char> {
+        if self.curs < self.lines.len() {
+            self.curs += 1;
+        }
+
+        self.lines[self.curs - 1].clone()
+    }
+
+    pub fn line_down(&mut self) -> Vec<char> {
+        if self.curs > 0 {
+            self.curs -= 1;
+        }
+
+        if self.curs > 0 {
+            self.lines[self.curs - 1].clone()
+        } else {
+            Vec::new().clone()
+        }
+    }
+}
+
+pub struct ConsoleOutput {
+    lines: Vec<Vec<char>>,
+}
+
+impl ConsoleOutput {
+    pub fn println<S>(&mut self, msg: S)
+        where S: AsRef<str>
+    {
+        println!("{}", msg.as_ref());
+    }
+}
+
 pub struct Console<'a> {
     cvars: Vec<Cvar>,
-
-    cmd_names: Vec<String>,
-    cmds: Vec<Box<FnMut() + 'a>>,
-
-    hist: VecDeque<Vec<char>>,
-    hist_curs: usize,
-
-    cmdline: Vec<char>,
-    cmdline_curs: usize,
+    line: InputLine,
+    hist: History,
+    cmds: CmdRegistry<'a>,
 }
 
 impl<'a> Console<'a> {
     pub fn new() -> Console<'a> {
         Console {
             cvars: Vec::new(),
-
-            cmd_names: Vec::new(),
-            cmds: Vec::new(),
-
-            hist: VecDeque::new(),
-            hist_curs: 0,
-
-            cmdline: Vec::new(),
-            cmdline_curs: 0,
+            line: InputLine::new(),
+            hist: History::new(),
+            cmds: CmdRegistry::new(),
         }
     }
 
@@ -149,42 +300,7 @@ impl<'a> Console<'a> {
         }
     }
 
-    /// Registers a new command.
-    pub fn add_cmd<S>(&mut self, name: S, cmd: Box<FnMut() + 'a>) -> Result<(), ()>
-        where S: AsRef<str>
-    {
-        let name = name.as_ref().to_owned();
-
-        match self.cmd_names.binary_search(&name) {
-            Ok(_) => return Err(()),
-            Err(n) => {
-                self.cmd_names.insert(n, name);
-                self.cmds.insert(n, cmd);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Executes a command.
-    pub fn exec_cmd<S>(&mut self, name: S, args: Vec<&str>) -> Result<(), ()>
-        where S: AsRef<str>
-    {
-        let name = name.as_ref().to_owned();
-
-        match self.cmd_names.binary_search(&name) {
-            Ok(c) => {
-                debug!("Executing {}", name);
-                let mut cmdfn = &mut self.cmds[c];
-                (cmdfn)()
-            }
-            Err(_) => return Err(()),
-        }
-
-        Ok(())
-    }
-
-    pub fn send_char(&mut self, c: char) -> Result<(), ()> {
+    pub fn send_char(&mut self, reg: &mut CmdRegistry, c: char) -> Result<(), ()> {
         match c {
             '\r' => {
                 let entered = self.get_string();
@@ -197,25 +313,25 @@ impl<'a> Console<'a> {
 
                 let args: Vec<&str> = parts.collect();
 
-                match self.exec_cmd(cmd_name, args) {
-                    Ok(_) => (),
-                    Err(_) => println!("Unknown command \"{}\"", cmd_name),
-                }
+                // match reg.exec_cmd(self, cmd_name, args) {
+                // Ok(_) => (),
+                // Err(_) => println!("Unknown command \"{}\"", cmd_name),
+                // }
+                //
 
-                self.hist.push_front(self.cmdline.clone());
-                self.cmdline.clear();
-                self.cmdline_curs = 0;
+                self.hist.add_line(self.line.get_text());
+                self.line.clear();
             }
 
             // backspace
-            '\x08' => self.backspace(),
+            '\x08' => self.line.backspace(),
 
             // delete
-            '\x7f' => self.delete(),
+            '\x7f' => self.line.delete(),
 
             '\t' => (), // TODO: tab completion
 
-            c => self.insert(c),
+            c => self.line.insert(c),
         }
 
         println!("{}", self.debug_string());
@@ -225,81 +341,24 @@ impl<'a> Console<'a> {
 
     pub fn send_key(&mut self, key: Key) {
         match key {
-            Key::Up => {
-                let new_line = self.line_up();
-                let _ = ::std::mem::replace(&mut self.cmdline, new_line);
-                self.cmdline_curs = self.cmdline.len();
-            }
-            Key::Down => {
-                let new_line = self.line_down();
-                let _ = ::std::mem::replace(&mut self.cmdline, new_line);
-                self.cmdline_curs = self.cmdline.len();
-            }
-            Key::Right => self.cursor_right(),
-            Key::Left => self.cursor_left(),
+            Key::Up => self.line.set_text(&self.hist.line_up()),
+            Key::Down => self.line.set_text(&self.hist.line_down()),
+            Key::Right => self.line.cursor_right(),
+            Key::Left => self.line.cursor_left(),
             _ => (),
         }
 
         println!("{}", self.debug_string());
     }
 
-    fn insert(&mut self, c: char) {
-        self.cmdline.insert(self.cmdline_curs, c);
-        self.cursor_right();
-    }
-
-    fn cursor_right(&mut self) {
-        if self.cmdline_curs < self.cmdline.len() {
-            self.cmdline_curs += 1;
-        }
-    }
-
-    fn cursor_left(&mut self) {
-        if self.cmdline_curs > 0 {
-            self.cmdline_curs -= 1;
-        }
-    }
-
-    fn delete(&mut self) {
-        if self.cmdline_curs < self.cmdline.len() {
-            self.cmdline.remove(self.cmdline_curs);
-        }
-    }
-
-    fn backspace(&mut self) {
-        if self.cmdline_curs > 0 {
-            self.cmdline.remove(self.cmdline_curs - 1);
-            self.cmdline_curs -= 1;
-        }
-    }
 
     fn get_string(&self) -> String {
-        String::from_iter(self.cmdline.clone().into_iter())
+        String::from_iter(self.line.text.clone().into_iter())
     }
 
     fn debug_string(&self) -> String {
         format!("{}_{}",
-                String::from_iter(self.cmdline[..self.cmdline_curs].to_owned().into_iter()),
-                String::from_iter(self.cmdline[self.cmdline_curs..].to_owned().into_iter()))
-    }
-
-    fn line_up(&mut self) -> Vec<char> {
-        if self.hist_curs < self.hist.len() {
-            self.hist_curs += 1;
-        }
-
-        self.hist[self.hist_curs - 1].clone()
-    }
-
-    fn line_down(&mut self) -> Vec<char> {
-        if self.hist_curs > 0 {
-            self.hist_curs -= 1;
-        }
-
-        if self.hist_curs > 0 {
-            self.hist[self.hist_curs - 1].clone()
-        } else {
-            Vec::new()
-        }
+                String::from_iter(self.line.text[..self.line.curs].to_owned().into_iter()),
+                String::from_iter(self.line.text[self.line.curs..].to_owned().into_iter()))
     }
 }

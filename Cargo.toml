@@ -21,4 +21,3 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 
 # binaries only
 "docopt" = "0.7.0"
-"docopt_macros" = "0.7.0"
