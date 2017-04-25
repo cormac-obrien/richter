@@ -189,23 +189,24 @@ impl History {
     }
 
     // TODO: handle case where history is empty
-    pub fn line_up(&mut self) -> Vec<char> {
-        if self.curs < self.lines.len() {
+    pub fn line_up(&mut self) -> Option<Vec<char>> {
+        if self.lines.len() == 0 || self.curs >= self.lines.len() {
+            None
+        } else {
             self.curs += 1;
+            Some(self.lines[self.curs - 1].clone())
         }
-
-        self.lines[self.curs - 1].clone()
     }
 
-    pub fn line_down(&mut self) -> Vec<char> {
+    pub fn line_down(&mut self) -> Option<Vec<char>> {
         if self.curs > 0 {
             self.curs -= 1;
         }
 
         if self.curs > 0 {
-            self.lines[self.curs - 1].clone()
+            Some(self.lines[self.curs - 1].clone())
         } else {
-            Vec::new().clone()
+            Some(Vec::new().clone())
         }
     }
 }
@@ -341,8 +342,8 @@ impl<'a> Console<'a> {
 
     pub fn send_key(&mut self, key: Key) {
         match key {
-            Key::Up => self.line.set_text(&self.hist.line_up()),
-            Key::Down => self.line.set_text(&self.hist.line_down()),
+            Key::Up => self.line.set_text(&self.hist.line_up().unwrap()),
+            Key::Down => self.line.set_text(&self.hist.line_down().unwrap()),
             Key::Right => self.line.cursor_right(),
             Key::Left => self.line.cursor_left(),
             _ => (),

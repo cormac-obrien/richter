@@ -219,8 +219,16 @@ fn main() {
                     match key {
                         Key::Right => cmdline.cursor_right(),
                         Key::Left => cmdline.cursor_left(),
-                        Key::Up => cmdline.set_text(&hist.line_up()),
-                        Key::Down => cmdline.set_text(&hist.line_down()),
+                        Key::Up => {
+                            if let Some(line) = hist.line_up() {
+                                cmdline.set_text(&line);
+                            }
+                        }
+                        Key::Down => {
+                            if let Some(line) = hist.line_down() {
+                                cmdline.set_text(&line);
+                            }
+                        }
                         Key::Return => {
                             use std::iter::FromIterator;
                             let line = cmdline.get_text();
