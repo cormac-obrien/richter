@@ -120,8 +120,8 @@ impl InputLine {
         }
     }
 
-    pub fn get_text(&self) -> &Vec<char> {
-        &self.text
+    pub fn get_text(&self) -> Vec<char> {
+        self.text.to_owned()
     }
 
     pub fn set_text(&mut self, text: &Vec<char>) {
@@ -183,8 +183,8 @@ impl History {
         }
     }
 
-    pub fn add_line(&mut self, line: &Vec<char>) {
-        self.lines.push_front(line.clone());
+    pub fn add_line(&mut self, line: Vec<char>) {
+        self.lines.push_front(line);
         self.curs = 0;
     }
 

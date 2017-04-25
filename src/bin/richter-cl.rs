@@ -211,6 +211,8 @@ fn main() {
 
                         _ => cmdline.insert(c),
                     }
+                    println!("{}", cmdline.debug_string());
+
                 }
 
                 Event::KeyboardInput(ElementState::Pressed, _, Some(key)) => {
@@ -219,9 +221,29 @@ fn main() {
                         Key::Left => cmdline.cursor_left(),
                         Key::Up => cmdline.set_text(&hist.line_up()),
                         Key::Down => cmdline.set_text(&hist.line_down()),
+                        Key::Return => {
+                            use std::iter::FromIterator;
+                            let line = cmdline.get_text();
+                            let cmd = String::from_iter(line.to_owned());
+                            let mut args = cmd.split_whitespace();
+
+                            let name = match args.next() {
+                                Some(n) => n,
+                                None => break,
+                            };
+
+                            if let Err(_) = reg.exec_cmd(name, args.collect()) {
+                                println!("Error executing \"{}\"", name);
+                            }
+
+                            hist.add_line(line);
+                            cmdline.clear();
+                        }
 
                         _ => (),
                     }
+                    println!("{}", cmdline.debug_string());
+
                 }
 
                 Event::Closed => {
@@ -230,8 +252,6 @@ fn main() {
 
                 _ => (),
             }
-
-            println!("{}", cmdline.debug_string());
 
             let mut frame = display.draw();
             frame.clear_color(0.0, 0.0, 0.0, 0.0);
