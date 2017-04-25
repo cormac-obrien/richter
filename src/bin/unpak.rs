@@ -1,6 +1,3 @@
-#![feature(plugin)]
-#![plugin(docopt_macros)]
-
 extern crate docopt;
 extern crate richter;
 extern crate rustc_serialize;
