@@ -21,3 +21,4 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 
 # binaries only
 "docopt" = "0.7.0"
+"pnet" = "0.17.0"
