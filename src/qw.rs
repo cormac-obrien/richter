@@ -81,6 +81,14 @@ pub enum SvCmd {
 }
 
 #[derive(Debug, FromPrimitive)]
+pub enum PrintType {
+    Low = 0,
+    Medium = 1,
+    High = 2,
+    Chat = 3,
+}
+
+#[derive(Debug, FromPrimitive)]
 pub enum ClCmd {
     Bad = 0,
     Nop = 1,

@@ -1,4 +1,4 @@
-// Copyright © 2016 Cormac O'Brien
+// Copyright © 2017 Cormac O'Brien
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this software
 // and associated documentation files (the "Software"), to deal in the Software without
@@ -24,9 +24,7 @@ pub struct KeyState {
 
 impl KeyState {
     pub fn new() -> Self {
-        KeyState {
-            key_states: HashSet::new(),
-        }
+        KeyState { key_states: HashSet::new() }
     }
 
     pub fn is_pressed(&self, key: VirtualKeyCode) -> bool {

@@ -1,4 +1,4 @@
-// Copyright © 2016 Cormac O'Brien
+// Copyright © 2017 Cormac O'Brien
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this software
 // and associated documentation files (the "Software"), to deal in the Software without
@@ -221,7 +221,7 @@ struct TextureInfo {
 }
 
 impl TextureInfo {
-    fn load<L>(data: L) -> Result<TextureInfo, LoadError>
+    fn load<L>(data: &mut L) -> Result<TextureInfo, LoadError>
         where L: Load
     {
         let mut s_vec = [0.0f32; 3];
@@ -243,7 +243,7 @@ impl TextureInfo {
             s_offset: s_off,
             t_vector: t_vec,
             t_offset: t_off,
-            tex_id: tex_id,
+            tex_id: tex_id as u32,
             animated: anim == 1,
         })
     }

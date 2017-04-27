@@ -1,4 +1,4 @@
-// Copyright © 2016 Cormac O'Brien
+// Copyright © 2017 Cormac O'Brien
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this software
 // and associated documentation files (the "Software"), to deal in the Software without
@@ -17,7 +17,7 @@
 
 use std;
 
-pub use std::f32::consts::PI as PI;
+pub use std::f32::consts::PI;
 
 /// A 4x4 matrix.
 pub struct Mat4(pub [[f32; 4]; 4]);
@@ -59,37 +59,25 @@ impl Mat4 {
     pub fn rotation_x(theta: f32) -> Self {
         let s = theta.sin();
         let c = theta.cos();
-        Mat4([[1.0, 0.0, 0.0, 0.0],
-              [0.0,   c,   s, 0.0],
-              [0.0,  -s,   c, 0.0],
-              [0.0, 0.0, 0.0, 1.0]])
+        Mat4([[1.0, 0.0, 0.0, 0.0], [0.0, c, s, 0.0], [0.0, -s, c, 0.0], [0.0, 0.0, 0.0, 1.0]])
     }
 
     /// Performs a rotation about the y-axis.
     pub fn rotation_y(theta: f32) -> Self {
         let s = theta.sin();
         let c = theta.cos();
-        Mat4([[  c, 0.0,   s, 0.0],
-              [0.0, 1.0, 0.0, 0.0],
-              [ -s, 0.0,   c, 0.0],
-              [0.0, 0.0, 0.0, 1.0]])
+        Mat4([[c, 0.0, s, 0.0], [0.0, 1.0, 0.0, 0.0], [-s, 0.0, c, 0.0], [0.0, 0.0, 0.0, 1.0]])
     }
 
     /// Performs a rotation about the z-axis.
     pub fn rotation_z(theta: f32) -> Self {
         let s = theta.sin();
         let c = theta.cos();
-        Mat4([[  c,   s, 0.0, 0.0],
-              [ -s,   c, 0.0, 0.0],
-              [0.0, 0.0, 1.0, 0.0],
-              [0.0, 0.0, 0.0, 1.0]])
+        Mat4([[c, s, 0.0, 0.0], [-s, c, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]])
     }
 
     pub fn translation(x: f32, y: f32, z: f32) -> Self {
-        Mat4([[1.0, 0.0, 0.0, 0.0],
-              [0.0, 1.0, 0.0, 0.0],
-              [0.0, 0.0, 1.0, 0.0],
-              [  x,   y,   z, 1.0]])
+        Mat4([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [x, y, z, 1.0]])
     }
 
     pub fn perspective(w: f32, h: f32, fov: f32) -> Self {
@@ -98,10 +86,10 @@ impl Mat4 {
         let zfar = 4096.0;
         let f = 1.0 / (fov / 2.0).tan();
 
-        Mat4([[f / aspect, 0.0,                                   0.0,  0.0],
-              [       0.0,   f,                                   0.0,  0.0],
-              [       0.0, 0.0,       (zfar + znear) / (zfar - znear), -1.0],
-              [       0.0, 0.0, (2.0 * zfar * znear) / (zfar - znear),  0.0]])
+        Mat4([[f / aspect, 0.0, 0.0, 0.0],
+              [0.0, f, 0.0, 0.0],
+              [0.0, 0.0, (zfar + znear) / (zfar - znear), -1.0],
+              [0.0, 0.0, (2.0 * zfar * znear) / (zfar - znear), 0.0]])
     }
 }
 
@@ -130,7 +118,7 @@ impl Vec3 {
     pub fn rotate_y(&self, theta: f32) -> Self {
         Vec3([self[0] * theta.cos() + self[2] * theta.sin(),
               self[1],
-             -self[0] * theta.sin() + self[2] * theta.cos()])
+              -self[0] * theta.sin() + self[2] * theta.cos()])
     }
 
     pub fn rotate_z(&self, theta: f32) -> Self {
@@ -218,17 +206,23 @@ impl<'a> std::ops::Mul<&'a Vec3> for f32 {
 
 impl std::ops::Add<Vec3> for Vec3 {
     type Output = Vec3;
-    fn add(self, other: Vec3) -> Vec3 { &self - &other }
+    fn add(self, other: Vec3) -> Vec3 {
+        &self - &other
+    }
 }
 
 impl<'a> std::ops::Add<&'a Vec3> for Vec3 {
     type Output = Vec3;
-    fn add(self, other: &'a Vec3) -> Vec3 { &self - other }
+    fn add(self, other: &'a Vec3) -> Vec3 {
+        &self - other
+    }
 }
 
 impl<'a> std::ops::Add<Vec3> for &'a Vec3 {
     type Output = Vec3;
-    fn add(self, other: Vec3) -> Vec3 { self - &other }
+    fn add(self, other: Vec3) -> Vec3 {
+        self - &other
+    }
 }
 
 impl<'a, 'b> std::ops::Add<&'a Vec3> for &'b Vec3 {
@@ -241,17 +235,23 @@ impl<'a, 'b> std::ops::Add<&'a Vec3> for &'b Vec3 {
 
 impl std::ops::Sub<Vec3> for Vec3 {
     type Output = Vec3;
-    fn sub(self, other: Vec3) -> Vec3 { &self - &other }
+    fn sub(self, other: Vec3) -> Vec3 {
+        &self - &other
+    }
 }
 
 impl<'a> std::ops::Sub<&'a Vec3> for Vec3 {
     type Output = Vec3;
-    fn sub(self, other: &Vec3) -> Vec3 { &self - other }
+    fn sub(self, other: &Vec3) -> Vec3 {
+        &self - other
+    }
 }
 
 impl<'a> std::ops::Sub<Vec3> for &'a Vec3 {
     type Output = Vec3;
-    fn sub(self, other: Vec3) -> Vec3 { self - &other }
+    fn sub(self, other: Vec3) -> Vec3 {
+        self - &other
+    }
 }
 
 impl<'a, 'b> std::ops::Sub<&'a Vec3> for &'b Vec3 {

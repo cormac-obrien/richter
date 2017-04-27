@@ -1,4 +1,4 @@
-// Copyright © 2015 Cormac O'Brien.
+// Copyright © 2017 Cormac O'Brien.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this software
 // and associated documentation files (the "Software"), to deal in the Software without
@@ -207,7 +207,22 @@ impl Progs {
     }
 
     fn execute(&mut self, function_id: FunctionId) {
+        let mut callstack: Vec<StackFrame> = Vec::new();
+
+        let pc = self.enter_function(function_id);
+
+        loop {
+            let st = &self.statements[pc];
+            match st.opcode {
+                Opcode::Done | Opcode::Return => (),
+                _ => (),
+            }
+        }
+    }
+
+    fn enter_function(&mut self, function_id: FunctionId) -> usize {
         let function = &self.functions[function_id.0 as usize];
+        0
     }
 
     fn globals_as_f32(&mut self) -> *mut [f32] {
