@@ -16,10 +16,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 extern crate byteorder;
-extern crate env_logger;
-#[macro_use]
 extern crate num;
-extern crate log;
 extern crate pnet;
 extern crate richter;
 
@@ -32,7 +29,8 @@ use pnet::packet::Packet;
 use pnet::packet::udp::UdpPacket;
 use pnet::packet::ip::IpNextHeaderProtocols::Udp;
 use pnet::transport::{self, TransportChannelType};
-use richter::qw::{self, ClCmd, MoveDelta, MoveDeltaFlags, SvCmd};
+use richter::qw::{self, ClCmd, MoveDeltaFlags, SvCmd};
+use richter::util;
 
 static USAGE: &'static str = "Usage: cl-sniff <client IP> <client port> <server IP> <server port>";
 
@@ -162,10 +160,6 @@ impl NetchanPacket {
         self.ack & !SEQUENCE_RELIABLE
     }
 
-    pub fn get_ack_sequence_reliable(&self) -> bool {
-        self.ack & SEQUENCE_RELIABLE == SEQUENCE_RELIABLE
-    }
-
     pub fn payload(&self) -> &[u8] {
         &self.payload
     }
@@ -183,13 +177,14 @@ fn transcribe_clcmd<'a>(src: &'a [u8]) -> String {
             result += &format!("Move ");
             result += &format!("crc={} ", curs.read_u8().unwrap());
             result += &format!("loss={} ", curs.read_u8().unwrap());
-
-            let indent = result.len();
+            result += "\n";
 
             for i in 0..3 {
-                result += &format!("[D{}] ", i);
+                result += &format!("| [D{}] ", i);
 
                 let flags = MoveDeltaFlags::from_bits(curs.read_u8().unwrap()).unwrap();
+
+                result += &format!("flags={:08b} ", flags.bits());
 
                 if flags.contains(qw::CM_ANGLE1) {
                     result += &format!("angle1={} ", curs.read_u16::<LittleEndian>().unwrap());
@@ -224,10 +219,47 @@ fn transcribe_clcmd<'a>(src: &'a [u8]) -> String {
                 }
 
                 result += &format!("msec={} ", curs.read_u8().unwrap());
+                result += "\n";
             }
         }
 
-        _ => (),
+        ClCmd::StringCmd => {
+            let cmd = util::read_cstring(&mut curs).unwrap();
+            result += &format!("cmd=\"{}\"", cmd);
+        }
+
+        c => {
+            result += &format!("{:?} ", c);
+        }
+    }
+
+    return result;
+}
+
+fn transcribe_svcmd<'a>(src: &'a [u8]) -> String {
+    let mut result = String::new();
+    let mut curs = Cursor::new(src);
+
+    let cmdbyte = curs.read_u8().unwrap();
+
+    match SvCmd::from_u8(cmdbyte).unwrap() {
+        SvCmd::Disconnect => {
+            result += &format!("disconnect");
+        }
+
+        SvCmd::Print => {
+            result += &format!("print ");
+
+            let print_type = qw::PrintType::from_u8(curs.read_u8().unwrap()).unwrap();
+            result += &format!("type={:?} ", print_type);
+
+            let msg = util::read_cstring(&mut curs).unwrap();
+            result += &format!("msg=\"{}\"", msg);
+        }
+
+        s => {
+            result += &format!("{:?} ", s);
+        }
     }
 
     return result;
@@ -254,7 +286,7 @@ fn main() {
     let mut iter = transport::ipv4_packet_iter(&mut rx);
     loop {
         match iter.next() {
-            Ok((packet, addr)) => {
+            Ok((packet, _)) => {
                 let udp_packet = UdpPacket::new(packet.payload()).unwrap();
                 let dest_ip = packet.get_destination();
                 let dest_port = udp_packet.get_destination();
@@ -271,10 +303,10 @@ fn main() {
                 match qw_packet {
                     QwPacket::Oob(oob_packet) => {
                         match oob_packet {
-                            OobPacket::GetChallenge => println!("getchallenge"),
-                            OobPacket::Challenge(challenge) => println!("challenge={}", challenge),
-                            OobPacket::Connect(conn_packet) => println!("{}", conn_packet),
-                            OobPacket::Accept => println!("accept"),
+                            OobPacket::GetChallenge => print!("getchallenge"),
+                            OobPacket::Challenge(challenge) => print!("challenge={}", challenge),
+                            OobPacket::Connect(conn_packet) => print!("{}", conn_packet),
+                            OobPacket::Accept => print!("accept"),
                             _ => (),
                         }
                     }
@@ -291,6 +323,11 @@ fn main() {
                         if dest_ip == server_ip && dest_port == server_port {
                             print!("{} ", transcribe_clcmd(nc_packet.payload()));
                         } else if dest_ip == client_ip && dest_port == client_port {
+                            if nc_packet.payload().len() != 0 {
+                                print!("{} ", transcribe_svcmd(nc_packet.payload()));
+                            } else {
+                                print!("empty");
+                            }
                         }
                     }
                 }
