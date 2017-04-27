@@ -92,6 +92,35 @@ pub enum ClCmd {
     Upload = 7,
 }
 
+pub struct MoveCmd {
+    crc: u8,
+    loss: u8,
+    delta: [MoveDelta; 3],
+}
+
+// Move command delta flags, https://github.com/id-Software/Quake/blob/master/QW/client/protocol.h#L171
+bitflags! {
+    pub flags MoveDeltaFlags: u8 {
+        const CM_ANGLE1  = 0x01,
+        const CM_ANGLE3  = 0x02,
+        const CM_FORWARD = 0x04,
+        const CM_SIDE    = 0x08,
+        const CM_UP      = 0x10,
+        const CM_BUTTONS = 0x20,
+        const CM_IMPULSE = 0x40,
+        const CM_ANGLE2  = 0x80,
+    }
+}
+
+pub struct MoveDelta {
+    flags: MoveDeltaFlags,
+    angles: [u16; 3],
+    moves: [u16; 3],
+    buttons: u8,
+    impulse: u8,
+    msec: u8,
+}
+
 const PROTOCOL_FTE: u32 = ('F' as u32) << 0 | ('T' as u32) << 8 | ('E' as u32) << 16 |
                           ('X' as u32) << 24;
 
