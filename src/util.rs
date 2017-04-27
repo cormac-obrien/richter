@@ -1,4 +1,4 @@
-// Copyright © 2016 Cormac O'Brien
+// Copyright © 2017 Cormac O'Brien
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this software
 // and associated documentation files (the "Software"), to deal in the Software without
@@ -15,46 +15,10 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#![feature(collections_bound)]
-#![feature(collections_range)]
-#![feature(custom_derive)]
-
-extern crate arrayvec;
-#[macro_use]
-extern crate bitflags;
-extern crate byteorder;
-extern crate env_logger;
-#[macro_use]
-extern crate glium;
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate nom;
-extern crate num;
-#[macro_use]
-extern crate num_derive;
-extern crate rand;
-extern crate regex;
-extern crate time;
-
-pub mod bsp;
-pub mod client;
-pub mod console;
-pub mod engine;
-pub mod entity;
-pub mod event;
-pub mod gfx;
-pub mod input;
-pub mod load;
-pub mod lump;
-pub mod math;
-pub mod mdl;
-pub mod net;
-pub mod pak;
-pub mod progs;
-pub mod qw;
-// pub mod sprite;
-pub mod util;
-pub mod wad;
+pub fn read_cstring<R>(src: &mut R) -> Result<String, ::std::string::FromUtf8Error>
+    where R: ::std::io::BufRead
+{
+    let mut bytes: Vec<u8> = Vec::new();
+    src.read_until(0, &mut bytes).unwrap();
+    return String::from_utf8(bytes);
+}
