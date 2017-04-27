@@ -171,6 +171,68 @@ impl NetchanPacket {
     }
 }
 
+fn transcribe_clcmd<'a>(src: &'a [u8]) -> String {
+    let mut result = String::new();
+    let mut curs = Cursor::new(src);
+
+    let qport = curs.read_u16::<LittleEndian>().unwrap();
+    result += &format!("qport={} ", qport);
+
+    match ClCmd::from_u8(curs.read_u8().unwrap()).unwrap() {
+        ClCmd::Move => {
+            result += &format!("Move ");
+            result += &format!("crc={} ", curs.read_u8().unwrap());
+            result += &format!("loss={} ", curs.read_u8().unwrap());
+
+            let indent = result.len();
+
+            for i in 0..3 {
+                result += &format!("[D{}] ", i);
+
+                let flags = MoveDeltaFlags::from_bits(curs.read_u8().unwrap()).unwrap();
+
+                if flags.contains(qw::CM_ANGLE1) {
+                    result += &format!("angle1={} ", curs.read_u16::<LittleEndian>().unwrap());
+                }
+
+                if flags.contains(qw::CM_ANGLE2) {
+                    result += &format!("angle2={} ", curs.read_u16::<LittleEndian>().unwrap());
+                }
+
+                if flags.contains(qw::CM_ANGLE3) {
+                    result += &format!("angle3={} ", curs.read_u16::<LittleEndian>().unwrap());
+                }
+
+                if flags.contains(qw::CM_FORWARD) {
+                    result += &format!("forward={} ", curs.read_u16::<LittleEndian>().unwrap());
+                }
+
+                if flags.contains(qw::CM_SIDE) {
+                    result += &format!("side={} ", curs.read_u16::<LittleEndian>().unwrap());
+                }
+
+                if flags.contains(qw::CM_UP) {
+                    result += &format!("up={} ", curs.read_u16::<LittleEndian>().unwrap());
+                }
+
+                if flags.contains(qw::CM_BUTTONS) {
+                    result += &format!("buttons={} ", curs.read_u8().unwrap());
+                }
+
+                if flags.contains(qw::CM_IMPULSE) {
+                    result += &format!("impulse={} ", curs.read_u8().unwrap());
+                }
+
+                result += &format!("msec={} ", curs.read_u8().unwrap());
+            }
+        }
+
+        _ => (),
+    }
+
+    return result;
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 5 {
@@ -212,6 +274,7 @@ fn main() {
                             OobPacket::GetChallenge => println!("getchallenge"),
                             OobPacket::Challenge(challenge) => println!("challenge={}", challenge),
                             OobPacket::Connect(conn_packet) => println!("{}", conn_packet),
+                            OobPacket::Accept => println!("accept"),
                             _ => (),
                         }
                     }
@@ -225,24 +288,8 @@ fn main() {
                         }
                         print!("] ack={} ", nc_packet.get_ack_sequence());
 
-                        let mut curs = Cursor::new(nc_packet.payload());
-
                         if dest_ip == server_ip && dest_port == server_port {
-                            let qport = curs.read_u16::<LittleEndian>().unwrap();
-                            print!("qport={} ", qport);
-
-                            match ClCmd::from_u8(curs.read_u8().unwrap()).unwrap() {
-                                ClCmd::Move => {
-                                    let flags = MoveDeltaFlags::from_bits(curs.read_u8().unwrap())
-                                                    .unwrap();
-                                    print!("move: ");
-
-                                    if flags.contains(qw::CM_ANGLE1) {
-                                        print!("angle1 ");
-                                    }
-                                }
-                                _ => (),
-                            }
+                            print!("{} ", transcribe_clcmd(nc_packet.payload()));
                         } else if dest_ip == client_ip && dest_port == client_port {
                         }
                     }
@@ -251,7 +298,7 @@ fn main() {
                 println!("");
             }
 
-            Err(why) => panic!("Error reading packet: {}"),
+            Err(why) => panic!("Error reading packet: {}", why),
         }
     }
 }
