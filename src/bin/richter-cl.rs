@@ -81,6 +81,13 @@ fn main() {
     env_logger::init().unwrap();
     info!("Richter v0.0.1");
 
+    let cl = Client::connect(Ipv4Addr::new(127, 0, 0, 1));
+
+    loop {
+        frame(&cl);
+    }
+
+
     let display = match glium::glutin::WindowBuilder::new()
                             .with_dimensions(1024, 768)
                             .with_title(format!("Richter"))
@@ -194,87 +201,82 @@ fn main() {
                 Box::new(|| input.showteamscores.set(false)))
        .unwrap();
 
-    loop {
-        for event in display.poll_events() {
-            match event {
-                Event::ReceivedCharacter(c) => {
-                    info!("Got char {:?}", c);
-                    match c {
-                        // backspace
-                        '\x08' => cmdline.backspace(),
-
-                        // delete
-                        '\x7f' => cmdline.delete(),
-
-                        // TODO: tab completion
-                        '\t' => (),
-
-                        _ => cmdline.insert(c),
-                    }
-                    println!("{}", cmdline.debug_string());
-
-                }
-
-                Event::KeyboardInput(ElementState::Pressed, _, Some(key)) => {
-                    match key {
-                        Key::Right => cmdline.cursor_right(),
-                        Key::Left => cmdline.cursor_left(),
-                        Key::Up => {
-                            if let Some(line) = hist.line_up() {
-                                cmdline.set_text(&line);
-                            }
-                        }
-                        Key::Down => {
-                            if let Some(line) = hist.line_down() {
-                                cmdline.set_text(&line);
-                            }
-                        }
-                        Key::Return => {
-                            use std::iter::FromIterator;
-                            let line = cmdline.get_text();
-                            let cmd = String::from_iter(line.to_owned());
-                            let mut args = cmd.split_whitespace();
-
-                            let name = match args.next() {
-                                Some(n) => n,
-                                None => break,
-                            };
-
-                            if let Err(_) = reg.exec_cmd(name, args.collect()) {
-                                println!("Error executing \"{}\"", name);
-                            }
-
-                            hist.add_line(line);
-                            cmdline.clear();
-                        }
-
-                        _ => (),
-                    }
-                    println!("{}", cmdline.debug_string());
-
-                }
-
-                Event::Closed => {
-                    exit(0);
-                }
-
-                _ => (),
-            }
-
-            let mut frame = display.draw();
-            frame.clear_color(0.0, 0.0, 0.0, 0.0);
-            frame.clear_depth(0.0);
-            frame.finish().unwrap();
-
-            display.swap_buffers().unwrap();
-        }
-    }
-
-    let cl = Client::connect(Ipv4Addr::new(127, 0, 0, 1));
-
-    loop {
-        frame(&cl);
-    }
+    // loop {
+    // for event in display.poll_events() {
+    // match event {
+    // Event::ReceivedCharacter(c) => {
+    // info!("Got char {:?}", c);
+    // match c {
+    // backspace
+    // '\x08' => cmdline.backspace(),
+    //
+    // delete
+    // '\x7f' => cmdline.delete(),
+    //
+    // TODO: tab completion
+    // '\t' => (),
+    //
+    // _ => cmdline.insert(c),
+    // }
+    // println!("{}", cmdline.debug_string());
+    //
+    // }
+    //
+    // Event::KeyboardInput(ElementState::Pressed, _, Some(key)) => {
+    // match key {
+    // Key::Right => cmdline.cursor_right(),
+    // Key::Left => cmdline.cursor_left(),
+    // Key::Up => {
+    // if let Some(line) = hist.line_up() {
+    // cmdline.set_text(&line);
+    // }
+    // }
+    // Key::Down => {
+    // if let Some(line) = hist.line_down() {
+    // cmdline.set_text(&line);
+    // }
+    // }
+    // Key::Return => {
+    // use std::iter::FromIterator;
+    // let line = cmdline.get_text();
+    // let cmd = String::from_iter(line.to_owned());
+    // let mut args = cmd.split_whitespace();
+    //
+    // let name = match args.next() {
+    // Some(n) => n,
+    // None => break,
+    // };
+    //
+    // if let Err(_) = reg.exec_cmd(name, args.collect()) {
+    // println!("Error executing \"{}\"", name);
+    // }
+    //
+    // hist.add_line(line);
+    // cmdline.clear();
+    // }
+    //
+    // _ => (),
+    // }
+    // println!("{}", cmdline.debug_string());
+    //
+    // }
+    //
+    // Event::Closed => {
+    // exit(0);
+    // }
+    //
+    // _ => (),
+    // }
+    //
+    // let mut frame = display.draw();
+    // frame.clear_color(0.0, 0.0, 0.0, 0.0);
+    // frame.clear_depth(0.0);
+    // frame.finish().unwrap();
+    //
+    // display.swap_buffers().unwrap();
+    // }
+    // }
+    //
 
     exit(0);
 

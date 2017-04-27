@@ -54,6 +54,6 @@ pub mod mdl;
 pub mod net;
 pub mod pak;
 pub mod progs;
-pub mod proto;
+pub mod qw;
 // pub mod sprite;
 pub mod wad;

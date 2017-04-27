@@ -22,7 +22,7 @@ use arrayvec::ArrayVec;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use math::Vec3;
 use net::{Message, NetworkBuffer, NetworkChannel};
-use proto::{self, ClCmd, PacketEntities, SvCmd, UserCmd, UserInfo};
+use qw::{self, ClCmd, PacketEntities, SvCmd, UserCmd, UserInfo};
 use std;
 use std::cell::{Cell, RefCell};
 use std::default::Default;
@@ -113,8 +113,8 @@ impl Client {
         }
 
         let client = Client {
-            netchannel: NetworkChannel::new(SocketAddrV4::new(server, proto::PORT_SERVER),
-                                            proto::PORT_CLIENT),
+            netchannel: NetworkChannel::new(SocketAddrV4::new(server, qw::PORT_SERVER),
+                                            qw::PORT_CLIENT),
             challenge: Cell::new(0),
             cxn_status: Cell::new(CxnStatus::Disconnected),
             cxn_time: Cell::new(None),
@@ -131,14 +131,14 @@ impl Client {
     /// Connection messages are out-band-messages of the form:
     ///
     /// ```
-    /// connect <proto> <qport> <challenge> <userinfo>
+    /// connect <qw> <qport> <challenge> <userinfo>
     /// ```
     ///
     /// If all goes well, the server will reply with an out-of-band message
     /// containing a single 'j'.
     pub fn send_connect(&self) {
         self.netchannel.out_of_band(format!("connect {} {} {} \"{}\"",
-                                            proto::VERSION,
+                                            qw::VERSION,
                                             27001,
                                             self.challenge.get(),
                                             self.user_info.serialize())
@@ -197,7 +197,7 @@ impl Client {
     ///
     /// Server data is sent in the following format:
     /// ```
-    /// proto version: u32
+    /// qw version: u32
     /// server count: u32
     /// game directory: null-terminated string
     /// player number: u8
@@ -213,9 +213,9 @@ impl Client {
     /// entity gravity: f32
     /// ```
     pub fn parse_serverdata(&self, msg: &mut NetworkBuffer) {
-        let proto = msg.read_u32::<LittleEndian>().unwrap();
+        let qw = msg.read_u32::<LittleEndian>().unwrap();
 
-        if proto != proto::VERSION {
+        if qw != qw::VERSION {
             // TODO: allow demo playback on versions 26-29
             // otherwise end the game
             panic!("Bad version handler unimplemented");

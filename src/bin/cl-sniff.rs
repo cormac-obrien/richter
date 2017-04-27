@@ -32,7 +32,7 @@ use pnet::packet::Packet;
 use pnet::packet::udp::UdpPacket;
 use pnet::packet::ip::IpNextHeaderProtocols::Udp;
 use pnet::transport::{self, TransportChannelType};
-use richter::proto::{self, ClCmd, MoveDelta, MoveDeltaFlags, SvCmd};
+use richter::qw::{self, ClCmd, MoveDelta, MoveDeltaFlags, SvCmd};
 
 static USAGE: &'static str = "Usage: cl-sniff <client IP> <client port> <server IP> <server port>";
 
@@ -101,12 +101,12 @@ impl OobPacket {
             "status" => OobPacket::Status,
             "log" => OobPacket::Log,
             "connect" => {
-                let protocol = i32::from_str(cmd_args.next().unwrap()).unwrap();
+                let qwcol = i32::from_str(cmd_args.next().unwrap()).unwrap();
                 let qport = u16::from_str(cmd_args.next().unwrap()).unwrap();
                 let challenge = i32::from_str(cmd_args.next().unwrap()).unwrap();
 
                 OobPacket::Connect(ConnectPacket {
-                    protocol: protocol,
+                    qwcol: qwcol,
                     qport: qport,
                     challenge: challenge,
                     userinfo: String::from(cmd_args.next().unwrap()),
@@ -126,7 +126,7 @@ impl OobPacket {
 }
 
 struct ConnectPacket {
-    protocol: i32,
+    qwcol: i32,
     qport: u16,
     challenge: i32,
     userinfo: String,
@@ -135,8 +135,8 @@ struct ConnectPacket {
 impl fmt::Display for ConnectPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f,
-               "proto={} qport={} challenge={} userinfo={}",
-               self.protocol,
+               "qw={} qport={} challenge={} userinfo={}",
+               self.qwcol,
                self.qport,
                self.challenge,
                self.userinfo)
@@ -237,7 +237,7 @@ fn main() {
                                                     .unwrap();
                                     print!("move: ");
 
-                                    if flags.contains(proto::CM_ANGLE1) {
+                                    if flags.contains(qw::CM_ANGLE1) {
                                         print!("angle1 ");
                                     }
                                 }
