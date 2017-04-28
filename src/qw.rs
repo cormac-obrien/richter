@@ -216,6 +216,53 @@ impl ServerDataPacket {
     }
 }
 
+pub struct ModelListPacket {
+    count: u8,
+    list: Vec<String>,
+
+    // either same as count or 0.
+    // if same as count, send this to server with next model list request.
+    // if 0, we have all the models we need.
+    progress: u8,
+}
+
+impl ModelListPacket {
+    pub fn from_bytes<'a>(src: &'a [u8]) -> ModelListPacket {
+        let mut curs = Cursor::new(src);
+        let mut count = curs.read_u8().unwrap();
+        let mut list: Vec<String> = Vec::new();
+
+        loop {
+            let model_name = util::read_cstring(&mut curs).unwrap();
+            if model_name.len() == 0 {
+                break;
+            }
+            count += 1;
+            list.push(model_name);
+        }
+
+        let progress = curs.read_u8().unwrap();
+
+        ModelListPacket {
+            count: count,
+            list: list,
+            progress: progress,
+        }
+    }
+
+    pub fn get_count(&self) -> u8 {
+        self.count
+    }
+
+    pub fn get_list(&self) -> &Vec<String> {
+        &self.list
+    }
+
+    pub fn get_progress(&self) -> u8 {
+        self.progress
+    }
+}
+
 pub struct SoundListPacket {
     count: u8,
     list: Vec<String>,

@@ -247,6 +247,23 @@ fn transcribe_svcmd<'a>(src: &'a [u8]) -> String {
             result += "disconnect";
         }
 
+        SvCmd::ModelList => {
+            result += "modellist ";
+
+            let pos = curs.position() as usize;
+            let modellist = qw::ModelListPacket::from_bytes(&curs.into_inner()[pos..]);
+
+            result += &format!("count={} ", modellist.get_count());
+
+            let list = modellist.get_list();
+            result += "\nMODEL LIST\n==========\n";
+            for model in list.into_iter() {
+                result += &format!("\"{}\"\n", model);
+            }
+            result += "==========\n";
+            result += &format!("progress={}\n", modellist.get_progress());
+        }
+
         SvCmd::Print => {
             result += "print ";
 
