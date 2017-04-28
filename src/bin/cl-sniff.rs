@@ -173,6 +173,8 @@ fn transcribe_clcmd<'a>(src: &'a [u8]) -> String {
     result += &format!("qport={} ", qport);
 
     match ClCmd::from_u8(curs.read_u8().unwrap()).unwrap() {
+
+        // TODO: use MoveDelta::from_bytes
         ClCmd::Move => {
             result += &format!("Move ");
             result += &format!("crc={} ", curs.read_u8().unwrap());
@@ -250,8 +252,7 @@ fn transcribe_svcmd<'a>(src: &'a [u8]) -> String {
         SvCmd::ModelList => {
             result += "modellist ";
 
-            let pos = curs.position() as usize;
-            let modellist = qw::ModelListPacket::from_bytes(&curs.into_inner()[pos..]);
+            let modellist = qw::ModelListPacket::from_bytes(&mut curs);
 
             result += &format!("count={} ", modellist.get_count());
 
@@ -262,6 +263,10 @@ fn transcribe_svcmd<'a>(src: &'a [u8]) -> String {
             }
             result += "==========\n";
             result += &format!("progress={}\n", modellist.get_progress());
+        }
+
+        SvCmd::PlayerInfo => {
+            result += "playerinfo ";
         }
 
         SvCmd::Print => {
@@ -276,8 +281,7 @@ fn transcribe_svcmd<'a>(src: &'a [u8]) -> String {
 
         SvCmd::ServerData => {
             result += "serverdata ";
-            let pos = curs.position() as usize;
-            let data = qw::ServerDataPacket::from_bytes(&curs.into_inner()[pos..]);
+            let data = qw::ServerDataPacket::from_bytes(&mut curs);
 
             result += &format!("proto={} ", data.get_protocol_version());
             result += &format!("servercount={} ", data.get_server_count());
@@ -299,8 +303,7 @@ fn transcribe_svcmd<'a>(src: &'a [u8]) -> String {
         SvCmd::SoundList => {
             result += "soundlist ";
 
-            let pos = curs.position() as usize;
-            let soundlist = qw::SoundListPacket::from_bytes(&curs.into_inner()[pos..]);
+            let soundlist = qw::SoundListPacket::from_bytes(&mut curs);
 
             result += &format!("count={} ", soundlist.get_count());
 

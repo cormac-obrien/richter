@@ -1,11 +1,30 @@
+// Copyright © 2017 Cormac O'Brien
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy of this software
+// and associated documentation files (the "Software"), to deal in the Software without
+// restriction, including without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all copies or
+// substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
+// BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use math::Vec3;
 use num::FromPrimitive;
 use std::collections::HashMap;
 use std::default::Default;
-use std::io::{Cursor, Read, Write};
+use std::io::{BufRead, Cursor, Read, Write};
 use std::str::FromStr;
 use util;
+
+pub const MAX_CLIENTS: usize = 32;
 
 /// The maximum number of entities per packet, excluding nails.
 pub const MAX_PACKET_ENTITIES: usize = 64;
@@ -97,14 +116,87 @@ pub struct PrintPacket {
 }
 
 impl PrintPacket {
-    pub fn from_bytes<'a>(src: &'a [u8]) -> PrintPacket {
-        let mut curs = Cursor::new(src);
-        let ptype = PrintType::from_u8(curs.read_u8().unwrap()).unwrap();
-        let msg = util::read_cstring(&mut curs).unwrap();
+    pub fn from_bytes<R>(mut src: R) -> PrintPacket
+        where R: BufRead + ReadBytesExt
+    {
+        let ptype = PrintType::from_u8(src.read_u8().unwrap()).unwrap();
+        let msg = util::read_cstring(&mut src).unwrap();
 
         PrintPacket {
             ptype: ptype,
             msg: msg,
+        }
+    }
+}
+
+bitflags! {
+    pub flags PlayerInfoFlags: u16 {
+        const PF_MSEC        = 0x0001,
+        const PF_COMMAND     = 0x0002,
+        const PF_VELOCITY1   = 0x0004,
+        const PF_VELOCITY2   = 0x0008,
+        const PF_VELOCITY3   = 0x0010,
+        const PF_MODEL       = 0x0020,
+        const PF_SKINNUM     = 0x0040,
+        const PF_EFFECTS     = 0x0080,
+        const PF_WEAPONFRAME = 0x0100,
+        const PF_DEAD        = 0x0200,
+        const PF_GIB         = 0x0400,
+        const PF_NOGRAV      = 0x0800,
+    }
+}
+
+pub struct PlayerInfoPacket {
+    id: u8,
+    flags: PlayerInfoFlags,
+    origin: [i16; 3], // TODO: define types for compressed coords, etc.
+    frame: u8,
+    msec: u8,
+    delta: MoveDelta,
+    vel: [i16; 3],
+    model_id: u8,
+    skin_id: u8,
+    effects: u8,
+    weapon_frame: u8,
+}
+
+impl PlayerInfoPacket {
+    pub fn from_bytes<R>(mut src: R) -> PlayerInfoPacket
+        where R: BufRead + ReadBytesExt
+    {
+
+        let id = src.read_u8().unwrap();
+        let flags = PlayerInfoFlags::from_bits(src.read_u16::<LittleEndian>().unwrap()).unwrap();
+
+        let mut origin = [0i16; 3];
+        for i in 0..origin.len() {
+            origin[i] = src.read_i16::<LittleEndian>().unwrap();
+        }
+
+        let frame = src.read_u8().unwrap();
+
+        let mut msec = 0;
+        if flags.contains(PF_MSEC) {
+            msec = src.read_u8().unwrap();
+        }
+
+        let mut delta: MoveDelta = Default::default();
+        if flags.contains(PF_COMMAND) {
+            // delta =
+        }
+
+        PlayerInfoPacket {
+            id: id,
+            flags: flags,
+            origin: origin,
+            frame: frame,
+            msec: msec,
+            delta: Default::default(),
+            vel: [0; 3],
+            model_id: 0,
+            skin_id: 0,
+            effects: 0,
+            weapon_frame: 0,
         }
     }
 }
@@ -130,24 +222,25 @@ pub struct ServerDataPacket {
 }
 
 impl ServerDataPacket {
-    pub fn from_bytes<'a>(src: &'a [u8]) -> ServerDataPacket {
-        let mut curs = Cursor::new(src);
+    pub fn from_bytes<R>(mut src: R) -> ServerDataPacket
+        where R: BufRead + ReadBytesExt
+    {
         ServerDataPacket {
-            proto: curs.read_i32::<LittleEndian>().unwrap(),
-            server_count: curs.read_i32::<LittleEndian>().unwrap(),
-            game_dir: util::read_cstring(&mut curs).unwrap(),
-            player_num: curs.read_u8().unwrap(),
-            level_name: util::read_cstring(&mut curs).unwrap(),
-            gravity: curs.read_f32::<LittleEndian>().unwrap(),
-            stop_speed: curs.read_f32::<LittleEndian>().unwrap(),
-            max_speed: curs.read_f32::<LittleEndian>().unwrap(),
-            spec_max_speed: curs.read_f32::<LittleEndian>().unwrap(),
-            accelerate: curs.read_f32::<LittleEndian>().unwrap(),
-            air_accelerate: curs.read_f32::<LittleEndian>().unwrap(),
-            water_accelerate: curs.read_f32::<LittleEndian>().unwrap(),
-            friction: curs.read_f32::<LittleEndian>().unwrap(),
-            water_friction: curs.read_f32::<LittleEndian>().unwrap(),
-            ent_gravity: curs.read_f32::<LittleEndian>().unwrap(),
+            proto: src.read_i32::<LittleEndian>().unwrap(),
+            server_count: src.read_i32::<LittleEndian>().unwrap(),
+            game_dir: util::read_cstring(&mut src).unwrap(),
+            player_num: src.read_u8().unwrap(),
+            level_name: util::read_cstring(&mut src).unwrap(),
+            gravity: src.read_f32::<LittleEndian>().unwrap(),
+            stop_speed: src.read_f32::<LittleEndian>().unwrap(),
+            max_speed: src.read_f32::<LittleEndian>().unwrap(),
+            spec_max_speed: src.read_f32::<LittleEndian>().unwrap(),
+            accelerate: src.read_f32::<LittleEndian>().unwrap(),
+            air_accelerate: src.read_f32::<LittleEndian>().unwrap(),
+            water_accelerate: src.read_f32::<LittleEndian>().unwrap(),
+            friction: src.read_f32::<LittleEndian>().unwrap(),
+            water_friction: src.read_f32::<LittleEndian>().unwrap(),
+            ent_gravity: src.read_f32::<LittleEndian>().unwrap(),
         }
     }
 
@@ -227,13 +320,14 @@ pub struct ModelListPacket {
 }
 
 impl ModelListPacket {
-    pub fn from_bytes<'a>(src: &'a [u8]) -> ModelListPacket {
-        let mut curs = Cursor::new(src);
-        let mut count = curs.read_u8().unwrap();
+    pub fn from_bytes<R>(mut src: R) -> ModelListPacket
+        where R: BufRead + ReadBytesExt
+    {
+        let mut count = src.read_u8().unwrap();
         let mut list: Vec<String> = Vec::new();
 
         loop {
-            let model_name = util::read_cstring(&mut curs).unwrap();
+            let model_name = util::read_cstring(&mut src).unwrap();
             if model_name.len() == 0 {
                 break;
             }
@@ -241,7 +335,7 @@ impl ModelListPacket {
             list.push(model_name);
         }
 
-        let progress = curs.read_u8().unwrap();
+        let progress = src.read_u8().unwrap();
 
         ModelListPacket {
             count: count,
@@ -274,13 +368,14 @@ pub struct SoundListPacket {
 }
 
 impl SoundListPacket {
-    pub fn from_bytes<'a>(src: &'a [u8]) -> SoundListPacket {
-        let mut curs = Cursor::new(src);
-        let mut count = curs.read_u8().unwrap();
+    pub fn from_bytes<R>(mut src: R) -> SoundListPacket
+        where R: BufRead + ReadBytesExt
+    {
+        let mut count = src.read_u8().unwrap();
         let mut list: Vec<String> = Vec::new();
 
         loop {
-            let sound_name = util::read_cstring(&mut curs).unwrap();
+            let sound_name = util::read_cstring(&mut src).unwrap();
             if sound_name.len() == 0 {
                 break;
             }
@@ -288,7 +383,7 @@ impl SoundListPacket {
             list.push(sound_name);
         }
 
-        let progress = curs.read_u8().unwrap();
+        let progress = src.read_u8().unwrap();
 
         SoundListPacket {
             count: count,
@@ -349,6 +444,76 @@ pub struct MoveDelta {
     buttons: u8,
     impulse: u8,
     msec: u8,
+}
+
+impl MoveDelta {
+    pub fn from_bytes<R>(mut src: R) -> MoveDelta
+        where R: BufRead + ReadBytesExt
+    {
+        let flags = MoveDeltaFlags::from_bits(src.read_u8().unwrap()).unwrap();
+
+        let mut angles = [0u16; 3];
+
+        if flags.contains(CM_ANGLE1) {
+            angles[0] = src.read_u16::<LittleEndian>().unwrap();
+        }
+
+        if flags.contains(CM_ANGLE2) {
+            angles[1] = src.read_u16::<LittleEndian>().unwrap();
+        }
+
+        if flags.contains(CM_ANGLE3) {
+            angles[2] = src.read_u16::<LittleEndian>().unwrap();
+        }
+
+        let mut moves = [0u16; 3];
+
+        if flags.contains(CM_FORWARD) {
+            moves[0] = src.read_u16::<LittleEndian>().unwrap();
+        }
+
+        if flags.contains(CM_SIDE) {
+            moves[1] = src.read_u16::<LittleEndian>().unwrap();
+        }
+
+        if flags.contains(CM_UP) {
+            moves[2] = src.read_u16::<LittleEndian>().unwrap();
+        }
+
+        let mut buttons = 0;
+        if flags.contains(CM_BUTTONS) {
+            buttons = src.read_u8().unwrap();
+        }
+
+        let mut impulse = 0;
+        if flags.contains(CM_IMPULSE) {
+            impulse = src.read_u8().unwrap();
+        }
+
+        let msec = src.read_u8().unwrap();
+
+        MoveDelta {
+            flags: flags,
+            angles: angles,
+            moves: moves,
+            buttons: buttons,
+            impulse: impulse,
+            msec: msec,
+        }
+    }
+}
+
+impl Default for MoveDelta {
+    fn default() -> MoveDelta {
+        MoveDelta {
+            flags: MoveDeltaFlags::empty(),
+            angles: [0; 3],
+            moves: [0; 3],
+            buttons: 0,
+            impulse: 0,
+            msec: 0,
+        }
+    }
 }
 
 const PROTOCOL_FTE: u32 = ('F' as u32) << 0 | ('T' as u32) << 8 | ('E' as u32) << 16 |
