@@ -5,9 +5,12 @@ use std::collections::HashMap;
 use std::default::Default;
 use std::io::{Cursor, Read, Write};
 use std::str::FromStr;
+use util;
 
 /// The maximum number of entities per packet, excluding nails.
 pub const MAX_PACKET_ENTITIES: usize = 64;
+
+pub const MAX_SOUNDS: usize = 256;
 
 /// The maximum allowed size of a UDP packet.
 pub const PACKET_MAX: usize = 8192;
@@ -86,6 +89,178 @@ pub enum PrintType {
     Medium = 1,
     High = 2,
     Chat = 3,
+}
+
+pub struct PrintPacket {
+    ptype: PrintType,
+    msg: String,
+}
+
+impl PrintPacket {
+    pub fn from_bytes<'a>(src: &'a [u8]) -> PrintPacket {
+        let mut curs = Cursor::new(src);
+        let ptype = PrintType::from_u8(curs.read_u8().unwrap()).unwrap();
+        let msg = util::read_cstring(&mut curs).unwrap();
+
+        PrintPacket {
+            ptype: ptype,
+            msg: msg,
+        }
+    }
+}
+
+const PLAYER_SPECTATOR: u8 = 0x80;
+
+pub struct ServerDataPacket {
+    proto: i32,
+    server_count: i32,
+    game_dir: String,
+    player_num: u8,
+    level_name: String,
+    gravity: f32,
+    stop_speed: f32,
+    max_speed: f32,
+    spec_max_speed: f32,
+    accelerate: f32,
+    air_accelerate: f32,
+    water_accelerate: f32,
+    friction: f32,
+    water_friction: f32,
+    ent_gravity: f32,
+}
+
+impl ServerDataPacket {
+    pub fn from_bytes<'a>(src: &'a [u8]) -> ServerDataPacket {
+        let mut curs = Cursor::new(src);
+        ServerDataPacket {
+            proto: curs.read_i32::<LittleEndian>().unwrap(),
+            server_count: curs.read_i32::<LittleEndian>().unwrap(),
+            game_dir: util::read_cstring(&mut curs).unwrap(),
+            player_num: curs.read_u8().unwrap(),
+            level_name: util::read_cstring(&mut curs).unwrap(),
+            gravity: curs.read_f32::<LittleEndian>().unwrap(),
+            stop_speed: curs.read_f32::<LittleEndian>().unwrap(),
+            max_speed: curs.read_f32::<LittleEndian>().unwrap(),
+            spec_max_speed: curs.read_f32::<LittleEndian>().unwrap(),
+            accelerate: curs.read_f32::<LittleEndian>().unwrap(),
+            air_accelerate: curs.read_f32::<LittleEndian>().unwrap(),
+            water_accelerate: curs.read_f32::<LittleEndian>().unwrap(),
+            friction: curs.read_f32::<LittleEndian>().unwrap(),
+            water_friction: curs.read_f32::<LittleEndian>().unwrap(),
+            ent_gravity: curs.read_f32::<LittleEndian>().unwrap(),
+        }
+    }
+
+    pub fn get_protocol_version(&self) -> i32 {
+        self.proto
+    }
+
+    pub fn get_server_count(&self) -> i32 {
+        self.server_count
+    }
+
+    pub fn get_game_directory(&self) -> &str {
+        &self.game_dir
+    }
+
+    pub fn get_player_number(&self) -> u8 {
+        self.player_num & !PLAYER_SPECTATOR
+    }
+
+    pub fn is_spectator(&self) -> bool {
+        self.player_num & PLAYER_SPECTATOR == PLAYER_SPECTATOR
+    }
+
+    pub fn get_level_name(&self) -> &str {
+        &self.level_name
+    }
+
+    pub fn get_gravity(&self) -> f32 {
+        self.gravity
+    }
+
+    pub fn get_stop_speed(&self) -> f32 {
+        self.stop_speed
+    }
+
+    pub fn get_max_speed(&self) -> f32 {
+        self.max_speed
+    }
+
+    pub fn get_spec_max_speed(&self) -> f32 {
+        self.spec_max_speed
+    }
+
+    pub fn get_accelerate(&self) -> f32 {
+        self.accelerate
+    }
+
+    pub fn get_air_accelerate(&self) -> f32 {
+        self.air_accelerate
+    }
+
+    pub fn get_water_accelerate(&self) -> f32 {
+        self.water_accelerate
+    }
+
+    pub fn get_friction(&self) -> f32 {
+        self.friction
+    }
+
+    pub fn get_water_friction(&self) -> f32 {
+        self.water_friction
+    }
+
+    pub fn get_ent_gravity(&self) -> f32 {
+        self.ent_gravity
+    }
+}
+
+pub struct SoundListPacket {
+    count: u8,
+    list: Vec<String>,
+
+    // either same as count or 0.
+    // if same as count, send this to server with next sound list request.
+    // if 0, we have all the sounds we need.
+    progress: u8,
+}
+
+impl SoundListPacket {
+    pub fn from_bytes<'a>(src: &'a [u8]) -> SoundListPacket {
+        let mut curs = Cursor::new(src);
+        let mut count = curs.read_u8().unwrap();
+        let mut list: Vec<String> = Vec::new();
+
+        loop {
+            let sound_name = util::read_cstring(&mut curs).unwrap();
+            if sound_name.len() == 0 {
+                break;
+            }
+            count += 1;
+            list.push(sound_name);
+        }
+
+        let progress = curs.read_u8().unwrap();
+
+        SoundListPacket {
+            count: count,
+            list: list,
+            progress: progress,
+        }
+    }
+
+    pub fn get_count(&self) -> u8 {
+        self.count
+    }
+
+    pub fn get_list(&self) -> &Vec<String> {
+        &self.list
+    }
+
+    pub fn get_progress(&self) -> u8 {
+        self.progress
+    }
 }
 
 #[derive(Debug, FromPrimitive)]

@@ -20,5 +20,7 @@ pub fn read_cstring<R>(src: &mut R) -> Result<String, ::std::string::FromUtf8Err
 {
     let mut bytes: Vec<u8> = Vec::new();
     src.read_until(0, &mut bytes).unwrap();
+    let len = bytes.len();
+    bytes.remove(len - 1);
     return String::from_utf8(bytes);
 }

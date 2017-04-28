@@ -244,17 +244,56 @@ fn transcribe_svcmd<'a>(src: &'a [u8]) -> String {
 
     match SvCmd::from_u8(cmdbyte).unwrap() {
         SvCmd::Disconnect => {
-            result += &format!("disconnect");
+            result += "disconnect";
         }
 
         SvCmd::Print => {
-            result += &format!("print ");
+            result += "print ";
 
             let print_type = qw::PrintType::from_u8(curs.read_u8().unwrap()).unwrap();
             result += &format!("type={:?} ", print_type);
 
             let msg = util::read_cstring(&mut curs).unwrap();
             result += &format!("msg=\"{}\"", msg);
+        }
+
+        SvCmd::ServerData => {
+            result += "serverdata ";
+            let pos = curs.position() as usize;
+            let data = qw::ServerDataPacket::from_bytes(&curs.into_inner()[pos..]);
+
+            result += &format!("proto={} ", data.get_protocol_version());
+            result += &format!("servercount={} ", data.get_server_count());
+            result += &format!("gamedir=\"{}\" ", data.get_game_directory());
+            result += &format!("playerno={} ", data.get_player_number());
+            result += &format!("levelname=\"{}\" ", data.get_level_name());
+            result += &format!("gravity={} ", data.get_gravity());
+            result += &format!("stopspeed={} ", data.get_stop_speed());
+            result += &format!("maxspeed={} ", data.get_max_speed());
+            result += &format!("spectatormaxspeed={} ", data.get_spec_max_speed());
+            result += &format!("accelerate={} ", data.get_accelerate());
+            result += &format!("airaccelerate={} ", data.get_air_accelerate());
+            result += &format!("wateraccelerate={} ", data.get_water_accelerate());
+            result += &format!("friction={} ", data.get_friction());
+            result += &format!("waterfriction={} ", data.get_water_friction());
+            result += &format!("entgravity={} ", data.get_ent_gravity());
+        }
+
+        SvCmd::SoundList => {
+            result += "soundlist ";
+
+            let pos = curs.position() as usize;
+            let soundlist = qw::SoundListPacket::from_bytes(&curs.into_inner()[pos..]);
+
+            result += &format!("count={} ", soundlist.get_count());
+
+            let list = soundlist.get_list();
+            result += "\nSOUND LIST\n==========\n";
+            for sound in list.into_iter() {
+                result += &format!("\"{}\"\n", sound);
+            }
+            result += "==========\n";
+            result += &format!("progress={}\n", soundlist.get_progress());
         }
 
         s => {
