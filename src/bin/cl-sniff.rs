@@ -34,137 +34,6 @@ use richter::util;
 
 static USAGE: &'static str = "Usage: cl-sniff <client IP> <client port> <server IP> <server port>";
 
-const SEQUENCE_RELIABLE: i32 = (1 << 31);
-
-enum QwPacket {
-    Oob(OobPacket),
-    Netchan(NetchanPacket),
-}
-
-impl QwPacket {
-    pub fn new<'a>(src: &'a [u8]) -> QwPacket {
-        if src.len() < 4 {
-            panic!("Packet is too short");
-        }
-
-        let mut curs = Cursor::new(src);
-        let seq = curs.read_i32::<LittleEndian>().unwrap();
-
-        if seq == -1 {
-            return QwPacket::Oob(OobPacket::new(&curs.into_inner()[4..]));
-        }
-
-        if src.len() < 8 {
-            panic!("Packet is too short for a netchannel packet");
-        }
-
-        let ack_seq = curs.read_i32::<LittleEndian>().unwrap();
-        let payload = Vec::from(&curs.into_inner()[8..]);
-
-        QwPacket::Netchan(NetchanPacket {
-            seq: seq,
-            ack: ack_seq,
-            payload: payload,
-        })
-    }
-}
-
-enum OobPacket {
-    GetChallenge,
-    Challenge(i32),
-    Connect(ConnectPacket),
-    Accept,
-    Ping,
-    Ack,
-    Status,
-    Log,
-    Rcon,
-}
-
-impl OobPacket {
-    pub fn new<'a>(src: &'a [u8]) -> OobPacket {
-        // TODO: specify a maximum out-of-band packet length
-        let mut len = 0;
-        while len < src.len() && src[len] != 0 {
-            len += 1;
-        }
-
-        let cmd_text = String::from(str::from_utf8(&src[..len]).unwrap());
-        let mut cmd_args = cmd_text.split_whitespace();
-
-        match cmd_args.next().unwrap() {
-            "getchallenge" => OobPacket::GetChallenge,
-            "ping" | "k" => OobPacket::Ping,
-            "l" => OobPacket::Ack,
-            "status" => OobPacket::Status,
-            "log" => OobPacket::Log,
-            "connect" => {
-                let qwcol = i32::from_str(cmd_args.next().unwrap()).unwrap();
-                let qport = u16::from_str(cmd_args.next().unwrap()).unwrap();
-                let challenge = i32::from_str(cmd_args.next().unwrap()).unwrap();
-
-                OobPacket::Connect(ConnectPacket {
-                    qwcol: qwcol,
-                    qport: qport,
-                    challenge: challenge,
-                    userinfo: String::from(cmd_args.next().unwrap()),
-                })
-            }
-            "rcon" => OobPacket::Rcon,
-            "j" => OobPacket::Accept,
-            s => {
-                if s.starts_with("c") {
-                    return OobPacket::Challenge(i32::from_str(&s[1..]).unwrap());
-                } else {
-                    panic!("Unrecognized out-of-band command");
-                }
-            }
-        }
-    }
-}
-
-struct ConnectPacket {
-    qwcol: i32,
-    qport: u16,
-    challenge: i32,
-    userinfo: String,
-}
-
-impl fmt::Display for ConnectPacket {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f,
-               "qw={} qport={} challenge={} userinfo={}",
-               self.qwcol,
-               self.qport,
-               self.challenge,
-               self.userinfo)
-    }
-}
-
-struct NetchanPacket {
-    seq: i32,
-    ack: i32,
-    payload: Vec<u8>,
-}
-
-impl NetchanPacket {
-    pub fn get_sequence(&self) -> i32 {
-        self.seq & !SEQUENCE_RELIABLE
-    }
-
-    pub fn get_sequence_reliable(&self) -> bool {
-        self.seq & SEQUENCE_RELIABLE == SEQUENCE_RELIABLE
-    }
-
-    pub fn get_ack_sequence(&self) -> i32 {
-        self.ack & !SEQUENCE_RELIABLE
-    }
-
-    pub fn payload(&self) -> &[u8] {
-        &self.payload
-    }
-}
-
 fn transcribe_clcmd<'a>(src: &'a [u8]) -> String {
     let mut result = String::new();
     let mut curs = Cursor::new(src);
@@ -252,7 +121,7 @@ fn transcribe_svcmd<'a>(src: &'a [u8]) -> String {
         SvCmd::ModelList => {
             result += "modellist ";
 
-            let modellist = qw::ModelListPacket::from_bytes(&mut curs);
+            let modellist = qw::ModelListPacket::from_bytes(&mut curs).unwrap();
 
             result += &format!("count={} ", modellist.get_count());
 
@@ -267,6 +136,9 @@ fn transcribe_svcmd<'a>(src: &'a [u8]) -> String {
 
         SvCmd::PlayerInfo => {
             result += "playerinfo ";
+
+            let playerinfo = qw::PlayerInfoPacket::from_bytes(&mut curs).unwrap();
+            result += &format!("{:#?} ", playerinfo);
         }
 
         SvCmd::Print => {
@@ -281,7 +153,7 @@ fn transcribe_svcmd<'a>(src: &'a [u8]) -> String {
 
         SvCmd::ServerData => {
             result += "serverdata ";
-            let data = qw::ServerDataPacket::from_bytes(&mut curs);
+            let data = qw::ServerDataPacket::from_bytes(&mut curs).unwrap();
 
             result += &format!("proto={} ", data.get_protocol_version());
             result += &format!("servercount={} ", data.get_server_count());
@@ -303,7 +175,7 @@ fn transcribe_svcmd<'a>(src: &'a [u8]) -> String {
         SvCmd::SoundList => {
             result += "soundlist ";
 
-            let soundlist = qw::SoundListPacket::from_bytes(&mut curs);
+            let soundlist = qw::SoundListPacket::from_bytes(&mut curs).unwrap();
 
             result += &format!("count={} ", soundlist.get_count());
 
@@ -358,19 +230,21 @@ fn main() {
                     continue;
                 }
 
-                let qw_packet = QwPacket::new(udp_packet.payload());
+                let qw_packet = qw::Packet::new(udp_packet.payload()).unwrap();
                 match qw_packet {
-                    QwPacket::Oob(oob_packet) => {
+                    qw::Packet::OutOfBand(oob_packet) => {
                         match oob_packet {
-                            OobPacket::GetChallenge => print!("getchallenge"),
-                            OobPacket::Challenge(challenge) => print!("challenge={}", challenge),
-                            OobPacket::Connect(conn_packet) => print!("{}", conn_packet),
-                            OobPacket::Accept => print!("accept"),
+                            qw::OutOfBandPacket::GetChallenge => print!("getchallenge"),
+                            qw::OutOfBandPacket::Challenge(challenge) => {
+                                print!("challenge={}", challenge)
+                            }
+                            qw::OutOfBandPacket::Connect(conn_packet) => print!("{}", conn_packet),
+                            qw::OutOfBandPacket::Accept => print!("accept"),
                             _ => (),
                         }
                     }
 
-                    QwPacket::Netchan(nc_packet) => {
+                    qw::Packet::NetChan(nc_packet) => {
                         print!("seq={} [", nc_packet.get_sequence());
                         if nc_packet.get_sequence_reliable() {
                             print!("R");

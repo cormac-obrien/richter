@@ -20,8 +20,11 @@ use math::Vec3;
 use num::FromPrimitive;
 use std::collections::HashMap;
 use std::default::Default;
-use std::io::{BufRead, Cursor, Read, Write};
-use std::str::FromStr;
+use std::error::Error;
+use std::fmt;
+use std::convert::From;
+use std::io::{self, BufRead, Cursor, Write};
+use std::str::{self, FromStr};
 use util;
 
 pub const MAX_CLIENTS: usize = 32;
@@ -38,6 +41,45 @@ pub const VERSION: u32 = 28;
 pub const PORT_MASTER: u16 = 27000;
 pub const PORT_CLIENT: u16 = 27001;
 pub const PORT_SERVER: u16 = 27500;
+
+const SEQUENCE_RELIABLE: i32 = (1 << 31);
+
+#[derive(Debug)]
+pub enum NetworkError {
+    Io(io::Error),
+    Other,
+}
+
+impl fmt::Display for NetworkError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            NetworkError::Io(ref err) => write!(f, "Network error: {}", err),
+            NetworkError::Other => write!(f, "Unknown network error"),
+        }
+    }
+}
+
+impl Error for NetworkError {
+    fn description(&self) -> &str {
+        match *self {
+            NetworkError::Io(_) => "I/O error",
+            NetworkError::Other => "Unknown network error",
+        }
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        match *self {
+            NetworkError::Io(ref err) => Some(err),
+            NetworkError::Other => None,
+        }
+    }
+}
+
+impl From<io::Error> for NetworkError {
+    fn from(err: io::Error) -> NetworkError {
+        NetworkError::Io(err)
+    }
+}
 
 #[derive(Debug, FromPrimitive)]
 pub enum SvCmd {
@@ -102,6 +144,135 @@ pub enum SvCmd {
     UpdatePl = 53,
 }
 
+pub enum Packet {
+    OutOfBand(OutOfBandPacket),
+    NetChan(NetChanPacket),
+}
+
+impl Packet {
+    pub fn new<'a>(src: &'a [u8]) -> Result<Packet, NetworkError> {
+        if src.len() < 4 {
+            return Err(NetworkError::Other);
+        }
+
+        let mut curs = Cursor::new(src);
+        let seq = curs.read_i32::<LittleEndian>()?;
+
+        if seq == -1 {
+            return Ok(Packet::OutOfBand(OutOfBandPacket::new(&curs.into_inner()[4..]).unwrap()));
+        }
+
+        if src.len() < 8 {
+            panic!("Packet is too short for a netchannel packet");
+        }
+
+        let ack_seq = curs.read_i32::<LittleEndian>()?;
+        let payload = Vec::from(&curs.into_inner()[8..]);
+
+        Ok(Packet::NetChan(NetChanPacket {
+            seq: seq,
+            ack: ack_seq,
+            payload: payload,
+        }))
+    }
+}
+
+pub enum OutOfBandPacket {
+    GetChallenge,
+    Challenge(i32),
+    Connect(ConnectPacket),
+    Accept,
+    Ping,
+    Ack,
+    Status,
+    Log,
+    Rcon,
+}
+
+impl OutOfBandPacket {
+    pub fn new<'a>(src: &'a [u8]) -> Result<OutOfBandPacket, NetworkError> {
+        // TODO: specify a maximum out-of-band packet length
+        let mut len = 0;
+        while len < src.len() && src[len] != 0 {
+            len += 1;
+        }
+
+        let cmd_text = String::from(str::from_utf8(&src[..len]).unwrap());
+        let mut cmd_args = cmd_text.split_whitespace();
+
+        match cmd_args.next().unwrap() {
+            "getchallenge" => Ok(OutOfBandPacket::GetChallenge),
+            "ping" | "k" => Ok(OutOfBandPacket::Ping),
+            "l" => Ok(OutOfBandPacket::Ack),
+            "status" => Ok(OutOfBandPacket::Status),
+            "log" => Ok(OutOfBandPacket::Log),
+            "connect" => {
+                let qwcol = i32::from_str(cmd_args.next().unwrap()).unwrap();
+                let qport = u16::from_str(cmd_args.next().unwrap()).unwrap();
+                let challenge = i32::from_str(cmd_args.next().unwrap()).unwrap();
+
+                Ok(OutOfBandPacket::Connect(ConnectPacket {
+                    qwcol: qwcol,
+                    qport: qport,
+                    challenge: challenge,
+                    userinfo: String::from(cmd_args.next().unwrap()),
+                }))
+            }
+            "rcon" => Ok(OutOfBandPacket::Rcon),
+            "j" => Ok(OutOfBandPacket::Accept),
+            s => {
+                if s.starts_with("c") {
+                    Ok(OutOfBandPacket::Challenge(i32::from_str(&s[1..]).unwrap()))
+                } else {
+                    Err(NetworkError::Other)
+                }
+            }
+        }
+    }
+}
+
+pub struct ConnectPacket {
+    qwcol: i32,
+    qport: u16,
+    challenge: i32,
+    userinfo: String,
+}
+
+impl fmt::Display for ConnectPacket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f,
+               "qw={} qport={} challenge={} userinfo={}",
+               self.qwcol,
+               self.qport,
+               self.challenge,
+               self.userinfo)
+    }
+}
+
+pub struct NetChanPacket {
+    seq: i32,
+    ack: i32,
+    payload: Vec<u8>,
+}
+
+impl NetChanPacket {
+    pub fn get_sequence(&self) -> i32 {
+        self.seq & !SEQUENCE_RELIABLE
+    }
+
+    pub fn get_sequence_reliable(&self) -> bool {
+        self.seq & SEQUENCE_RELIABLE == SEQUENCE_RELIABLE
+    }
+
+    pub fn get_ack_sequence(&self) -> i32 {
+        self.ack & !SEQUENCE_RELIABLE
+    }
+
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+}
+
 #[derive(Debug, FromPrimitive)]
 pub enum PrintType {
     Low = 0,
@@ -116,16 +287,16 @@ pub struct PrintPacket {
 }
 
 impl PrintPacket {
-    pub fn from_bytes<R>(mut src: R) -> PrintPacket
+    pub fn from_bytes<R>(mut src: R) -> Result<PrintPacket, NetworkError>
         where R: BufRead + ReadBytesExt
     {
-        let ptype = PrintType::from_u8(src.read_u8().unwrap()).unwrap();
+        let ptype = PrintType::from_u8(src.read_u8()?).unwrap();
         let msg = util::read_cstring(&mut src).unwrap();
 
-        PrintPacket {
+        Ok(PrintPacket {
             ptype: ptype,
             msg: msg,
-        }
+        })
     }
 }
 
@@ -146,6 +317,7 @@ bitflags! {
     }
 }
 
+#[derive(Debug)]
 pub struct PlayerInfoPacket {
     id: u8,
     flags: PlayerInfoFlags,
@@ -161,16 +333,16 @@ pub struct PlayerInfoPacket {
 }
 
 impl PlayerInfoPacket {
-    pub fn from_bytes<R>(mut src: R) -> PlayerInfoPacket
+    pub fn from_bytes<R>(mut src: R) -> Result<PlayerInfoPacket, NetworkError>
         where R: BufRead + ReadBytesExt
     {
 
         let id = src.read_u8().unwrap();
-        let flags = PlayerInfoFlags::from_bits(src.read_u16::<LittleEndian>().unwrap()).unwrap();
+        let flags = PlayerInfoFlags::from_bits(src.read_u16::<LittleEndian>()?).unwrap();
 
         let mut origin = [0i16; 3];
         for i in 0..origin.len() {
-            origin[i] = src.read_i16::<LittleEndian>().unwrap();
+            origin[i] = src.read_i16::<LittleEndian>()?;
         }
 
         let frame = src.read_u8().unwrap();
@@ -182,22 +354,56 @@ impl PlayerInfoPacket {
 
         let mut delta: MoveDelta = Default::default();
         if flags.contains(PF_COMMAND) {
-            // delta =
+            delta = MoveDelta::from_bytes(&mut src).unwrap();
         }
 
-        PlayerInfoPacket {
+        let mut vel = [0i16; 3];
+
+        if flags.contains(PF_VELOCITY1) {
+            vel[0] = src.read_i16::<LittleEndian>()?;
+        }
+
+        if flags.contains(PF_VELOCITY2) {
+            vel[1] = src.read_i16::<LittleEndian>()?;
+        }
+
+        if flags.contains(PF_VELOCITY3) {
+            vel[2] = src.read_i16::<LittleEndian>()?;
+        }
+
+        let mut model_id = 0;
+        if flags.contains(PF_MODEL) {
+            model_id = src.read_u8().unwrap();
+        }
+
+        let mut skin_id = 0;
+        if flags.contains(PF_SKINNUM) {
+            skin_id = src.read_u8().unwrap();
+        }
+
+        let mut effects = 0;
+        if flags.contains(PF_EFFECTS) {
+            effects = src.read_u8().unwrap();
+        }
+
+        let mut weapon_frame = 0;
+        if flags.contains(PF_WEAPONFRAME) {
+            weapon_frame = src.read_u8().unwrap();
+        }
+
+        Ok(PlayerInfoPacket {
             id: id,
             flags: flags,
             origin: origin,
             frame: frame,
             msec: msec,
-            delta: Default::default(),
-            vel: [0; 3],
-            model_id: 0,
-            skin_id: 0,
-            effects: 0,
-            weapon_frame: 0,
-        }
+            delta: delta,
+            vel: vel,
+            model_id: model_id,
+            skin_id: skin_id,
+            effects: effects,
+            weapon_frame: weapon_frame,
+        })
     }
 }
 
@@ -222,26 +428,26 @@ pub struct ServerDataPacket {
 }
 
 impl ServerDataPacket {
-    pub fn from_bytes<R>(mut src: R) -> ServerDataPacket
+    pub fn from_bytes<R>(mut src: R) -> Result<ServerDataPacket, NetworkError>
         where R: BufRead + ReadBytesExt
     {
-        ServerDataPacket {
-            proto: src.read_i32::<LittleEndian>().unwrap(),
-            server_count: src.read_i32::<LittleEndian>().unwrap(),
+        Ok(ServerDataPacket {
+            proto: src.read_i32::<LittleEndian>()?,
+            server_count: src.read_i32::<LittleEndian>()?,
             game_dir: util::read_cstring(&mut src).unwrap(),
             player_num: src.read_u8().unwrap(),
             level_name: util::read_cstring(&mut src).unwrap(),
-            gravity: src.read_f32::<LittleEndian>().unwrap(),
-            stop_speed: src.read_f32::<LittleEndian>().unwrap(),
-            max_speed: src.read_f32::<LittleEndian>().unwrap(),
-            spec_max_speed: src.read_f32::<LittleEndian>().unwrap(),
-            accelerate: src.read_f32::<LittleEndian>().unwrap(),
-            air_accelerate: src.read_f32::<LittleEndian>().unwrap(),
-            water_accelerate: src.read_f32::<LittleEndian>().unwrap(),
-            friction: src.read_f32::<LittleEndian>().unwrap(),
-            water_friction: src.read_f32::<LittleEndian>().unwrap(),
-            ent_gravity: src.read_f32::<LittleEndian>().unwrap(),
-        }
+            gravity: src.read_f32::<LittleEndian>()?,
+            stop_speed: src.read_f32::<LittleEndian>()?,
+            max_speed: src.read_f32::<LittleEndian>()?,
+            spec_max_speed: src.read_f32::<LittleEndian>()?,
+            accelerate: src.read_f32::<LittleEndian>()?,
+            air_accelerate: src.read_f32::<LittleEndian>()?,
+            water_accelerate: src.read_f32::<LittleEndian>()?,
+            friction: src.read_f32::<LittleEndian>()?,
+            water_friction: src.read_f32::<LittleEndian>()?,
+            ent_gravity: src.read_f32::<LittleEndian>()?,
+        })
     }
 
     pub fn get_protocol_version(&self) -> i32 {
@@ -320,10 +526,10 @@ pub struct ModelListPacket {
 }
 
 impl ModelListPacket {
-    pub fn from_bytes<R>(mut src: R) -> ModelListPacket
+    pub fn from_bytes<R>(mut src: R) -> Result<ModelListPacket, NetworkError>
         where R: BufRead + ReadBytesExt
     {
-        let mut count = src.read_u8().unwrap();
+        let mut count = src.read_u8()?;
         let mut list: Vec<String> = Vec::new();
 
         loop {
@@ -335,13 +541,13 @@ impl ModelListPacket {
             list.push(model_name);
         }
 
-        let progress = src.read_u8().unwrap();
+        let progress = src.read_u8()?;
 
-        ModelListPacket {
+        Ok(ModelListPacket {
             count: count,
             list: list,
             progress: progress,
-        }
+        })
     }
 
     pub fn get_count(&self) -> u8 {
@@ -368,10 +574,10 @@ pub struct SoundListPacket {
 }
 
 impl SoundListPacket {
-    pub fn from_bytes<R>(mut src: R) -> SoundListPacket
+    pub fn from_bytes<R>(mut src: R) -> Result<SoundListPacket, NetworkError>
         where R: BufRead + ReadBytesExt
     {
-        let mut count = src.read_u8().unwrap();
+        let mut count = src.read_u8()?;
         let mut list: Vec<String> = Vec::new();
 
         loop {
@@ -383,13 +589,13 @@ impl SoundListPacket {
             list.push(sound_name);
         }
 
-        let progress = src.read_u8().unwrap();
+        let progress = src.read_u8()?;
 
-        SoundListPacket {
+        Ok(SoundListPacket {
             count: count,
             list: list,
             progress: progress,
-        }
+        })
     }
 
     pub fn get_count(&self) -> u8 {
@@ -417,6 +623,7 @@ pub enum ClCmd {
     Upload = 7,
 }
 
+#[derive(Debug)]
 pub struct MoveCmd {
     crc: u8,
     loss: u8,
@@ -437,6 +644,7 @@ bitflags! {
     }
 }
 
+#[derive(Debug)]
 pub struct MoveDelta {
     flags: MoveDeltaFlags,
     angles: [u16; 3],
@@ -447,7 +655,7 @@ pub struct MoveDelta {
 }
 
 impl MoveDelta {
-    pub fn from_bytes<R>(mut src: R) -> MoveDelta
+    pub fn from_bytes<R>(mut src: R) -> Result<MoveDelta, NetworkError>
         where R: BufRead + ReadBytesExt
     {
         let flags = MoveDeltaFlags::from_bits(src.read_u8().unwrap()).unwrap();
@@ -455,29 +663,29 @@ impl MoveDelta {
         let mut angles = [0u16; 3];
 
         if flags.contains(CM_ANGLE1) {
-            angles[0] = src.read_u16::<LittleEndian>().unwrap();
+            angles[0] = src.read_u16::<LittleEndian>()?;
         }
 
         if flags.contains(CM_ANGLE2) {
-            angles[1] = src.read_u16::<LittleEndian>().unwrap();
+            angles[1] = src.read_u16::<LittleEndian>()?;
         }
 
         if flags.contains(CM_ANGLE3) {
-            angles[2] = src.read_u16::<LittleEndian>().unwrap();
+            angles[2] = src.read_u16::<LittleEndian>()?;
         }
 
         let mut moves = [0u16; 3];
 
         if flags.contains(CM_FORWARD) {
-            moves[0] = src.read_u16::<LittleEndian>().unwrap();
+            moves[0] = src.read_u16::<LittleEndian>()?;
         }
 
         if flags.contains(CM_SIDE) {
-            moves[1] = src.read_u16::<LittleEndian>().unwrap();
+            moves[1] = src.read_u16::<LittleEndian>()?;
         }
 
         if flags.contains(CM_UP) {
-            moves[2] = src.read_u16::<LittleEndian>().unwrap();
+            moves[2] = src.read_u16::<LittleEndian>()?;
         }
 
         let mut buttons = 0;
@@ -492,14 +700,14 @@ impl MoveDelta {
 
         let msec = src.read_u8().unwrap();
 
-        MoveDelta {
+        Ok(MoveDelta {
             flags: flags,
             angles: angles,
             moves: moves,
             buttons: buttons,
             impulse: impulse,
             msec: msec,
-        }
+        })
     }
 }
 
@@ -581,19 +789,19 @@ pub struct Challenge {
 }
 
 impl Challenge {
-    pub fn serialize(&self) -> Vec<u8> {
+    pub fn serialize(&self) -> Result<Vec<u8>, NetworkError> {
         let mut result = Cursor::new(Vec::new());
         result.write(&self.challenge.to_string().into_bytes()).unwrap();
 
         if let Some(fte) = self.fte_extensions {
-            result.write_u32::<LittleEndian>(fte.bits()).unwrap();
+            result.write_u32::<LittleEndian>(fte.bits())?;
         }
 
         if let Some(fte2) = self.fte2_extensions {
-            result.write_u32::<LittleEndian>(fte2.bits()).unwrap();
+            result.write_u32::<LittleEndian>(fte2.bits())?;
         }
 
-        result.into_inner()
+        Ok(result.into_inner())
     }
 
     pub fn deserialize<A>(data: A) -> Challenge
