@@ -26,7 +26,7 @@ use qw::{self, ClCmd, PacketEntities, SvCmd, UserCmd, UserInfo};
 use std;
 use std::cell::{Cell, RefCell};
 use std::default::Default;
-use std::io::{Cursor, Read, Write};
+use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::str::{self, FromStr};
 use time::{Duration, PreciseTime};

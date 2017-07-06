@@ -19,11 +19,12 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use math::Vec3;
 use num::FromPrimitive;
 use std::collections::HashMap;
+use std::convert::From;
 use std::default::Default;
 use std::error::Error;
 use std::fmt;
-use std::convert::From;
 use std::io::{self, BufRead, Cursor, Write};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
 use std::str::{self, FromStr};
 use util;
 
@@ -42,7 +43,7 @@ pub const PORT_MASTER: u16 = 27000;
 pub const PORT_CLIENT: u16 = 27001;
 pub const PORT_SERVER: u16 = 27500;
 
-const SEQUENCE_RELIABLE: i32 = (1 << 31);
+const RELIABLE_FLAG: i32 = (1 << 31);
 
 #[derive(Debug)]
 pub enum NetworkError {
@@ -78,6 +79,95 @@ impl Error for NetworkError {
 impl From<io::Error> for NetworkError {
     fn from(err: io::Error) -> NetworkError {
         NetworkError::Io(err)
+    }
+}
+
+pub enum SockType {
+    Client,
+    Server
+}
+
+pub struct QwSocket {
+    // underlying UDP socket
+    socket: UdpSocket,
+
+    // what kind of socket this is (client or server)
+    sock_type: SockType,
+
+    // remote address this socket is connected to
+    remote: SocketAddr,
+
+    // sequence number of the most recently received packet
+    in_seq: i32,
+
+    // true if last packet received was reliable
+    in_seq_reliable: bool,
+
+    // sequence number of packet most recently acked by remote
+    ack: i32,
+
+    // true if remote acked most recently sent reliable packet
+    remote_acked_reliable: bool,
+
+    // number of packets dropped this frame
+    dropped: i32,
+
+    // number of "drop events" (times when self.dropped was greater than 0)
+    drop_count: i32
+}
+
+impl QwSocket {
+    pub fn from_raw_parts(socket: UdpSocket, remote: SocketAddr, sock_type: SockType) -> QwSocket {
+        QwSocket {
+            socket: socket,
+            sock_type: sock_type,
+            remote: remote,
+
+            in_seq: 0,
+            dropped: 0,
+            drop_count: 0,
+        }
+    }
+
+    pub fn connect(remote: SocketAddr) -> Result<QwSocket, NetworkError> {
+        let udp_socket = UdpSocket::bind("127.0.0.1:27001")?;
+
+        let mut s = QwSocket::from_raw_parts(udp_socket, remote, SockType::Client);
+
+        return Err(NetworkError::Other);
+    }
+
+    pub fn process<R>(&mut self, buf: R) -> Result<(), NetworkError> where R: ReadBytesExt {
+        // sequence number of incoming packet
+        let mut seq = match buf.read_i32()? {
+            -1 => panic!("Unhandled out-of-band packet"),
+            x => x
+        };
+
+        // most recently acked packet from remote
+        let mut ack = buf.read_i32()?;
+
+        // save reliable flags
+        let seq_reliable = seq & RELIABLE_FLAG == RELIABLE_FLAG;
+        let ack_reliable = ack & RELIABLE_FLAG == RELIABLE_FLAG;
+
+        // mask off flags
+        seq &= !RELIABLE_FLAG;
+        ack &= !RELIABLE_FLAG;
+
+        // check for outdated or duplicate packets
+        if seq <= self.in_seq{
+            // TODO: handle this gracefully
+            panic!("Outdated or duplicate packet");
+        }
+
+        // how many packets have we missed?
+        self.dropped = seq - (self.in_seq+ 1);
+
+        // bump drop counter if we missed any packets
+        if self.dropped > 0 {
+            self.drop_count += 1;
+        }
     }
 }
 
@@ -257,15 +347,15 @@ pub struct NetChanPacket {
 
 impl NetChanPacket {
     pub fn get_sequence(&self) -> i32 {
-        self.seq & !SEQUENCE_RELIABLE
+        self.seq & !RELIABLE_FLAG
     }
 
     pub fn get_sequence_reliable(&self) -> bool {
-        self.seq & SEQUENCE_RELIABLE == SEQUENCE_RELIABLE
+        self.seq & RELIABLE_FLAG == RELIABLE_FLAG
     }
 
     pub fn get_ack_sequence(&self) -> i32 {
-        self.ack & !SEQUENCE_RELIABLE
+        self.ack & !RELIABLE_FLAG
     }
 
     pub fn payload(&self) -> &[u8] {

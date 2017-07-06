@@ -16,7 +16,6 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 "log" = "0.3.6"
 "rand" = "0.3.15"
 "regex" = "0.2.1"
-"rustc-serialize" = "0.3.22"
 "time" = "0.1.36"
 
 # binaries only

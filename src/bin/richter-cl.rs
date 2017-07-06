@@ -278,6 +278,12 @@ fn main() {
     // }
     //
 
+    let cl = Client::connect(Ipv4Addr::new(127, 0, 0, 1));
+
+    loop {
+        frame(&cl);
+    }
+
     exit(0);
 
     use glium::DisplayBuild;

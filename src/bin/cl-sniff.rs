@@ -41,7 +41,23 @@ fn transcribe_clcmd<'a>(src: &'a [u8]) -> String {
     let qport = curs.read_u16::<LittleEndian>().unwrap();
     result += &format!("qport={} ", qport);
 
-    match ClCmd::from_u8(curs.read_u8().unwrap()).unwrap() {
+    let opcode = match curs.read_u8() {
+        Ok(o) => o,
+        Err(why) => {
+            result += &format!("ERROR: {}", why);
+            return result;
+        }
+    };
+
+    let clcmd = match ClCmd::from_u8(opcode) {
+        Some(c) => c,
+        None => {
+            result += &format!("ERROR: Unrecognized opcode {}", opcode);
+            return result;
+        }
+    };
+
+    match clcmd {
 
         // TODO: use MoveDelta::from_bytes
         ClCmd::Move => {
