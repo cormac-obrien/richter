@@ -266,24 +266,10 @@ impl Client {
                 debug!("Server accepted connection request");
                 self.cxn_status = CxnStatus::Connected;
 
-                {
-                    self.socket.write_u8(ClCmd::StringCmd as u8).unwrap();
-                    self.socket.write("new".as_bytes()).unwrap();
-                    self.socket.write_u8(0).unwrap();
-                    self.socket.write_u8(ClCmd::Move as u8).unwrap();
-                    for _ in 0..9 {
-                        self.socket.write_u8(0).unwrap();
-                    }
-                }
-                self.socket.transmit();
-                {
-                    self.socket.write_u8(ClCmd::Move as u8).unwrap();
-                    for _ in 0..9 {
-                        self.socket.write_u8(0).unwrap();
-                    }
-                }
-                self.socket.transmit();
-
+                self.socket.write_u8(ClCmd::StringCmd as u8).unwrap();
+                self.socket.write("new".as_bytes()).unwrap();
+                self.socket.write_u8(0).unwrap();
+                self.socket.transmit().unwrap();
             }
 
             'k' => {

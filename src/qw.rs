@@ -35,8 +35,7 @@ pub const MAX_PACKET_ENTITIES: usize = 64;
 
 pub const MAX_SOUNDS: usize = 256;
 
-pub const MIN_CLIENT_PACKET: usize = 10;
-pub const MIN_SERVER_PACKET: usize = 8;
+pub const MIN_PACKET: usize = 5;
 
 /// The maximum allowed size of a UDP packet.
 pub const PACKET_MAX: usize = 8192;
@@ -187,12 +186,7 @@ impl QwSocket {
         let mut data = bytes.to_vec();
         data.truncate(size);
 
-        let min_size = match self.sock_type {
-            SockType::Client => MIN_CLIENT_PACKET,
-            SockType::Server => MIN_SERVER_PACKET,
-        };
-
-        if data.len() < min_size {
+        if data.len() < MIN_PACKET {
             return Err(NetworkError::PacketSize(data.len()));
         }
 
@@ -297,7 +291,9 @@ impl QwSocket {
         // clear message buffer
         self.compose = Cursor::new(Vec::new());
 
-        Err(NetworkError::Other)
+        // TODO: update network stats
+
+        Ok(())
     }
 }
 

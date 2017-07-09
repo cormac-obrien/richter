@@ -67,11 +67,13 @@ fn frame(cl: &mut Client) {
     match cl.read_packets() {
         Ok(_) => (),
         Err(ref why) => {
+            println!("{}", why);
             let mut e: &Error = why;
             while let Some(c) = e.cause() {
                 println!("{}", c);
                 e = c;
             }
+            exit(1);
         }
     }
 
