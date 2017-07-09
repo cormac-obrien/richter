@@ -23,8 +23,8 @@ use std::convert::From;
 use std::default::Default;
 use std::error::Error;
 use std::fmt;
-use std::io::{self, BufRead, Cursor, Write};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
+use std::io::{self, BufRead, Cursor, Read, Write};
+use std::net::{SocketAddr, UdpSocket};
 use std::str::{self, FromStr};
 use util;
 
@@ -34,6 +34,9 @@ pub const MAX_CLIENTS: usize = 32;
 pub const MAX_PACKET_ENTITIES: usize = 64;
 
 pub const MAX_SOUNDS: usize = 256;
+
+pub const MIN_CLIENT_PACKET: usize = 10;
+pub const MIN_SERVER_PACKET: usize = 8;
 
 /// The maximum allowed size of a UDP packet.
 pub const PACKET_MAX: usize = 8192;
@@ -48,6 +51,7 @@ const RELIABLE_FLAG: i32 = (1 << 31);
 #[derive(Debug)]
 pub enum NetworkError {
     Io(io::Error),
+    PacketSize(usize),
     Other,
 }
 
@@ -55,6 +59,7 @@ impl fmt::Display for NetworkError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             NetworkError::Io(ref err) => write!(f, "Network error: {}", err),
+            NetworkError::PacketSize(size) => write!(f, "Invalid packet size ({} bytes)", size),
             NetworkError::Other => write!(f, "Unknown network error"),
         }
     }
@@ -64,6 +69,7 @@ impl Error for NetworkError {
     fn description(&self) -> &str {
         match *self {
             NetworkError::Io(_) => "I/O error",
+            NetworkError::PacketSize(_) => "Invalid packet size",
             NetworkError::Other => "Unknown network error",
         }
     }
@@ -71,6 +77,7 @@ impl Error for NetworkError {
     fn cause(&self) -> Option<&Error> {
         match *self {
             NetworkError::Io(ref err) => Some(err),
+            NetworkError::PacketSize(_) => None,
             NetworkError::Other => None,
         }
     }
@@ -82,6 +89,13 @@ impl From<io::Error> for NetworkError {
     }
 }
 
+pub enum Message {
+    InBand,
+    OutOfBand(Box<[u8]>),
+    None
+}
+
+#[derive(PartialEq)]
 pub enum SockType {
     Client,
     Server
@@ -109,11 +123,26 @@ pub struct QwSocket {
     // true if remote acked most recently sent reliable packet
     remote_acked_reliable: bool,
 
+    // ?
+    out_seq: i32,
+
+    // ?
+    out_seq_reliable: bool,
+
+    // last reliable sequence sent
+    last_reliable: i32,
+
     // number of packets dropped this frame
     dropped: i32,
 
-    // number of "drop events" (times when self.dropped was greater than 0)
-    drop_count: i32
+    // number of frames with dropped packets
+    drop_count: i32,
+
+    // buffer for messages being composed
+    compose: Cursor<Vec<u8>>,
+
+    // buffer for messages being parsed
+    parse: Cursor<Vec<u8>>,
 }
 
 impl QwSocket {
@@ -124,28 +153,61 @@ impl QwSocket {
             remote: remote,
 
             in_seq: 0,
+            in_seq_reliable: false,
+            ack: 0,
+            remote_acked_reliable: false,
+            out_seq: 0,
+            out_seq_reliable: false,
+            last_reliable: 0,
             dropped: 0,
             drop_count: 0,
+
+            compose: Cursor::new(Vec::new()),
+            parse: Cursor::new(Vec::new()),
         }
     }
 
-    pub fn connect(remote: SocketAddr) -> Result<QwSocket, NetworkError> {
-        let udp_socket = UdpSocket::bind("127.0.0.1:27001")?;
-
-        let mut s = QwSocket::from_raw_parts(udp_socket, remote, SockType::Client);
-
-        return Err(NetworkError::Other);
+    pub fn bind(remote: SocketAddr, sock_type: SockType) -> Result<QwSocket, NetworkError> {
+        Ok(QwSocket::from_raw_parts(UdpSocket::bind("127.0.0.1:27001")?, remote, sock_type))
     }
 
-    pub fn process<R>(&mut self, buf: R) -> Result<(), NetworkError> where R: ReadBytesExt {
+    pub fn out_of_band(&self, data: &[u8]) -> Result<(), NetworkError> {
+        let mut buf = Vec::new();
+        buf.write_i32::<LittleEndian>(-1)?;
+        buf.write(data)?;
+        self.socket.send_to(&buf, self.remote)?;
+        Ok(())
+    }
+
+    pub fn process(&mut self) -> Result<Message, NetworkError> {
+        debug!("Processing remote message");
+
+        let mut bytes = [0u8; 8192];
+        let (size, _) = self.socket.recv_from(&mut bytes)?;
+        let mut data = bytes.to_vec();
+        data.truncate(size);
+
+        let min_size = match self.sock_type {
+            SockType::Client => MIN_CLIENT_PACKET,
+            SockType::Server => MIN_SERVER_PACKET,
+        };
+
+        if data.len() < min_size {
+            return Err(NetworkError::PacketSize(data.len()));
+        }
+
+        let mut buf = Cursor::new(data);
+
         // sequence number of incoming packet
-        let mut seq = match buf.read_i32()? {
-            -1 => panic!("Unhandled out-of-band packet"),
+        debug!("Reading sequence number");
+        let mut seq = match buf.read_i32::<LittleEndian>()? {
+            -1 => return Ok(Message::OutOfBand(Vec::from(&buf.into_inner()[4..]).into_boxed_slice())),
             x => x
         };
 
         // most recently acked packet from remote
-        let mut ack = buf.read_i32()?;
+        debug!("Reading ack number");
+        let mut ack = buf.read_i32::<LittleEndian>()?;
 
         // save reliable flags
         let seq_reliable = seq & RELIABLE_FLAG == RELIABLE_FLAG;
@@ -156,18 +218,102 @@ impl QwSocket {
         ack &= !RELIABLE_FLAG;
 
         // check for outdated or duplicate packets
-        if seq <= self.in_seq{
+        if seq <= self.in_seq {
             // TODO: handle this gracefully
             panic!("Outdated or duplicate packet");
         }
 
         // how many packets have we missed?
-        self.dropped = seq - (self.in_seq+ 1);
+        self.dropped = seq - (self.in_seq + 1);
 
         // bump drop counter if we missed any packets
         if self.dropped > 0 {
+            debug!("Dropped {} packets this frame", self.dropped);
             self.drop_count += 1;
         }
+
+        if ack_reliable == self.in_seq_reliable {
+            // TODO: clear reliable message (see net_chan.c line 246)
+        }
+
+        self.in_seq = seq;
+        self.ack = ack;
+        self.remote_acked_reliable = ack_reliable;
+
+        if seq_reliable {
+            self.in_seq_reliable = !self.in_seq_reliable;
+        }
+
+        let mut payload = Vec::new();
+        buf.read_to_end(&mut payload)?;
+        self.parse = Cursor::new(payload);
+
+        Ok(Message::InBand)
+    }
+
+    pub fn transmit(&mut self) -> Result<(), NetworkError> {
+        // TODO: check if message exceeds max length
+
+        // send reliable if remote acked packets past our last reliable
+        // or resend reliable if remote hasn't acked it yet
+        let send_reliable = self.ack > self.last_reliable && self.remote_acked_reliable != self.out_seq_reliable;
+
+        // TODO: if no current reliable message, copy it out
+
+        let mut buf = Cursor::new(Vec::new());
+
+        // sequence number
+        let mut seq = self.out_seq;
+        if send_reliable {
+            seq |= RELIABLE_FLAG;
+        }
+
+        // ack remote's sequence
+        let mut ack = self.in_seq;
+        if self.in_seq_reliable {
+            ack |= RELIABLE_FLAG;
+        }
+
+        // write the packet header
+        buf.write_i32::<LittleEndian>(seq)?;
+        buf.write_i32::<LittleEndian>(ack)?;
+
+        self.out_seq += 1;
+
+        // if this is a client socket, include the qport
+        if self.sock_type == SockType::Client {
+            // TODO: send qport
+            buf.write_i16::<LittleEndian>(0)?;
+        }
+
+        if send_reliable {
+            // TODO: copy reliable message first
+        }
+
+        // TODO: check for max length before copying unreliable message
+        buf.write(self.compose.get_ref())?;
+        self.socket.send_to(buf.get_ref(), self.remote)?;
+
+        // clear message buffer
+        self.compose = Cursor::new(Vec::new());
+
+        Err(NetworkError::Other)
+    }
+}
+
+impl Read for QwSocket {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.parse.read(buf)
+    }
+}
+
+impl Write for QwSocket {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.compose.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.compose.flush()
     }
 }
 

@@ -59,12 +59,21 @@ static POP: [u8; 256] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0
                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x00,
                          0x00, 0x00, 0x00, 0x00];
 
-fn frame(cl: &Client) {
+fn frame(cl: &mut Client) {
     // TODO: handle key input
     // TODO: handle mouse/controller input
     // TODO: run console/script commands
 
-    cl.read_packets();
+    match cl.read_packets() {
+        Ok(_) => (),
+        Err(ref why) => {
+            let mut e: &Error = why;
+            while let Some(c) = e.cause() {
+                println!("{}", c);
+                e = c;
+            }
+        }
+    }
 
     if cl.get_cxn_status() == CxnStatus::Disconnected {
         // TODO: resend connection request
@@ -81,10 +90,10 @@ fn main() {
     env_logger::init().unwrap();
     info!("Richter v0.0.1");
 
-    let cl = Client::connect(Ipv4Addr::new(127, 0, 0, 1));
+    let mut cl = Client::connect(Ipv4Addr::new(127, 0, 0, 1));
 
     loop {
-        frame(&cl);
+        frame(&mut cl);
     }
 
 
@@ -278,10 +287,10 @@ fn main() {
     // }
     //
 
-    let cl = Client::connect(Ipv4Addr::new(127, 0, 0, 1));
+    let mut cl = Client::connect(Ipv4Addr::new(127, 0, 0, 1));
 
     loop {
-        frame(&cl);
+        frame(&mut cl);
     }
 
     exit(0);

@@ -22,7 +22,6 @@ extern crate richter;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use num::FromPrimitive;
-use std::fmt;
 use std::io::Cursor;
 use std::str::{self, FromStr};
 use pnet::packet::Packet;

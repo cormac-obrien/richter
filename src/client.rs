@@ -18,16 +18,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use arrayvec::ArrayVec;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use math::Vec3;
-use net::{Message, NetworkBuffer, NetworkChannel};
-use qw::{self, ClCmd, PacketEntities, SvCmd, UserCmd, UserInfo};
+use qw::{self, ClCmd, Message, PacketEntities, QwSocket, SockType, SvCmd, UserCmd, UserInfo};
 use std;
-use std::cell::{Cell, RefCell};
 use std::default::Default;
-use std::io::{Read, Write};
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::io::{Cursor, Read, Write};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::str::{self, FromStr};
 use time::{Duration, PreciseTime};
 
@@ -91,38 +88,34 @@ impl Default for Update {
 }
 
 pub struct Client {
-    netchannel: NetworkChannel,
-    challenge: Cell<i32>,
-    cxn_status: Cell<CxnStatus>,
+    socket: QwSocket,
+    challenge: i32,
+    cxn_status: CxnStatus,
 
     /// The last time this client sent a connection request to the server.
-    cxn_time: Cell<Option<PreciseTime>>,
+    cxn_time: Option<PreciseTime>,
     user_info: UserInfo,
 
     /// The last MAX_QUEUED_UPDATES updates the client received.
-    updates: ArrayVec<[RefCell<Update>; MAX_QUEUED_UPDATES]>,
+    updates: Vec<Update>,
 }
 
 impl Client {
     /// Create a new `Client` by initiating a connection to `server`. The client
     /// will request a challenge from the server and then begin normal operation.
     pub fn connect(server: Ipv4Addr) -> Client {
-        let mut updates = ArrayVec::new();
-        for _ in 0..MAX_QUEUED_UPDATES {
-            updates.push(RefCell::new(Update::default()));
-        }
+        let remote = SocketAddr::V4(SocketAddrV4::new(server, qw::PORT_SERVER));
 
-        let client = Client {
-            netchannel: NetworkChannel::new(SocketAddrV4::new(server, qw::PORT_SERVER),
-                                            qw::PORT_CLIENT),
-            challenge: Cell::new(0),
-            cxn_status: Cell::new(CxnStatus::Disconnected),
-            cxn_time: Cell::new(None),
+        let mut client = Client {
+            socket: QwSocket::bind(remote, SockType::Client).unwrap(),
+            challenge: 0,
+            cxn_status: CxnStatus::Disconnected,
+            cxn_time: None,
             user_info: UserInfo::default(),
-            updates: updates,
+            updates: Vec::new(),
         };
 
-        client.netchannel.out_of_band("getchallenge\n".as_bytes());
+        client.socket.out_of_band("getchallenge\n".as_bytes()).unwrap();
         client
     }
 
@@ -136,46 +129,43 @@ impl Client {
     ///
     /// If all goes well, the server will reply with an out-of-band message
     /// containing a single 'j'.
-    pub fn send_connect(&self) {
-        self.netchannel.out_of_band(format!("connect {} {} {} \"{}\"",
-                                            qw::VERSION,
-                                            27001,
-                                            self.challenge.get(),
-                                            self.user_info.serialize())
-                                        .as_bytes());
-        self.cxn_time.set(Some(PreciseTime::now()));
+    pub fn send_connect(&mut self) {
+        let connect = format!("connect {} {} {} \"{}\"", qw::VERSION, 27001, self.challenge, self.user_info.serialize());
+        debug!("Sending connect message: {}", connect);
+        self.socket.out_of_band(connect.as_bytes()).unwrap();
+        self.cxn_time = Some(PreciseTime::now());
     }
 
 
-    pub fn retry_connect(&self) {
-        match self.cxn_time.get() {
-            // Has it been 5 seconds since last connection attempt?
-            Some(x) if x.to(PreciseTime::now()) > Duration::seconds(RETRY_INTERVAL) => {
+    pub fn retry_connect(&mut self) {
+        if let Some(x) = self.cxn_time {
+            if x.to(PreciseTime::now()) > Duration::seconds(RETRY_INTERVAL) {
                 debug!("Five seconds elapsed, retrying...");
                 self.send_connect();
             }
-
-            _ => (),
         }
     }
 
-    pub fn read_packets(&self) {
-        while let Some(msg) = self.netchannel.process() {
-            match msg {
-                Message::InBand(mut msg) => self.parse_msg(&mut *msg),
+    pub fn read_packets(&mut self) -> Result<(), qw::NetworkError> {
+        loop {
+            match self.socket.process()? {
+                Message::InBand => self.parse_msg(),
                 Message::OutOfBand(mut msg) => self.proc_outofband(&mut *msg),
+                Message::None => break,
             }
         }
+
+        Ok(())
     }
 
-    pub fn parse_msg(&self, msg: &mut NetworkBuffer) {
+    pub fn parse_msg(&mut self) {
         loop {
             use num::FromPrimitive;
 
-            let first = msg.read_u8().unwrap();
+            let first = self.socket.read_u8().unwrap();
 
             if first == std::u8::MAX {
-                // msg_readcount++
+                // self.parse_readcount++
                 break;
             }
 
@@ -185,7 +175,7 @@ impl Client {
             };
 
             match cmd {
-                SvCmd::ServerData => self.parse_serverdata(msg),
+                SvCmd::ServerData => self.parse_serverdata(),
                 _ => panic!("No handler for {:?}", cmd),
             };
         }
@@ -212,8 +202,8 @@ impl Client {
     /// water friction: f32
     /// entity gravity: f32
     /// ```
-    pub fn parse_serverdata(&self, msg: &mut NetworkBuffer) {
-        let qw = msg.read_u32::<LittleEndian>().unwrap();
+    pub fn parse_serverdata(&mut self) where {
+        let qw = self.socket.read_u32::<LittleEndian>().unwrap();
 
         if qw != qw::VERSION {
             // TODO: allow demo playback on versions 26-29
@@ -221,11 +211,11 @@ impl Client {
             panic!("Bad version handler unimplemented");
         }
 
-        let servcount = msg.read_u32::<LittleEndian>().unwrap();
+        let servcount = self.socket.read_u32::<LittleEndian>().unwrap();
 
         let mut gamedir_bytes: Vec<u8> = Vec::new();
         loop {
-            match msg.read_u8().unwrap() {
+            match self.socket.read_u8().unwrap() {
                 0 => break,
                 c => gamedir_bytes.push(c),
             }
@@ -235,13 +225,15 @@ impl Client {
         // TODO: if current game dir differs, do host_writeconfig
     }
 
-    pub fn proc_outofband(&self, msg: &mut NetworkBuffer) {
-        match msg.read_u8().unwrap() as char {
+    pub fn proc_outofband(&mut self, msg: &[u8]) {
+        let mut curs = Cursor::new(msg);
+
+        match curs.read_u8().unwrap() as char {
             'c' => {
                 // challenge
                 debug!("Received challenge from server");
                 let mut challenge_bytes = Vec::new();
-                msg.read_to_end(&mut challenge_bytes);
+                curs.read_to_end(&mut challenge_bytes).unwrap();
 
                 let challenge_str = match str::from_utf8(&challenge_bytes) {
                     Ok(s) => s,
@@ -261,45 +253,43 @@ impl Client {
                     }
                 };
 
-                self.challenge.set(challenge);
+                self.challenge = challenge;
                 self.send_connect();
             }
 
             'j' => {
                 // connection
-                if self.cxn_status.get() >= CxnStatus::Connected {
+                if self.cxn_status >= CxnStatus::Connected {
                     return;
                 }
 
                 debug!("Server accepted connection request");
-                self.cxn_status.set(CxnStatus::Connected);
+                self.cxn_status = CxnStatus::Connected;
 
                 {
-                    let mut message_buf = self.netchannel.get_message_buffer();
-                    message_buf.write_u8(ClCmd::StringCmd as u8).unwrap();
-                    message_buf.write("new".as_bytes()).unwrap();
-                    message_buf.write_u8(0).unwrap();
-                    message_buf.write_u8(ClCmd::Move as u8).unwrap();
+                    self.socket.write_u8(ClCmd::StringCmd as u8).unwrap();
+                    self.socket.write("new".as_bytes()).unwrap();
+                    self.socket.write_u8(0).unwrap();
+                    self.socket.write_u8(ClCmd::Move as u8).unwrap();
                     for _ in 0..9 {
-                        message_buf.write_u8(0).unwrap();
+                        self.socket.write_u8(0).unwrap();
                     }
                 }
-                self.netchannel.transmit(&[]);
+                self.socket.transmit();
                 {
-                    let mut message_buf = self.netchannel.get_message_buffer();
-                    message_buf.write_u8(ClCmd::Move as u8).unwrap();
+                    self.socket.write_u8(ClCmd::Move as u8).unwrap();
                     for _ in 0..9 {
-                        message_buf.write_u8(0).unwrap();
+                        self.socket.write_u8(0).unwrap();
                     }
                 }
-                self.netchannel.transmit(&[]);
+                self.socket.transmit();
 
             }
 
             'k' => {
                 // ping
                 debug!("Received ping");
-                self.netchannel.out_of_band(&['l' as u8, 0]);
+                self.socket.out_of_band(&['l' as u8, 0]);
             }
 
             _ => panic!("Unrecognized out-of-band message"),
@@ -307,6 +297,6 @@ impl Client {
     }
 
     pub fn get_cxn_status(&self) -> CxnStatus {
-        self.cxn_status.get()
+        self.cxn_status
     }
 }
