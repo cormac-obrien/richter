@@ -100,6 +100,7 @@ pub enum SockType {
     Server
 }
 
+/// A QuakeWorld protocol network socket.
 pub struct QwSocket {
     // underlying UDP socket
     socket: UdpSocket,
@@ -140,11 +141,15 @@ pub struct QwSocket {
     // buffer for messages being composed
     compose: Cursor<Vec<u8>>,
 
+    // buffer for reliable messages not yet acked
+    reliable_buf: Vec<u8>,
+
     // buffer for messages being parsed
     parse: Cursor<Vec<u8>>,
 }
 
 impl QwSocket {
+    /// Creates a QwSocket from a UDP socket, a remote address and a socket type.
     pub fn from_raw_parts(socket: UdpSocket, remote: SocketAddr, sock_type: SockType) -> QwSocket {
         QwSocket {
             socket: socket,
@@ -162,6 +167,7 @@ impl QwSocket {
             drop_count: 0,
 
             compose: Cursor::new(Vec::new()),
+            reliable_buf: Vec::new(),
             parse: Cursor::new(Vec::new()),
         }
     }
@@ -170,6 +176,7 @@ impl QwSocket {
         Ok(QwSocket::from_raw_parts(UdpSocket::bind("127.0.0.1:27001")?, remote, sock_type))
     }
 
+    /// Sends an out-of-band message to this socket's remote address.
     pub fn out_of_band(&self, data: &[u8]) -> Result<(), NetworkError> {
         let mut buf = Vec::new();
         buf.write_i32::<LittleEndian>(-1)?;
@@ -193,14 +200,12 @@ impl QwSocket {
         let mut buf = Cursor::new(data);
 
         // sequence number of incoming packet
-        debug!("Reading sequence number");
         let mut seq = match buf.read_i32::<LittleEndian>()? {
             -1 => return Ok(Message::OutOfBand(Vec::from(&buf.into_inner()[4..]).into_boxed_slice())),
             x => x
         };
 
         // most recently acked packet from remote
-        debug!("Reading ack number");
         let mut ack = buf.read_i32::<LittleEndian>()?;
 
         // save reliable flags
@@ -227,7 +232,7 @@ impl QwSocket {
         }
 
         if ack_reliable == self.in_seq_reliable {
-            // TODO: clear reliable message (see net_chan.c line 246)
+            self.reliable_buf.clear();
         }
 
         self.in_seq = seq;
@@ -248,11 +253,21 @@ impl QwSocket {
     pub fn transmit(&mut self) -> Result<(), NetworkError> {
         // TODO: check if message exceeds max length
 
+        let mut send_reliable = false;
+
         // send reliable if remote acked packets past our last reliable
         // or resend reliable if remote hasn't acked it yet
-        let send_reliable = self.ack > self.last_reliable && self.remote_acked_reliable != self.out_seq_reliable;
+        if self.ack > self.last_reliable && self.remote_acked_reliable != self.out_seq_reliable {
+            send_reliable = true;
+        }
 
-        // TODO: if no current reliable message, copy it out
+        // if reliable buffer is empty, copy current message to it and send
+        if self.reliable_buf.is_empty() && self.compose.position() != 0 {
+            self.reliable_buf = self.compose.get_ref().to_owned();
+            self.compose = Cursor::new(Vec::new());
+            self.out_seq_reliable = !self.out_seq_reliable;
+            send_reliable = true;
+        }
 
         let mut buf = Cursor::new(Vec::new());
 
@@ -277,11 +292,12 @@ impl QwSocket {
         // if this is a client socket, include the qport
         if self.sock_type == SockType::Client {
             // TODO: send qport
-            buf.write_i16::<LittleEndian>(0)?;
+            buf.write_u16::<LittleEndian>(PORT_CLIENT)?;
         }
 
         if send_reliable {
-            // TODO: copy reliable message first
+            buf.write(&self.reliable_buf)?;
+            self.last_reliable = self.out_seq;
         }
 
         // TODO: check for max length before copying unreliable message
@@ -294,6 +310,87 @@ impl QwSocket {
         // TODO: update network stats
 
         Ok(())
+    }
+
+    pub fn write_angle16(&mut self, angle: f32) -> io::Result<usize> {
+        // TODO: convert bitwise-and to modulo (thanks Carmack ಠ_ಠ)
+        self.write_i16::<LittleEndian>(((angle * 65536.0 / 360.0).round() as i32 & 65535) as i16)?;
+        Ok(2)
+    }
+
+    pub fn write_movedelta(&mut self, from: MoveDelta, cmd: MoveDelta) -> io::Result<usize> {
+        let mut flags = MoveDeltaFlags::empty();
+
+        if cmd.angles[0] != from.angles[0] {
+            flags |= MOVE_ANGLE1;
+        }
+
+        if cmd.angles[1] != from.angles[1] {
+            flags |= MOVE_ANGLE2;
+        }
+
+        if cmd.angles[2] != from.angles[2] {
+            flags |= MOVE_ANGLE3;
+        }
+
+        if cmd.forward != from.forward {
+            flags |= MOVE_FORWARD;
+        }
+
+        if cmd.side != from.side {
+            flags |= MOVE_SIDE;
+        }
+
+        if cmd.up != from.up {
+            flags |= MOVE_UP;
+        }
+
+        if cmd.buttons != from.buttons {
+            flags |= MOVE_BUTTONS;
+        }
+
+        if cmd.impulse != from.impulse {
+            flags |= MOVE_IMPULSE;
+        }
+
+        self.write_u8(flags.bits())?;
+
+        // TODO: writes
+        if flags.contains(MOVE_ANGLE1) {
+            self.write_angle16(cmd.angles[0])?;
+        }
+
+        if flags.contains(MOVE_ANGLE2) {
+            self.write_angle16(cmd.angles[1])?;
+        }
+
+        if flags.contains(MOVE_ANGLE3) {
+            self.write_angle16(cmd.angles[2])?;
+        }
+
+        if flags.contains(MOVE_FORWARD) {
+            self.write_i16::<LittleEndian>(cmd.forward)?;
+        }
+
+        if flags.contains(MOVE_SIDE) {
+            self.write_i16::<LittleEndian>(cmd.side)?;
+        }
+
+        if flags.contains(MOVE_UP) {
+            self.write_i16::<LittleEndian>(cmd.up)?;
+        }
+
+        if flags.contains(MOVE_BUTTONS) {
+            self.write_u8(cmd.buttons)?;
+        }
+
+        if flags.contains(MOVE_IMPULSE) {
+            self.write_u8(cmd.impulse)?;
+        }
+
+        self.write_u8(cmd.msec)?;
+
+        Ok(0)
     }
 }
 
@@ -865,22 +962,24 @@ pub struct MoveCmd {
 // Move command delta flags, https://github.com/id-Software/Quake/blob/master/QW/client/protocol.h#L171
 bitflags! {
     pub flags MoveDeltaFlags: u8 {
-        const CM_ANGLE1  = 0x01,
-        const CM_ANGLE3  = 0x02,
-        const CM_FORWARD = 0x04,
-        const CM_SIDE    = 0x08,
-        const CM_UP      = 0x10,
-        const CM_BUTTONS = 0x20,
-        const CM_IMPULSE = 0x40,
-        const CM_ANGLE2  = 0x80,
+        const MOVE_ANGLE1  = 0x01,
+        const MOVE_ANGLE3  = 0x02,
+        const MOVE_FORWARD = 0x04,
+        const MOVE_SIDE    = 0x08,
+        const MOVE_UP      = 0x10,
+        const MOVE_BUTTONS = 0x20,
+        const MOVE_IMPULSE = 0x40,
+        const MOVE_ANGLE2  = 0x80,
     }
 }
 
 #[derive(Debug)]
 pub struct MoveDelta {
     flags: MoveDeltaFlags,
-    angles: [u16; 3],
-    moves: [u16; 3],
+    angles: Vec3,
+    forward: i16,
+    side: i16,
+    up: i16,
     buttons: u8,
     impulse: u8,
     msec: u8,
@@ -892,41 +991,42 @@ impl MoveDelta {
     {
         let flags = MoveDeltaFlags::from_bits(src.read_u8().unwrap()).unwrap();
 
-        let mut angles = [0u16; 3];
+        let mut angles = Vec3::zero();
 
-        if flags.contains(CM_ANGLE1) {
-            angles[0] = src.read_u16::<LittleEndian>()?;
+        if flags.contains(MOVE_ANGLE1) {
+            angles[0] = src.read_i16::<LittleEndian>()? as f32 * (360.0 / 65536.0);
         }
 
-        if flags.contains(CM_ANGLE2) {
-            angles[1] = src.read_u16::<LittleEndian>()?;
+        if flags.contains(MOVE_ANGLE2) {
+            angles[1] = src.read_i16::<LittleEndian>()? as f32 * (360.0 / 65536.0);
         }
 
-        if flags.contains(CM_ANGLE3) {
-            angles[2] = src.read_u16::<LittleEndian>()?;
+        if flags.contains(MOVE_ANGLE3) {
+            angles[2] = src.read_i16::<LittleEndian>()? as f32 * (360.0 / 65536.0);
         }
 
-        let mut moves = [0u16; 3];
-
-        if flags.contains(CM_FORWARD) {
-            moves[0] = src.read_u16::<LittleEndian>()?;
+        let mut forward: i16 = 0;
+        if flags.contains(MOVE_FORWARD) {
+            forward = src.read_i16::<LittleEndian>()?;
         }
 
-        if flags.contains(CM_SIDE) {
-            moves[1] = src.read_u16::<LittleEndian>()?;
+        let mut side: i16 = 0;
+        if flags.contains(MOVE_SIDE) {
+            side = src.read_i16::<LittleEndian>()?;
         }
 
-        if flags.contains(CM_UP) {
-            moves[2] = src.read_u16::<LittleEndian>()?;
+        let mut up: i16 = 0;
+        if flags.contains(MOVE_UP) {
+            up = src.read_i16::<LittleEndian>()?;
         }
 
         let mut buttons = 0;
-        if flags.contains(CM_BUTTONS) {
+        if flags.contains(MOVE_BUTTONS) {
             buttons = src.read_u8().unwrap();
         }
 
         let mut impulse = 0;
-        if flags.contains(CM_IMPULSE) {
+        if flags.contains(MOVE_IMPULSE) {
             impulse = src.read_u8().unwrap();
         }
 
@@ -935,7 +1035,9 @@ impl MoveDelta {
         Ok(MoveDelta {
             flags: flags,
             angles: angles,
-            moves: moves,
+            forward: forward,
+            side: side,
+            up: up,
             buttons: buttons,
             impulse: impulse,
             msec: msec,
@@ -947,8 +1049,10 @@ impl Default for MoveDelta {
     fn default() -> MoveDelta {
         MoveDelta {
             flags: MoveDeltaFlags::empty(),
-            angles: [0; 3],
-            moves: [0; 3],
+            angles: Vec3::zero(),
+            forward: 0,
+            side: 0,
+            up: 0,
             buttons: 0,
             impulse: 0,
             msec: 0,

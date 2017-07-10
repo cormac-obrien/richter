@@ -94,10 +94,14 @@ impl Mat4 {
 }
 
 /// A 3-component vector.
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Vec3([f32; 3]);
 
 impl Vec3 {
+    pub fn zero() -> Self {
+        Vec3([0.0, 0.0, 0.0])
+    }
+
     /// Constructs a new Vec3 from its components.
     pub fn new(x: f32, y: f32, z: f32) -> Self {
         Vec3([x, y, z])
