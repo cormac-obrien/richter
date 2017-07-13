@@ -746,7 +746,7 @@ impl Bsp {
     }
 
     pub fn draw_naive(&self, display: &Display, view_matrix: &Mat4) {
-        let program = Program::new(display, gfx::get_bsp_shader_source()).unwrap();
+        let program = Program::new(display, gfx::gl::get_bsp_shader_source()).unwrap();
         let mut target = display.draw();
         use glium::Surface;
         target.clear_color(0.0, 0.0, 0.0, 1.0);
@@ -813,7 +813,7 @@ impl Bsp {
                         command_buffer.with_primitive_type(PrimitiveType::TriangleFan),
                         &program,
                         &uniforms,
-                        &gfx::get_draw_parameters())
+                        &gfx::gl::get_draw_parameters())
                   .unwrap();
 
             first_face += face_count;
