@@ -19,5 +19,7 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 "time" = "0.1.36"
 
 # binaries only
-"docopt" = "0.7.0"
+"docopt" = "0.8"
+"serde" = "1.0"
+"serde_derive" = "1.0"
 "pnet" = "0.17.0"

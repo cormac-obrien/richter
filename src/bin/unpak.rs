@@ -17,7 +17,8 @@
 
 extern crate docopt;
 extern crate richter;
-extern crate rustc_serialize;
+#[macro_use]
+extern crate serde_derive;
 
 use docopt::Docopt;
 use richter::pak::{Pak, PakError};
@@ -27,7 +28,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-#[derive(RustcDecodable)]
+#[derive(Deserialize)]
 struct Args {
     arg_source: String,
     arg_dest: Option<String>,
@@ -57,7 +58,7 @@ Released under the terms of the MIT License
 
 fn main() {
     let args: Args = Docopt::new(USAGE)
-                         .and_then(|d| d.decode())
+                         .and_then(|d| d.deserialize())
                          .unwrap_or_else(|e| e.exit());
 
     if args.flag_help || args.flag_h {
