@@ -22,42 +22,276 @@ extern crate log;
 extern crate richter;
 
 use std::error::Error;
-use std::net::Ipv4Addr;
 use std::process::exit;
-use glium::Surface;
-use glium::glutin::{ElementState, Event, VirtualKeyCode as Key};
+use glium::glutin::{Event, VirtualKeyCode as Key};
 use richter::bsp;
 use richter::client::{Client, CxnStatus};
 use richter::console::{CmdRegistry, Console, InputLine, History};
 use richter::entity;
 use richter::event;
-use richter::input::InputState;
+use richter::input::{InputFocus, InputState};
 use richter::math;
 use richter::pak;
 use richter::progs;
 
-static POP: [u8; 256] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x00, 0x00, 0x00,
-                         0x00, 0x00, 0x00, 0x00, 0x66, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66,
-                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x67, 0x00, 0x00,
-                         0x00, 0x00, 0x66, 0x65, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                         0x00, 0x65, 0x66, 0x00, 0x00, 0x63, 0x65, 0x61, 0x00, 0x00, 0x00, 0x00,
-                         0x00, 0x00, 0x00, 0x00, 0x00, 0x61, 0x65, 0x63, 0x00, 0x64, 0x65, 0x61,
-                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x61, 0x65, 0x64,
-                         0x00, 0x64, 0x65, 0x64, 0x00, 0x00, 0x64, 0x69, 0x69, 0x69, 0x64, 0x00,
-                         0x00, 0x64, 0x65, 0x64, 0x00, 0x63, 0x65, 0x68, 0x62, 0x00, 0x00, 0x64,
-                         0x68, 0x64, 0x00, 0x00, 0x62, 0x68, 0x65, 0x63, 0x00, 0x00, 0x65, 0x67,
-                         0x69, 0x63, 0x00, 0x64, 0x67, 0x64, 0x00, 0x63, 0x69, 0x67, 0x65, 0x00,
-                         0x00, 0x00, 0x62, 0x66, 0x67, 0x69, 0x6a, 0x68, 0x67, 0x68, 0x6a, 0x69,
-                         0x67, 0x66, 0x62, 0x00, 0x00, 0x00, 0x00, 0x62, 0x65, 0x66, 0x66, 0x66,
-                         0x66, 0x66, 0x66, 0x66, 0x65, 0x62, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                         0x00, 0x62, 0x63, 0x64, 0x66, 0x64, 0x63, 0x62, 0x00, 0x00, 0x00, 0x00,
-                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x66, 0x62, 0x00, 0x00,
-                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x61,
-                         0x66, 0x61, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                         0x00, 0x00, 0x00, 0x00, 0x65, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x00,
-                         0x00, 0x00, 0x00, 0x00];
+static POP: [u8; 256] = [
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x66,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x66,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x66,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x67,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x66,
+    0x65,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x65,
+    0x66,
+    0x00,
+    0x00,
+    0x63,
+    0x65,
+    0x61,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x61,
+    0x65,
+    0x63,
+    0x00,
+    0x64,
+    0x65,
+    0x61,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x61,
+    0x65,
+    0x64,
+    0x00,
+    0x64,
+    0x65,
+    0x64,
+    0x00,
+    0x00,
+    0x64,
+    0x69,
+    0x69,
+    0x69,
+    0x64,
+    0x00,
+    0x00,
+    0x64,
+    0x65,
+    0x64,
+    0x00,
+    0x63,
+    0x65,
+    0x68,
+    0x62,
+    0x00,
+    0x00,
+    0x64,
+    0x68,
+    0x64,
+    0x00,
+    0x00,
+    0x62,
+    0x68,
+    0x65,
+    0x63,
+    0x00,
+    0x00,
+    0x65,
+    0x67,
+    0x69,
+    0x63,
+    0x00,
+    0x64,
+    0x67,
+    0x64,
+    0x00,
+    0x63,
+    0x69,
+    0x67,
+    0x65,
+    0x00,
+    0x00,
+    0x00,
+    0x62,
+    0x66,
+    0x67,
+    0x69,
+    0x6a,
+    0x68,
+    0x67,
+    0x68,
+    0x6a,
+    0x69,
+    0x67,
+    0x66,
+    0x62,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x62,
+    0x65,
+    0x66,
+    0x66,
+    0x66,
+    0x66,
+    0x66,
+    0x66,
+    0x66,
+    0x65,
+    0x62,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x62,
+    0x63,
+    0x64,
+    0x66,
+    0x64,
+    0x63,
+    0x62,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x62,
+    0x66,
+    0x62,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x61,
+    0x66,
+    0x61,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x65,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x64,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+];
 
 fn frame(cl: &mut Client) {
     // TODO: handle key input
@@ -92,28 +326,29 @@ fn main() {
     env_logger::init().unwrap();
     info!("Richter v0.0.1");
 
-    let mut cl = Client::connect(Ipv4Addr::new(127, 0, 0, 1));
+    let mut cl: Option<Client> = None;
 
-    loop {
-        frame(&mut cl);
-    }
-
-
+    use glium::DisplayBuild;
     let display = match glium::glutin::WindowBuilder::new()
-                            .with_dimensions(1024, 768)
-                            .with_title(format!("Richter"))
-                            .build_glium() {
+        .with_dimensions(1024, 768)
+        .with_title(format!("Richter"))
+        .build_glium() {
         Ok(w) => w,
         Err(why) => {
             use std::error::Error;
+            println!("Error constructing display:");
             let mut error: Option<&Error> = Some(&why as &Error);
             while let Some(e) = error {
-                println!("{}", e);
+                println!("> {}", e);
                 error = e.cause();
             }
             exit(0);
         }
     };
+
+    info!("Successfully constructed display");
+
+    let focus = InputFocus::Game;
 
     let input = InputState::new();
     let mut con = Console::new();
@@ -128,10 +363,12 @@ fn main() {
     con.add_cvar("cl_forwardspeed", "200", true, false).unwrap();
     con.add_cvar("cl_backspeed", "200", true, false).unwrap();
     con.add_cvar("cl_sidespeed", "350", false, false).unwrap();
-    con.add_cvar("cl_movespeedkey", "2.0", false, false).unwrap();
+    con.add_cvar("cl_movespeedkey", "2.0", false, false)
+        .unwrap();
     con.add_cvar("cl_yawspeed", "140", false, false).unwrap();
     con.add_cvar("cl_pitchspeed", "150", false, false).unwrap();
-    con.add_cvar("cl_anglespeedkey", "1.5", false, false).unwrap();
+    con.add_cvar("cl_anglespeedkey", "1.5", false, false)
+        .unwrap();
     con.add_cvar("cl_shownet", "0", false, false).unwrap();
     con.add_cvar("cl_sbar", "0", true, false).unwrap();
     con.add_cvar("cl_hudswap", "0", true, false).unwrap();
@@ -146,8 +383,10 @@ fn main() {
     con.add_cvar("rcon_password", "", false, false).unwrap();
     con.add_cvar("rcon_address", "", false, false).unwrap();
     con.add_cvar("entlatency", "20", false, false).unwrap();
-    con.add_cvar("cl_predict_players2", "1", false, false).unwrap();
-    con.add_cvar("cl_predict_players", "1", false, false).unwrap();
+    con.add_cvar("cl_predict_players2", "1", false, false)
+        .unwrap();
+    con.add_cvar("cl_predict_players", "1", false, false)
+        .unwrap();
     con.add_cvar("cl_solid_players", "1", false, false).unwrap();
     con.add_cvar("localid", "", false, false).unwrap();
     con.add_cvar("baseskin", "base", false, false).unwrap();
@@ -166,138 +405,174 @@ fn main() {
     con.add_cvar("noaim", "0", true, true).unwrap();
 
     // TODO: write an actual quit function
-    reg.add_cmd("quit", Box::new(|| std::process::exit(0))).unwrap();
+    reg.add_cmd("quit", Box::new(|_| std::process::exit(0)))
+        .unwrap();
 
     // input commands
-    reg.add_cmd("+forward", Box::new(|| input.forward.set(true))).unwrap();
-    reg.add_cmd("-forward", Box::new(|| input.forward.set(false))).unwrap();
-    reg.add_cmd("+back", Box::new(|| input.back.set(true))).unwrap();
-    reg.add_cmd("-back", Box::new(|| input.back.set(false))).unwrap();
-    reg.add_cmd("+moveleft", Box::new(|| input.moveleft.set(true))).unwrap();
-    reg.add_cmd("-moveleft", Box::new(|| input.moveleft.set(false))).unwrap();
-    reg.add_cmd("+moveright", Box::new(|| input.moveright.set(true))).unwrap();
-    reg.add_cmd("-moveright", Box::new(|| input.moveright.set(false))).unwrap();
-    reg.add_cmd("+moveup", Box::new(|| input.moveup.set(true))).unwrap();
-    reg.add_cmd("-moveup", Box::new(|| input.moveup.set(false))).unwrap();
-    reg.add_cmd("+movedown", Box::new(|| input.movedown.set(true))).unwrap();
-    reg.add_cmd("-movedown", Box::new(|| input.movedown.set(false))).unwrap();
-    reg.add_cmd("+left", Box::new(|| input.left.set(true))).unwrap();
-    reg.add_cmd("-left", Box::new(|| input.left.set(false))).unwrap();
-    reg.add_cmd("+right", Box::new(|| input.right.set(true))).unwrap();
-    reg.add_cmd("-right", Box::new(|| input.right.set(false))).unwrap();
-    reg.add_cmd("+lookup", Box::new(|| input.lookup.set(true))).unwrap();
-    reg.add_cmd("-lookup", Box::new(|| input.lookup.set(false))).unwrap();
-    reg.add_cmd("+lookdown", Box::new(|| input.lookdown.set(true))).unwrap();
-    reg.add_cmd("-lookdown", Box::new(|| input.lookdown.set(false))).unwrap();
-    reg.add_cmd("+speed", Box::new(|| input.speed.set(true))).unwrap();
-    reg.add_cmd("-speed", Box::new(|| input.speed.set(false))).unwrap();
-    reg.add_cmd("+jump", Box::new(|| input.jump.set(true))).unwrap();
-    reg.add_cmd("-jump", Box::new(|| input.jump.set(false))).unwrap();
-    reg.add_cmd("+strafe", Box::new(|| input.strafe.set(true))).unwrap();
-    reg.add_cmd("-strafe", Box::new(|| input.strafe.set(false))).unwrap();
-    reg.add_cmd("+attack", Box::new(|| input.attack.set(true))).unwrap();
-    reg.add_cmd("-attack", Box::new(|| input.attack.set(false))).unwrap();
-    reg.add_cmd("+use", Box::new(|| input.use_.set(true))).unwrap();
-    reg.add_cmd("-use", Box::new(|| input.use_.set(false))).unwrap();
-    reg.add_cmd("+klook", Box::new(|| input.klook.set(true))).unwrap();
-    reg.add_cmd("-klook", Box::new(|| input.klook.set(false))).unwrap();
-    reg.add_cmd("+mlook", Box::new(|| input.mlook.set(true))).unwrap();
-    reg.add_cmd("-mlook", Box::new(|| input.mlook.set(false))).unwrap();
-    reg.add_cmd("+showscores", Box::new(|| input.showscores.set(true))).unwrap();
-    reg.add_cmd("-showscores", Box::new(|| input.showscores.set(false))).unwrap();
-    reg.add_cmd("+showteamscores",
-                Box::new(|| input.showteamscores.set(true)))
-       .unwrap();
-    reg.add_cmd("-showteamscores",
-                Box::new(|| input.showteamscores.set(false)))
-       .unwrap();
+    reg.add_cmd("+forward", Box::new(|_| input.forward.set(true)))
+        .unwrap();
+    reg.add_cmd("-forward", Box::new(|_| input.forward.set(false)))
+        .unwrap();
+    reg.add_cmd("+back", Box::new(|_| input.back.set(true)))
+        .unwrap();
+    reg.add_cmd("-back", Box::new(|_| input.back.set(false)))
+        .unwrap();
+    reg.add_cmd("+moveleft", Box::new(|_| input.moveleft.set(true)))
+        .unwrap();
+    reg.add_cmd("-moveleft", Box::new(|_| input.moveleft.set(false)))
+        .unwrap();
+    reg.add_cmd("+moveright", Box::new(|_| input.moveright.set(true)))
+        .unwrap();
+    reg.add_cmd("-moveright", Box::new(|_| input.moveright.set(false)))
+        .unwrap();
+    reg.add_cmd("+moveup", Box::new(|_| input.moveup.set(true)))
+        .unwrap();
+    reg.add_cmd("-moveup", Box::new(|_| input.moveup.set(false)))
+        .unwrap();
+    reg.add_cmd("+movedown", Box::new(|_| input.movedown.set(true)))
+        .unwrap();
+    reg.add_cmd("-movedown", Box::new(|_| input.movedown.set(false)))
+        .unwrap();
+    reg.add_cmd("+left", Box::new(|_| input.left.set(true)))
+        .unwrap();
+    reg.add_cmd("-left", Box::new(|_| input.left.set(false)))
+        .unwrap();
+    reg.add_cmd("+right", Box::new(|_| input.right.set(true)))
+        .unwrap();
+    reg.add_cmd("-right", Box::new(|_| input.right.set(false)))
+        .unwrap();
+    reg.add_cmd("+lookup", Box::new(|_| input.lookup.set(true)))
+        .unwrap();
+    reg.add_cmd("-lookup", Box::new(|_| input.lookup.set(false)))
+        .unwrap();
+    reg.add_cmd("+lookdown", Box::new(|_| input.lookdown.set(true)))
+        .unwrap();
+    reg.add_cmd("-lookdown", Box::new(|_| input.lookdown.set(false)))
+        .unwrap();
+    reg.add_cmd("+speed", Box::new(|_| input.speed.set(true)))
+        .unwrap();
+    reg.add_cmd("-speed", Box::new(|_| input.speed.set(false)))
+        .unwrap();
+    reg.add_cmd("+jump", Box::new(|_| input.jump.set(true)))
+        .unwrap();
+    reg.add_cmd("-jump", Box::new(|_| input.jump.set(false)))
+        .unwrap();
+    reg.add_cmd("+strafe", Box::new(|_| input.strafe.set(true)))
+        .unwrap();
+    reg.add_cmd("-strafe", Box::new(|_| input.strafe.set(false)))
+        .unwrap();
+    reg.add_cmd("+attack", Box::new(|_| input.attack.set(true)))
+        .unwrap();
+    reg.add_cmd("-attack", Box::new(|_| input.attack.set(false)))
+        .unwrap();
+    reg.add_cmd("+use", Box::new(|_| input.use_.set(true)))
+        .unwrap();
+    reg.add_cmd("-use", Box::new(|_| input.use_.set(false)))
+        .unwrap();
+    reg.add_cmd("+klook", Box::new(|_| input.klook.set(true)))
+        .unwrap();
+    reg.add_cmd("-klook", Box::new(|_| input.klook.set(false)))
+        .unwrap();
+    reg.add_cmd("+mlook", Box::new(|_| input.mlook.set(true)))
+        .unwrap();
+    reg.add_cmd("-mlook", Box::new(|_| input.mlook.set(false)))
+        .unwrap();
+    reg.add_cmd("+showscores", Box::new(|_| input.showscores.set(true)))
+        .unwrap();
+    reg.add_cmd("-showscores", Box::new(|_| input.showscores.set(false)))
+        .unwrap();
+    reg.add_cmd(
+        "+showteamscores",
+        Box::new(|_| input.showteamscores.set(true)),
+    ).unwrap();
+    reg.add_cmd(
+        "-showteamscores",
+        Box::new(|_| input.showteamscores.set(false)),
+    ).unwrap();
 
+    reg.add_cmd(
+        "connect",
+        Box::new(|args| {
+            println!("{:?}", args);
+        }),
+    ).unwrap();
+
+    debug!("Entering main loop");
     // loop {
-    // for event in display.poll_events() {
-    // match event {
-    // Event::ReceivedCharacter(c) => {
-    // info!("Got char {:?}", c);
-    // match c {
-    // backspace
-    // '\x08' => cmdline.backspace(),
-    //
-    // delete
-    // '\x7f' => cmdline.delete(),
-    //
-    // TODO: tab completion
-    // '\t' => (),
-    //
-    // _ => cmdline.insert(c),
-    // }
-    // println!("{}", cmdline.debug_string());
-    //
-    // }
-    //
-    // Event::KeyboardInput(ElementState::Pressed, _, Some(key)) => {
-    // match key {
-    // Key::Right => cmdline.cursor_right(),
-    // Key::Left => cmdline.cursor_left(),
-    // Key::Up => {
-    // if let Some(line) = hist.line_up() {
-    // cmdline.set_text(&line);
-    // }
-    // }
-    // Key::Down => {
-    // if let Some(line) = hist.line_down() {
-    // cmdline.set_text(&line);
-    // }
-    // }
-    // Key::Return => {
-    // use std::iter::FromIterator;
-    // let line = cmdline.get_text();
-    // let cmd = String::from_iter(line.to_owned());
-    // let mut args = cmd.split_whitespace();
-    //
-    // let name = match args.next() {
-    // Some(n) => n,
-    // None => break,
-    // };
-    //
-    // if let Err(_) = reg.exec_cmd(name, args.collect()) {
-    // println!("Error executing \"{}\"", name);
-    // }
-    //
-    // hist.add_line(line);
-    // cmdline.clear();
-    // }
-    //
-    // _ => (),
-    // }
-    // println!("{}", cmdline.debug_string());
-    //
-    // }
-    //
-    // Event::Closed => {
-    // exit(0);
-    // }
-    //
-    // _ => (),
-    // }
-    //
-    // let mut frame = display.draw();
-    // frame.clear_color(0.0, 0.0, 0.0, 0.0);
-    // frame.clear_depth(0.0);
-    // frame.finish().unwrap();
-    //
-    // display.swap_buffers().unwrap();
-    // }
-    // }
-    //
+    //     for event in display.poll_events() {
+    //         match event {
+    //             Event::ReceivedCharacter(c) => {
+    //                 info!("Got char {:?}", c);
+    //                 match c {
+    //                     backspace
+    //                     '\x08' => cmdline.backspace(),
 
-    let mut cl = Client::connect(Ipv4Addr::new(127, 0, 0, 1));
+    //                     delete
+    //                     '\x7f' => cmdline.delete(),
 
-    loop {
-        frame(&mut cl);
-    }
+    //                     TODO: tab completion
+    //                     '\t' => (),
 
-    exit(0);
+    //                     _ => cmdline.insert(c),
+    //                 }
+    //                 println!("{}", cmdline.debug_string());
 
-    use glium::DisplayBuild;
+    // }
+
+    //             Event::KeyboardInput(ElementState::Pressed, _, Some(key)) => {
+    //                 match key {
+    //                     Key::Right => cmdline.cursor_right(),
+    //                     Key::Left => cmdline.cursor_left(),
+    //                     Key::Up => {
+    //                         if let Some(line) = hist.line_up() {
+    //                             cmdline.set_text(&line);
+    //                         }
+    //                     }
+    //                     Key::Down => {
+    //                         if let Some(line) = hist.line_down() {
+    //                             cmdline.set_text(&line);
+    //                         }
+    //                     }
+    //                     Key::Return => {
+    //                         use std::iter::FromIterator;
+    //                         let line = cmdline.get_text();
+    //                         let cmd = String::from_iter(line.to_owned());
+    //                         let mut args = cmd.split_whitespace();
+
+    //                         let name = match args.next() {
+    //                             Some(n) => n,
+    //                             None => break,
+    //                         };
+
+    //                         if let Err(_) = reg.exec_cmd(name, args.collect()) {
+    //                             println!("Error executing \"{}\"", name);
+    //                         }
+
+    //                         hist.add_line(line);
+    //                         cmdline.clear();
+    //                     }
+
+    //                     _ => (),
+    //                 }
+    //                 println!("{}", cmdline.debug_string());
+
+    // }
+
+    //             Event::Closed => {
+    //                 exit(0);
+    //             }
+
+    //             _ => (),
+    //         }
+
+    //         let mut frame = display.draw();
+    //         frame.clear_color(0.0, 0.0, 0.0, 0.0);
+    //         frame.clear_depth(0.0);
+    //         frame.finish().unwrap();
+
+    //         display.swap_buffers().unwrap();
+    //     }
+    // }
 
     let mut pak = pak::Pak::new();
     match pak.add("pak0.pak") {
@@ -326,7 +601,7 @@ fn main() {
         let angle = player.get_angle();
 
         let view_matrix = math::Mat4::rotation_x(angle[0]) * math::Mat4::rotation_y(angle[1]) *
-                          math::Mat4::translation(-pos[0], -pos[1], -pos[2]);
+            math::Mat4::translation(-pos[0], -pos[1], -pos[2]);
 
         bsp.draw_naive(&display, &view_matrix);
 

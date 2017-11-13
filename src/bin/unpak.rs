@@ -58,8 +58,8 @@ Released under the terms of the MIT License
 
 fn main() {
     let args: Args = Docopt::new(USAGE)
-                         .and_then(|d| d.deserialize())
-                         .unwrap_or_else(|e| e.exit());
+        .and_then(|d| d.deserialize())
+        .unwrap_or_else(|e| e.exit());
 
     if args.flag_help || args.flag_h {
         println!("{}", USAGE);

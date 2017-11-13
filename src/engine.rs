@@ -24,16 +24,35 @@ use glium::Texture2d;
 use glium::backend::glutin_backend::GlutinFacade as Window;
 use glium::texture::RawImage2d;
 
+// TODO: the palette should be host-specific and loaded alongside pak0.pak (or the latest PAK with a
+// palette.lmp)
 lazy_static! {
     static ref PALETTE: [u8; 768] = {
         let mut _palette = [0; 768];
-        let mut f = File::open("pak0/gfx/palette.lmp").unwrap();
+        let mut f = File::open("pak0.pak.d/gfx/palette.lmp").unwrap();
         match f.read(&mut _palette) {
             Err(why) => panic!("{}", why),
             Ok(768) => _palette,
             _ => panic!("Bad read on pak0/gfx/palette.lmp"),
         }
     };
+}
+
+pub fn indexed_to_rgba(indices: &[u8]) -> Vec<u8> {
+    let mut rgba = Vec::with_capacity(4 * indices.len());
+    for i in 0..indices.len() {
+        if indices[i] != 0xFF {
+            for c in 0..3 {
+                rgba.push(PALETTE[(3 * (indices[i] as usize) + c) as usize]);
+            }
+            rgba.push(0xFF);
+        } else {
+            for _ in 0..4 {
+                rgba.push(0x00);
+            }
+        }
+    }
+    rgba
 }
 
 pub fn tex_from_indexed(window: &Window, indices: &[u8], width: u32, height: u32) -> Texture2d {

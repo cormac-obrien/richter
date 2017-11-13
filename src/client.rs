@@ -115,7 +115,10 @@ impl Client {
             updates: Vec::new(),
         };
 
-        client.socket.out_of_band("getchallenge\n".as_bytes()).unwrap();
+        client
+            .socket
+            .out_of_band("getchallenge\n".as_bytes())
+            .unwrap();
         client
     }
 
@@ -130,7 +133,13 @@ impl Client {
     /// If all goes well, the server will reply with an out-of-band message
     /// containing a single 'j'.
     pub fn send_connect(&mut self) {
-        let connect = format!("connect {} {} {} \"{}\"", qw::VERSION, 27001, self.challenge, self.user_info.serialize());
+        let connect = format!(
+            "connect {} {} {} \"{}\"",
+            qw::VERSION,
+            27001,
+            self.challenge,
+            self.user_info.serialize()
+        );
         debug!("Sending connect message: {}", connect);
         self.socket.out_of_band(connect.as_bytes()).unwrap();
         self.cxn_time = Some(PreciseTime::now());
@@ -202,7 +211,7 @@ impl Client {
     /// water friction: f32
     /// entity gravity: f32
     /// ```
-    pub fn parse_serverdata(&mut self) where {
+    pub fn parse_serverdata(&mut self) {
         let qw = self.socket.read_u32::<LittleEndian>().unwrap();
 
         if qw != qw::VERSION {

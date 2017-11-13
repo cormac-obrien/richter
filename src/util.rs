@@ -16,7 +16,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 pub fn read_cstring<R>(src: &mut R) -> Result<String, ::std::string::FromUtf8Error>
-    where R: ::std::io::BufRead
+where
+    R: ::std::io::BufRead,
 {
     let mut bytes: Vec<u8> = Vec::new();
     src.read_until(0, &mut bytes).unwrap();

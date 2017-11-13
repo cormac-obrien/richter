@@ -145,7 +145,8 @@ struct Plane {
 
 impl Plane {
     fn load<L>(data: &mut L) -> Result<Plane, LoadError>
-        where L: Load
+    where
+        L: Load,
     {
         let mut normal = [0.0f32; 3];
         for i in 0..normal.len() {
@@ -222,7 +223,8 @@ struct TextureInfo {
 
 impl TextureInfo {
     fn load<L>(data: &mut L) -> Result<TextureInfo, LoadError>
-        where L: Load
+    where
+        L: Load,
     {
         let mut s_vec = [0.0f32; 3];
         for i in 0..s_vec.len() {
@@ -342,16 +344,18 @@ impl std::convert::From<i32> for LeafType {
 
 impl fmt::Debug for LeafType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f,
-               "{}",
-               match *self {
-                   LeafType::Normal => "Normal",
-                   LeafType::Void => "Void",
-                   LeafType::Water => "Water",
-                   LeafType::Acid => "Acid",
-                   LeafType::Lava => "Lava",
-                   LeafType::Sky => "Sky",
-               })
+        write!(
+            f,
+            "{}",
+            match *self {
+                LeafType::Normal => "Normal",
+                LeafType::Void => "Void",
+                LeafType::Water => "Water",
+                LeafType::Acid => "Acid",
+                LeafType::Lava => "Lava",
+                LeafType::Sky => "Sky",
+            }
+        )
     }
 }
 
@@ -413,7 +417,6 @@ pub struct Bsp {
     entities: Vec<HashMap<String, String>>,
     planes: Box<[Plane]>,
     textures: Box<[Texture]>,
-    vertices: Box<[BspVertex]>,
     vertex_buffer: VertexBuffer<BspVertex>,
     visibility: Box<[u8]>,
     nodes: Box<[Node]>,
@@ -494,10 +497,7 @@ impl Bsp {
         let src = bspload::DiskBsp::load(data).unwrap();
         let entities = parse_edicts(&src.entstring).unwrap();
 
-        let planes: Vec<Plane> = src.planes
-                                    .iter()
-                                    .map(|p| Plane::from_disk(p))
-                                    .collect();
+        let planes: Vec<Plane> = src.planes.iter().map(|p| Plane::from_disk(p)).collect();
 
         // Holds the sequence of frames for the texture's primary animation
         let mut anims: [Option<usize>; MAX_TEXTURE_FRAMES] = [None; MAX_TEXTURE_FRAMES];
@@ -506,9 +506,9 @@ impl Bsp {
         let mut alt_anims: [Option<usize>; MAX_TEXTURE_FRAMES] = [None; MAX_TEXTURE_FRAMES];
 
         let mut textures: Vec<Texture> = src.textures
-                                            .iter()
-                                            .map(|t| Texture::from_disk(display, t))
-                                            .collect();
+            .iter()
+            .map(|t| Texture::from_disk(display, t))
+            .collect();
 
         // Sequence texture animations. See
         // https://github.com/id-Software/Quake/blob/master/WinQuake/gl_model.c#L397
@@ -544,7 +544,8 @@ impl Bsp {
                     frame_max += 1;
                 }
 
-                ASCII_A...ASCII_J | ASCII_a...ASCII_j => {
+                ASCII_A...ASCII_J |
+                ASCII_a...ASCII_j => {
                     // capitalize if lowercase
                     if frame_char >= 'a' as usize && frame_char <= 'z' as usize {
                         frame_char -= 'a' as usize - 'A' as usize;
@@ -563,7 +564,8 @@ impl Bsp {
                 let mut tex2 = &textures[j];
 
                 if !textures[j].name.starts_with("+") ||
-                   textures[j].name[2..] != textures[i].name[2..] {
+                    textures[j].name[2..] != textures[i].name[2..]
+                {
                     continue;
                 }
 
@@ -685,20 +687,17 @@ impl Bsp {
             });
         }
 
-        let nodes: Vec<Node> = src.nodes
-                                  .iter()
-                                  .map(|n| Node::from_disk(n))
-                                  .collect();
+        let nodes: Vec<Node> = src.nodes.iter().map(|n| Node::from_disk(n)).collect();
 
         let texinfo: Vec<TextureInfo> = src.texinfo
-                                           .iter()
-                                           .map(|t| TextureInfo::from_disk(t))
-                                           .collect();
+            .iter()
+            .map(|t| TextureInfo::from_disk(t))
+            .collect();
 
         let clipnodes: Vec<ClipNode> = src.clipnodes
-                                          .iter()
-                                          .map(|c| ClipNode::from_disk(c))
-                                          .collect();
+            .iter()
+            .map(|c| ClipNode::from_disk(c))
+            .collect();
 
         let mut leaves = Vec::with_capacity(src.leaves.len());
         for disk_leaf in src.leaves.iter() {
@@ -722,16 +721,12 @@ impl Bsp {
 
         let vertex_buffer = VertexBuffer::new(display, &vertices).unwrap();
 
-        let models: Vec<Model> = src.models
-                                    .iter()
-                                    .map(|m| Model::from_disk(m))
-                                    .collect();
+        let models: Vec<Model> = src.models.iter().map(|m| Model::from_disk(m)).collect();
 
         Bsp {
             entities: entities,
             planes: planes.into_boxed_slice(),
             textures: textures.into_boxed_slice(),
-            vertices: vertices.into_boxed_slice(),
             vertex_buffer: vertex_buffer,
             visibility: src.visibility.clone(),
             nodes: nodes.into_boxed_slice(),
@@ -773,7 +768,7 @@ impl Bsp {
             commands.shrink_to_fit();
 
             let command_buffer = DrawCommandsNoIndicesBuffer::empty(display, commands.len())
-                                     .unwrap();
+                .unwrap();
             command_buffer.write(commands.as_slice());
 
             let surf = &self.texinfo[surface_id as usize];
@@ -799,7 +794,8 @@ impl Bsp {
                 None => base_tex,
             };
 
-            let uniforms = uniform! {
+            let uniforms =
+                uniform! {
                 perspective: *Mat4::perspective(w as f32, h as f32, math::PI / 2.0),
                 view: **view_matrix,
                 world: *Mat4::identity(),
@@ -809,12 +805,15 @@ impl Bsp {
                             .wrap_function(SamplerWrapFunction::Repeat),
             };
 
-            target.draw(&self.vertex_buffer,
-                        command_buffer.with_primitive_type(PrimitiveType::TriangleFan),
-                        &program,
-                        &uniforms,
-                        &gfx::gl::get_draw_parameters())
-                  .unwrap();
+            target
+                .draw(
+                    &self.vertex_buffer,
+                    command_buffer.with_primitive_type(PrimitiveType::TriangleFan),
+                    &program,
+                    &uniforms,
+                    &gfx::gl::get_draw_parameters(),
+                )
+                .unwrap();
 
             first_face += face_count;
         }
@@ -823,7 +822,8 @@ impl Bsp {
     }
 
     fn find_leaf<V>(&self, point: V) -> &Leaf
-        where V: AsRef<Vec3>
+    where
+        V: AsRef<Vec3>,
     {
         let mut node_index = 0;
 

@@ -61,7 +61,7 @@ impl Ord for Cvar {
 
 pub struct CmdRegistry<'a> {
     cmd_names: Vec<String>,
-    cmds: Vec<Box<Fn() + 'a>>,
+    cmds: Vec<Box<Fn(Vec<&str>) + 'a>>,
 }
 
 impl<'a> CmdRegistry<'a> {
@@ -73,8 +73,9 @@ impl<'a> CmdRegistry<'a> {
     }
 
     /// Registers a new command.
-    pub fn add_cmd<S>(&mut self, name: S, cmd: Box<Fn() + 'a>) -> Result<(), ()>
-        where S: AsRef<str>
+    pub fn add_cmd<S>(&mut self, name: S, cmd: Box<Fn(Vec<&str>) + 'a>) -> Result<(), ()>
+    where
+        S: AsRef<str>,
     {
         let name = name.as_ref().to_owned();
 
@@ -91,14 +92,15 @@ impl<'a> CmdRegistry<'a> {
 
     /// Executes a command.
     pub fn exec_cmd<S>(&mut self, name: S, args: Vec<&str>) -> Result<(), ()>
-        where S: AsRef<str>
+    where
+        S: AsRef<str>,
     {
         let name = name.as_ref().to_owned();
 
         match self.cmd_names.binary_search(&name) {
             Ok(c) => {
                 debug!("Executing {}", name);
-                (&self.cmds[c])()
+                (&self.cmds[c])(args)
             }
             Err(_) => return Err(()),
         }
@@ -164,9 +166,11 @@ impl InputLine {
     }
 
     pub fn debug_string(&self) -> String {
-        format!("{}_{}",
-                String::from_iter(self.text[..self.curs].to_owned().into_iter()),
-                String::from_iter(self.text[self.curs..].to_owned().into_iter()))
+        format!(
+            "{}_{}",
+            String::from_iter(self.text[..self.curs].to_owned().into_iter()),
+            String::from_iter(self.text[self.curs..].to_owned().into_iter())
+        )
     }
 }
 
@@ -217,7 +221,8 @@ pub struct ConsoleOutput {
 
 impl ConsoleOutput {
     pub fn println<S>(&mut self, msg: S)
-        where S: AsRef<str>
+    where
+        S: AsRef<str>,
     {
         println!("{}", msg.as_ref());
     }
@@ -242,7 +247,8 @@ impl<'a> Console<'a> {
 
     /// Registers a new configuration variable.
     pub fn add_cvar<S>(&mut self, name: S, default: S, archive: bool, info: bool) -> Result<(), ()>
-        where S: AsRef<str>
+    where
+        S: AsRef<str>,
     {
         let new_cvar = Cvar {
             name: name.as_ref().to_owned(),
@@ -262,7 +268,8 @@ impl<'a> Console<'a> {
 
     /// Sets the value of a configuration variable.
     pub fn set_cvar<S>(&mut self, name: S, val: S) -> Result<(), ()>
-        where S: AsRef<str>
+    where
+        S: AsRef<str>,
     {
         let search_cvar = Cvar {
             name: name.as_ref().to_owned(),
@@ -274,8 +281,8 @@ impl<'a> Console<'a> {
 
         match self.cvars.binary_search(&search_cvar) {
             Ok(n) => {
-                let _ = ::std::mem::replace::<String>(&mut self.cvars[n].val,
-                                                      val.as_ref().to_owned());
+                let _ =
+                    ::std::mem::replace::<String>(&mut self.cvars[n].val, val.as_ref().to_owned());
             }
             Err(_) => return Err(()),
         }
@@ -285,7 +292,8 @@ impl<'a> Console<'a> {
 
     /// Retrieves the value of a configuration variable.
     pub fn get_cvar<S>(&self, name: S) -> Option<&str>
-        where S: AsRef<str>
+    where
+        S: AsRef<str>,
     {
         let search_cvar = Cvar {
             name: name.as_ref().to_owned(),
@@ -358,8 +366,10 @@ impl<'a> Console<'a> {
     }
 
     fn debug_string(&self) -> String {
-        format!("{}_{}",
-                String::from_iter(self.line.text[..self.line.curs].to_owned().into_iter()),
-                String::from_iter(self.line.text[self.line.curs..].to_owned().into_iter()))
+        format!(
+            "{}_{}",
+            String::from_iter(self.line.text[..self.line.curs].to_owned().into_iter()),
+            String::from_iter(self.line.text[self.line.curs..].to_owned().into_iter())
+        )
     }
 }

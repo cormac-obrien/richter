@@ -127,7 +127,7 @@ pub struct NetworkChannel {
 impl NetworkChannel {
     pub fn new(dest: SocketAddrV4, local_port: u16) -> NetworkChannel {
         let sock = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), local_port))
-                       .unwrap();
+            .unwrap();
 
         debug!("Bound UDP socket at {:?}", sock.local_addr().unwrap());
 
@@ -166,22 +166,28 @@ impl NetworkChannel {
     }
 
     pub fn transmit(&self, data: &[u8]) {
-        println!("message: {:?}\nsend: {:?}",
-                 self.message_buf.borrow().get_ref(),
-                 self.send_buf.borrow().get_ref());
+        println!(
+            "message: {:?}\nsend: {:?}",
+            self.message_buf.borrow().get_ref(),
+            self.send_buf.borrow().get_ref()
+        );
         self.message_buf.borrow_mut().rewind();
         // we can send a reliable message if...
         let mut should_send_reliable = self.incoming_ack > self.previous_reliable_sequence &&
-                                       self.incoming_ack_is_reliable !=
-                                       self.outgoing_sequence_is_reliable;
+            self.incoming_ack_is_reliable != self.outgoing_sequence_is_reliable;
 
         // if we're not waiting on a reliable message to be acknowledged and there's a message
         // waiting, copy it to the reliable buffer
         if self.reliable_buf.borrow().is_empty() && !self.message_buf.borrow().is_empty() {
-            self.reliable_buf.borrow_mut().write(self.message_buf.borrow().get_ref()).unwrap();
+            self.reliable_buf
+                .borrow_mut()
+                .write(self.message_buf.borrow().get_ref())
+                .unwrap();
             println!("reliable: {:?}", self.reliable_buf.borrow().get_ref());
             self.message_buf.borrow_mut().clear();
-            self.outgoing_sequence_is_reliable.set(!self.outgoing_sequence_is_reliable.get());
+            self.outgoing_sequence_is_reliable.set(
+                !self.outgoing_sequence_is_reliable.get(),
+            );
             should_send_reliable = true;
         }
 
@@ -213,8 +219,12 @@ impl NetworkChannel {
             // }
 
             if should_send_reliable {
-                send_buf.write(self.reliable_buf.borrow().get_ref()).unwrap();
-                self.previous_reliable_sequence.set(self.outgoing_sequence.get());
+                send_buf
+                    .write(self.reliable_buf.borrow().get_ref())
+                    .unwrap();
+                self.previous_reliable_sequence.set(
+                    self.outgoing_sequence.get(),
+                );
             }
 
             // TODO: write in the unreliable part if there's space left.
@@ -222,7 +232,8 @@ impl NetworkChannel {
             println!("message: {:?}", self.message_buf.borrow().get_ref());
 
             if HEADER_SIZE + MAX_MESSAGE - send_buf.get_ref().len() <
-               self.message_buf.borrow().position() as usize {
+                self.message_buf.borrow().position() as usize
+            {
                 send_buf.write(self.message_buf.borrow().get_ref()).unwrap();
             }
         } // finished writing to send_buf
@@ -232,7 +243,9 @@ impl NetworkChannel {
         // TODO: do bandwidth calculations
 
         self.send_buf.borrow_mut().rewind();
-        self.sock.send_to(self.send_buf.borrow().get_ref(), self.dest).unwrap();
+        self.sock
+            .send_to(self.send_buf.borrow().get_ref(), self.dest)
+            .unwrap();
 
         // TODO: time updates and stuff
         self.message_buf.borrow_mut().clear();
@@ -289,7 +302,9 @@ impl NetworkChannel {
         self.incoming_ack_is_reliable.set(true);
 
         if msg_is_reliable {
-            self.incoming_sequence_is_reliable.set(!self.incoming_sequence_is_reliable.get());
+            self.incoming_sequence_is_reliable.set(
+                !self.incoming_sequence_is_reliable.get(),
+            );
         }
 
         Some(Message::InBand(self.recv_buf.borrow_mut()))

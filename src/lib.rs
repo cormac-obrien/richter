@@ -15,9 +15,9 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#![feature(collections_bound)]
 #![feature(collections_range)]
 #![feature(custom_derive)]
+#![feature(manually_drop)]
 
 extern crate arrayvec;
 #[macro_use]
@@ -30,7 +30,6 @@ extern crate glium;
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
-#[macro_use]
 extern crate nom;
 extern crate num;
 #[macro_use]
@@ -38,6 +37,7 @@ extern crate num_derive;
 extern crate rand;
 extern crate regex;
 extern crate time;
+extern crate winit;
 
 pub mod bsp;
 pub mod client;
@@ -46,6 +46,7 @@ pub mod engine;
 pub mod entity;
 pub mod event;
 pub mod gfx;
+pub mod host;
 pub mod input;
 pub mod load;
 pub mod lump;

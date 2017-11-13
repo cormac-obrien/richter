@@ -149,12 +149,12 @@ impl Wad {
 
             curs.seek(SeekFrom::Start(entry.offset as u64))?;
             let mut bytes = Vec::new();
-            (&mut curs).take(entry.disk_size as u64).read_to_end(&mut bytes)?;
+            (&mut curs).take(entry.disk_size as u64).read_to_end(
+                &mut bytes,
+            )?;
             map.insert(entry.name, bytes.into_boxed_slice());
         }
 
-        Ok(Wad {
-            entries: map,
-        })
+        Ok(Wad { entries: map })
     }
 }

@@ -49,35 +49,67 @@ impl std::ops::Mul for Mat4 {
 impl Mat4 {
     /// Returns a 4x4 identity matrix.
     pub fn identity() -> Self {
-        Mat4([[1.0, 0.0, 0.0, 0.0],
-              [0.0, 1.0, 0.0, 0.0],
-              [0.0, 0.0, 1.0, 0.0],
-              [0.0, 0.0, 0.0, 1.0]])
+        Mat4(
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        )
     }
 
     /// Performs a rotation about the x-axis.
     pub fn rotation_x(theta: f32) -> Self {
         let s = theta.sin();
         let c = theta.cos();
-        Mat4([[1.0, 0.0, 0.0, 0.0], [0.0, c, s, 0.0], [0.0, -s, c, 0.0], [0.0, 0.0, 0.0, 1.0]])
+        Mat4(
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, c, s, 0.0],
+                [0.0, -s, c, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        )
     }
 
     /// Performs a rotation about the y-axis.
     pub fn rotation_y(theta: f32) -> Self {
         let s = theta.sin();
         let c = theta.cos();
-        Mat4([[c, 0.0, s, 0.0], [0.0, 1.0, 0.0, 0.0], [-s, 0.0, c, 0.0], [0.0, 0.0, 0.0, 1.0]])
+        Mat4(
+            [
+                [c, 0.0, s, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [-s, 0.0, c, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        )
     }
 
     /// Performs a rotation about the z-axis.
     pub fn rotation_z(theta: f32) -> Self {
         let s = theta.sin();
         let c = theta.cos();
-        Mat4([[c, s, 0.0, 0.0], [-s, c, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]])
+        Mat4(
+            [
+                [c, s, 0.0, 0.0],
+                [-s, c, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        )
     }
 
     pub fn translation(x: f32, y: f32, z: f32) -> Self {
-        Mat4([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [x, y, z, 1.0]])
+        Mat4(
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [x, y, z, 1.0],
+            ],
+        )
     }
 
     pub fn perspective(w: f32, h: f32, fov: f32) -> Self {
@@ -86,10 +118,14 @@ impl Mat4 {
         let zfar = 4096.0;
         let f = 1.0 / (fov / 2.0).tan();
 
-        Mat4([[f / aspect, 0.0, 0.0, 0.0],
-              [0.0, f, 0.0, 0.0],
-              [0.0, 0.0, (zfar + znear) / (zfar - znear), -1.0],
-              [0.0, 0.0, (2.0 * zfar * znear) / (zfar - znear), 0.0]])
+        Mat4(
+            [
+                [f / aspect, 0.0, 0.0, 0.0],
+                [0.0, f, 0.0, 0.0],
+                [0.0, 0.0, (zfar + znear) / (zfar - znear), -1.0],
+                [0.0, 0.0, (2.0 * zfar * znear) / (zfar - znear), 0.0],
+            ],
+        )
     }
 }
 
@@ -114,21 +150,33 @@ impl Vec3 {
 
     // Constructs a new Vec3 by rotating `self` about the x-axis by `theta` radians
     pub fn rotate_x(&self, theta: f32) -> Self {
-        Vec3([self[0],
-              self[1] * theta.cos() - self[2] * theta.sin(),
-              self[1] * theta.sin() + self[2] * theta.cos()])
+        Vec3(
+            [
+                self[0],
+                self[1] * theta.cos() - self[2] * theta.sin(),
+                self[1] * theta.sin() + self[2] * theta.cos(),
+            ],
+        )
     }
 
     pub fn rotate_y(&self, theta: f32) -> Self {
-        Vec3([self[0] * theta.cos() + self[2] * theta.sin(),
-              self[1],
-              -self[0] * theta.sin() + self[2] * theta.cos()])
+        Vec3(
+            [
+                self[0] * theta.cos() + self[2] * theta.sin(),
+                self[1],
+                -self[0] * theta.sin() + self[2] * theta.cos(),
+            ],
+        )
     }
 
     pub fn rotate_z(&self, theta: f32) -> Self {
-        Vec3([self[0] * theta.cos() - self[1] * theta.sin(),
-              self[0] * theta.sin() + self[1] * theta.cos(),
-              self[2]])
+        Vec3(
+            [
+                self[0] * theta.cos() - self[1] * theta.sin(),
+                self[0] * theta.sin() + self[1] * theta.cos(),
+                self[2],
+            ],
+        )
     }
 
     /// Calculates the dot product of this Vec3 and another.

@@ -92,10 +92,11 @@ void main() {
 "#;
 
 pub fn sample(texture: &glium::Texture2d) -> glium::uniforms::Sampler<glium::Texture2d> {
-    texture.sampled()
-           .magnify_filter(MAGNIFY_FILTER)
-           .minify_filter(MINIFY_FILTER)
-           .wrap_function(WRAP_FUNCTION)
+    texture
+        .sampled()
+        .magnify_filter(MAGNIFY_FILTER)
+        .minify_filter(MINIFY_FILTER)
+        .wrap_function(WRAP_FUNCTION)
 }
 
 // TODO: Can this be made a compile-time constant?

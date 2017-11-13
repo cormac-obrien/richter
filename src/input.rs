@@ -17,6 +17,12 @@
 
 use std::cell::Cell;
 
+pub enum InputFocus {
+    Game,
+    Console,
+    Menu,
+}
+
 pub struct InputState {
     pub forward: Cell<bool>,
     pub back: Cell<bool>,

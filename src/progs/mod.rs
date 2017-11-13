@@ -165,9 +165,16 @@ impl Progs {
                 name_id: src.load_i32le(Some(&(0..)))? as usize,
                 srcfile_id: src.load_i32le(Some(&(0..)))? as usize,
                 argc: src.load_i32le(Some(&(0..)))? as usize,
-                argsz: [src.load_u8(None)?, src.load_u8(None)?, src.load_u8(None)?,
-                        src.load_u8(None)?, src.load_u8(None)?, src.load_u8(None)?,
-                        src.load_u8(None)?, src.load_u8(None)?]
+                argsz: [
+                    src.load_u8(None)?,
+                    src.load_u8(None)?,
+                    src.load_u8(None)?,
+                    src.load_u8(None)?,
+                    src.load_u8(None)?,
+                    src.load_u8(None)?,
+                    src.load_u8(None)?,
+                    src.load_u8(None)?,
+                ],
             });
         }
 
@@ -239,9 +246,7 @@ impl Progs {
     }
 
     fn get_v(&mut self, id: u16) -> Vec3 {
-        let slice = unsafe {
-            &(*self.globals_as_f32())[id as usize..id as usize + 3]
-        };
+        let slice = unsafe { &(*self.globals_as_f32())[id as usize..id as usize + 3] };
         Vec3::new(slice[0], slice[1], slice[2])
     }
 
@@ -335,87 +340,103 @@ impl Progs {
     fn ge(&mut self, f1_id: u16, f2_id: u16, ge_id: u16) {
         let f1 = self.get_f(f1_id);
         let f2 = self.get_f(f2_id);
-        self.put_f(match f1 >= f2 {
-                       true => 1.0,
-                       false => 0.0,
-                   },
-                   ge_id);
+        self.put_f(
+            match f1 >= f2 {
+                true => 1.0,
+                false => 0.0,
+            },
+            ge_id,
+        );
     }
 
     // LE: Less than or equal to comparison
     fn le(&mut self, f1_id: u16, f2_id: u16, le_id: u16) {
         let f1 = self.get_f(f1_id);
         let f2 = self.get_f(f2_id);
-        self.put_f(match f1 <= f2 {
-                       true => 1.0,
-                       false => 0.0,
-                   },
-                   le_id);
+        self.put_f(
+            match f1 <= f2 {
+                true => 1.0,
+                false => 0.0,
+            },
+            le_id,
+        );
     }
 
     // GE: Greater than comparison
     fn gt(&mut self, f1_id: u16, f2_id: u16, gt_id: u16) {
         let f1 = self.get_f(f1_id);
         let f2 = self.get_f(f2_id);
-        self.put_f(match f1 > f2 {
-                       true => 1.0,
-                       false => 0.0,
-                   },
-                   gt_id);
+        self.put_f(
+            match f1 > f2 {
+                true => 1.0,
+                false => 0.0,
+            },
+            gt_id,
+        );
     }
 
     // LT: Less than comparison
     fn lt(&mut self, f1_id: u16, f2_id: u16, lt_id: u16) {
         let f1 = self.get_f(f1_id);
         let f2 = self.get_f(f2_id);
-        self.put_f(match f1 < f2 {
-                       true => 1.0,
-                       false => 0.0,
-                   },
-                   lt_id);
+        self.put_f(
+            match f1 < f2 {
+                true => 1.0,
+                false => 0.0,
+            },
+            lt_id,
+        );
     }
 
     // AND: Logical AND
     fn and(&mut self, f1_id: u16, f2_id: u16, and_id: u16) {
         let f1 = self.get_f(f1_id);
         let f2 = self.get_f(f2_id);
-        self.put_f(match f1 != 0.0 && f2 != 0.0 {
-                       true => 1.0,
-                       false => 0.0,
-                   },
-                   and_id);
+        self.put_f(
+            match f1 != 0.0 && f2 != 0.0 {
+                true => 1.0,
+                false => 0.0,
+            },
+            and_id,
+        );
     }
 
     // OR: Logical OR
     fn or(&mut self, f1_id: u16, f2_id: u16, or_id: u16) {
         let f1 = self.get_f(f1_id);
         let f2 = self.get_f(f2_id);
-        self.put_f(match f1 != 0.0 || f2 != 0.0 {
-                       true => 1.0,
-                       false => 0.0,
-                   },
-                   or_id);
+        self.put_f(
+            match f1 != 0.0 || f2 != 0.0 {
+                true => 1.0,
+                false => 0.0,
+            },
+            or_id,
+        );
     }
 
     // NOT_F: Compare float to 0.0
     fn not_f(&mut self, f_id: u16, not_id: u16) {
         let f = self.get_f(f_id);
-        self.put_f(match f == 0.0 {
-                       true => 1.0,
-                       false => 0.0,
-                   },
-                   not_id);
+        self.put_f(
+            match f == 0.0 {
+                true => 1.0,
+                false => 0.0,
+            },
+            not_id,
+        );
     }
 
     // NOT_V: Compare vec to { 0.0, 0.0, 0.0 }
     fn not_v(&mut self, v_id: u16, not_id: u16) {
         let v = self.get_v(v_id);
         let zero_vec = Vec3::new(0.0, 0.0, 0.0);
-        self.put_v(match v == zero_vec {
-                       true => Vec3::new(1.0, 1.0, 1.0),
-                       false => zero_vec,
-                   },
-                   not_id);
+        self.put_v(
+            match v == zero_vec {
+                true => Vec3::new(1.0, 1.0, 1.0),
+                false => zero_vec,
+            },
+            not_id,
+        );
     }
 
     // TODO
@@ -431,44 +452,52 @@ impl Progs {
     fn eq_f(&mut self, f1_id: u16, f2_id: u16, eq_id: u16) {
         let f1 = self.get_f(f1_id);
         let f2 = self.get_f(f2_id);
-        self.put_f(match f1 == f2 {
-                       true => 1.0,
-                       false => 0.0,
-                   },
-                   eq_id);
+        self.put_f(
+            match f1 == f2 {
+                true => 1.0,
+                false => 0.0,
+            },
+            eq_id,
+        );
     }
 
     // EQ_V: Test equality of two vectors
     fn eq_v(&mut self, v1_id: u16, v2_id: u16, eq_id: u16) {
         let v1 = self.get_v(v1_id);
         let v2 = self.get_v(v2_id);
-        self.put_f(match v1 == v2 {
-                       true => 1.0,
-                       false => 0.0,
-                   },
-                   eq_id);
+        self.put_f(
+            match v1 == v2 {
+                true => 1.0,
+                false => 0.0,
+            },
+            eq_id,
+        );
     }
 
     // NE_F: Test inequality of two floats
     fn ne_f(&mut self, f1_id: u16, f2_id: u16, ne_id: u16) {
         let f1 = self.get_f(f1_id);
         let f2 = self.get_f(f2_id);
-        self.put_f(match f1 != f2 {
-                       true => 1.0,
-                       false => 0.0,
-                   },
-                   ne_id);
+        self.put_f(
+            match f1 != f2 {
+                true => 1.0,
+                false => 0.0,
+            },
+            ne_id,
+        );
     }
 
     // NE_V: Test inequality of two vectors
     fn ne_v(&mut self, v1_id: u16, v2_id: u16, ne_id: u16) {
         let v1 = self.get_v(v1_id);
         let v2 = self.get_v(v2_id);
-        self.put_f(match v1 != v2 {
-                       true => 1.0,
-                       false => 0.0,
-                   },
-                   ne_id);
+        self.put_f(
+            match v1 != v2 {
+                true => 1.0,
+                false => 0.0,
+            },
+            ne_id,
+        );
     }
 
     fn ne_s(&mut self, s1_id: u16, s2_id: u16, ne_id: u16) {}
@@ -476,175 +505,175 @@ impl Progs {
 
 // #[cfg(test)]
 // mod test {
-    // use super::*;
-    // use std::mem::{size_of, transmute};
-    // use math::Vec3;
-    // use progs::Progs;
-// 
-    // #[test]
-    // fn test_progs_get_f() {
-        // let to_load = 42.0;
-// 
-        // let data: [u8; 4];
-        // unsafe {
-            // data = transmute(to_load);
-        // }
-        // let mut progs = Progs {
-            // functions: Default::default(),
-            // data: data.to_vec().into_boxed_slice(),
-            // statements: Default::default(),
-        // };
-// 
-        // assert!(progs.get_f(0) == to_load);
-    // }
-// 
-    // #[test]
-    // fn test_progs_put_f() {
-        // let to_store = 365.0;
-// 
-        // let mut progs = Progs {
-            // functions: Default::default(),
-            // data: vec![0, 0, 0, 0].into_boxed_slice(),
-            // statements: Default::default(),
-        // };
-// 
-        // progs.put_f(to_store, 0);
-        // assert!(progs.get_f(0) == to_store);
-    // }
-// 
-    // #[test]
-    // fn test_progs_get_v() {
-        // let to_load = Vec3::new(10.0, -10.0, 0.0);
-        // let data: [u8; 12];
-        // unsafe {
-            // data = transmute(to_load);
-        // }
-        // let mut progs = Progs {
-            // functions: Default::default(),
-            // data: data.to_vec().into_boxed_slice(),
-            // statements: Default::default(),
-        // };
-// 
-        // assert!(progs.get_v(0) == to_load);
-    // }
-// 
-    // #[test]
-    // fn test_progs_put_v() {
-        // let to_store = Vec3::new(245.2, 50327.99, 0.0002);
-// 
-        // let mut progs = Progs {
-            // functions: Default::default(),
-            // data: vec![0; 12].into_boxed_slice(),
-            // statements: Default::default(),
-        // };
-// 
-// 
-        // progs.put_v(to_store, 0);
-        // assert!(progs.get_v(0) == to_store);
-    // }
-// 
-    // #[test]
-    // fn test_progs_add_f() {
-        // let f32_size = size_of::<f32>() as u16;
-        // let term1 = 5.0;
-        // let t1_addr = 0 * f32_size;
-        // let term2 = 7.0;
-        // let t2_addr = 1 * f32_size;
-        // let sum_addr = 2 * f32_size;
-// 
-        // let mut progs = Progs {
-            // functions: Default::default(),
-            // data: vec![0; 12].into_boxed_slice(),
-            // statements: Default::default(),
-        // };
-// 
-        // progs.put_f(term1, t1_addr);
-        // progs.put_f(term2, t2_addr);
-        // progs.add_f(t1_addr as u16, t2_addr as u16, sum_addr as u16);
-        // assert!(progs.get_f(sum_addr) == term1 + term2);
-    // }
-// 
-    // #[test]
-    // fn test_progs_sub_f() {
-        // let f32_size = size_of::<f32>() as u16;
-        // let term1 = 9.0;
-        // let t1_addr = 0 * f32_size;
-        // let term2 = 2.0;
-        // let t2_addr = 1 * f32_size;
-        // let diff_addr = 2 * f32_size;
-// 
-        // let mut progs = Progs {
-            // functions: Default::default(),
-            // data: vec![0; 12].into_boxed_slice(),
-            // statements: Default::default(),
-        // };
-// 
-        // progs.put_f(term1, t1_addr);
-        // progs.put_f(term2, t2_addr);
-        // progs.sub_f(t1_addr as u16, t2_addr as u16, diff_addr as u16);
-        // assert!(progs.get_f(diff_addr) == term1 - term2);
-    // }
-// 
-    // #[test]
-    // fn test_progs_mul_f() {
-        // let f32_size = size_of::<f32>() as u16;
-        // let term1 = 3.0;
-        // let t1_addr = 0 * f32_size;
-        // let term2 = 8.0;
-        // let t2_addr = 1 * f32_size;
-        // let prod_addr = 2 * f32_size;
-// 
-        // let mut progs = Progs {
-            // functions: Default::default(),
-            // data: vec![0; 12].into_boxed_slice(),
-            // statements: Default::default(),
-        // };
-// 
-        // progs.put_f(term1, t1_addr);
-        // progs.put_f(term2, t2_addr);
-        // progs.mul_f(t1_addr as u16, t2_addr as u16, prod_addr as u16);
-        // assert!(progs.get_f(prod_addr) == term1 * term2);
-    // }
-// 
-    // #[test]
-    // fn test_progs_div_f() {
-        // let f32_size = size_of::<f32>() as u16;
-        // let term1 = 6.0;
-        // let t1_addr = 0 * f32_size;
-        // let term2 = 4.0;
-        // let t2_addr = 1 * f32_size;
-        // let quot_addr = 2 * f32_size;
-// 
-        // let mut progs = Progs {
-            // functions: Default::default(),
-            // data: vec![0; 12].into_boxed_slice(),
-            // statements: Default::default(),
-        // };
-// 
-        // progs.put_f(term1, t1_addr);
-        // progs.put_f(term2, t2_addr);
-        // progs.div_f(t1_addr as u16, t2_addr as u16, quot_addr as u16);
-        // assert!(progs.get_f(quot_addr) == term1 / term2);
-    // }
-// 
-    // #[test]
-    // fn test_progs_bitand() {
-        // let f32_size = size_of::<f32>() as u16;
-        // let term1: f32 = unsafe { transmute(0xFFFFFFFFu32) };
-        // let t1_addr = 0 * f32_size;
-        // let term2: f32 = unsafe { transmute(0xF0F0F0F0u32) };
-        // let t2_addr = 1 * f32_size;
-        // let result_addr = 2 * f32_size;
-// 
-        // let mut progs = Progs {
-            // functions: Default::default(),
-            // data: vec![0; 12].into_boxed_slice(),
-            // statements: Default::default(),
-        // };
-// 
-        // progs.put_f(term1, t1_addr);
-        // progs.put_f(term2, t2_addr);
-        // progs.bitand(t1_addr as u16, t2_addr as u16, result_addr as u16);
-        // assert_eq!(progs.get_f(result_addr) as i32, term1 as i32 & term2 as i32);
-    // }
+// use super::*;
+// use std::mem::{size_of, transmute};
+// use math::Vec3;
+// use progs::Progs;
+//
+// #[test]
+// fn test_progs_get_f() {
+// let to_load = 42.0;
+//
+// let data: [u8; 4];
+// unsafe {
+// data = transmute(to_load);
+// }
+// let mut progs = Progs {
+// functions: Default::default(),
+// data: data.to_vec().into_boxed_slice(),
+// statements: Default::default(),
+// };
+//
+// assert!(progs.get_f(0) == to_load);
+// }
+//
+// #[test]
+// fn test_progs_put_f() {
+// let to_store = 365.0;
+//
+// let mut progs = Progs {
+// functions: Default::default(),
+// data: vec![0, 0, 0, 0].into_boxed_slice(),
+// statements: Default::default(),
+// };
+//
+// progs.put_f(to_store, 0);
+// assert!(progs.get_f(0) == to_store);
+// }
+//
+// #[test]
+// fn test_progs_get_v() {
+// let to_load = Vec3::new(10.0, -10.0, 0.0);
+// let data: [u8; 12];
+// unsafe {
+// data = transmute(to_load);
+// }
+// let mut progs = Progs {
+// functions: Default::default(),
+// data: data.to_vec().into_boxed_slice(),
+// statements: Default::default(),
+// };
+//
+// assert!(progs.get_v(0) == to_load);
+// }
+//
+// #[test]
+// fn test_progs_put_v() {
+// let to_store = Vec3::new(245.2, 50327.99, 0.0002);
+//
+// let mut progs = Progs {
+// functions: Default::default(),
+// data: vec![0; 12].into_boxed_slice(),
+// statements: Default::default(),
+// };
+//
+//
+// progs.put_v(to_store, 0);
+// assert!(progs.get_v(0) == to_store);
+// }
+//
+// #[test]
+// fn test_progs_add_f() {
+// let f32_size = size_of::<f32>() as u16;
+// let term1 = 5.0;
+// let t1_addr = 0 * f32_size;
+// let term2 = 7.0;
+// let t2_addr = 1 * f32_size;
+// let sum_addr = 2 * f32_size;
+//
+// let mut progs = Progs {
+// functions: Default::default(),
+// data: vec![0; 12].into_boxed_slice(),
+// statements: Default::default(),
+// };
+//
+// progs.put_f(term1, t1_addr);
+// progs.put_f(term2, t2_addr);
+// progs.add_f(t1_addr as u16, t2_addr as u16, sum_addr as u16);
+// assert!(progs.get_f(sum_addr) == term1 + term2);
+// }
+//
+// #[test]
+// fn test_progs_sub_f() {
+// let f32_size = size_of::<f32>() as u16;
+// let term1 = 9.0;
+// let t1_addr = 0 * f32_size;
+// let term2 = 2.0;
+// let t2_addr = 1 * f32_size;
+// let diff_addr = 2 * f32_size;
+//
+// let mut progs = Progs {
+// functions: Default::default(),
+// data: vec![0; 12].into_boxed_slice(),
+// statements: Default::default(),
+// };
+//
+// progs.put_f(term1, t1_addr);
+// progs.put_f(term2, t2_addr);
+// progs.sub_f(t1_addr as u16, t2_addr as u16, diff_addr as u16);
+// assert!(progs.get_f(diff_addr) == term1 - term2);
+// }
+//
+// #[test]
+// fn test_progs_mul_f() {
+// let f32_size = size_of::<f32>() as u16;
+// let term1 = 3.0;
+// let t1_addr = 0 * f32_size;
+// let term2 = 8.0;
+// let t2_addr = 1 * f32_size;
+// let prod_addr = 2 * f32_size;
+//
+// let mut progs = Progs {
+// functions: Default::default(),
+// data: vec![0; 12].into_boxed_slice(),
+// statements: Default::default(),
+// };
+//
+// progs.put_f(term1, t1_addr);
+// progs.put_f(term2, t2_addr);
+// progs.mul_f(t1_addr as u16, t2_addr as u16, prod_addr as u16);
+// assert!(progs.get_f(prod_addr) == term1 * term2);
+// }
+//
+// #[test]
+// fn test_progs_div_f() {
+// let f32_size = size_of::<f32>() as u16;
+// let term1 = 6.0;
+// let t1_addr = 0 * f32_size;
+// let term2 = 4.0;
+// let t2_addr = 1 * f32_size;
+// let quot_addr = 2 * f32_size;
+//
+// let mut progs = Progs {
+// functions: Default::default(),
+// data: vec![0; 12].into_boxed_slice(),
+// statements: Default::default(),
+// };
+//
+// progs.put_f(term1, t1_addr);
+// progs.put_f(term2, t2_addr);
+// progs.div_f(t1_addr as u16, t2_addr as u16, quot_addr as u16);
+// assert!(progs.get_f(quot_addr) == term1 / term2);
+// }
+//
+// #[test]
+// fn test_progs_bitand() {
+// let f32_size = size_of::<f32>() as u16;
+// let term1: f32 = unsafe { transmute(0xFFFFFFFFu32) };
+// let t1_addr = 0 * f32_size;
+// let term2: f32 = unsafe { transmute(0xF0F0F0F0u32) };
+// let t2_addr = 1 * f32_size;
+// let result_addr = 2 * f32_size;
+//
+// let mut progs = Progs {
+// functions: Default::default(),
+// data: vec![0; 12].into_boxed_slice(),
+// statements: Default::default(),
+// };
+//
+// progs.put_f(term1, t1_addr);
+// progs.put_f(term2, t2_addr);
+// progs.bitand(t1_addr as u16, t2_addr as u16, result_addr as u16);
+// assert_eq!(progs.get_f(result_addr) as i32, term1 as i32 & term2 as i32);
+// }
 // }

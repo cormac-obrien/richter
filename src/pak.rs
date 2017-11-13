@@ -25,7 +25,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io;
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::string;
 use byteorder::{LittleEndian, ReadBytesExt};
@@ -179,7 +179,6 @@ impl Pak {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
 
@@ -201,10 +200,9 @@ mod tests {
             _setup_path
         };
 
-        let setup_status = Command::new("sh")
-                               .arg(setup_path)
-                               .status()
-                               .expect("Setup failed.");
+        let setup_status = Command::new("sh").arg(setup_path).status().expect(
+            "Setup failed.",
+        );
 
         if !setup_status.success() {
             panic!("Setup script failed.");

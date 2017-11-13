@@ -72,35 +72,35 @@ fn transcribe_clcmd<'a>(src: &'a [u8]) -> String {
 
                 result += &format!("flags={:08b} ", flags.bits());
 
-                if flags.contains(qw::CM_ANGLE1) {
+                if flags.contains(qw::MOVE_ANGLE1) {
                     result += &format!("angle1={} ", curs.read_u16::<LittleEndian>().unwrap());
                 }
 
-                if flags.contains(qw::CM_ANGLE2) {
+                if flags.contains(qw::MOVE_ANGLE2) {
                     result += &format!("angle2={} ", curs.read_u16::<LittleEndian>().unwrap());
                 }
 
-                if flags.contains(qw::CM_ANGLE3) {
+                if flags.contains(qw::MOVE_ANGLE3) {
                     result += &format!("angle3={} ", curs.read_u16::<LittleEndian>().unwrap());
                 }
 
-                if flags.contains(qw::CM_FORWARD) {
+                if flags.contains(qw::MOVE_FORWARD) {
                     result += &format!("forward={} ", curs.read_u16::<LittleEndian>().unwrap());
                 }
 
-                if flags.contains(qw::CM_SIDE) {
+                if flags.contains(qw::MOVE_SIDE) {
                     result += &format!("side={} ", curs.read_u16::<LittleEndian>().unwrap());
                 }
 
-                if flags.contains(qw::CM_UP) {
+                if flags.contains(qw::MOVE_UP) {
                     result += &format!("up={} ", curs.read_u16::<LittleEndian>().unwrap());
                 }
 
-                if flags.contains(qw::CM_BUTTONS) {
+                if flags.contains(qw::MOVE_BUTTONS) {
                     result += &format!("buttons={} ", curs.read_u8().unwrap());
                 }
 
-                if flags.contains(qw::CM_IMPULSE) {
+                if flags.contains(qw::MOVE_IMPULSE) {
                     result += &format!("impulse={} ", curs.read_u8().unwrap());
                 }
 
@@ -223,11 +223,11 @@ fn main() {
     let server_ip = std::net::Ipv4Addr::from_str(&args[3]).unwrap();
     let server_port = u16::from_str(&args[4]).unwrap();
 
-    let (_, mut rx) = match pnet::transport::transport_channel(4096,
-                                                               TransportChannelType::Layer3(Udp)) {
-        Ok((tx, rx)) => (tx, rx),
-        Err(why) => panic!("Error creating channel: {}", why),
-    };
+    let (_, mut rx) =
+        match pnet::transport::transport_channel(4096, TransportChannelType::Layer3(Udp)) {
+            Ok((tx, rx)) => (tx, rx),
+            Err(why) => panic!("Error creating channel: {}", why),
+        };
 
     let mut iter = transport::ipv4_packet_iter(&mut rx);
     loop {

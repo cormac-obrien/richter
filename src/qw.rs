@@ -91,13 +91,13 @@ impl From<io::Error> for NetworkError {
 pub enum Message {
     InBand,
     OutOfBand(Box<[u8]>),
-    None
+    None,
 }
 
 #[derive(PartialEq)]
 pub enum SockType {
     Client,
-    Server
+    Server,
 }
 
 /// A QuakeWorld protocol network socket.
@@ -173,7 +173,11 @@ impl QwSocket {
     }
 
     pub fn bind(remote: SocketAddr, sock_type: SockType) -> Result<QwSocket, NetworkError> {
-        Ok(QwSocket::from_raw_parts(UdpSocket::bind("127.0.0.1:27001")?, remote, sock_type))
+        Ok(QwSocket::from_raw_parts(
+            UdpSocket::bind("127.0.0.1:27001")?,
+            remote,
+            sock_type,
+        ))
     }
 
     /// Sends an out-of-band message to this socket's remote address.
@@ -201,8 +205,12 @@ impl QwSocket {
 
         // sequence number of incoming packet
         let mut seq = match buf.read_i32::<LittleEndian>()? {
-            -1 => return Ok(Message::OutOfBand(Vec::from(&buf.into_inner()[4..]).into_boxed_slice())),
-            x => x
+            -1 => {
+                return Ok(Message::OutOfBand(
+                    Vec::from(&buf.into_inner()[4..]).into_boxed_slice(),
+                ))
+            }
+            x => x,
         };
 
         // most recently acked packet from remote
@@ -314,7 +322,10 @@ impl QwSocket {
 
     pub fn write_angle16(&mut self, angle: f32) -> io::Result<usize> {
         // TODO: convert bitwise-and to modulo (thanks Carmack ಠ_ಠ)
-        self.write_i16::<LittleEndian>(((angle * 65536.0 / 360.0).round() as i32 & 65535) as i16)?;
+        self.write_i16::<LittleEndian>(
+            ((angle * 65536.0 / 360.0).round() as i32 & 65535) as
+                i16,
+        )?;
         Ok(2)
     }
 
@@ -488,7 +499,9 @@ impl Packet {
         let seq = curs.read_i32::<LittleEndian>()?;
 
         if seq == -1 {
-            return Ok(Packet::OutOfBand(OutOfBandPacket::new(&curs.into_inner()[4..]).unwrap()));
+            return Ok(Packet::OutOfBand(
+                OutOfBandPacket::new(&curs.into_inner()[4..]).unwrap(),
+            ));
         }
 
         if src.len() < 8 {
@@ -569,12 +582,14 @@ pub struct ConnectPacket {
 
 impl fmt::Display for ConnectPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f,
-               "qw={} qport={} challenge={} userinfo={}",
-               self.qwcol,
-               self.qport,
-               self.challenge,
-               self.userinfo)
+        write!(
+            f,
+            "qw={} qport={} challenge={} userinfo={}",
+            self.qwcol,
+            self.qport,
+            self.challenge,
+            self.userinfo
+        )
     }
 }
 
@@ -617,7 +632,8 @@ pub struct PrintPacket {
 
 impl PrintPacket {
     pub fn from_bytes<R>(mut src: R) -> Result<PrintPacket, NetworkError>
-        where R: BufRead + ReadBytesExt
+    where
+        R: BufRead + ReadBytesExt,
     {
         let ptype = PrintType::from_u8(src.read_u8()?).unwrap();
         let msg = util::read_cstring(&mut src).unwrap();
@@ -663,7 +679,8 @@ pub struct PlayerInfoPacket {
 
 impl PlayerInfoPacket {
     pub fn from_bytes<R>(mut src: R) -> Result<PlayerInfoPacket, NetworkError>
-        where R: BufRead + ReadBytesExt
+    where
+        R: BufRead + ReadBytesExt,
     {
 
         let id = src.read_u8().unwrap();
@@ -758,7 +775,8 @@ pub struct ServerDataPacket {
 
 impl ServerDataPacket {
     pub fn from_bytes<R>(mut src: R) -> Result<ServerDataPacket, NetworkError>
-        where R: BufRead + ReadBytesExt
+    where
+        R: BufRead + ReadBytesExt,
     {
         Ok(ServerDataPacket {
             proto: src.read_i32::<LittleEndian>()?,
@@ -856,7 +874,8 @@ pub struct ModelListPacket {
 
 impl ModelListPacket {
     pub fn from_bytes<R>(mut src: R) -> Result<ModelListPacket, NetworkError>
-        where R: BufRead + ReadBytesExt
+    where
+        R: BufRead + ReadBytesExt,
     {
         let mut count = src.read_u8()?;
         let mut list: Vec<String> = Vec::new();
@@ -904,7 +923,8 @@ pub struct SoundListPacket {
 
 impl SoundListPacket {
     pub fn from_bytes<R>(mut src: R) -> Result<SoundListPacket, NetworkError>
-        where R: BufRead + ReadBytesExt
+    where
+        R: BufRead + ReadBytesExt,
     {
         let mut count = src.read_u8()?;
         let mut list: Vec<String> = Vec::new();
@@ -987,7 +1007,8 @@ pub struct MoveDelta {
 
 impl MoveDelta {
     pub fn from_bytes<R>(mut src: R) -> Result<MoveDelta, NetworkError>
-        where R: BufRead + ReadBytesExt
+    where
+        R: BufRead + ReadBytesExt,
     {
         let flags = MoveDeltaFlags::from_bits(src.read_u8().unwrap()).unwrap();
 
@@ -1061,7 +1082,7 @@ impl Default for MoveDelta {
 }
 
 const PROTOCOL_FTE: u32 = ('F' as u32) << 0 | ('T' as u32) << 8 | ('E' as u32) << 16 |
-                          ('X' as u32) << 24;
+    ('X' as u32) << 24;
 
 // FTE extensions, https://github.com/mdeguzis/ftequake/blob/master/engine/common/protocol.h#L21
 bitflags! {
@@ -1103,7 +1124,7 @@ bitflags! {
 }
 
 const PROTOCOL_FTE2: u32 = ('F' as u32) << 0 | ('T' as u32) << 8 | ('E' as u32) << 16 |
-                           ('2' as u32) << 24;
+    ('2' as u32) << 24;
 
 // FTE2 extensions, https://github.com/mdeguzis/ftequake/blob/master/engine/common/protocol.h#L73
 bitflags! {
@@ -1127,7 +1148,9 @@ pub struct Challenge {
 impl Challenge {
     pub fn serialize(&self) -> Result<Vec<u8>, NetworkError> {
         let mut result = Cursor::new(Vec::new());
-        result.write(&self.challenge.to_string().into_bytes()).unwrap();
+        result
+            .write(&self.challenge.to_string().into_bytes())
+            .unwrap();
 
         if let Some(fte) = self.fte_extensions {
             result.write_u32::<LittleEndian>(fte.bits())?;
@@ -1141,7 +1164,8 @@ impl Challenge {
     }
 
     pub fn deserialize<A>(data: A) -> Challenge
-        where A: AsRef<[u8]>
+    where
+        A: AsRef<[u8]>,
     {
         let mut result = Challenge {
             challenge: 0,
@@ -1169,14 +1193,18 @@ impl Challenge {
         while let Ok(n) = curs.read_u32::<LittleEndian>() {
             match n {
                 PROTOCOL_FTE => {
-                    result.fte_extensions =
-                        Some(FteExtensions::from_bits(curs.read_u32::<LittleEndian>().unwrap())
-                                 .unwrap())
+                    result.fte_extensions = Some(
+                        FteExtensions::from_bits(
+                            curs.read_u32::<LittleEndian>().unwrap(),
+                        ).unwrap(),
+                    )
                 }
                 PROTOCOL_FTE2 => {
-                    result.fte2_extensions =
-                        Some(Fte2Extensions::from_bits(curs.read_u32::<LittleEndian>().unwrap())
-                                 .unwrap())
+                    result.fte2_extensions = Some(
+                        Fte2Extensions::from_bits(
+                            curs.read_u32::<LittleEndian>().unwrap(),
+                        ).unwrap(),
+                    )
                 }
                 _ => panic!("Unrecognized sequence in challenge packet"),
             }

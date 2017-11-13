@@ -262,8 +262,12 @@ impl DiskBsp {
         let mut entdata = Vec::with_capacity(MAX_ENTSTRING);
         try!(bspreader.read_until(0x00, &mut entdata));
         let entstring = try!(String::from_utf8(entdata));
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load planes
         lump = &lumps[LumpId::Planes as usize];
@@ -273,15 +277,21 @@ impl DiskBsp {
         let mut planes = Vec::with_capacity(plane_count);
         for _ in 0..plane_count {
             planes.push(DiskPlane {
-                normal: [bspreader.load_f32le(None).unwrap(),
-                         bspreader.load_f32le(None).unwrap(),
-                         bspreader.load_f32le(None).unwrap()],
+                normal: [
+                    bspreader.load_f32le(None).unwrap(),
+                    bspreader.load_f32le(None).unwrap(),
+                    bspreader.load_f32le(None).unwrap(),
+                ],
                 dist: bspreader.load_f32le(None).unwrap(),
                 kind: bspreader.load_i32le(None).unwrap(),
             });
         }
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load textures
         lump = &lumps[LumpId::Textures as usize];
@@ -293,7 +303,9 @@ impl DiskBsp {
         }
         let mut textures = Vec::with_capacity(tex_count);
         for t in 0..tex_count {
-            try!(bspreader.seek(SeekFrom::Start((lump.offset + tex_offsets[t]) as u64)));
+            try!(bspreader.seek(SeekFrom::Start(
+                (lump.offset + tex_offsets[t]) as u64,
+            )));
             let mut tex_name: [u8; 16] = [0; 16];
             try!(bspreader.read(&mut tex_name));
             let width = bspreader.load_u32le(None).unwrap();
@@ -306,23 +318,34 @@ impl DiskBsp {
             for m in 0..mip_offsets.len() {
                 let factor = 2usize.pow(m as u32);
                 let mipmap_size = (width as usize / factor) * (height as usize / factor);
-                try!(bspreader.seek(SeekFrom::Start((lump.offset + tex_offsets[t] + mip_offsets[m]) as u64)));
+                try!(bspreader.seek(SeekFrom::Start(
+                    (lump.offset + tex_offsets[t] + mip_offsets[m]) as
+                        u64,
+                )));
                 let mut mip_data = Vec::with_capacity(mipmap_size);
-                try!((&mut bspreader).take(mipmap_size as u64).read_to_end(&mut mip_data));
+                try!((&mut bspreader).take(mipmap_size as u64).read_to_end(
+                    &mut mip_data,
+                ));
                 mipmap_vec.push(mip_data.into_boxed_slice());
             }
             textures.push(DiskTexture {
                 name: tex_name,
                 width: width,
                 height: height,
-                mipmaps: [mipmap_vec[0].clone(),
-                          mipmap_vec[1].clone(),
-                          mipmap_vec[2].clone(),
-                          mipmap_vec[3].clone()],
+                mipmaps: [
+                    mipmap_vec[0].clone(),
+                    mipmap_vec[1].clone(),
+                    mipmap_vec[2].clone(),
+                    mipmap_vec[3].clone(),
+                ],
             });
         }
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load vertices
         lump = &lumps[LumpId::Vertices as usize];
@@ -338,16 +361,26 @@ impl DiskBsp {
 
             vertices.push(DiskVertex { position: position });
         }
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load visibility
         lump = &lumps[LumpId::Visibility as usize];
         try!(bspreader.seek(SeekFrom::Start(lump.offset as u64)));
         let mut vislists: Vec<u8> = Vec::with_capacity(lump.size);
-        try!((&mut bspreader).take(lump.size as u64).read_to_end(&mut vislists));
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        try!((&mut bspreader).take(lump.size as u64).read_to_end(
+            &mut vislists,
+        ));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load nodes
         lump = &lumps[LumpId::Nodes as usize];
@@ -357,8 +390,10 @@ impl DiskBsp {
         let mut nodes = Vec::with_capacity(node_count);
         for _ in 0..node_count {
             let plane_id = bspreader.load_i32le(None).unwrap();
-            let children = [bspreader.load_i16le(None).unwrap(),
-                            bspreader.load_i16le(None).unwrap()];
+            let children = [
+                bspreader.load_i16le(None).unwrap(),
+                bspreader.load_i16le(None).unwrap(),
+            ];
             let mut mins = [0i16; 3];
             for i in 0..mins.len() {
                 mins[i] = bspreader.load_i16le(None).unwrap();
@@ -379,8 +414,12 @@ impl DiskBsp {
                 face_count: face_count,
             });
         }
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load texinfo
         lump = &lumps[LumpId::TextureInfo as usize];
@@ -403,8 +442,12 @@ impl DiskBsp {
                 flags: flags,
             });
         }
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load faces
         lump = &lumps[LumpId::Faces as usize];
@@ -434,16 +477,26 @@ impl DiskBsp {
                 light_off: light_off,
             });
         }
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load lightmaps
         lump = &lumps[LumpId::Lightmaps as usize];
         try!(bspreader.seek(SeekFrom::Start(lump.offset as u64)));
         let mut lightmaps = Vec::with_capacity(lump.size);
-        try!((&mut bspreader).take(lump.size as u64).read_to_end(&mut lightmaps));
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        try!((&mut bspreader).take(lump.size as u64).read_to_end(
+            &mut lightmaps,
+        ));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load clipnodes
         lump = &lumps[LumpId::ClipNodes as usize];
@@ -454,12 +507,18 @@ impl DiskBsp {
         for _ in 0..clipnode_count {
             clipnodes.push(DiskClipNode {
                 plane_id: bspreader.load_i32le(None).unwrap(),
-                children: [bspreader.load_i16le(None).unwrap(),
-                           bspreader.load_i16le(None).unwrap()],
+                children: [
+                    bspreader.load_i16le(None).unwrap(),
+                    bspreader.load_i16le(None).unwrap(),
+                ],
             });
         }
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load leaves
         lump = &lumps[LumpId::Leaves as usize];
@@ -492,8 +551,12 @@ impl DiskBsp {
                 sounds: sounds,
             });
         }
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load mark surfaces
         lump = &lumps[LumpId::MarkSurfaces as usize];
@@ -504,8 +567,12 @@ impl DiskBsp {
         for _ in 0..marksurface_count {
             marksurfaces.push(bspreader.load_u16le(None).unwrap());
         }
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load edges
         lump = &lumps[LumpId::Edges as usize];
@@ -515,12 +582,18 @@ impl DiskBsp {
         let mut edges = Vec::with_capacity(edge_count);
         for _ in 0..edge_count {
             edges.push(DiskEdge {
-                vertex_ids: [bspreader.load_u16le(None).unwrap(),
-                             bspreader.load_u16le(None).unwrap()],
+                vertex_ids: [
+                    bspreader.load_u16le(None).unwrap(),
+                    bspreader.load_u16le(None).unwrap(),
+                ],
             });
         }
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load surfedges
         lump = &lumps[LumpId::SurfEdges as usize];
@@ -533,8 +606,12 @@ impl DiskBsp {
             debug!("Edge table {}: {}", i, edge);
             surfedges.push(edge);
         }
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         // load models
         lump = &lumps[LumpId::Models as usize];
@@ -572,8 +649,12 @@ impl DiskBsp {
                 face_count: face_count,
             });
         }
-        assert_eq!(try!(bspreader.seek(SeekFrom::Current(0))),
-                   try!(bspreader.seek(SeekFrom::Start((lump.offset + lump.size) as u64))));
+        assert_eq!(
+            try!(bspreader.seek(SeekFrom::Current(0))),
+            try!(bspreader.seek(
+                SeekFrom::Start((lump.offset + lump.size) as u64),
+            ))
+        );
 
         Ok(DiskBsp {
             entstring: entstring,

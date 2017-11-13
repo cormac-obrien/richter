@@ -62,7 +62,8 @@ impl From<IoError> for LoadError {
 }
 
 fn in_range<T>(x: T, range: &RangeArgument<T>) -> bool
-    where T: PartialOrd + Copy
+where
+    T: PartialOrd + Copy,
 {
     match range.start() {
         Bound::Included(&s) => {
@@ -168,7 +169,15 @@ pub trait Load: ReadBytesExt {
     }
 }
 
-impl<R> Load for BufReader<R> where R: Read {}
-impl<T> Load for Cursor<T> where T: AsRef<[u8]> {}
+impl<R> Load for BufReader<R>
+where
+    R: Read,
+{
+}
+impl<T> Load for Cursor<T>
+where
+    T: AsRef<[u8]>,
+{
+}
 impl Load for File {}
 impl<'a> Load for &'a [u8] {}
