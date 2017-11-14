@@ -43,10 +43,11 @@ use vulkano::buffer::CpuAccessibleBuffer;
 use vulkano::buffer::ImmutableBuffer;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::DynamicState;
+use vulkano::descriptor::descriptor_set::FixedSizeDescriptorSetsPool;
 use vulkano::device::Device;
 use vulkano::device::DeviceExtensions;
 use vulkano::device::Queue;
-use vulkano::format::R8G8B8A8Uint;
+use vulkano::format::R8G8B8A8Unorm;
 use vulkano::framebuffer::Framebuffer;
 use vulkano::framebuffer::Subpass;
 use vulkano::image::AttachmentImage;
@@ -54,6 +55,7 @@ use vulkano::image::Dimensions;
 use vulkano::image::ImmutableImage;
 use vulkano::image::ImageUsage;
 use vulkano::image::ImageLayout;
+use vulkano::image::ImageViewAccess;
 use vulkano::image::MipmapsCount;
 use vulkano::instance::Features;
 use vulkano::instance::Instance;
@@ -61,6 +63,10 @@ use vulkano::instance::PhysicalDevice;
 use vulkano::instance::QueueFamily;
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::pipeline::viewport::Viewport;
+use vulkano::sampler::Filter;
+use vulkano::sampler::MipmapMode;
+use vulkano::sampler::Sampler;
+use vulkano::sampler::SamplerAddressMode;
 use vulkano::swapchain::PresentMode;
 use vulkano::swapchain::Swapchain;
 use vulkano::swapchain::SurfaceTransform;
@@ -114,6 +120,16 @@ const ASCII_J: usize = 'J' as usize;
 const ASCII_a: usize = 'a' as usize;
 const ASCII_j: usize = 'j' as usize;
 
+//   | +z                 | -y
+//   |                    |
+//   |_____ -y Quake ->   |_____ +x Vulkan
+//   /                    /
+//  /                    /
+// / +x                 / -z
+//
+// Quake  [x, y, z] <-> [-z, -x, -y] Vulkan
+// Vulkan [x, y, z] <-> [ y, -z, -x] Quake
+
 mod vs {
     #[derive(VulkanoShader)]
     #[ty = "vertex"]
@@ -122,12 +138,28 @@ mod vs {
 
     layout (location = 0) in vec3 v_position;
 
+    layout (location = 0) out vec2 f_texcoord;
+
     layout (push_constant) uniform PushConstants {
         mat4 u_projection;
-    } push_constants;
+        vec3 s_vector;
+        float s_offset;
+        vec3 t_vector;
+        float t_offset;
+        float tex_w;
+        float tex_h;
+    } pcs;
+
+    vec3 quake_to_vulkan(vec3 v) {
+        return vec3(-v.y, -v.z, -v.x);
+    }
 
     void main() {
-        gl_Position = push_constants.u_projection * vec4(v_position.xyz, 1.0);
+        f_texcoord = vec2(
+            (dot(v_position, pcs.s_vector) + pcs.s_offset) / pcs.tex_w,
+            (dot(v_position, pcs.t_vector) + pcs.t_offset) / pcs.tex_h
+        );
+        gl_Position = pcs.u_projection * vec4(quake_to_vulkan(v_position), 1.0);
     }
     "]
     struct Dummy;
@@ -139,10 +171,24 @@ mod fs {
     #[src = "
     #version 450
 
+    layout (location = 0) in vec2 f_texcoord;
+
     layout (location = 0) out vec4 out_color;
 
+    layout (set = 0, binding = 0) uniform sampler2D u_sampler;
+
+    layout (push_constant) uniform PushConstants {
+        mat4 u_projection;
+        vec3 s_vector;
+        float s_offset;
+        vec3 t_vector;
+        float t_offset;
+        float tex_w;
+        float tex_h;
+    } pcs;
+
     void main() {
-        out_color = vec4(1.0, 0.0, 0.0, 1.0);
+        out_color = texture(u_sampler, f_texcoord);
     }"]
     struct Dummy;
 }
@@ -1217,7 +1263,7 @@ impl Bsp {
 type VkBspPlane = BspPlane;
 
 struct VkBspTexture {
-    img: Arc<ImmutableImage<R8G8B8A8Uint>>,
+    img: Arc<ImmutableImage<R8G8B8A8Unorm>>,
     next: Option<usize>,
 }
 
@@ -1275,9 +1321,10 @@ impl VkBsp {
                     width: tex.width as u32,
                     height: tex.height as u32,
                 },
-                R8G8B8A8Uint,
+                R8G8B8A8Unorm,
                 queue.clone(),
             ).unwrap();
+
 
             // TODO: chain these futures
             img_future.flush().expect(
@@ -1444,15 +1491,22 @@ fn main() {
     );
 
     let vs = vs::Shader::load(device.clone()).unwrap();
-    let vs_push_constants = vs::ty::PushConstants {
+    let fs = fs::Shader::load(device.clone()).unwrap();
+
+    let mut pcs = vs::ty::PushConstants {
         u_projection: cgmath::perspective(
             cgmath::Deg(75.0f32),
             dimensions[0] as f32 / dimensions[1] as f32,
             1.0f32,
             1024.0f32,
         ).into(),
+        s_vector: [0.0; 3],
+        s_offset: 0.0,
+        t_vector: [0.0; 3],
+        t_offset: 0.0,
+        tex_w: 0.0,
+        tex_h: 0.0,
     };
-    let fs = fs::Shader::load(device.clone()).unwrap();
 
     let pipeline = Arc::new(
         GraphicsPipeline::start()
@@ -1461,14 +1515,32 @@ fn main() {
             .triangle_fan()
             .viewports_dynamic_scissors_irrelevant(1)
             .fragment_shader(fs.main_entry_point(), ())
+            .front_face_clockwise()
+            .cull_mode_back()
             .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
             .build(device.clone())
             .expect("Failed to create graphics pipeline"),
     );
 
+    let mut descriptor_pool = FixedSizeDescriptorSetsPool::new(pipeline.clone(), 0);
+
     let mut framebuffers: Option<Vec<Arc<Framebuffer<_, _>>>> = None;
     let mut recreate_swapchain = false;
     let mut previous_frame_end = Box::new(now(device.clone())) as Box<GpuFuture>;
+
+    let mut sampler = Sampler::new(
+        device.clone(),
+        Filter::Nearest,
+        Filter::Nearest,
+        MipmapMode::Nearest,
+        SamplerAddressMode::Repeat,
+        SamplerAddressMode::Repeat,
+        SamplerAddressMode::Repeat,
+        0.0,
+        1.0,
+        1.0,
+        100.0,
+    ).unwrap();
 
     let bsp = Bsp::load("pak0.pak.d/maps/e1m1.bsp").unwrap();
     let vk_bsp = VkBsp::new(bsp, device.clone(), queue.clone()).unwrap();
@@ -1539,6 +1611,25 @@ fn main() {
                 .unwrap();
 
         for face in vk_bsp.faces.iter() {
+            let texinfo = &vk_bsp.texinfo[face.texinfo_id];
+            let tex_dimensions = &vk_bsp.textures[texinfo.tex_id].img.dimensions();
+            pcs.s_vector = texinfo.s_vector;
+            pcs.s_offset = texinfo.s_offset;
+            pcs.t_vector = texinfo.t_vector;
+            pcs.t_offset = texinfo.t_offset;
+            pcs.tex_w = tex_dimensions.width() as f32;
+            pcs.tex_h = tex_dimensions.height() as f32;
+            assert!(&vk_bsp.textures[texinfo.tex_id].img.can_be_sampled(
+                &sampler,
+            ));
+
+            let descriptor_set = descriptor_pool
+                .next()
+                .add_sampled_image(vk_bsp.textures[texinfo.tex_id].img.clone(), sampler.clone())
+                .unwrap()
+                .build()
+                .unwrap();
+
             cmd_buf_builder = cmd_buf_builder
                 .draw_indexed(pipeline.clone(),
                               DynamicState {
@@ -1552,7 +1643,7 @@ fn main() {
                                   scissors: None,
                               },
                               vk_bsp.vertex_buffer.clone(),
-                              face.index_slice.clone(), (), vs_push_constants)
+                              face.index_slice.clone(), descriptor_set, pcs)
                 .unwrap()
         }
 
@@ -1572,8 +1663,6 @@ fn main() {
             winit::Event::WindowEvent { event: winit::WindowEvent::Closed, .. } => done = true,
             _ => (),
         });
-
-        println!("frame");
 
         if done {
             break;
