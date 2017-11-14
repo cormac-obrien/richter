@@ -1472,7 +1472,7 @@ fn main() {
     };
 
     let depth_buffer =
-        AttachmentImage::transient(device.clone(), dimensions, vulkano::format::D16Unorm);
+        AttachmentImage::transient(device.clone(), dimensions, vulkano::format::D16Unorm).unwrap();
 
     let render_pass = Arc::new(
         single_pass_renderpass!(device.clone(),
@@ -1482,11 +1482,17 @@ fn main() {
                                         store: Store,
                                         format: swapchain.format(),
                                         samples: 1,
+                                    },
+                                    depth: {
+                                        load: Clear,
+                                        store: DontCare,
+                                        format: vulkano::format::Format::D16Unorm,
+                                        samples: 1,
                                     }
                                 },
                                 pass: {
                                     color: [color],
-                                    depth_stencil: {}
+                                    depth_stencil: {depth}
                                 }).unwrap(),
     );
 
@@ -1515,6 +1521,7 @@ fn main() {
             .triangle_fan()
             .viewports_dynamic_scissors_irrelevant(1)
             .fragment_shader(fs.main_entry_point(), ())
+            .depth_stencil_simple_depth()
             .front_face_clockwise()
             .cull_mode_back()
             .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
@@ -1528,7 +1535,7 @@ fn main() {
     let mut recreate_swapchain = false;
     let mut previous_frame_end = Box::new(now(device.clone())) as Box<GpuFuture>;
 
-    let mut sampler = Sampler::new(
+    let sampler = Sampler::new(
         device.clone(),
         Filter::Nearest,
         Filter::Nearest,
@@ -1580,6 +1587,8 @@ fn main() {
                         Arc::new(
                             Framebuffer::start(render_pass.clone())
                                 .add(image.clone())
+                                .unwrap()
+                                .add(depth_buffer.clone())
                                 .unwrap()
                                 .build()
                                 .unwrap(),

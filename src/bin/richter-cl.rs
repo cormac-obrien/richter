@@ -20,10 +20,11 @@ extern crate glium;
 #[macro_use]
 extern crate log;
 extern crate richter;
+extern crate winit;
 
 use std::error::Error;
 use std::process::exit;
-use glium::glutin::{Event, VirtualKeyCode as Key};
+
 use richter::bsp;
 use richter::client::{Client, CxnStatus};
 use richter::console::{CmdRegistry, Console, InputLine, History};
@@ -328,24 +329,6 @@ fn main() {
 
     let mut cl: Option<Client> = None;
 
-    use glium::DisplayBuild;
-    let display = match glium::glutin::WindowBuilder::new()
-        .with_dimensions(1024, 768)
-        .with_title(format!("Richter"))
-        .build_glium() {
-        Ok(w) => w,
-        Err(why) => {
-            use std::error::Error;
-            println!("Error constructing display:");
-            let mut error: Option<&Error> = Some(&why as &Error);
-            while let Some(e) = error {
-                println!("> {}", e);
-                error = e.cause();
-            }
-            exit(0);
-        }
-    };
-
     info!("Successfully constructed display");
 
     let focus = InputFocus::Game;
@@ -497,83 +480,6 @@ fn main() {
         }),
     ).unwrap();
 
-    debug!("Entering main loop");
-    // loop {
-    //     for event in display.poll_events() {
-    //         match event {
-    //             Event::ReceivedCharacter(c) => {
-    //                 info!("Got char {:?}", c);
-    //                 match c {
-    //                     backspace
-    //                     '\x08' => cmdline.backspace(),
-
-    //                     delete
-    //                     '\x7f' => cmdline.delete(),
-
-    //                     TODO: tab completion
-    //                     '\t' => (),
-
-    //                     _ => cmdline.insert(c),
-    //                 }
-    //                 println!("{}", cmdline.debug_string());
-
-    // }
-
-    //             Event::KeyboardInput(ElementState::Pressed, _, Some(key)) => {
-    //                 match key {
-    //                     Key::Right => cmdline.cursor_right(),
-    //                     Key::Left => cmdline.cursor_left(),
-    //                     Key::Up => {
-    //                         if let Some(line) = hist.line_up() {
-    //                             cmdline.set_text(&line);
-    //                         }
-    //                     }
-    //                     Key::Down => {
-    //                         if let Some(line) = hist.line_down() {
-    //                             cmdline.set_text(&line);
-    //                         }
-    //                     }
-    //                     Key::Return => {
-    //                         use std::iter::FromIterator;
-    //                         let line = cmdline.get_text();
-    //                         let cmd = String::from_iter(line.to_owned());
-    //                         let mut args = cmd.split_whitespace();
-
-    //                         let name = match args.next() {
-    //                             Some(n) => n,
-    //                             None => break,
-    //                         };
-
-    //                         if let Err(_) = reg.exec_cmd(name, args.collect()) {
-    //                             println!("Error executing \"{}\"", name);
-    //                         }
-
-    //                         hist.add_line(line);
-    //                         cmdline.clear();
-    //                     }
-
-    //                     _ => (),
-    //                 }
-    //                 println!("{}", cmdline.debug_string());
-
-    // }
-
-    //             Event::Closed => {
-    //                 exit(0);
-    //             }
-
-    //             _ => (),
-    //         }
-
-    //         let mut frame = display.draw();
-    //         frame.clear_color(0.0, 0.0, 0.0, 0.0);
-    //         frame.clear_depth(0.0);
-    //         frame.finish().unwrap();
-
-    //         display.swap_buffers().unwrap();
-    //     }
-    // }
-
     let mut pak = pak::Pak::new();
     match pak.add("pak0.pak") {
         Ok(_) => (),
@@ -587,83 +493,8 @@ fn main() {
         }
     }
 
-    let bsp_data = pak.open("maps/e1m1.bsp").unwrap();
-    let bsp = bsp::Bsp::load(&display, bsp_data);
-
+    let e1m1 = bsp::Bsp::load("pak0.pak.d/maps/e1m1.bsp");
     let progs = progs::Progs::load(pak.open("progs.dat").unwrap());
 
     let mut key_state = event::KeyState::new();
-    let player = entity::Entity::new();
-    player.set_position(352.0, 88.0, -480.0);
-
-    'outer: loop {
-        let pos = player.get_position();
-        let angle = player.get_angle();
-
-        let view_matrix = math::Mat4::rotation_x(angle[0]) * math::Mat4::rotation_y(angle[1]) *
-            math::Mat4::translation(-pos[0], -pos[1], -pos[2]);
-
-        bsp.draw_naive(&display, &view_matrix);
-
-        for event in display.poll_events() {
-            match event {
-                Event::Closed => {
-                    debug!("Caught Event::Closed, exiting.");
-                    break 'outer;
-                }
-
-                Event::KeyboardInput(state, _, key) => {
-                    debug!("{:?}", event);
-                    if let Some(k) = key {
-                        key_state.update(k, state);
-                    }
-                }
-                _ => (),
-            }
-        }
-
-        if key_state.is_pressed(glium::glutin::VirtualKeyCode::W) {
-            let delta = math::Vec3::new(0.0, 0.0, -2.0).rotate_y(player.get_angle()[1]);
-            player.adjust_position(delta[0], delta[1], delta[2]);
-        }
-
-        if key_state.is_pressed(glium::glutin::VirtualKeyCode::S) {
-            let delta = math::Vec3::new(0.0, 0.0, 2.0).rotate_y(player.get_angle()[1]);
-            player.adjust_position(delta[0], delta[1], delta[2]);
-        }
-
-        if key_state.is_pressed(glium::glutin::VirtualKeyCode::A) {
-            let delta = math::Vec3::new(-2.0, 0.0, 0.0).rotate_y(player.get_angle()[1]);
-            player.adjust_position(delta[0], delta[1], delta[2]);
-        }
-
-        if key_state.is_pressed(glium::glutin::VirtualKeyCode::D) {
-            let delta = math::Vec3::new(2.0, 0.0, 0.0).rotate_y(player.get_angle()[1]);
-            player.adjust_position(delta[0], delta[1], delta[2]);
-        }
-
-        if key_state.is_pressed(glium::glutin::VirtualKeyCode::Space) {
-            player.adjust_position(0.0, 2.0, 0.0);
-        }
-
-        if key_state.is_pressed(glium::glutin::VirtualKeyCode::LControl) {
-            player.adjust_position(0.0, -2.0, 0.0);
-        }
-
-        if key_state.is_pressed(glium::glutin::VirtualKeyCode::Left) {
-            player.adjust_angle(0.0, 0.05, 0.0);
-        }
-
-        if key_state.is_pressed(glium::glutin::VirtualKeyCode::Right) {
-            player.adjust_angle(0.0, -0.05, 0.0);
-        }
-
-        if key_state.is_pressed(glium::glutin::VirtualKeyCode::Up) {
-            player.adjust_angle(-0.05, 0.0, 0.0);
-        }
-
-        if key_state.is_pressed(glium::glutin::VirtualKeyCode::Down) {
-            player.adjust_angle(0.05, 0.0, 0.0);
-        }
-    }
 }
