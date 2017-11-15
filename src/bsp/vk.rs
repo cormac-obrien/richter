@@ -9,12 +9,23 @@ use vulkano::buffer::BufferAccess;
 use vulkano::buffer::BufferSlice;
 use vulkano::buffer::BufferUsage;
 use vulkano::buffer::ImmutableBuffer;
+use vulkano::command_buffer::AutoCommandBuffer;
+use vulkano::command_buffer::AutoCommandBufferBuilder;
+use vulkano::command_buffer::DynamicState;
+use vulkano::descriptor::PipelineLayoutAbstract;
+use vulkano::descriptor::descriptor_set::FixedSizeDescriptorSetsPool;
 use vulkano::device::Device;
 use vulkano::device::Queue;
 use vulkano::format::R8G8B8A8Unorm;
+use vulkano::framebuffer::RenderPassAbstract;
+use vulkano::framebuffer::Subpass;
 use vulkano::image::Dimensions;
 use vulkano::image::ImmutableImage;
 use vulkano::image::ImageViewAccess;
+use vulkano::pipeline::GraphicsPipeline;
+use vulkano::pipeline::GraphicsPipelineAbstract;
+use vulkano::pipeline::viewport::Viewport;
+use vulkano::sampler::Sampler;
 use vulkano::sync::GpuFuture;
 
 //   | +z                 | -y
@@ -45,7 +56,7 @@ mod vs {
         float t_offset;
         float tex_w;
         float tex_h;
-    } pcs;
+    } push_constants;
 
     vec3 quake_to_vulkan(vec3 v) {
         return vec3(-v.y, -v.z, -v.x);
@@ -53,10 +64,12 @@ mod vs {
 
     void main() {
         f_texcoord = vec2(
-            (dot(v_position, pcs.s_vector) + pcs.s_offset) / pcs.tex_w,
-            (dot(v_position, pcs.t_vector) + pcs.t_offset) / pcs.tex_h
+            (dot(v_position, push_constants.s_vector) + push_constants.s_offset)
+                / push_constants.tex_w,
+            (dot(v_position, push_constants.t_vector) + push_constants.t_offset)
+                / push_constants.tex_h
         );
-        gl_Position = pcs.u_projection * vec4(quake_to_vulkan(v_position), 1.0);
+        gl_Position = push_constants.u_projection * vec4(quake_to_vulkan(v_position), 1.0);
     }
     "]
     struct Dummy;
@@ -82,7 +95,7 @@ mod fs {
         float t_offset;
         float tex_w;
         float tex_h;
-    } pcs;
+    } push_constants;
 
     void main() {
         out_color = texture(u_sampler, f_texcoord);
@@ -135,14 +148,24 @@ pub struct VkBsp {
     clipnodes: Vec<VkBspClipNode>,
     leaves: Vec<VkBspLeaf>,
     facelist: Vec<usize>,
+    queue: Arc<Queue>,
+    pipeline: Arc<GraphicsPipelineAbstract + Send + Sync>,
+    vertex_shader: vs::Shader,
+    fragment_shader: fs::Shader,
+    sampler: Arc<Sampler>,
 }
 
 impl VkBsp {
-    pub fn new(
+    pub fn new<R>(
         bsp: bsp::Bsp,
-        device: Arc<Device>,
         queue: Arc<Queue>,
-    ) -> Result<VkBsp, bsp::BspError> {
+        subpass: Subpass<R>,
+        sampler: Arc<Sampler>,
+    ) -> Result<VkBsp, bsp::BspError>
+    where
+        R: RenderPassAbstract + Send + Sync + 'static,
+    {
+        let device = queue.device();
         let mut textures: Vec<VkBspTexture> = Vec::new();
 
         for tex in bsp.textures.iter() {
@@ -212,6 +235,24 @@ impl VkBsp {
             });
         }
 
+        let vertex_shader = vs::Shader::load(device.clone()).unwrap();
+        let fragment_shader = fs::Shader::load(device.clone()).unwrap();
+
+        let pipeline = Arc::new(
+            GraphicsPipeline::start()
+                .vertex_input_single_buffer::<VkBspVertex>()
+                .vertex_shader(vertex_shader.main_entry_point(), ())
+                .triangle_fan()
+                .viewports_dynamic_scissors_irrelevant(1)
+                .fragment_shader(fragment_shader.main_entry_point(), ())
+                .depth_stencil_simple_depth()
+                .front_face_clockwise()
+                .cull_mode_back()
+                .render_pass(subpass)
+                .build(device.clone())
+                .expect("Failed to create graphics pipeline"),
+        );
+
         Ok(VkBsp {
             entities: bsp.entities,
             planes: bsp.planes,
@@ -226,6 +267,88 @@ impl VkBsp {
             clipnodes: bsp.clipnodes,
             leaves: bsp.leaves,
             facelist: bsp.facelist,
+            queue: queue.clone(),
+            pipeline: pipeline,
+            vertex_shader: vs::Shader::load(device.clone()).unwrap(),
+            fragment_shader: fs::Shader::load(device.clone()).unwrap(),
+            sampler: sampler.clone(),
         })
+    }
+
+    pub fn draw_naive<R>(
+        &mut self,
+        viewport_dimensions: [u32; 2],
+        projection_matrix: [[f32; 4]; 4],
+        render_pass: Subpass<R>,
+    ) -> AutoCommandBuffer
+    where
+        R: RenderPassAbstract + Clone + Send + Sync + 'static,
+    {
+        let mut push_constants = vs::ty::PushConstants {
+            u_projection: [[0.0; 4]; 4],
+            s_vector: [0.0; 3],
+            s_offset: 0.0,
+            t_vector: [0.0; 3],
+            t_offset: 0.0,
+            tex_w: 0.0,
+            tex_h: 0.0,
+        };
+
+        let dynamic_state = DynamicState {
+            line_width: None,
+            viewports: Some(vec![
+                Viewport {
+                    origin: [0.0, 0.0],
+                    dimensions: [viewport_dimensions[0] as f32, viewport_dimensions[1] as f32],
+                    depth_range: 0.0..1.0,
+                },
+            ]),
+            scissors: None,
+        };
+
+        let mut cmd_buf_builder = AutoCommandBufferBuilder::secondary_graphics_one_time_submit(
+            self.queue.device().clone(),
+            self.queue.family(),
+            render_pass,
+        ).unwrap();
+
+        let mut descriptor_pool = FixedSizeDescriptorSetsPool::new(self.pipeline.clone(), 0);
+
+        for face in self.faces.iter() {
+            let texinfo = &self.texinfo[face.texinfo_id];
+            let tex_dimensions = &self.textures[texinfo.tex_id].img.dimensions();
+            push_constants.u_projection = projection_matrix;
+            push_constants.s_vector = texinfo.s_vector;
+            push_constants.s_offset = texinfo.s_offset;
+            push_constants.t_vector = texinfo.t_vector;
+            push_constants.t_offset = texinfo.t_offset;
+            push_constants.tex_w = tex_dimensions.width() as f32;
+            push_constants.tex_h = tex_dimensions.height() as f32;
+
+            let descriptor_set = descriptor_pool
+                .next()
+                .add_sampled_image(
+                    self.textures[texinfo.tex_id].img.clone(),
+                    self.sampler.clone(),
+                )
+                .unwrap()
+                .build()
+                .unwrap();
+
+            cmd_buf_builder = cmd_buf_builder
+                .draw_indexed(
+                    self.pipeline.clone(),
+                    dynamic_state.clone(),
+                    vec![self.vertex_buffer.clone()],
+                    face.index_slice.clone(),
+                    descriptor_set,
+                    push_constants,
+                )
+                .unwrap()
+                .end_render_pass()
+                .unwrap();
+        }
+
+        cmd_buf_builder.build().unwrap()
     }
 }

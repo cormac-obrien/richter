@@ -23,6 +23,7 @@ extern crate arrayvec;
 #[macro_use]
 extern crate bitflags;
 extern crate byteorder;
+extern crate cgmath;
 extern crate env_logger;
 #[macro_use]
 extern crate glium;

@@ -20,6 +20,104 @@
 // - Create project-wide Wad and WadEntry types
 // - Replace index fields with direct references where possible
 
+//! Quake BSP file and data structure handling.
+//!
+//! # Data Structure
+//!
+//! The binary space partitioning tree, or BSP, is the central data structure used by the Quake
+//! engine for collision detection and rendering level geometry.
+//!
+//! # File Format
+//!
+//! The BSP file header consists only of the file format version number, stored as an `i32`.
+//!
+//! This is followed by a series of "lumps" (as they are called in the Quake source code),
+//! which act as a directory into the BSP file data. There are 15 of these lumps, each
+//! consisting of a 32-bit offset (into the file data) and a 32-bit size (in bytes).
+//!
+//! ## Entities
+//! Lump 0 points to the level entity data, which is stored in a JSON-like dictionary
+//! format. Entities are anonymous; they do not have names, only attributes. They are stored
+//! as follows:
+//!
+//! ```
+//! {
+//! "attribute0" "value0"
+//! "attribute1" "value1"
+//! "attribute2" "value2"
+//! }
+//! {
+//! "attribute0" "value0"
+//! "attribute1" "value1"
+//! "attribute2" "value2"
+//! }
+//! ```
+//!
+//! The newline character is `0x0A` (line feed). The entity data is stored as a null-terminated
+//! string (it ends when byte `0x00` is reached).
+//!
+//! ## Planes
+//!
+//! Lump 1 points to the planes used to partition the map, stored in point-normal form as 4 IEEE 754
+//! single-precision floats. The first 3 floats form the normal vector for the plane, and the last
+//! float specifies the distance from the map origin along the line defined by the normal vector.
+//!
+//! ## Textures
+//!
+//! The textures are preceded by a 32-bit integer count and a list of 32-bit integer offsets. The
+//! offsets are given in bytes from the beginning of the texture section (the offset given by the
+//! texture lump at the start of the file).
+//!
+//! The textures themselves consist of a 16-byte name field, a 32-bit integer width, a 32-bit
+//! integer height, and 4 32-bit mipmap offsets. These offsets are given in bytes from the beginning
+//! of the texture. Each mipmap has its dimensions halved (i.e. its area quartered) from the
+//! previous mipmap: the first is full size, the second 1/4, the third 1/16, and the last 1/64. Each
+//! byte represents one pixel and contains an index into `gfx/palette.lmp`.
+//!
+//! ### Texture sequencing
+//!
+//! Animated textures are stored as individual frames with no guarantee of being in the correct
+//! order. This means that animated textures must be sequenced when the map is loaded. Frames of
+//! animated textures have names beginning with `U+002B PLUS SIGN` (`+`).
+//!
+//! Each texture can have two animations of up to MAX_TEXTURE_FRAMES frames each. The character
+//! following the plus sign determines whether the frame belongs to the first or second animation.
+//!
+//! If it is between `U+0030 DIGIT ZERO` (`0`) and `U+0039 DIGIT NINE` (`9`), then the character
+//! represents that texture's frame index in the first animation sequence.
+//!
+//! If it is between `U+0041 LATIN CAPITAL LETTER A` (`A`) and `U+004A LATIN CAPITAL LETTER J`, or
+//! between `U+0061 LATIN SMALL LETTER A` (`a`) and `U+006A LATIN SMALL LETTER J`, then the
+//! character represents that texture's frame index in the second animation sequence as that
+//! letter's position in the English alphabet (that is, `A`/`a` correspond to 0 and `J`/`j`
+//! correspond to 9).
+//!
+//! ## Vertex positions
+//!
+//! The vertex positions are stored as 3-component vectors of `float`. The Quake coordinate system
+//! defines X as the longitudinal axis, Y as the lateral axis, and Z as the vertical axis. *During
+//! loading, Richter converts coordinates to a standard right-handed coordinate system.*
+//!
+//! # Visibility lists
+//!
+//! The visibility lists are simply stored as a series of run-length encoded bit strings. The total
+//! size of the visibility data is given by the lump size.
+//!
+//! ## Nodes
+//!
+//! Nodes are stored with a 32-bit integer plane ID denoting which plane splits the node. This is
+//! followed by two 16-bit integers which point to the children in front and back of the plane. If
+//! the high bit is set, the ID points to a leaf node; if not, it points to another internal node.
+//!
+//! After the node IDs are a 16-bit integer face ID, which denotes the index of the first face in
+//! the face list that belongs to this node, and a 16-bit integer face count, which denotes the
+//! number of faces to draw starting with the face ID.
+//!
+//! ## Edges
+//!
+//! The edges are stored as a pair of 16-bit integer vertex IDs.
+
+
 pub mod vk;
 
 use std::collections::HashMap;
@@ -31,12 +129,12 @@ use std::io::BufReader;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
-use std::iter::IntoIterator;
 use std::path::Path;
-use std::sync::Arc;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
+use cgmath::InnerSpace;
+use cgmath::Vector3;
 use num::FromPrimitive;
 use regex::Regex;
 
@@ -125,7 +223,7 @@ impl From<::std::io::Error> for BspError {
     }
 }
 
-enum LumpId {
+enum BspLumpId {
     Entities = 0,
     Planes = 1,
     Textures = 2,
@@ -182,12 +280,12 @@ struct BspPlane {
     kind: BspPlaneKind,
 }
 
-struct BspTexture {
-    name: String,
-    width: usize,
-    height: usize,
-    mipmaps: [Vec<u8>; MIPLEVELS],
-    next: Option<usize>,
+pub struct BspTexture {
+    pub name: String,
+    pub width: usize,
+    pub height: usize,
+    pub mipmaps: [Vec<u8>; MIPLEVELS],
+    pub next: Option<usize>,
 }
 
 struct BspVisibility {
@@ -224,7 +322,7 @@ enum BspFaceSide {
     Back,
 }
 
-struct BspFace {
+pub struct BspFace {
     plane_id: usize,
     side: BspFaceSide,
     edge_id: usize,
@@ -268,12 +366,13 @@ struct BspLeaf {
 }
 
 struct BspEdge {
-    vertex_ids: [usize; 2],
+    vertex_ids: [u16; 2],
 }
 
+#[derive(Copy, Clone)]
 enum BspEdgeDirection {
-    Forward,
-    Backward,
+    Forward = 0,
+    Backward = 1,
 }
 
 struct BspEdgeIndex {
@@ -328,9 +427,8 @@ impl Bsp {
 
         let mut reader = BufReader::new(&mut file);
 
-        /// The BSP file header consists only of the file format version number.
         let version = reader.read_i32::<LittleEndian>()?;
-        if (version != VERSION) {
+        if version != VERSION {
             error!(
                 "Bad version number in {} (found {}, should be {})",
                 path_str,
@@ -340,11 +438,8 @@ impl Bsp {
             return Err(BspError::with_msg("Bad version number"));
         }
 
-        /// This is followed by a series of "lumps" (as they are called in the Quake source code),
-        /// which act as a directory into the BSP file data. There are 15 of these lumps, each
-        /// consisting of a 32-bit offset (into the file data) and a 32-bit size (in bytes).
-        let mut lumps = Vec::with_capacity(LumpId::Count as usize);
-        for l in 0..(LumpId::Count as usize) {
+        let mut lumps = Vec::with_capacity(BspLumpId::Count as usize);
+        for l in 0..(BspLumpId::Count as usize) {
             let offset = match reader.read_i32::<LittleEndian>()? {
                 o if o < 0 => return Err(BspError::Other(format!("Invalid lump offset of {}", o))),
                 o => o,
@@ -367,25 +462,7 @@ impl Bsp {
             ));
         }
 
-        /// # Entities
-        /// Lump 0 points to the level entity data, which is stored in a JSON-like dictionary
-        /// format. Entities are anonymous; they do not have names, only attributes. They are stored
-        /// as follows:
-        ///
-        ///     {
-        ///     "attribute0" "value0"
-        ///     "attribute1" "value1"
-        ///     "attribute2" "value2"
-        ///     }
-        ///     {
-        ///     "attribute0" "value0"
-        ///     "attribute1" "value1"
-        ///     "attribute2" "value2"
-        ///     }
-        ///
-        /// The newline character is `0x0A` (line feed). The entity data is stored as a
-        /// null-terminated string (it ends when byte `0x00` is reached).
-        let ent_lump = &lumps[LumpId::Entities as usize];
+        let ent_lump = &lumps[BspLumpId::Entities as usize];
         reader.seek(SeekFrom::Start(ent_lump.offset as u64))?;
         let mut ent_data = Vec::with_capacity(MAX_ENTSTRING);
         reader.read_until(0x00, &mut ent_data)?;
@@ -456,13 +533,7 @@ impl Bsp {
             ))?
         );
 
-        /// # Planes
-        ///
-        /// Lump 1 points to the planes used to partition the map, stored in point-normal form as 4
-        /// IEEE 754 single-precision floats. The first 3 floats form the normal vector for the
-        /// plane, and the last float specifies the distance from the map origin along the line
-        /// defined by the normal vector.
-        let plane_lump = &lumps[LumpId::Planes as usize];
+        let plane_lump = &lumps[BspLumpId::Planes as usize];
         reader.seek(SeekFrom::Start(plane_lump.offset as u64))?;
         assert_eq!(plane_lump.size % PLANE_SIZE, 0);
         let plane_count = plane_lump.size / PLANE_SIZE;
@@ -471,12 +542,12 @@ impl Bsp {
         }
         let mut planes = Vec::with_capacity(plane_count);
         for _ in 0..plane_count {
+            // Quake coordinates to standard right-handed coordinates
+            let neg_z = reader.read_f32::<LittleEndian>()?;
+            let neg_x = reader.read_f32::<LittleEndian>()?;
+            let y = reader.read_f32::<LittleEndian>()?;
             planes.push(BspPlane {
-                normal: [
-                    reader.read_f32::<LittleEndian>()?,
-                    reader.read_f32::<LittleEndian>()?,
-                    reader.read_f32::<LittleEndian>()?,
-                ],
+                normal: [-neg_x, y, -neg_z],
                 dist: reader.read_f32::<LittleEndian>()?,
                 kind: BspPlaneKind::from_i32(reader.read_i32::<LittleEndian>()?).unwrap(),
             });
@@ -488,13 +559,8 @@ impl Bsp {
             ))?
         );
 
-        /// # Textures
-        let tex_lump = &lumps[LumpId::Textures as usize];
+        let tex_lump = &lumps[BspLumpId::Textures as usize];
         reader.seek(SeekFrom::Start(tex_lump.offset as u64))?;
-        /// The textures are preceded by a 32-bit integer count and a list of 32-bit integer
-        /// offsets. The offsets are given in bytes from the beginning of the texture section (the
-        /// offset given by the texture lump at the start of the file).
-        ///
         let tex_count = reader.read_i32::<LittleEndian>()?;
         if tex_count < 0 || tex_count as usize > MAX_TEXTURES {
             return Err(BspError::with_msg("Invalid texture count"));
@@ -507,24 +573,25 @@ impl Bsp {
 
         let mut textures = Vec::with_capacity(tex_count);
         for t in 0..tex_count {
-            /// The textures themselves consist of a 16-byte name field, a 32-bit integer width, a
-            /// 32-bit integer height, and 4 32-bit mipmap offsets. These offsets are given in
-            /// bytes from the beginning of the texture. Each mipmap has its dimensions halved
-            /// (i.e. its area quartered) from the previous mipmap: the first is full size, the
-            /// second 1/4, the third 1/16, and the last 1/64. Each byte represents one pixel and
-            /// contains an index into `gfx/palette.lmp`.
-            reader.seek(SeekFrom::Start((tex_lump.offset + tex_offsets[t]) as u64))?;
+            reader.seek(SeekFrom::Start(
+                (tex_lump.offset + tex_offsets[t]) as u64,
+            ))?;
             let mut tex_name_bytes = [0u8; TEX_NAME_MAX];
             reader.read(&mut tex_name_bytes)?;
-            let len = tex_name_bytes.iter().enumerate()
+            let len = tex_name_bytes
+                .iter()
+                .enumerate()
                 .find(|&item| item.1 == &0)
-                .unwrap_or((TEX_NAME_MAX, &0)).0;
+                .unwrap_or((TEX_NAME_MAX, &0))
+                .0;
             let tex_name = String::from_utf8(tex_name_bytes[..len].to_vec()).unwrap();
 
-            debug!("Texture {id:>width$}: {name}",
-                   id=t,
-                   width=(tex_count as f32).log(10.0) as usize,
-                   name=tex_name);
+            debug!(
+                "Texture {id:>width$}: {name}",
+                id = t,
+                width = (tex_count as f32).log(10.0) as usize,
+                name = tex_name
+            );
 
             let width = reader.read_u32::<LittleEndian>()? as usize;
             let height = reader.read_u32::<LittleEndian>()? as usize;
@@ -540,7 +607,9 @@ impl Bsp {
                 let mipmap_size = (width as usize / factor) * (height as usize / factor);
                 let offset = tex_lump.offset + tex_offsets[t] + mip_offsets[m];
                 reader.seek(SeekFrom::Start(offset as u64))?;
-                (&mut reader).take(mipmap_size as u64).read_to_end(&mut mipmaps[m])?;
+                (&mut reader).take(mipmap_size as u64).read_to_end(
+                    &mut mipmaps[m],
+                )?;
             }
 
             textures.push(BspTexture {
@@ -559,12 +628,6 @@ impl Bsp {
             ))?
         );
 
-        /// # Texture sequencing
-        ///
-        /// Animated textures are stored as individual frames with no guarantee of being in the
-        /// correct order. This means that animated textures must be sequenced when the map is
-        /// loaded. Frames of animated textures have names beginning with `U+002B PLUS SIGN` (`+`).
-
         debug!("Sequencing textures");
         for t in 0..textures.len() {
             if !textures[t].name.starts_with("+") || textures[t].next.is_some() {
@@ -573,7 +636,6 @@ impl Bsp {
 
             debug!("Sequencing texture {}", textures[t].name);
 
-            /// Each texture can have two animations of up to MAX_TEXTURE_FRAMES frames each.
             let mut anim1 = [None; MAX_TEXTURE_FRAMES];
             let mut anim2 = [None; MAX_TEXTURE_FRAMES];
             let mut anim1_len = 0;
@@ -583,12 +645,7 @@ impl Bsp {
                 "Invalid texture name",
             ) as usize;
 
-            /// The character following the plus sign determines whether the frame belongs to the
-            /// first or second animation.
             match frame_char {
-                /// If it is between `U+0030 DIGIT ZERO` (`0`) and `U+0039 DIGIT NINE` (`9`), then
-                /// the character represents that texture's frame index in the first animation
-                /// sequence.
                 ASCII_0...ASCII_9 => {
                     anim1_len = frame_char - ASCII_0;
                     anim2_len = 0;
@@ -596,12 +653,8 @@ impl Bsp {
                     anim1_len += 1;
                 }
 
-                /// If it is between `U+0041 LATIN CAPITAL LETTER A` (`A`) and `U+004A LATIN CAPITAL
-                /// LETTER J`, or between `U+0061 LATIN SMALL LETTER A` (`a`) and `U+006A LATIN
-                /// SMALL LETTER J`, then the character represents that texture's frame index in the
-                /// second animation sequence as that letter's position in the English alphabet
-                /// (that is, `A`/`a` correspond to 0 and `J`/`j` correspond to 9).
-                ASCII_A...ASCII_J | ASCII_a...ASCII_j => {
+                ASCII_A...ASCII_J |
+                ASCII_a...ASCII_j => {
                     if frame_char >= ASCII_a && frame_char <= ASCII_j {
                         frame_char -= ASCII_a - ASCII_A;
                     }
@@ -611,9 +664,12 @@ impl Bsp {
                     anim2_len += 1;
                 }
 
-                _ => return Err(BspError::with_msg(
-                    format!("Invalid texture frame specifier: U+{:x}", frame_char)
-                ))
+                _ => {
+                    return Err(BspError::with_msg(format!(
+                        "Invalid texture frame specifier: U+{:x}",
+                        frame_char
+                    )))
+                }
             }
 
             for t2 in t + 1..textures.len() {
@@ -637,7 +693,8 @@ impl Bsp {
                         }
                     }
 
-                    ASCII_A...ASCII_J | ASCII_a...ASCII_j => {
+                    ASCII_A...ASCII_J |
+                    ASCII_a...ASCII_j => {
                         if frame_n_char >= ASCII_a && frame_n_char <= ASCII_j {
                             frame_n_char -= ASCII_a - ASCII_A;
                         }
@@ -648,9 +705,12 @@ impl Bsp {
                         }
                     }
 
-                    _ => return Err(BspError::with_msg(
-                        format!("Invalid texture frame specifier: U+{:x}", frame_n_char)
-                    ))
+                    _ => {
+                        return Err(BspError::with_msg(format!(
+                            "Invalid texture frame specifier: U+{:x}",
+                            frame_n_char
+                        )))
+                    }
                 }
             }
 
@@ -659,9 +719,11 @@ impl Bsp {
             for frame in 0..anim1_len {
                 let mut tex2 = match anim1[frame] {
                     Some(t2) => t2,
-                    None => return Err(BspError::with_msg(
-                        format!("Missing frame {} of {}", frame, textures[t].name)
-                    ))
+                    None => {
+                        return Err(BspError::with_msg(
+                            format!("Missing frame {} of {}", frame, textures[t].name),
+                        ))
+                    }
                 };
 
                 textures[tex2].next = Some(anim1[(frame + 1) % anim1_len].unwrap());
@@ -670,19 +732,18 @@ impl Bsp {
             for frame in 0..anim2_len {
                 let mut tex2 = match anim2[frame] {
                     Some(t2) => t2,
-                    None => return Err(BspError::with_msg(
-                        format!("Missing frame {} of {}", frame, textures[t].name)
-                    ))
+                    None => {
+                        return Err(BspError::with_msg(
+                            format!("Missing frame {} of {}", frame, textures[t].name),
+                        ))
+                    }
                 };
 
                 textures[tex2].next = Some(anim2[(frame + 1) % anim2_len].unwrap());
             }
         }
 
-        /// # Vertex positions
-        ///
-        /// The vertex positions are stored as 3-component vectors of `float`.
-        let vert_lump = &lumps[LumpId::Vertices as usize];
+        let vert_lump = &lumps[BspLumpId::Vertices as usize];
         reader.seek(SeekFrom::Start(vert_lump.offset as u64))?;
         assert_eq!(vert_lump.size % VERTEX_SIZE, 0);
         let vert_count = vert_lump.size / VERTEX_SIZE;
@@ -691,13 +752,11 @@ impl Bsp {
         }
         let mut vertices = Vec::with_capacity(vert_count);
         for _ in 0..vert_count {
-            vertices.push(
-                [
-                    reader.read_f32::<LittleEndian>()?,
-                    reader.read_f32::<LittleEndian>()?,
-                    reader.read_f32::<LittleEndian>()?,
-                ],
-            );
+            // Quake coordinates to standard right-handed coordinates
+            let neg_z = reader.read_f32::<LittleEndian>()?;
+            let neg_x = reader.read_f32::<LittleEndian>()?;
+            let y = reader.read_f32::<LittleEndian>()?;
+            vertices.push([-neg_x, y, -neg_z]);
         }
         assert_eq!(
             reader.seek(SeekFrom::Current(0))?,
@@ -706,11 +765,7 @@ impl Bsp {
             ))?
         );
 
-        /// # Visibility lists
-        ///
-        /// The visibility lists are simply stored as a series of run-length encoded bit strings.
-        /// The total size of the visibility data is given by the lump size.
-        let vis_lump = &lumps[LumpId::Visibility as usize];
+        let vis_lump = &lumps[BspLumpId::Visibility as usize];
         reader.seek(SeekFrom::Start(vis_lump.offset as u64))?;
         if vis_lump.size > MAX_VISLIST {
             return Err(BspError::with_msg(
@@ -728,17 +783,7 @@ impl Bsp {
             ))?
         );
 
-        /// # Nodes
-        ///
-        /// Nodes are stored with a 32-bit integer plane ID denoting which plane splits the node.
-        /// This is followed by two 16-bit integers which point to the children in front and back of
-        /// the plane. If the high bit is set, the ID points to a leaf node; if not, it points to
-        /// another internal node.
-        ///
-        /// After the node IDs are a 16-bit integer face ID, which denotes the index of the first
-        /// face in the face list that belongs to this node, and a 16-bit integer face count, which
-        /// denotes the number of faces to draw starting with the face ID.
-        let node_lump = &lumps[LumpId::Nodes as usize];
+        let node_lump = &lumps[BspLumpId::Nodes as usize];
         reader.seek(SeekFrom::Start(node_lump.offset as u64))?;
         assert_eq!(node_lump.size % NODE_SIZE, 0);
         let node_count = node_lump.size / NODE_SIZE;
@@ -762,17 +807,15 @@ impl Bsp {
                 b => BspNodeChild::Node(b as usize),
             };
 
-            let min = [
-                reader.read_i16::<LittleEndian>()?,
-                reader.read_i16::<LittleEndian>()?,
-                reader.read_i16::<LittleEndian>()?,
-            ];
+            let min_neg_z = reader.read_i16::<LittleEndian>()?;
+            let min_neg_x = reader.read_i16::<LittleEndian>()?;
+            let min_y = reader.read_i16::<LittleEndian>()?;
+            let min = [-min_neg_x, min_y, -min_neg_z];
 
-            let max = [
-                reader.read_i16::<LittleEndian>()?,
-                reader.read_i16::<LittleEndian>()?,
-                reader.read_i16::<LittleEndian>()?,
-            ];
+            let max_neg_z = reader.read_i16::<LittleEndian>()?;
+            let max_neg_x = reader.read_i16::<LittleEndian>()?;
+            let max_y = reader.read_i16::<LittleEndian>()?;
+            let max = [-max_neg_x, max_y, -max_neg_z];
 
             let face_id = reader.read_i16::<LittleEndian>()?;
             if face_id < 0 {
@@ -801,25 +844,30 @@ impl Bsp {
             ))?
         );
 
-        let texinfo_lump = &lumps[LumpId::TextureInfo as usize];
+        let texinfo_lump = &lumps[BspLumpId::TextureInfo as usize];
         reader.seek(SeekFrom::Start(texinfo_lump.offset as u64))?;
         assert_eq!(texinfo_lump.size % TEXINFO_SIZE, 0);
         let texinfo_count = texinfo_lump.size / TEXINFO_SIZE;
         let mut texinfos = Vec::with_capacity(texinfo_count);
         for _ in 0..texinfo_count {
+            let s_neg_z = reader.read_f32::<LittleEndian>()?;
+            let s_neg_x = reader.read_f32::<LittleEndian>()?;
+            let s_y = reader.read_f32::<LittleEndian>()?;
+
+            let s_off = reader.read_f32::<LittleEndian>()?;
+
+            let t_neg_z = reader.read_f32::<LittleEndian>()?;
+            let t_neg_x = reader.read_f32::<LittleEndian>()?;
+            let t_y = reader.read_f32::<LittleEndian>()?;
+
+            let t_off = reader.read_f32::<LittleEndian>()?;
+
             texinfos.push(BspTexInfo {
-                s_vector: [
-                    reader.read_f32::<LittleEndian>()?,
-                    reader.read_f32::<LittleEndian>()?,
-                    reader.read_f32::<LittleEndian>()?,
-                ],
-                s_offset: reader.read_f32::<LittleEndian>()?,
-                t_vector: [
-                    reader.read_f32::<LittleEndian>()?,
-                    reader.read_f32::<LittleEndian>()?,
-                    reader.read_f32::<LittleEndian>()?,
-                ],
-                t_offset: reader.read_f32::<LittleEndian>()?,
+                s_vector: [-s_neg_x, s_y, -s_neg_z],
+                s_offset: s_off,
+                t_vector: [-t_neg_x, t_y, -t_neg_z],
+                t_offset: t_off,
+
                 tex_id: match reader.read_i32::<LittleEndian>()? {
                     t if t < 0 || t as usize > tex_count => {
                         return Err(BspError::with_msg("Invalid texture ID"))
@@ -840,7 +888,7 @@ impl Bsp {
             ))?
         );
 
-        let face_lump = &lumps[LumpId::Faces as usize];
+        let face_lump = &lumps[BspLumpId::Faces as usize];
         reader.seek(SeekFrom::Start(face_lump.offset as u64))?;
         assert_eq!(face_lump.size % FACE_SIZE, 0);
         let face_count = face_lump.size / FACE_SIZE;
@@ -900,7 +948,7 @@ impl Bsp {
             ))?
         );
 
-        let lightmap_lump = &lumps[LumpId::Lightmaps as usize];
+        let lightmap_lump = &lumps[BspLumpId::Lightmaps as usize];
         reader.seek(SeekFrom::Start(lightmap_lump.offset as u64))?;
         let mut lightmaps = Vec::with_capacity(lightmap_lump.size);
         (&mut reader).take(lightmap_lump.size as u64).read_to_end(
@@ -913,7 +961,7 @@ impl Bsp {
             ))?
         );
 
-        let clipnode_lump = &lumps[LumpId::ClipNodes as usize];
+        let clipnode_lump = &lumps[BspLumpId::ClipNodes as usize];
         reader.seek(SeekFrom::Start(clipnode_lump.offset as u64))?;
         assert_eq!(clipnode_lump.size % CLIPNODE_SIZE, 0);
         let clipnode_count = clipnode_lump.size / CLIPNODE_SIZE;
@@ -939,7 +987,7 @@ impl Bsp {
                 .unwrap()
         );
 
-        let leaf_lump = &lumps[LumpId::Leaves as usize];
+        let leaf_lump = &lumps[BspLumpId::Leaves as usize];
         reader
             .seek(SeekFrom::Start(leaf_lump.offset as u64))
             .unwrap();
@@ -956,16 +1004,17 @@ impl Bsp {
                 -1 => None,
                 x => Some(x as usize),
             };
-            let mut min = [
-                reader.read_i16::<LittleEndian>()?,
-                reader.read_i16::<LittleEndian>()?,
-                reader.read_i16::<LittleEndian>()?,
-            ];
-            let mut max = [
-                reader.read_i16::<LittleEndian>()?,
-                reader.read_i16::<LittleEndian>()?,
-                reader.read_i16::<LittleEndian>()?,
-            ];
+
+            let min_neg_z = reader.read_i16::<LittleEndian>()?;
+            let min_neg_x = reader.read_i16::<LittleEndian>()?;
+            let min_y = reader.read_i16::<LittleEndian>()?;
+            let min = [-min_neg_x, min_y, -min_neg_z];
+
+            let max_neg_z = reader.read_i16::<LittleEndian>()?;
+            let max_neg_x = reader.read_i16::<LittleEndian>()?;
+            let max_y = reader.read_i16::<LittleEndian>()?;
+            let max = [-max_neg_x, max_y, -max_neg_z];
+
             let face_id = reader.read_u16::<LittleEndian>()? as usize;
             let face_count = reader.read_u16::<LittleEndian>()? as usize;
             let mut sounds = [0u8; NUM_AMBIENTS];
@@ -981,7 +1030,7 @@ impl Bsp {
             });
         }
 
-        let facelist_lump = &lumps[LumpId::FaceList as usize];
+        let facelist_lump = &lumps[BspLumpId::FaceList as usize];
         reader
             .seek(SeekFrom::Start(facelist_lump.offset as u64))
             .unwrap();
@@ -1000,10 +1049,7 @@ impl Bsp {
                 .unwrap()
         );
 
-        /// # Edges
-        ///
-        /// The edges are stored as a pair of 16-bit integer vertex IDs.
-        let edge_lump = &lumps[LumpId::Edges as usize];
+        let edge_lump = &lumps[BspLumpId::Edges as usize];
         reader
             .seek(SeekFrom::Start(edge_lump.offset as u64))
             .unwrap();
@@ -1016,8 +1062,8 @@ impl Bsp {
         for _ in 0..edge_count {
             edges.push(BspEdge {
                 vertex_ids: [
-                    reader.read_u16::<LittleEndian>()? as usize,
-                    reader.read_u16::<LittleEndian>()? as usize,
+                    reader.read_u16::<LittleEndian>()?,
+                    reader.read_u16::<LittleEndian>()?,
                 ],
             });
         }
@@ -1028,7 +1074,7 @@ impl Bsp {
                 .unwrap()
         );
 
-        let edgelist_lump = &lumps[LumpId::EdgeList as usize];
+        let edgelist_lump = &lumps[BspLumpId::EdgeList as usize];
         reader.seek(SeekFrom::Start(edgelist_lump.offset as u64))?;
         assert_eq!(edgelist_lump.size % EDGELIST_SIZE, 0);
         let edgelist_count = edgelist_lump.size / EDGELIST_SIZE;
@@ -1060,7 +1106,7 @@ impl Bsp {
                 .unwrap()
         );
 
-        let model_lump = &lumps[LumpId::Models as usize];
+        let model_lump = &lumps[BspLumpId::Models as usize];
         reader
             .seek(SeekFrom::Start(model_lump.offset as u64))
             .unwrap();
@@ -1071,23 +1117,20 @@ impl Bsp {
         }
         let mut models = Vec::with_capacity(model_count);
         for _ in 0..model_count {
-            let min = [
-                reader.read_f32::<LittleEndian>()?,
-                reader.read_f32::<LittleEndian>()?,
-                reader.read_f32::<LittleEndian>()?,
-            ];
+            let min_neg_z = reader.read_f32::<LittleEndian>()?;
+            let min_neg_x = reader.read_f32::<LittleEndian>()?;
+            let min_y = reader.read_f32::<LittleEndian>()?;
+            let min = [-min_neg_x, min_y, -min_neg_z];
 
-            let max = [
-                reader.read_f32::<LittleEndian>()?,
-                reader.read_f32::<LittleEndian>()?,
-                reader.read_f32::<LittleEndian>()?,
-            ];
+            let max_neg_z = reader.read_f32::<LittleEndian>()?;
+            let max_neg_x = reader.read_f32::<LittleEndian>()?;
+            let max_y = reader.read_f32::<LittleEndian>()?;
+            let max = [-max_neg_x, max_y, -max_neg_z];
 
-            let origin = [
-                reader.read_f32::<LittleEndian>()?,
-                reader.read_f32::<LittleEndian>()?,
-                reader.read_f32::<LittleEndian>()?,
-            ];
+            let origin_neg_z = reader.read_f32::<LittleEndian>()?;
+            let origin_neg_x = reader.read_f32::<LittleEndian>()?;
+            let origin_y = reader.read_f32::<LittleEndian>()?;
+            let origin = [-origin_neg_x, origin_y, -origin_neg_z];
 
             let mut roots = [0; MAX_HULLS];
             for i in 0..roots.len() {
@@ -1143,5 +1186,88 @@ impl Bsp {
             edgelist: edgelist,
             models: models,
         })
+    }
+
+    /// Maps a function over the BSP textures and returns a vector of the results.
+    ///
+    /// This is meant to be used to provide a straightforward method of generating texture objects
+    /// for graphics APIs like OpenGL.
+    pub fn gen_textures<F, T>(&self, mut func: F) -> Vec<T>
+    where
+        F: FnMut(&BspTexture) -> T,
+    {
+        self.textures.iter().map(|tex| func(tex)).collect()
+    }
+
+    /// Generates render data in interleaved format.
+    pub fn gen_render_data_interleaved<F, V>(&self) -> (Vec<F>, Vec<V>)
+    where
+        F: From<(usize, usize, usize)>,
+        V: From<[f32; 5]>,
+    {
+        let mut face_data = Vec::new();
+        let mut vertex_data = Vec::new();
+
+        for face in self.faces.iter() {
+            let face_vertex_id = vertex_data.len();
+
+            let texinfo = &self.texinfo[face.texinfo_id];
+            let tex = &self.textures[texinfo.tex_id];
+
+            // Convert from triangle-fan to triangle-list format
+            let face_edge_ids = &self.edgelist[face.edge_id..face.edge_id + face.edge_count];
+
+            // Store the data for the base vertex of the fan
+            let base_edge_id = &face_edge_ids[0];
+            let base_vertex_id = self.edges[base_edge_id.index].vertex_ids[base_edge_id.direction as
+                                                                               usize];
+            let base_position = self.vertices[base_vertex_id as usize];
+            let base_pos_vec = Vector3::from(base_position);
+            let base_s = (base_pos_vec.dot(Vector3::from(texinfo.s_vector)) + texinfo.s_offset) /
+                tex.width as f32;
+            let base_t = (base_pos_vec.dot(Vector3::from(texinfo.t_vector)) + texinfo.t_offset) /
+                tex.height as f32;
+
+            // Duplicate every subsequent pair of vertices in the fan
+            for i in 1..face_edge_ids.len() - 1 {
+                // First push the base vertex
+                vertex_data.push(
+                    [
+                        base_position[0],
+                        base_position[1],
+                        base_position[2],
+                        base_s,
+                        base_t,
+                    ],
+                );
+
+                // And then the vertices comprising the next section of the fan
+                for v in 0..2 {
+                    let edge_id = &face_edge_ids[i + v];
+                    let vertex_id = self.edges[edge_id.index].vertex_ids[edge_id.direction as
+                                                                             usize];
+                    let position = self.vertices[vertex_id as usize];
+                    let pos_vec = Vector3::from(self.vertices[vertex_id as usize]);
+                    let s = (pos_vec.dot(Vector3::from(texinfo.s_vector)) + texinfo.s_offset) /
+                        tex.width as f32;
+                    let t = (pos_vec.dot(Vector3::from(texinfo.t_vector)) + texinfo.t_offset) /
+                        tex.height as f32;
+
+                    vertex_data.push([position[0], position[1], position[2], s, t]);
+                }
+            }
+
+            let face_vertex_count = vertex_data.len() - face_vertex_id;
+            face_data.push((
+                face_vertex_id,
+                face_vertex_count,
+                self.texinfo[face.texinfo_id].tex_id,
+            ));
+        }
+
+        (
+            face_data.into_iter().map(|f| F::from(f)).collect(),
+            vertex_data.into_iter().map(|v| V::from(v)).collect(),
+        )
     }
 }
