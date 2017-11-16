@@ -94,8 +94,8 @@ fn main() {
     let mut encoder: gfx::Encoder<gfx_device_gl::Resources, gfx_device_gl::CommandBuffer> =
         factory.create_command_buffer().into();
 
-    let pso = factory
-        .create_pipeline_simple(
+    let shader_set = factory
+        .create_shader_set(
             r#"
 #version 430
 
@@ -125,6 +125,22 @@ void main() {
     Target0 = texture(u_texture, f_texcoord);
 }"#
                 .as_bytes(),
+        )
+        .unwrap();
+
+    let rasterizer = gfx::state::Rasterizer {
+        front_face: gfx::state::FrontFace::Clockwise,
+        cull_face: gfx::state::CullFace::Back,
+        method: gfx::state::RasterMethod::Fill,
+        offset: None,
+        samples: Some(gfx::state::MultiSample),
+    };
+
+    let pso = factory
+        .create_pipeline_state(
+            &shader_set,
+            gfx::Primitive::TriangleList,
+            rasterizer,
             pipe::new(),
         )
         .unwrap();
@@ -151,7 +167,6 @@ void main() {
 
     let (face_data, vertex_data): (Vec<Face>, Vec<Vertex>) = bsp.gen_render_data_interleaved();
     let vertex_buffer = factory.create_vertex_buffer(&vertex_data);
-    let slice = gfx::Slice::new_match_vertex_buffer(&vertex_buffer);
 
     let sampler = factory.create_sampler(gfx::texture::SamplerInfo::new(
         gfx::texture::FilterMethod::Scale,

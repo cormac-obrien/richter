@@ -16,8 +16,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 // TODO:
-// - Inline parse_edicts()?
-// - Create project-wide Wad and WadEntry types
 // - Replace index fields with direct references where possible
 
 //! Quake BSP file and data structure handling.
@@ -25,7 +23,9 @@
 //! # Data Structure
 //!
 //! The binary space partitioning tree, or BSP, is the central data structure used by the Quake
-//! engine for collision detection and rendering level geometry.
+//! engine for collision detection and rendering level geometry. At its core, the BSP tree is a
+//! binary search tree with each node representing a subspace of the map. The tree is navigated
+//! using the planes stored in each node; each child represents one side of the plane.
 //!
 //! # File Format
 //!
@@ -409,6 +409,7 @@ pub struct Bsp {
 }
 
 impl Bsp {
+    /// Loads a BSP from the file at the designated path,
     pub fn load<P>(path: P) -> Result<Bsp, BspError>
     where
         P: AsRef<Path>,
@@ -988,9 +989,7 @@ impl Bsp {
         );
 
         let leaf_lump = &lumps[BspLumpId::Leaves as usize];
-        reader
-            .seek(SeekFrom::Start(leaf_lump.offset as u64))
-            .unwrap();
+        reader.seek(SeekFrom::Start(leaf_lump.offset as u64))?;
         assert_eq!(leaf_lump.size % LEAF_SIZE, 0);
         let leaf_count = leaf_lump.size / LEAF_SIZE;
         if leaf_count > MAX_LEAVES {
@@ -1186,6 +1185,61 @@ impl Bsp {
             edgelist: edgelist,
             models: models,
         })
+    }
+
+    /// Locates the leaf containing the given position vector and returns its index.
+    pub fn find_leaf<V>(&self, pos: V) -> usize
+    where
+        V: Into<Vector3<f32>>,
+    {
+        let pos_vec = pos.into();
+
+        let mut node = &self.nodes[0];
+        loop {
+            let plane = &self.planes[node.plane_id];
+
+            let child;
+            if pos_vec.dot(Vector3::from(plane.normal)) - plane.dist < 0.0 {
+                child = &node.front;
+            } else {
+                child = &node.back;
+            }
+
+            match child {
+                &BspNodeChild::Node(i) => node = &self.nodes[i],
+                &BspNodeChild::Leaf(i) => return i,
+            }
+        }
+    }
+
+    /// Decompresses the PVS for the leaf with the given ID
+    pub fn decompress_visibility(&self, leaf_id: usize) -> Option<Vec<u8>> {
+        // Calculate length of vis data in bytes, rounding up
+        let decompressed_len = (self.leaves.len() + 7) / 8;
+
+        match self.leaves[leaf_id].vis_offset {
+            Some(o) => {
+                let mut decompressed = Vec::new();
+
+                let mut i = 0;
+                while decompressed.len() < decompressed_len {
+                    match self.visibility[o + i] {
+                        0 => {
+                            let count = self.visibility[o + i + 1];
+                            for _ in 0..count {
+                                decompressed.push(0);
+                            }
+                        }
+                        x => decompressed.push(x),
+                    }
+                }
+
+                assert_eq!(decompressed.len(), decompressed_len);
+
+                Some(decompressed)
+            }
+            None => None,
+        }
     }
 
     /// Maps a function over the BSP textures and returns a vector of the results.
