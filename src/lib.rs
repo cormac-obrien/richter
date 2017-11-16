@@ -27,6 +27,7 @@ extern crate cgmath;
 extern crate env_logger;
 #[macro_use]
 extern crate glium;
+extern crate glutin;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
