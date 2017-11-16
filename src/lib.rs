@@ -52,7 +52,6 @@ pub mod engine;
 pub mod entity;
 pub mod event;
 pub mod gfx;
-pub mod host;
 pub mod input;
 pub mod load;
 pub mod lump;
