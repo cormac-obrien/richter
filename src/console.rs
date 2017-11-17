@@ -15,11 +15,13 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use glutin::VirtualKeyCode as Key;
-use std::cmp::Ordering;
+// TODO: implement proper Error types
+
 use std::collections::VecDeque;
 use std::collections::HashMap;
 use std::iter::FromIterator;
+
+use glutin::VirtualKeyCode as Key;
 
 /// Stores console commands.
 pub struct CmdRegistry<'a> {
@@ -398,7 +400,6 @@ impl Console {
         println!("{}", self.debug_string());
     }
 
-
     fn get_string(&self) -> String {
         String::from_iter(self.input.text.clone().into_iter())
     }
@@ -409,5 +410,98 @@ impl Console {
             String::from_iter(self.input.text[..self.input.curs].to_owned().into_iter()),
             String::from_iter(self.input.text[self.input.curs..].to_owned().into_iter())
         )
+    }
+}
+
+struct Tokenizer<'a> {
+    input: &'a str,
+    byte_offset: usize,
+}
+
+impl<'a> Tokenizer<'a> {
+    fn new(input: &'a str) -> Tokenizer<'a> {
+        Tokenizer {
+            input: input,
+            byte_offset: 0,
+        }
+    }
+
+    fn get_remaining_input(&self) -> &'a str {
+        &self.input[self.byte_offset..]
+    }
+
+    fn skip_spaces(&mut self) {
+        let iter = self.get_remaining_input().char_indices();
+        match iter.skip_while(|&(_, c)| c.is_whitespace()).next() {
+            Some((i, _)) => self.byte_offset += i,
+            None => self.byte_offset = self.input.len(),
+        }
+    }
+
+    fn try_skip_line_comment(&mut self) -> bool {
+        if self.get_remaining_input().starts_with("//") {
+            match self.get_remaining_input()
+                .char_indices()
+                .skip_while(|&(_, c)| c != '\n')
+                .next()
+            {
+                Some((i, _)) => self.byte_offset += i,
+                None => self.byte_offset = self.input.len(),
+            }
+
+            return true;
+        }
+
+        false
+    }
+
+    fn next(&mut self) -> Option<&'a str> {
+        loop {
+            self.skip_spaces();
+
+            if !self.try_skip_line_comment() {
+                break;
+            }
+        }
+
+        let mut char_indices = self.get_remaining_input().char_indices();
+        match char_indices.next() {
+            Some((start_i, '"')) => {
+                let offset = self.byte_offset + start_i;
+                match char_indices.skip_while(|&(_, c)| c != '"').next() {
+                    Some((end_i, '"')) => {
+                        let len = end_i + 1 - start_i;
+                        self.byte_offset += len;
+                        Some(&self.input[offset..offset + len])
+                    }
+                    Some(_) => panic!("wtf hapen"),
+                    None => None
+                }
+            }
+            Some((start_i, _)) => {
+                let offset = self.byte_offset + start_i;
+
+                match char_indices.take_while(|&(_, c)| !c.is_whitespace()).last() {
+                    Some((end_i, _)) => {
+                        let len = end_i + 1 - start_i;
+                        self.byte_offset += len;
+                        Some(&self.input[offset..offset + len])
+                    }
+                    None => None,
+                }
+            }
+            None => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tokenizer_empty() {
+        let mut tokenizer = Tokenizer::new("");
+        assert_eq!(tokenizer.next(), None);
     }
 }
