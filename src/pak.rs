@@ -83,17 +83,34 @@ impl From<string::FromUtf8Error> for PakError {
 pub struct Pak(HashMap<String, Box<[u8]>>);
 
 impl Pak {
+    /// Constructs a new `Pak` object.
+    ///
+    /// The virtual file tree is initially empty.
+    ///
+    /// # Examples
+    /// ```
+    /// # extern crate richter;
+    /// use richter::pak::Pak;
+    ///
+    /// # fn main() {
+    /// let pak = Pak::new();
+    /// # }
+    /// ```
     pub fn new() -> Pak {
         Pak(HashMap::new())
     }
 
-    /// Attempts to load a virtual file tree from a PAK archive.
+    /// Adds the data from the specified PAK archive to the virtual file tree.
     ///
     /// # Examples
-    /// ```
-    /// use pak::Pak;
+    /// ```no_run
+    /// # extern crate richter;
+    /// use richter::pak::Pak;
     ///
-    /// let pak0 = Pak::load("pak0.pak");
+    /// # fn main() {
+    /// let mut pak = Pak::new();
+    /// pak.add("pak0.pak").unwrap();
+    /// # }
     /// ```
     pub fn add<P: AsRef<Path>>(&mut self, path: P) -> Result<(), PakError> {
         debug!("Opening {}", path.as_ref().to_str().unwrap());
@@ -159,11 +176,15 @@ impl Pak {
     /// Opens a file in the file tree for reading.
     ///
     /// # Examples
-    /// ```
-    /// use pak::Pak;
+    /// ```no_run
+    /// # extern crate richter;
+    /// use richter::pak::Pak;
     ///
-    /// let pak0 = Pak::load("pak0.pak");
-    /// let progs_dat = pak0.open("progs.dat");
+    /// # fn main() {
+    /// let mut pak = Pak::new();
+    /// pak.add("pak0.pak").unwrap();
+    /// let progs_dat = pak.open("progs.dat").unwrap();
+    /// # }
     /// ```
     pub fn open(&self, path: &str) -> Option<&[u8]> {
         match self.0.get(path) {
