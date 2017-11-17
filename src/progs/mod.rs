@@ -34,11 +34,16 @@
 mod globals;
 mod ops;
 
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::error::Error;
+use std::fmt;
+use std::io::Cursor;
+use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::mem::transmute;
 
-use byteorder::{LittleEndian, WriteBytesExt};
-use load::{Load, LoadError};
+use byteorder::LittleEndian;
+use byteorder::ReadBytesExt;
 use math::Vec3;
 use num::FromPrimitive;
 
@@ -52,9 +57,49 @@ const MAX_STACK_DEPTH: usize = 32;
 const LUMP_COUNT: usize = 6;
 const SAVE_GLOBAL: u16 = 1 << 15;
 
-#[repr(C)]
+#[derive(Debug)]
+pub enum ProgsError {
+    Io(::std::io::Error),
+    Other(String),
+}
+
+impl ProgsError {
+    fn with_msg<S>(msg: S) -> Self
+    where
+        S: AsRef<str>,
+    {
+        ProgsError::Other(msg.as_ref().to_owned())
+    }
+}
+
+impl fmt::Display for ProgsError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ProgsError::Io(ref err) => err.fmt(f),
+            ProgsError::Other(ref msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl Error for ProgsError {
+    fn description(&self) -> &str {
+        match *self {
+            ProgsError::Io(ref err) => err.description(),
+            ProgsError::Other(ref msg) => &msg,
+        }
+    }
+}
+
+impl From<::std::io::Error> for ProgsError {
+    fn from(error: ::std::io::Error) -> Self {
+        ProgsError::Io(error)
+    }
+}
+
+#[derive(Debug)]
 struct FunctionId(i32);
 
+#[derive(Debug)]
 #[repr(C)]
 struct StringId(i32);
 
@@ -67,7 +112,7 @@ enum LumpId {
     Globals = 5,
 }
 
-#[derive(FromPrimitive)]
+#[derive(Debug, FromPrimitive)]
 #[repr(u16)]
 enum Type {
     QVoid = 0,
@@ -80,24 +125,33 @@ enum Type {
     QPointer = 7,
 }
 
+#[derive(Debug)]
 #[repr(C)]
 struct Statement {
     opcode: Opcode,
-    arg1: u16,
-    arg2: u16,
-    result: u16,
+    arg1: i16,
+    arg2: i16,
+    arg3: i16,
 }
 
+#[derive(Debug)]
+enum FunctionKind {
+    BuiltIn(usize),
+    QuakeC(usize),
+}
+
+#[derive(Debug)]
 struct Function {
-    statement_id: usize,
+    kind: FunctionKind,
     arg_start: usize,
     locals: usize,
-    name_id: usize,
+    name_id: StringId,
     srcfile_id: usize,
     argc: usize,
     argsz: [u8; MAX_ARGS],
 }
 
+#[derive(Debug)]
 struct StackFrame {
     instr_id: i32,
     func_id: u32,
@@ -109,6 +163,7 @@ struct Lump {
     count: usize,
 }
 
+#[derive(Debug)]
 #[repr(C)]
 struct Def {
     save: bool,
@@ -117,6 +172,7 @@ struct Def {
     name_id: i32,
 }
 
+#[derive(Debug)]
 pub struct Progs {
     functions: Box<[Function]>,
     statements: Box<[Statement]>,
@@ -127,53 +183,109 @@ pub struct Progs {
 }
 
 impl Progs {
-    pub fn load(data: &[u8]) -> Result<Progs, LoadError> {
+    pub fn load(data: &[u8]) -> Result<Progs, ProgsError> {
         let mut src = Cursor::new(data);
-        assert!(src.load_i32le(None)? == VERSION);
-        assert!(src.load_i32le(None)? == CRC);
+        assert!(src.read_i32::<LittleEndian>()? == VERSION);
+        assert!(src.read_i32::<LittleEndian>()? == CRC);
 
         let mut lumps = Vec::new();
-        for i in 0..LUMP_COUNT {
+        for _ in 0..LUMP_COUNT {
             lumps.push(Lump {
-                offset: src.load_i32le(Some(&(0..)))? as usize,
-                count: src.load_i32le(Some(&(0..)))? as usize,
+                offset: src.read_i32::<LittleEndian>()? as usize,
+                count: src.read_i32::<LittleEndian>()? as usize,
             });
         }
 
-        let field_count = src.load_i32le(Some(&(0..)))? as usize;
+        let field_count = src.read_i32::<LittleEndian>()? as usize;
+
+        let string_lump = &lumps[LumpId::Strings as usize];
+        src.seek(SeekFrom::Start(string_lump.offset as u64))?;
+        let mut string_data = Vec::new();
+        (&mut src).take(string_lump.count as u64).read_to_end(
+            &mut string_data,
+        )?;
+        let str_slice = ::std::str::from_utf8(&string_data).unwrap();
+
+        let mut strings = Vec::new();
+        let mut string_offsets = Vec::new();
+        let mut current_offset = 0;
+
+        for s in str_slice.split('\x00') {
+            strings.push(s.to_owned());
+            string_offsets.push(current_offset);
+
+            // add 1 to length to account for null byte
+            current_offset += s.len() + 1;
+        }
 
         let statement_lump = &lumps[LumpId::Statements as usize];
         src.seek(SeekFrom::Start(statement_lump.offset as u64))?;
         let mut statements = Vec::with_capacity(statement_lump.count);
         for _ in 0..statement_lump.count {
             statements.push(Statement {
-                opcode: Opcode::from_u16(src.load_u16le(None)?).unwrap(),
-                arg1: src.load_u16le(None)?,
-                arg2: src.load_u16le(None)?,
-                result: src.load_u16le(None)?,
+                opcode: Opcode::from_u16(src.read_u16::<LittleEndian>()?).unwrap(),
+                arg1: src.read_i16::<LittleEndian>()?,
+                arg2: src.read_i16::<LittleEndian>()?,
+                arg3: src.read_i16::<LittleEndian>()?,
             });
         }
+
+        assert_eq!(
+            src.seek(SeekFrom::Current(0))?,
+            src.seek(SeekFrom::Start(
+                (statement_lump.offset + statement_lump.count * 8) as u64,
+            ))?
+        );
 
         let function_lump = &lumps[LumpId::Functions as usize];
         src.seek(SeekFrom::Start(function_lump.offset as u64))?;
         let mut functions = Vec::with_capacity(function_lump.count);
         for _ in 0..function_lump.count {
+            let kind = match src.read_i32::<LittleEndian>()? {
+                x if x < 0 => FunctionKind::BuiltIn(-x as usize),
+                x => FunctionKind::QuakeC(x as usize),
+            };
+            let arg_start = src.read_i32::<LittleEndian>()?;
+            let locals = src.read_i32::<LittleEndian>()?;
+
+            // throw away profile variable
+            let _ = src.read_i32::<LittleEndian>()?;
+
+            let name_id = match src.read_i32::<LittleEndian>()? {
+                id if id < 0 => StringId(id),
+                id => {
+                    let str_id = match string_offsets.binary_search(&(id as usize)) {
+                        Ok(i) => i,
+                        Err(_) => {
+                            return Err(ProgsError::with_msg(
+                                format!("No string with offset {}", id),
+                            ))
+                        }
+                    };
+
+                    StringId(str_id as i32)
+                }
+            };
+
+            let srcfile_id = src.read_i32::<LittleEndian>()?;
+            let argc = src.read_i32::<LittleEndian>()?;
+
             functions.push(Function {
-                statement_id: src.load_i32le(Some(&(0..)))? as usize,
-                arg_start: src.load_i32le(Some(&(0..)))? as usize,
-                locals: src.load_i32le(Some(&(0..)))? as usize,
-                name_id: src.load_i32le(Some(&(0..)))? as usize,
-                srcfile_id: src.load_i32le(Some(&(0..)))? as usize,
-                argc: src.load_i32le(Some(&(0..)))? as usize,
+                kind: kind,
+                arg_start: arg_start as usize,
+                locals: locals as usize,
+                name_id: name_id,
+                srcfile_id: srcfile_id as usize,
+                argc: argc as usize,
                 argsz: [
-                    src.load_u8(None)?,
-                    src.load_u8(None)?,
-                    src.load_u8(None)?,
-                    src.load_u8(None)?,
-                    src.load_u8(None)?,
-                    src.load_u8(None)?,
-                    src.load_u8(None)?,
-                    src.load_u8(None)?,
+                    src.read_u8()?,
+                    src.read_u8()?,
+                    src.read_u8()?,
+                    src.read_u8()?,
+                    src.read_u8()?,
+                    src.read_u8()?,
+                    src.read_u8()?,
+                    src.read_u8()?,
                 ],
             });
         }
@@ -182,12 +294,12 @@ impl Progs {
         src.seek(SeekFrom::Start(globaldef_lump.offset as u64))?;
         let mut globaldefs = Vec::new();
         for _ in 0..globaldef_lump.count {
-            let type_ = src.load_u16le(None)?;
+            let type_ = src.read_u16::<LittleEndian>()?;
             globaldefs.push(Def {
                 save: type_ & SAVE_GLOBAL != 0,
                 type_: Type::from_u16(type_ & !SAVE_GLOBAL).unwrap(),
-                offset: src.load_u16le(None)?,
-                name_id: src.load_i32le(None)?,
+                offset: src.read_u16::<LittleEndian>()?,
+                name_id: src.read_i32::<LittleEndian>()?,
             });
         }
 
@@ -195,12 +307,12 @@ impl Progs {
         src.seek(SeekFrom::Start(fielddef_lump.offset as u64))?;
         let mut fielddefs = Vec::new();
         for _ in 0..fielddef_lump.count {
-            let type_ = src.load_u16le(None)?;
+            let type_ = src.read_u16::<LittleEndian>()?;
             fielddefs.push(Def {
                 save: type_ & SAVE_GLOBAL != 0,
                 type_: Type::from_u16(type_ & !SAVE_GLOBAL).unwrap(),
-                offset: src.load_u16le(None)?,
-                name_id: src.load_i32le(None)?,
+                offset: src.read_u16::<LittleEndian>()?,
+                name_id: src.read_i32::<LittleEndian>()?,
             });
         }
 

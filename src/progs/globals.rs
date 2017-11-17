@@ -15,16 +15,15 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::io::{Cursor, Read};
-use std::mem::{size_of, transmute};
+use std::mem::size_of;
 
-use load::{Load, LoadError};
 use math::Vec3;
 use progs::{FunctionId, StringId};
 
 pub const GLOBALS_COUNT: usize = 90;
 pub const GLOBALS_SIZE: usize = GLOBALS_COUNT * 4;
 
+#[derive(Debug)]
 #[repr(C)]
 pub struct Globals {
     pad: [i32; 28],
