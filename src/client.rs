@@ -195,7 +195,8 @@ impl Client {
     /// see Quake/QW/client/cl_parse.c:525
     ///
     /// Server data is sent in the following format:
-    /// ```
+    ///
+    /// ```text
     /// qw version: u32
     /// server count: u32
     /// game directory: null-terminated string
