@@ -40,7 +40,7 @@
 //! format. Entities are anonymous; they do not have names, only attributes. They are stored
 //! as follows:
 //!
-//! ```
+//! ```text
 //! {
 //! "attribute0" "value0"
 //! "attribute1" "value1"

@@ -126,7 +126,7 @@ impl Client {
     ///
     /// Connection messages are out-band-messages of the form:
     ///
-    /// ```
+    /// ```text
     /// connect <qw> <qport> <challenge> <userinfo>
     /// ```
     ///
