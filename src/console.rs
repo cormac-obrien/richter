@@ -413,13 +413,25 @@ impl Console {
     }
 }
 
-struct Tokenizer<'a> {
+pub struct Tokenizer<'a> {
     input: &'a str,
     byte_offset: usize,
 }
 
 impl<'a> Tokenizer<'a> {
-    fn new(input: &'a str) -> Tokenizer<'a> {
+    /// Constructs a command tokenizer with the specified input stream.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate richter;
+    /// use richter::console::Tokenizer;
+    ///
+    /// # fn main() {
+    /// let tokenizer = Tokenizer::new("map e1m1");
+    /// # }
+    /// ```
+    pub fn new(input: &'a str) -> Tokenizer<'a> {
         Tokenizer {
             input: input,
             byte_offset: 0,
@@ -455,10 +467,40 @@ impl<'a> Tokenizer<'a> {
         false
     }
 
-    fn next(&mut self) -> Option<&'a str> {
+    /// Returns the next token in the input stream.
+    ///
+    /// This will skip any leading any leading whitespace characters as recognized by the
+    /// `.is_whitespace()` function of `std::char`. Note that the original Quake engine only
+    /// expects ASCII input and recognizes as whitespace any character with a code point less than
+    /// or equal to `U+0020`, including control characters. It will also skip single-line comments
+    /// beginning with `//` and ending with a newline (`U+000A LINE FEED`).
+    ///
+    /// This function *does not* process semicolons in order to split commands.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate richter;
+    /// use richter::console::Tokenizer;
+    ///
+    /// # fn main() {
+    /// let mut tokenizer = Tokenizer::new("map e1m1");
+    /// assert_eq!(tokenizer.next(), Some("map"));
+    /// assert_eq!(tokenizer.next(), Some("e1m1"));
+    /// assert_eq!(tokenizer.next(), None);
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// The function panics if the end of input is reached and there is an unmatched double-quote.
+    /// This is not permanent behavior.
+    pub fn next(&mut self) -> Option<&'a str> {
         loop {
+            // Skip leading whitespace
             self.skip_spaces();
 
+            // If this line is a comment, move on to the next line
             if !self.try_skip_line_comment() {
                 break;
             }
@@ -466,6 +508,7 @@ impl<'a> Tokenizer<'a> {
 
         let mut char_indices = self.get_remaining_input().char_indices();
         match char_indices.next() {
+            // On encountering an opening double-quote, find the closing double-quote
             Some((start_i, '"')) => {
                 let offset = self.byte_offset + start_i;
                 match char_indices.skip_while(|&(_, c)| c != '"').next() {
@@ -474,10 +517,17 @@ impl<'a> Tokenizer<'a> {
                         self.byte_offset += len;
                         Some(&self.input[offset..offset + len])
                     }
-                    Some(_) => panic!("wtf hapen"),
-                    None => None
+
+                    // This case should not be possible
+                    Some(_) => None,
+
+                    // This means an unmatched quote.
+                    // TODO: this should not panic, make it fail gracefully and update the docs
+                    None => panic!("Unmatched quote in Tokenizer::next()"),
                 }
             }
+
+            // Any other token ends on the next whitespace character
             Some((start_i, _)) => {
                 let offset = self.byte_offset + start_i;
 
@@ -490,6 +540,8 @@ impl<'a> Tokenizer<'a> {
                     None => None,
                 }
             }
+
+            // If there are no characters left, tokenizer is at the end of the input stream
             None => None,
         }
     }
@@ -502,6 +554,18 @@ mod tests {
     #[test]
     fn test_tokenizer_empty() {
         let mut tokenizer = Tokenizer::new("");
+        assert_eq!(tokenizer.next(), None);
+    }
+
+    #[test]
+    fn test_tokenizer_whitespace_only() {
+        let mut tokenizer = Tokenizer::new(" \t\n\r");
+        assert_eq!(tokenizer.next(), None);
+    }
+
+    #[test]
+    fn test_tokenizer_comment_only() {
+        let mut tokenizer = Tokenizer::new("// this is a comment");
         assert_eq!(tokenizer.next(), None);
     }
 }
