@@ -179,10 +179,10 @@ const MAX_TEXTURE_FRAMES: usize = 10;
 
 const ASCII_0: usize = '0' as usize;
 const ASCII_9: usize = '9' as usize;
-const ASCII_A: usize = 'A' as usize;
-const ASCII_J: usize = 'J' as usize;
-const ASCII_a: usize = 'a' as usize;
-const ASCII_j: usize = 'j' as usize;
+const ASCII_CAPITAL_A: usize = 'A' as usize;
+const ASCII_CAPITAL_J: usize = 'J' as usize;
+const ASCII_SMALL_A: usize = 'a' as usize;
+const ASCII_SMALL_J: usize = 'j' as usize;
 
 #[derive(Debug)]
 pub enum BspError {
@@ -421,7 +421,7 @@ impl Bsp {
             Ok(f) => f,
             Err(err) => {
                 return Err(BspError::Other(
-                    format!("Failed to open {:?}", path.as_ref()),
+                    format!("Failed to open {:?}: {}", path.as_ref(), err),
                 ))
             }
         };
@@ -527,16 +527,22 @@ impl Bsp {
                 entity.insert(key, val);
             }
         }
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0))?,
+
+        if reader.seek(SeekFrom::Current(0))? !=
             reader.seek(SeekFrom::Start(
                 (ent_lump.offset + ent_lump.size) as u64,
             ))?
-        );
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         let plane_lump = &lumps[BspLumpId::Planes as usize];
         reader.seek(SeekFrom::Start(plane_lump.offset as u64))?;
-        assert_eq!(plane_lump.size % PLANE_SIZE, 0);
+        if plane_lump.size % PLANE_SIZE != 0 {
+            return Err(BspError::with_msg(
+                "BSP plane lump size not a multiple of lump size",
+            ));
+        }
         let plane_count = plane_lump.size / PLANE_SIZE;
         if plane_count > MAX_PLANES {
             return Err(BspError::with_msg("Plane count exceeds MAX_PLANES"));
@@ -553,12 +559,13 @@ impl Bsp {
                 kind: BspPlaneKind::from_i32(reader.read_i32::<LittleEndian>()?).unwrap(),
             });
         }
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0))?,
+        if reader.seek(SeekFrom::Current(0))? !=
             reader.seek(SeekFrom::Start(
                 (plane_lump.offset + plane_lump.size) as u64,
             ))?
-        );
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         let tex_lump = &lumps[BspLumpId::Textures as usize];
         reader.seek(SeekFrom::Start(tex_lump.offset as u64))?;
@@ -622,12 +629,13 @@ impl Bsp {
             })
         }
 
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0))?,
+        if reader.seek(SeekFrom::Current(0))? !=
             reader.seek(SeekFrom::Start(
                 (tex_lump.offset + tex_lump.size) as u64,
             ))?
-        );
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         debug!("Sequencing textures");
         for t in 0..textures.len() {
@@ -654,12 +662,12 @@ impl Bsp {
                     anim1_len += 1;
                 }
 
-                ASCII_A...ASCII_J |
-                ASCII_a...ASCII_j => {
-                    if frame_char >= ASCII_a && frame_char <= ASCII_j {
-                        frame_char -= ASCII_a - ASCII_A;
+                ASCII_CAPITAL_A...ASCII_CAPITAL_J |
+                ASCII_SMALL_A...ASCII_SMALL_J => {
+                    if frame_char >= ASCII_SMALL_A && frame_char <= ASCII_SMALL_J {
+                        frame_char -= ASCII_SMALL_A - ASCII_CAPITAL_A;
                     }
-                    anim2_len = frame_char - ASCII_A;
+                    anim2_len = frame_char - ASCII_CAPITAL_A;
                     anim1_len = 0;
                     anim2[anim2_len] = Some(t);
                     anim2_len += 1;
@@ -694,12 +702,12 @@ impl Bsp {
                         }
                     }
 
-                    ASCII_A...ASCII_J |
-                    ASCII_a...ASCII_j => {
-                        if frame_n_char >= ASCII_a && frame_n_char <= ASCII_j {
-                            frame_n_char -= ASCII_a - ASCII_A;
+                    ASCII_CAPITAL_A...ASCII_CAPITAL_J |
+                    ASCII_SMALL_A...ASCII_SMALL_J => {
+                        if frame_n_char >= ASCII_SMALL_A && frame_n_char <= ASCII_SMALL_J {
+                            frame_n_char -= ASCII_SMALL_A - ASCII_CAPITAL_A;
                         }
-                        frame_n_char -= ASCII_A;
+                        frame_n_char -= ASCII_CAPITAL_A;
                         anim2[frame_n_char] = Some(t2);
                         if frame_n_char + 1 > anim2_len {
                             anim2_len += 1;
@@ -746,7 +754,11 @@ impl Bsp {
 
         let vert_lump = &lumps[BspLumpId::Vertices as usize];
         reader.seek(SeekFrom::Start(vert_lump.offset as u64))?;
-        assert_eq!(vert_lump.size % VERTEX_SIZE, 0);
+        if vert_lump.size % VERTEX_SIZE != 0 {
+            return Err(BspError::with_msg(
+                "BSP vertex lump size not a multiple of vertex size",
+            ));
+        }
         let vert_count = vert_lump.size / VERTEX_SIZE;
         if vert_count > MAX_VERTICES {
             return Err(BspError::with_msg("Vertex count exceeds MAX_VERTICES"));
@@ -759,12 +771,13 @@ impl Bsp {
             let y = reader.read_f32::<LittleEndian>()?;
             vertices.push([-neg_x, y, -neg_z]);
         }
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0))?,
+        if reader.seek(SeekFrom::Current(0))? !=
             reader.seek(SeekFrom::Start(
                 (vert_lump.offset + vert_lump.size) as u64,
             ))?
-        );
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         let vis_lump = &lumps[BspLumpId::Visibility as usize];
         reader.seek(SeekFrom::Start(vis_lump.offset as u64))?;
@@ -777,16 +790,21 @@ impl Bsp {
         (&mut reader).take(vis_lump.size as u64).read_to_end(
             &mut vis_data,
         )?;
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0))?,
+        if reader.seek(SeekFrom::Current(0))? !=
             reader.seek(SeekFrom::Start(
                 (vis_lump.offset + vis_lump.size) as u64,
             ))?
-        );
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         let node_lump = &lumps[BspLumpId::Nodes as usize];
         reader.seek(SeekFrom::Start(node_lump.offset as u64))?;
-        assert_eq!(node_lump.size % NODE_SIZE, 0);
+        if node_lump.size % NODE_SIZE != 0 {
+            return Err(BspError::with_msg(
+                "BSP lump node size not a multiple of node size",
+            ));
+        }
         let node_count = node_lump.size / NODE_SIZE;
         if node_count > MAX_NODES {
             return Err(BspError::with_msg("Node count exceeds MAX_NODES"));
@@ -838,16 +856,21 @@ impl Bsp {
                 face_count: face_count as usize,
             });
         }
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0))?,
+        if reader.seek(SeekFrom::Current(0))? !=
             reader.seek(SeekFrom::Start(
                 (node_lump.offset + node_lump.size) as u64,
             ))?
-        );
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         let texinfo_lump = &lumps[BspLumpId::TextureInfo as usize];
         reader.seek(SeekFrom::Start(texinfo_lump.offset as u64))?;
-        assert_eq!(texinfo_lump.size % TEXINFO_SIZE, 0);
+        if texinfo_lump.size % TEXINFO_SIZE != 0 {
+            return Err(BspError::with_msg(
+                "BSP texinfo lump size not a multiple of texinfo size",
+            ));
+        }
         let texinfo_count = texinfo_lump.size / TEXINFO_SIZE;
         let mut texinfos = Vec::with_capacity(texinfo_count);
         for _ in 0..texinfo_count {
@@ -882,16 +905,21 @@ impl Bsp {
                 },
             });
         }
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0))?,
+        if reader.seek(SeekFrom::Current(0))? !=
             reader.seek(SeekFrom::Start(
                 (texinfo_lump.offset + texinfo_lump.size) as u64,
             ))?
-        );
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         let face_lump = &lumps[BspLumpId::Faces as usize];
         reader.seek(SeekFrom::Start(face_lump.offset as u64))?;
-        assert_eq!(face_lump.size % FACE_SIZE, 0);
+        if face_lump.size % FACE_SIZE != 0 {
+            return Err(BspError::with_msg(
+                "BSP face lump size not a multiple of face size",
+            ));
+        }
         let face_count = face_lump.size / FACE_SIZE;
         let mut faces = Vec::with_capacity(face_count);
         for _ in 0..face_count {
@@ -942,12 +970,13 @@ impl Bsp {
                 lightmap_id: lightmap_id,
             });
         }
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0))?,
+        if reader.seek(SeekFrom::Current(0))? !=
             reader.seek(SeekFrom::Start(
                 (face_lump.offset + face_lump.size) as u64,
             ))?
-        );
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         let lightmap_lump = &lumps[BspLumpId::Lightmaps as usize];
         reader.seek(SeekFrom::Start(lightmap_lump.offset as u64))?;
@@ -955,16 +984,21 @@ impl Bsp {
         (&mut reader).take(lightmap_lump.size as u64).read_to_end(
             &mut lightmaps,
         )?;
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0))?,
+        if reader.seek(SeekFrom::Current(0))? !=
             reader.seek(SeekFrom::Start(
                 (lightmap_lump.offset + lightmap_lump.size) as u64,
             ))?
-        );
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         let clipnode_lump = &lumps[BspLumpId::ClipNodes as usize];
         reader.seek(SeekFrom::Start(clipnode_lump.offset as u64))?;
-        assert_eq!(clipnode_lump.size % CLIPNODE_SIZE, 0);
+        if clipnode_lump.size % CLIPNODE_SIZE != 0 {
+            return Err(BspError::with_msg(
+                "BSP clipnode lump size not a multiple of clipnode size",
+            ));
+        }
         let clipnode_count = clipnode_lump.size / CLIPNODE_SIZE;
         let mut clipnodes = Vec::with_capacity(clipnode_count);
         for _ in 0..clipnode_count {
@@ -979,18 +1013,21 @@ impl Bsp {
                     .unwrap(),
             });
         }
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0))?,
-            reader
-                .seek(SeekFrom::Start(
-                    (clipnode_lump.offset + clipnode_lump.size) as u64,
-                ))
-                .unwrap()
-        );
+        if reader.seek(SeekFrom::Current(0))? !=
+            reader.seek(SeekFrom::Start(
+                (clipnode_lump.offset + clipnode_lump.size) as u64,
+            ))?
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         let leaf_lump = &lumps[BspLumpId::Leaves as usize];
         reader.seek(SeekFrom::Start(leaf_lump.offset as u64))?;
-        assert_eq!(leaf_lump.size % LEAF_SIZE, 0);
+        if leaf_lump.size % LEAF_SIZE != 0 {
+            return Err(BspError::with_msg(
+                "BSP leaf lump size not a multiple of leaf size",
+            ));
+        }
         let leaf_count = leaf_lump.size / LEAF_SIZE;
         if leaf_count > MAX_LEAVES {
             return Err(BspError::with_msg("Leaf count exceeds MAX_LEAVES"));
@@ -1017,7 +1054,7 @@ impl Bsp {
             let face_id = reader.read_u16::<LittleEndian>()? as usize;
             let face_count = reader.read_u16::<LittleEndian>()? as usize;
             let mut sounds = [0u8; NUM_AMBIENTS];
-            reader.read(&mut sounds).unwrap();
+            reader.read(&mut sounds)?;
             leaves.push(BspLeaf {
                 contents: contents,
                 vis_offset: vis_offset,
@@ -1028,31 +1065,41 @@ impl Bsp {
                 sounds: sounds,
             });
         }
+        if reader.seek(SeekFrom::Current(0))? !=
+            reader.seek(SeekFrom::Start(
+                (leaf_lump.offset + leaf_lump.size) as u64,
+            ))?
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         let facelist_lump = &lumps[BspLumpId::FaceList as usize];
-        reader
-            .seek(SeekFrom::Start(facelist_lump.offset as u64))
-            .unwrap();
-        assert_eq!(facelist_lump.size % FACELIST_SIZE, 0);
+        reader.seek(SeekFrom::Start(facelist_lump.offset as u64))?;
+        if facelist_lump.size % FACELIST_SIZE != 0 {
+            return Err(BspError::with_msg(
+                "BSP facelist lump size not a multiple of facelist entry size",
+            ));
+        }
         let facelist_count = facelist_lump.size / FACELIST_SIZE;
         let mut facelist = Vec::with_capacity(facelist_count);
         for _ in 0..facelist_count {
             facelist.push(reader.read_u16::<LittleEndian>()? as usize);
         }
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0)).unwrap(),
-            reader
-                .seek(SeekFrom::Start(
-                    (facelist_lump.offset + facelist_lump.size) as u64,
-                ))
-                .unwrap()
-        );
+        if reader.seek(SeekFrom::Current(0))? !=
+            reader.seek(SeekFrom::Start(
+                (facelist_lump.offset + facelist_lump.size) as u64,
+            ))?
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         let edge_lump = &lumps[BspLumpId::Edges as usize];
-        reader
-            .seek(SeekFrom::Start(edge_lump.offset as u64))
-            .unwrap();
-        assert_eq!(edge_lump.size % EDGE_SIZE, 0);
+        reader.seek(SeekFrom::Start(edge_lump.offset as u64))?;
+        if edge_lump.size % EDGE_SIZE != 0 {
+            return Err(BspError::with_msg(
+                "BSP edge lump size not a multiple of edge size",
+            ));
+        }
         let edge_count = edge_lump.size / EDGE_SIZE;
         if edge_count > MAX_EDGES {
             return Err(BspError::with_msg("Edge count exceeds MAX_EDGES"));
@@ -1066,16 +1113,21 @@ impl Bsp {
                 ],
             });
         }
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0)).unwrap(),
-            reader
-                .seek(SeekFrom::Start((edge_lump.offset + edge_lump.size) as u64))
-                .unwrap()
-        );
+        if reader.seek(SeekFrom::Current(0))? !=
+            reader.seek(SeekFrom::Start(
+                (edge_lump.offset + edge_lump.size) as u64,
+            ))?
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         let edgelist_lump = &lumps[BspLumpId::EdgeList as usize];
         reader.seek(SeekFrom::Start(edgelist_lump.offset as u64))?;
-        assert_eq!(edgelist_lump.size % EDGELIST_SIZE, 0);
+        if edgelist_lump.size % EDGELIST_SIZE != 0 {
+            return Err(BspError::with_msg(
+                "BSP edgelist lump size not a multiple of edgelist entry size",
+            ));
+        }
         let edgelist_count = edgelist_lump.size / EDGELIST_SIZE;
         if edgelist_count > MAX_EDGELIST {
             return Err(BspError::with_msg("Edge list count exceeds MAX_EDGELIST"));
@@ -1096,20 +1148,21 @@ impl Bsp {
                 x => return Err(BspError::with_msg(format!("Invalid edge index {}", x))),
             });
         }
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0)).unwrap(),
-            reader
-                .seek(SeekFrom::Start(
-                    (edgelist_lump.offset + edgelist_lump.size) as u64,
-                ))
-                .unwrap()
-        );
+        if reader.seek(SeekFrom::Current(0))? !=
+            reader.seek(SeekFrom::Start(
+                (edgelist_lump.offset + edgelist_lump.size) as u64,
+            ))?
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         let model_lump = &lumps[BspLumpId::Models as usize];
-        reader
-            .seek(SeekFrom::Start(model_lump.offset as u64))
-            .unwrap();
-        assert_eq!(model_lump.size % MODEL_SIZE, 0);
+        reader.seek(SeekFrom::Start(model_lump.offset as u64))?;
+        if model_lump.size % MODEL_SIZE != 0 {
+            return Err(BspError::with_msg(
+                "BSP model lump size not a multiple of model size",
+            ));
+        }
         let model_count = model_lump.size / MODEL_SIZE;
         if model_count > MAX_MODELS {
             return Err(BspError::with_msg("Model count exceeds MAX_MODELS"));
@@ -1161,12 +1214,13 @@ impl Bsp {
                 face_count: face_count,
             });
         }
-        assert_eq!(
-            reader.seek(SeekFrom::Current(0))?,
+        if reader.seek(SeekFrom::Current(0))? !=
             reader.seek(SeekFrom::Start(
                 (model_lump.offset + model_lump.size) as u64,
             ))?
-        );
+        {
+            return Err(BspError::with_msg("BSP read data misaligned"));
+        }
 
         Ok(Bsp {
             entities: entities,
