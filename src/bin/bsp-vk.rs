@@ -125,7 +125,7 @@ const ASCII_j: usize = 'j' as usize;
 //   |_____ -y Quake ->   |_____ +x Vulkan
 //   /                    /
 //  /                    /
-// / +x                 / -z
+// / +x                 / +z
 //
 // Quake  [x, y, z] <-> [-z, -x, -y] Vulkan
 // Vulkan [x, y, z] <-> [ y, -z, -x] Quake
