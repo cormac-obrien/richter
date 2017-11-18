@@ -90,6 +90,7 @@ fn main() {
                         ..
                     } => match e {
                         WindowEvent::Closed => quit = true,
+                        WindowEvent::ReceivedCharacter('`') => input_focus = InputFocus::Console,
                         WindowEvent::KeyboardInput {
                             input: KeyboardInput {
                                 virtual_keycode: Some(k),
