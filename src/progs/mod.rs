@@ -17,11 +17,18 @@
 
 //! QuakeC bytecode interpreter
 //!
-//! QuakeC bytecode consists of eight-byte instructions (referred to as "statements" in the original
-//! source, and henceforth referred to as such here) comprised of a 16-bit opcode and three 16-bit
-//! operands. The operands correspond to 4-byte offsets within the globals table. Thus, an operand
-//! of 0x0004 (4) indicates that the value should be loaded from 0x0010 (16) bytes into the global
-//! table. The statements are kept in a contiguous block of code (the "statements table").
+//! # Opcodes
+//!
+//! - `0 DONE   ret`
+//! - `1 MUL_F  f1  f2 product`
+//! - `2 MUL_V  v1  v2 product`
+//! - `3 MUL_FV f   v  product`
+//! - `4 MUL_VF v   f  product`
+//! - `5 DIV    f   f  quotient`
+//! - `6 ADD_F  f   f  sum`
+//! - `7 ADD_V  v   v  sum`
+//! - `8 ADD_FV f   v  sum`
+//! - `9 ADD_VF v   f  sum`
 //!
 //! The function table consists of named records containing the information necessary to execute
 //! the functions they describe, including the index of the first statement in the statements table,
@@ -30,6 +37,65 @@
 //!
 //! The call stack consists of stack frames containing the index of the function in the function
 //! table and the index offset (from the functions first statement) of the statement to reenter on.
+//!
+//! # Loading
+//!
+//! QuakeC bytecode is typically loaded from `progs.dat` or `qwprogs.dat`. Bytecode files begin with
+//! a brief header with an `i32` format version number (which must equal VERSION) and an `i32` CRC
+//! checksum to ensure the correct bytecode is being loaded.
+//!
+//! ```text
+//! version: i32,
+//! crc: i32,
+//! ```
+//!
+//! This is followed by a series of six lumps acting as a directory into the file data. Each lump
+//! consists of an `i32` byte offset into the file data and an `i32` element count.
+//!
+//! ```text
+//! statement_offset: i32,
+//! statement_count: i32,
+//!
+//! globaldef_offset: i32,
+//! globaldef_count: i32,
+//!
+//! fielddef_offset: i32,
+//! fielddef_count: i32,
+//!
+//! function_offset: i32,
+//! function_count: i32,
+//!
+//! string_offset: i32,
+//! string_count: i32,
+//!
+//! global_offset: i32,
+//! global_count: i32,
+//! ```
+//!
+//! These offsets are not guaranteed to be in order, and in fact `progs.dat` usually has the string
+//! section first. Offsets are in bytes from the beginning of the file.
+//!
+//! ## String data
+//!
+//! The string data block is located at the offset given by `string_offset` and consists of a series
+//! of null-terminated ASCII strings laid end-to-end. The first string is always the empty string,
+//! i.e. the first byte is always the null byte. The total size in bytes of the string data is given
+//! by `string_count`.
+//!
+//! ## Statements
+//!
+//! The statement table is located at the offset given by `statement_offset` and consists of
+//! `statement_count` 8-byte instructions of the form
+//!
+//! ```text
+//! opcode: u16,
+//! arg1: i16,
+//! arg2: i16,
+//! arg3: i16,
+//! ```
+//!
+//! Not every opcode uses three arguments, but all statements have space for three arguments anyway,
+//! probably for simplicity.
 
 mod globals;
 mod ops;
@@ -40,11 +106,10 @@ use std::io::Cursor;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
-use std::mem::transmute;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
-use math::Vec3;
+use byteorder::WriteBytesExt;
 use num::FromPrimitive;
 
 use self::ops::Opcode;
@@ -56,6 +121,10 @@ const MAX_ARGS: usize = 8;
 const MAX_STACK_DEPTH: usize = 32;
 const LUMP_COUNT: usize = 6;
 const SAVE_GLOBAL: u16 = 1 << 15;
+
+const STATEMENT_SIZE: usize = 8;
+const FUNCTION_SIZE: usize = 36;
+const DEF_SIZE: usize = 8;
 
 #[derive(Debug)]
 pub enum ProgsError {
@@ -99,20 +168,23 @@ impl From<::std::io::Error> for ProgsError {
 #[derive(Debug)]
 struct FunctionId(i32);
 
-#[derive(Debug)]
-#[repr(C)]
-struct StringId(i32);
+#[derive(Copy, Clone, Debug)]
+enum StringId {
+    Static(usize),
+    Dynamic(usize),
+}
 
 enum LumpId {
     Statements = 0,
     GlobalDefs = 1,
-    FieldDefs = 2,
+    Fielddefs = 2,
     Functions = 3,
     Strings = 4,
     Globals = 5,
+    Count = 6,
 }
 
-#[derive(Debug, FromPrimitive)]
+#[derive(Copy, Clone, Debug, FromPrimitive, PartialEq)]
 #[repr(u16)]
 enum Type {
     QVoid = 0,
@@ -134,6 +206,22 @@ struct Statement {
     arg3: i16,
 }
 
+impl Statement {
+    fn new(op: i16, arg1: i16, arg2: i16, arg3: i16) -> Result<Statement, ProgsError> {
+        let opcode = match Opcode::from_i16(op) {
+            Some(o) => o,
+            None => return Err(ProgsError::with_msg(format!("Bad opcode 0x{:x}", op))),
+        };
+
+        Ok(Statement {
+            opcode: opcode,
+            arg1: arg1,
+            arg2: arg2,
+            arg3: arg3,
+        })
+    }
+}
+
 #[derive(Debug)]
 enum FunctionKind {
     BuiltIn(usize),
@@ -146,7 +234,7 @@ struct Function {
     arg_start: usize,
     locals: usize,
     name_id: StringId,
-    srcfile_id: usize,
+    srcfile_id: StringId,
     argc: usize,
     argsz: [u8; MAX_ARGS],
 }
@@ -157,7 +245,7 @@ struct StackFrame {
     func_id: u32,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct Lump {
     offset: usize,
     count: usize,
@@ -169,36 +257,55 @@ struct Def {
     save: bool,
     type_: Type,
     offset: u16,
-    name_id: i32,
+    name_id: StringId,
 }
 
-#[derive(Debug)]
-pub struct Progs {
-    functions: Box<[Function]>,
-    statements: Box<[Statement]>,
-
-    globaldefs: Box<[Def]>,
-    fielddefs: Box<[Def]>,
-    globals: Globals,
+pub struct ProgsLoader {
+    lumps: [Lump; LumpId::Count as usize],
+    strings: Vec<String>,
+    string_offsets: Vec<usize>,
+    globaldefs: Vec<Def>,
+    globaldef_offsets: Vec<usize>,
+    fielddefs: Vec<Def>,
+    fielddef_offsets: Vec<usize>,
+    memory: Vec<[u8; 4]>,
 }
 
-impl Progs {
-    pub fn load(data: &[u8]) -> Result<Progs, ProgsError> {
+impl ProgsLoader {
+    pub fn new() -> ProgsLoader {
+        ProgsLoader {
+            lumps: [Lump {
+                offset: 0,
+                count: 0,
+            }; LumpId::Count as usize],
+            strings: Vec::new(),
+            string_offsets: Vec::new(),
+            globaldefs: Vec::new(),
+            globaldef_offsets: Vec::new(),
+            fielddefs: Vec::new(),
+            fielddef_offsets: Vec::new(),
+            memory: Vec::new(),
+        }
+    }
+
+    pub fn load(mut self, data: &[u8]) -> Result<Progs, ProgsError> {
         let mut src = Cursor::new(data);
         assert!(src.read_i32::<LittleEndian>()? == VERSION);
         assert!(src.read_i32::<LittleEndian>()? == CRC);
 
-        let mut lumps = Vec::new();
-        for _ in 0..LUMP_COUNT {
-            lumps.push(Lump {
+        for l in 0..LumpId::Count as usize {
+            self.lumps[l] = Lump {
                 offset: src.read_i32::<LittleEndian>()? as usize,
                 count: src.read_i32::<LittleEndian>()? as usize,
-            });
+            };
+
+            debug!("{:?}: {:?}", l, self.lumps[l]);
         }
 
         let field_count = src.read_i32::<LittleEndian>()? as usize;
+        debug!("Field count: {}", field_count);
 
-        let string_lump = &lumps[LumpId::Strings as usize];
+        let string_lump = &self.lumps[LumpId::Strings as usize];
         src.seek(SeekFrom::Start(string_lump.offset as u64))?;
         let mut string_data = Vec::new();
         (&mut src).take(string_lump.count as u64).read_to_end(
@@ -206,38 +313,17 @@ impl Progs {
         )?;
         let str_slice = ::std::str::from_utf8(&string_data).unwrap();
 
-        let mut strings = Vec::new();
-        let mut string_offsets = Vec::new();
         let mut current_offset = 0;
-
         for s in str_slice.split('\x00') {
-            strings.push(s.to_owned());
-            string_offsets.push(current_offset);
+            self.strings.push(s.to_owned());
+            self.string_offsets.push(current_offset);
 
             // add 1 to length to account for null byte
             current_offset += s.len() + 1;
         }
+        // we can now use `get_string_at_offset()`
 
-        let statement_lump = &lumps[LumpId::Statements as usize];
-        src.seek(SeekFrom::Start(statement_lump.offset as u64))?;
-        let mut statements = Vec::with_capacity(statement_lump.count);
-        for _ in 0..statement_lump.count {
-            statements.push(Statement {
-                opcode: Opcode::from_u16(src.read_u16::<LittleEndian>()?).unwrap(),
-                arg1: src.read_i16::<LittleEndian>()?,
-                arg2: src.read_i16::<LittleEndian>()?,
-                arg3: src.read_i16::<LittleEndian>()?,
-            });
-        }
-
-        assert_eq!(
-            src.seek(SeekFrom::Current(0))?,
-            src.seek(SeekFrom::Start(
-                (statement_lump.offset + statement_lump.count * 8) as u64,
-            ))?
-        );
-
-        let function_lump = &lumps[LumpId::Functions as usize];
+        let function_lump = &self.lumps[LumpId::Functions as usize];
         src.seek(SeekFrom::Start(function_lump.offset as u64))?;
         let mut functions = Vec::with_capacity(function_lump.count);
         for _ in 0..function_lump.count {
@@ -251,78 +337,247 @@ impl Progs {
             // throw away profile variable
             let _ = src.read_i32::<LittleEndian>()?;
 
-            let name_id = match src.read_i32::<LittleEndian>()? {
-                id if id < 0 => StringId(id),
-                id => {
-                    let str_id = match string_offsets.binary_search(&(id as usize)) {
-                        Ok(i) => i,
-                        Err(_) => {
-                            return Err(ProgsError::with_msg(
-                                format!("No string with offset {}", id),
-                            ))
-                        }
-                    };
+            let name_id = self.get_string_at_offset(src.read_i32::<LittleEndian>()?)?;
+            let srcfile_id = self.get_string_at_offset(src.read_i32::<LittleEndian>()?)?;
 
-                    StringId(str_id as i32)
-                }
-            };
-
-            let srcfile_id = src.read_i32::<LittleEndian>()?;
             let argc = src.read_i32::<LittleEndian>()?;
+            let mut argsz = [0; MAX_ARGS];
+            src.read(&mut argsz)?;
 
             functions.push(Function {
                 kind: kind,
                 arg_start: arg_start as usize,
                 locals: locals as usize,
                 name_id: name_id,
-                srcfile_id: srcfile_id as usize,
+                srcfile_id: srcfile_id,
                 argc: argc as usize,
-                argsz: [
-                    src.read_u8()?,
-                    src.read_u8()?,
-                    src.read_u8()?,
-                    src.read_u8()?,
-                    src.read_u8()?,
-                    src.read_u8()?,
-                    src.read_u8()?,
-                    src.read_u8()?,
-                ],
+                argsz: argsz,
             });
         }
 
-        let globaldef_lump = &lumps[LumpId::GlobalDefs as usize];
+        assert_eq!(
+            src.seek(SeekFrom::Current(0))?,
+            src.seek(SeekFrom::Start(
+                (function_lump.offset + function_lump.count * FUNCTION_SIZE) as
+                    u64,
+            ))?
+        );
+
+        let globaldef_lump = &self.lumps[LumpId::GlobalDefs as usize];
         src.seek(SeekFrom::Start(globaldef_lump.offset as u64))?;
-        let mut globaldefs = Vec::new();
         for _ in 0..globaldef_lump.count {
             let type_ = src.read_u16::<LittleEndian>()?;
-            globaldefs.push(Def {
+            let offset = src.read_u16::<LittleEndian>()?;
+            self.globaldef_offsets.push(offset as usize);
+            let name_id = self.get_string_at_offset(src.read_i32::<LittleEndian>()?)?;
+            self.globaldefs.push(Def {
                 save: type_ & SAVE_GLOBAL != 0,
                 type_: Type::from_u16(type_ & !SAVE_GLOBAL).unwrap(),
-                offset: src.read_u16::<LittleEndian>()?,
-                name_id: src.read_i32::<LittleEndian>()?,
+                offset: offset,
+                name_id: name_id,
             });
         }
 
-        let fielddef_lump = &lumps[LumpId::FieldDefs as usize];
+        for (i, g) in self.globaldefs.iter().enumerate() {
+            debug!("{}: {:?}", i, g);
+        }
+
+        assert_eq!(
+            src.seek(SeekFrom::Current(0))?,
+            src.seek(SeekFrom::Start(
+                (globaldef_lump.offset + globaldef_lump.count * DEF_SIZE) as
+                    u64,
+            ))?
+        );
+
+        let fielddef_lump = &self.lumps[LumpId::Fielddefs as usize];
         src.seek(SeekFrom::Start(fielddef_lump.offset as u64))?;
-        let mut fielddefs = Vec::new();
         for _ in 0..fielddef_lump.count {
             let type_ = src.read_u16::<LittleEndian>()?;
-            fielddefs.push(Def {
+            let offset = src.read_u16::<LittleEndian>()?;
+            self.fielddef_offsets.push(offset as usize);
+            let name_id = self.get_string_at_offset(src.read_i32::<LittleEndian>()?)?;
+            self.fielddefs.push(Def {
                 save: type_ & SAVE_GLOBAL != 0,
                 type_: Type::from_u16(type_ & !SAVE_GLOBAL).unwrap(),
-                offset: src.read_u16::<LittleEndian>()?,
-                name_id: src.read_i32::<LittleEndian>()?,
+                offset: offset,
+                name_id: name_id,
             });
         }
+
+        for (i, f) in self.fielddefs.iter().enumerate() {
+            debug!("{}: {:?}", i, f);
+        }
+
+        assert_eq!(
+            src.seek(SeekFrom::Current(0))?,
+            src.seek(SeekFrom::Start(
+                (fielddef_lump.offset + fielddef_lump.count * DEF_SIZE) as
+                    u64,
+            ))?
+        );
+
+        // statements must be loaded last in order to validate operands
+        let statement_lump = &self.lumps[LumpId::Statements as usize];
+        src.seek(SeekFrom::Start(statement_lump.offset as u64))?;
+        let mut statements = Vec::with_capacity(statement_lump.count);
+        for _ in 0..statement_lump.count {
+            statements.push(Statement::new(
+                src.read_i16::<LittleEndian>()?,
+                src.read_i16::<LittleEndian>()?,
+                src.read_i16::<LittleEndian>()?,
+                src.read_i16::<LittleEndian>()?,
+            )?);
+        }
+
+        assert_eq!(
+            src.seek(SeekFrom::Current(0))?,
+            src.seek(SeekFrom::Start(
+                (statement_lump.offset + statement_lump.count * STATEMENT_SIZE) as
+                    u64,
+            ))?
+        );
+
+        let memory_lump = &self.lumps[LumpId::Globals as usize];
+        src.seek(SeekFrom::Start(memory_lump.offset as u64))?;
+        for _ in 0..memory_lump.count {
+            let mut block = [0; 4];
+            src.read(&mut block)?;
+            self.memory.push(block);
+        }
+
+        assert_eq!(
+            src.seek(SeekFrom::Current(0))?,
+            src.seek(SeekFrom::Start(
+                (memory_lump.offset + memory_lump.count * 4) as u64,
+            ))?
+        );
 
         Ok(Progs {
             functions: functions.into_boxed_slice(),
             statements: statements.into_boxed_slice(),
-            globaldefs: globaldefs.into_boxed_slice(),
-            fielddefs: fielddefs.into_boxed_slice(),
-            globals: Globals::new(),
+            strings: self.strings.into_boxed_slice(),
+            string_offsets: self.string_offsets.into_boxed_slice(),
+            globaldefs: self.globaldefs.into_boxed_slice(),
+            globaldef_offsets: self.globaldef_offsets.into_boxed_slice(),
+            fielddefs: self.fielddefs.into_boxed_slice(),
+            fielddef_offsets: self.fielddef_offsets.into_boxed_slice(),
+            memory: self.memory.into_boxed_slice(),
         })
+    }
+
+    // Attempt to locate a string given its `i32` identifier in the bytecode file.
+    //
+    // TODO: check negative IDs against maximum dynamically allocated strings.
+    fn get_string_at_offset(&self, offset: i32) -> Result<StringId, ProgsError> {
+        match offset {
+            id if id < 0 => Ok(StringId::Dynamic(-id as usize)),
+            ofs => {
+                match self.string_offsets.binary_search(&(ofs as usize)) {
+                    Ok(o) => Ok(StringId::Static(o)),
+                    Err(_) => Err(ProgsError::with_msg(
+                        format!("No string with offset {}", ofs),
+                    )),
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Progs {
+    functions: Box<[Function]>,
+    statements: Box<[Statement]>,
+
+    strings: Box<[String]>,
+    string_offsets: Box<[usize]>,
+
+    globaldefs: Box<[Def]>,
+    globaldef_offsets: Box<[usize]>,
+
+    fielddefs: Box<[Def]>,
+    fielddef_offsets: Box<[usize]>,
+
+    memory: Box<[[u8; 4]]>,
+}
+
+impl Progs {
+    // run through all statements and see if we crash. elegant!
+    pub fn validate(&mut self) {
+        for i in 0..self.statements.len() {
+            let op = self.statements[i].opcode;
+            let arg1 = self.statements[i].arg1;
+            let arg2 = self.statements[i].arg2;
+            let arg3 = self.statements[i].arg3;
+            match op {
+                Opcode::MulF => self.mul_f(arg1, arg2, arg3).unwrap(),
+                Opcode::MulV => self.mul_v(arg1, arg2, arg3).unwrap(),
+                Opcode::MulFV => self.mul_fv(arg1, arg2, arg3).unwrap(),
+                Opcode::MulVF => self.mul_vf(arg1, arg2, arg3).unwrap(),
+                Opcode::Div => self.div(arg1, arg2, arg3).unwrap(),
+                Opcode::AddF => self.add_f(arg1, arg2, arg3).unwrap(),
+                Opcode::AddV => self.add_v(arg1, arg2, arg3).unwrap(),
+                Opcode::SubF => self.sub_f(arg1, arg2, arg3).unwrap(),
+                Opcode::SubV => self.sub_v(arg1, arg2, arg3).unwrap(),
+                Opcode::EqF => self.eq_f(arg1, arg2, arg3).unwrap(),
+                Opcode::EqV => self.eq_v(arg1, arg2, arg3).unwrap(),
+                // Opcode::EqS
+                // Opcode::EqE
+                // Opcode::EqFnc
+                Opcode::NeF => self.ne_f(arg1, arg2, arg3).unwrap(),
+                Opcode::NeV => self.ne_v(arg1, arg2, arg3).unwrap(),
+                // Opcode::NeS
+                // Opcode::NeE
+                // Opcode::NeFnc
+                Opcode::Le => self.le(arg1, arg2, arg3).unwrap(),
+                Opcode::Ge => self.ge(arg1, arg2, arg3).unwrap(),
+                Opcode::Lt => self.lt(arg1, arg2, arg3).unwrap(),
+                Opcode::Gt => self.gt(arg1, arg2, arg3).unwrap(),
+                // Opcode::Indirect0
+                // Opcode::Indirect1
+                // Opcode::Indirect2
+                // Opcode::Indirect3
+                // Opcode::Indirect4
+                // Opcode::Indirect5
+                // Opcode::Address
+                // Opcode::StoreF
+                // Opcode::StoreV
+                // Opcode::StoreS
+                // Opcode::StoreEnt
+                // Opcode::StoreFld
+                // Opcode::StoreFnc
+                // Opcode::StorePF
+                // Opcode::StorePV
+                // Opcode::StorePS
+                // Opcode::StorePEnt
+                // Opcode::StorePFld
+                // Opcode::StorePFnc
+                // Opcode::Return
+                Opcode::NotF => self.not_f(arg1, arg2, arg3).unwrap(),
+                Opcode::NotV => self.not_v(arg1, arg2, arg3).unwrap(),
+                // Opcode::NotS
+                // Opcode::NotEnt
+                // Opcode::NotFnc
+                // Opcode::If
+                // Opcode::IfNot
+                // Opcode::Call0
+                // Opcode::Call1
+                // Opcode::Call2
+                // Opcode::Call3
+                // Opcode::Call4
+                // Opcode::Call5
+                // Opcode::Call6
+                // Opcode::Call7
+                // Opcode::Call8
+                // Opcode::State
+                // Opcode::Goto
+                Opcode::And => self.and(arg1, arg2, arg3).unwrap(),
+                Opcode::Or => self.or(arg1, arg2, arg3).unwrap(),
+                // Opcode::BitAnd
+                // Opcode::BitOr
+                _ => (),
+            }
+        }
     }
 
     fn execute(&mut self, function_id: FunctionId) {
@@ -344,211 +599,348 @@ impl Progs {
         0
     }
 
-    fn globals_as_f32(&mut self) -> *mut [f32] {
-        let globals_f: &mut [f32; globals::GLOBALS_COUNT] = unsafe { transmute(&mut self.globals) };
-        globals_f as *mut [f32; globals::GLOBALS_COUNT]
-    }
+    fn get_type_at_offset(&self, ofs: i16) -> Result<Option<Type>, ProgsError> {
+        if ofs < 0 {
+            return Err(ProgsError::with_msg(
+                "Attempted type lookup with negative offset",
+            ));
+        }
 
-    fn get_f(&mut self, id: u16) -> f32 {
-        unsafe { (*self.globals_as_f32())[id as usize] }
-    }
-
-    fn put_f(&mut self, val: f32, id: u16) {
-        unsafe { (*self.globals_as_f32())[id as usize] = val };
-    }
-
-    fn get_v(&mut self, id: u16) -> Vec3 {
-        let slice = unsafe { &(*self.globals_as_f32())[id as usize..id as usize + 3] };
-        Vec3::new(slice[0], slice[1], slice[2])
-    }
-
-    fn put_v(&mut self, val: Vec3, id: u16) {
-        let array: [f32; 3] = val.into();
-        for i in 0..3 {
-            unsafe {
-                (*self.globals_as_f32())[i] = array[i];
-            }
+        match self.globaldef_offsets.binary_search(&(ofs as usize)) {
+            Ok(o) => Ok(Some(self.globaldefs[o].type_)),
+            Err(_) => Ok(None),
         }
     }
 
+    fn mem_as_ref(&self, ofs: i16) -> Result<&[u8], ProgsError> {
+        match ofs {
+            o if o < 0 => Err(ProgsError::with_msg("Negative memory access")),
+            o if o as usize > self.memory.len() => Err(ProgsError::with_msg(
+                "Out-of-bounds memory access",
+            )),
+            _ => Ok(&self.memory.as_ref()[ofs as usize]),
+        }
+    }
+
+    fn mem_as_mut(&mut self, ofs: i16) -> Result<&mut [u8], ProgsError> {
+        match ofs {
+            o if o < 0 => Err(ProgsError::with_msg("Negative memory access")),
+            o if o as usize > self.memory.len() => Err(ProgsError::with_msg(
+                "Out-of-bounds memory access",
+            )),
+            _ => Ok(&mut self.memory.as_mut()[ofs as usize]),
+        }
+    }
+
+    fn get_f(&self, ofs: i16) -> Result<f32, ProgsError> {
+        match self.get_type_at_offset(ofs)? {
+            Some(Type::QFloat) |
+            Some(Type::QVector) | // allow loading from QVector for component accesses
+            None => (),
+            _ => return Err(ProgsError::with_msg("get_f: type check failed")),
+        }
+
+        Ok(self.mem_as_ref(ofs)?.read_f32::<LittleEndian>()?)
+    }
+
+    fn put_f(&mut self, val: f32, ofs: i16) -> Result<(), ProgsError> {
+        match self.get_type_at_offset(ofs)? {
+            Some(Type::QFloat) |
+            Some(Type::QVector) | // allow storing to QVector for component accesses
+            None => (),
+            _ => return Err(ProgsError::with_msg("put_f: type check failed")),
+        }
+
+        Ok(self.mem_as_mut(ofs)?.write_f32::<LittleEndian>(val)?)
+    }
+
+    fn get_v(&self, ofs: i16) -> Result<[f32; 3], ProgsError> {
+        match self.get_type_at_offset(ofs)? {
+            // we have to allow loading from QFloat because the bytecode occasionally refers to
+            // a vector `vec` by its x-component `vec_x`
+            Some(Type::QFloat) |
+            Some(Type::QVector) |
+            None => (),
+            _ => return Err(ProgsError::with_msg("get_v: type check failed")),
+        }
+
+        let mut v = [0.0; 3];
+        for c in 0..v.len() {
+            v[c] = self.mem_as_ref(ofs + c as i16)?.read_f32::<LittleEndian>()?;
+        }
+        Ok(v)
+    }
+
+    fn put_v(&mut self, val: [f32; 3], ofs: i16) -> Result<(), ProgsError> {
+        for c in 0..val.len() {
+            self.mem_as_mut(ofs + c as i16)?.write_f32::<LittleEndian>(
+                val[c],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn get_s(&self, id: StringId) -> Result<String, ProgsError> {
+        Ok(match id {
+            StringId::Static(i) => self.strings[i].clone(),
+            StringId::Dynamic(_) => String::from("<dynamic>"),
+        })
+    }
+
     // ADD_F: Float addition
-    fn add_f(&mut self, f1_id: u16, f2_id: u16, sum_id: u16) {
-        let f1 = self.get_f(f1_id);
-        let f2 = self.get_f(f2_id);
-        self.put_f(f1 + f2, sum_id);
+    fn add_f(&mut self, f1_ofs: i16, f2_ofs: i16, sum_ofs: i16) -> Result<(), ProgsError> {
+        let f1 = self.get_f(f1_ofs)?;
+        let f2 = self.get_f(f2_ofs)?;
+        self.put_f(f1 + f2, sum_ofs)
     }
 
     // ADD_V: Vector addition
-    fn add_v(&mut self, v1_id: u16, v2_id: u16, sum_id: u16) {
-        let v1 = self.get_v(v1_id);
-        let v2 = self.get_v(v2_id);
-        self.put_v(v1 + v2, sum_id);
+    fn add_v(&mut self, v1_id: i16, v2_id: i16, sum_id: i16) -> Result<(), ProgsError> {
+        let v1 = self.get_v(v1_id)?;
+        let v2 = self.get_v(v2_id)?;
+
+        let mut sum = [0.0; 3];
+        for c in 0..sum.len() {
+            sum[c] = v1[c] + v2[c];
+        }
+
+        self.put_v(sum, sum_id)
     }
 
     // SUB_F: Float subtraction
-    fn sub_f(&mut self, f1_id: u16, f2_id: u16, diff_id: u16) {
-        let f1 = self.get_f(f1_id);
-        let f2 = self.get_f(f2_id);
-        self.put_f(f1 - f2, diff_id);
+    fn sub_f(&mut self, f1_id: i16, f2_id: i16, diff_id: i16) -> Result<(), ProgsError> {
+        let f1 = self.get_f(f1_id)?;
+        let f2 = self.get_f(f2_id)?;
+        self.put_f(f1 - f2, diff_id)
     }
 
     // SUB_V: Vector subtraction
-    fn sub_v(&mut self, v1_id: u16, v2_id: u16, diff_id: u16) {
-        let v1 = self.get_v(v1_id);
-        let v2 = self.get_v(v2_id);
-        self.put_v(v1 - v2, diff_id);
+    fn sub_v(&mut self, v1_id: i16, v2_id: i16, diff_id: i16) -> Result<(), ProgsError> {
+        let v1 = self.get_v(v1_id)?;
+        let v2 = self.get_v(v2_id)?;
+
+        let mut diff = [0.0; 3];
+        for c in 0..diff.len() {
+            diff[c] = v1[c] - v2[c];
+        }
+
+        self.put_v(diff, diff_id)
     }
 
     // MUL_F: Float multiplication
-    fn mul_f(&mut self, f1_id: u16, f2_id: u16, prod_id: u16) {
-        let f1 = self.get_f(f1_id);
-        let f2 = self.get_f(f2_id);
-        self.put_f(f1 * f2, prod_id);
+    fn mul_f(&mut self, f1_id: i16, f2_id: i16, prod_id: i16) -> Result<(), ProgsError> {
+        let f1 = self.get_f(f1_id)?;
+        let f2 = self.get_f(f2_id)?;
+        self.put_f(f1 * f2, prod_id)
     }
 
     // MUL_V: Vector dot-product
-    fn mul_v(&mut self, v1_id: u16, v2_id: u16, dot_id: u16) {
-        let v1 = self.get_v(v1_id);
-        let v2 = self.get_v(v2_id);
-        self.put_f(v1.dot(v2), dot_id);
+    fn mul_v(&mut self, v1_id: i16, v2_id: i16, dot_id: i16) -> Result<(), ProgsError> {
+        let v1 = self.get_v(v1_id)?;
+        let v2 = self.get_v(v2_id)?;
+
+        let mut dot = 0.0;
+
+        for c in 0..3 {
+            dot += v1[c] * v2[c];
+        }
+        self.put_f(dot, dot_id)
     }
 
     // MUL_FV: Component-wise multiplication of vector by scalar
-    fn mul_fv(&mut self, f_id: u16, v_id: u16, prod_id: u16) {
-        let f = self.get_f(f_id);
-        let v = self.get_v(v_id);
-        self.put_v(v * f, prod_id);
+    fn mul_fv(&mut self, f_id: i16, v_id: i16, prod_id: i16) -> Result<(), ProgsError> {
+        let f = self.get_f(f_id)?;
+        let v = self.get_v(v_id)?;
+
+        let mut prod = [0.0; 3];
+        for c in 0..prod.len() {
+            prod[c] = v[c] * f;
+        }
+
+        self.put_v(prod, prod_id)
     }
 
     // MUL_VF: Component-wise multiplication of vector by scalar
-    fn mul_vf(&mut self, v_id: u16, f_id: u16, prod_id: u16) {
-        let v = self.get_v(v_id);
-        let f = self.get_f(f_id);
-        self.put_v(v * f, prod_id);
+    fn mul_vf(&mut self, v_id: i16, f_id: i16, prod_id: i16) -> Result<(), ProgsError> {
+        let v = self.get_v(v_id)?;
+        let f = self.get_f(f_id)?;
+
+        let mut prod = [0.0; 3];
+        for c in 0..prod.len() {
+            prod[c] = v[c] * f;
+        }
+
+        self.put_v(prod, prod_id)
     }
 
     // DIV: Float division
-    fn div_f(&mut self, f1_id: u16, f2_id: u16, quot_id: u16) {
-        let f1 = self.get_f(f1_id);
-        let f2 = self.get_f(f2_id);
-        self.put_f(f1 / f2, quot_id);
+    fn div(&mut self, f1_id: i16, f2_id: i16, quot_id: i16) -> Result<(), ProgsError> {
+        let f1 = self.get_f(f1_id)?;
+        let f2 = self.get_f(f2_id)?;
+        self.put_f(f1 / f2, quot_id)
     }
 
     // BITAND: Bitwise AND
-    fn bitand(&mut self, f1_id: u16, f2_id: u16, and_id: u16) {
-        let i1 = self.get_f(f1_id) as i32;
-        let i2 = self.get_f(f2_id) as i32;
-        self.put_f((i1 & i2) as f32, and_id);
+    fn bitand(&mut self, f1_id: i16, f2_id: i16, and_id: i16) -> Result<(), ProgsError> {
+        let i1 = self.get_f(f1_id)? as i32;
+        let i2 = self.get_f(f2_id)? as i32;
+        self.put_f((i1 & i2) as f32, and_id)
     }
 
     // BITOR: Bitwise OR
-    fn bitor(&mut self, f1_id: u16, f2_id: u16, or_id: u16) {
-        let i1 = self.get_f(f1_id) as i32;
-        let i2 = self.get_f(f2_id) as i32;
-        self.put_f((i1 | i2) as f32, or_id);
-    }
-
-    // GE: Greater than or equal to comparison
-    fn ge(&mut self, f1_id: u16, f2_id: u16, ge_id: u16) {
-        let f1 = self.get_f(f1_id);
-        let f2 = self.get_f(f2_id);
-        self.put_f(
-            match f1 >= f2 {
-                true => 1.0,
-                false => 0.0,
-            },
-            ge_id,
-        );
+    fn bitor(&mut self, f1_id: i16, f2_id: i16, or_id: i16) -> Result<(), ProgsError> {
+        let i1 = self.get_f(f1_id)? as i32;
+        let i2 = self.get_f(f2_id)? as i32;
+        self.put_f((i1 | i2) as f32, or_id)
     }
 
     // LE: Less than or equal to comparison
-    fn le(&mut self, f1_id: u16, f2_id: u16, le_id: u16) {
-        let f1 = self.get_f(f1_id);
-        let f2 = self.get_f(f2_id);
+    fn le(&mut self, f1_id: i16, f2_id: i16, le_id: i16) -> Result<(), ProgsError> {
+        let f1 = self.get_f(f1_id)?;
+        let f2 = self.get_f(f2_id)?;
         self.put_f(
             match f1 <= f2 {
                 true => 1.0,
                 false => 0.0,
             },
             le_id,
-        );
+        )
     }
 
-    // GE: Greater than comparison
-    fn gt(&mut self, f1_id: u16, f2_id: u16, gt_id: u16) {
-        let f1 = self.get_f(f1_id);
-        let f2 = self.get_f(f2_id);
+    // GE: Greater than or equal to comparison
+    fn ge(&mut self, f1_id: i16, f2_id: i16, ge_id: i16) -> Result<(), ProgsError> {
+        let f1 = self.get_f(f1_id)?;
+        let f2 = self.get_f(f2_id)?;
         self.put_f(
-            match f1 > f2 {
+            match f1 >= f2 {
                 true => 1.0,
                 false => 0.0,
             },
-            gt_id,
-        );
+            ge_id,
+        )
     }
 
     // LT: Less than comparison
-    fn lt(&mut self, f1_id: u16, f2_id: u16, lt_id: u16) {
-        let f1 = self.get_f(f1_id);
-        let f2 = self.get_f(f2_id);
+    fn lt(&mut self, f1_id: i16, f2_id: i16, lt_id: i16) -> Result<(), ProgsError> {
+        let f1 = self.get_f(f1_id)?;
+        let f2 = self.get_f(f2_id)?;
         self.put_f(
             match f1 < f2 {
                 true => 1.0,
                 false => 0.0,
             },
             lt_id,
-        );
+        )
     }
 
-    // AND: Logical AND
-    fn and(&mut self, f1_id: u16, f2_id: u16, and_id: u16) {
-        let f1 = self.get_f(f1_id);
-        let f2 = self.get_f(f2_id);
+    // GT: Greater than comparison
+    fn gt(&mut self, f1_id: i16, f2_id: i16, gt_id: i16) -> Result<(), ProgsError> {
+        let f1 = self.get_f(f1_id)?;
+        let f2 = self.get_f(f2_id)?;
         self.put_f(
-            match f1 != 0.0 && f2 != 0.0 {
+            match f1 > f2 {
                 true => 1.0,
                 false => 0.0,
             },
-            and_id,
-        );
+            gt_id,
+        )
     }
 
-    // OR: Logical OR
-    fn or(&mut self, f1_id: u16, f2_id: u16, or_id: u16) {
-        let f1 = self.get_f(f1_id);
-        let f2 = self.get_f(f2_id);
+    // STORE_F
+    fn store_f(&mut self, src_id: i16, dest_id: i16, unused: i16) -> Result<(), ProgsError> {
+        let f = self.get_f(src_id)?;
+        self.put_f(f, dest_id)
+    }
+
+    // STORE_V
+    fn store_v(&mut self, src_id: i16, dest_id: i16, unused: i16) -> Result<(), ProgsError> {
+        let v = self.get_v(src_id)?;
+        self.put_v(v, dest_id)
+    }
+
+    // EQ_F: Test equality of two floats
+    fn eq_f(&mut self, f1_id: i16, f2_id: i16, eq_id: i16) -> Result<(), ProgsError> {
+        let f1 = self.get_f(f1_id)?;
+        let f2 = self.get_f(f2_id)?;
         self.put_f(
-            match f1 != 0.0 || f2 != 0.0 {
+            match f1 == f2 {
                 true => 1.0,
                 false => 0.0,
             },
-            or_id,
-        );
+            eq_id,
+        )
+    }
+
+    // EQ_V: Test equality of two vectors
+    fn eq_v(&mut self, v1_id: i16, v2_id: i16, eq_id: i16) -> Result<(), ProgsError> {
+        let v1 = self.get_v(v1_id)?;
+        let v2 = self.get_v(v2_id)?;
+        self.put_f(
+            match v1 == v2 {
+                true => 1.0,
+                false => 0.0,
+            },
+            eq_id,
+        )
+    }
+
+    // NE_F: Test inequality of two floats
+    fn ne_f(&mut self, f1_id: i16, f2_id: i16, ne_id: i16) -> Result<(), ProgsError> {
+        let f1 = self.get_f(f1_id)?;
+        let f2 = self.get_f(f2_id)?;
+        self.put_f(
+            match f1 != f2 {
+                true => 1.0,
+                false => 0.0,
+            },
+            ne_id,
+        )
+    }
+
+    // NE_V: Test inequality of two vectors
+    fn ne_v(&mut self, v1_id: i16, v2_id: i16, ne_id: i16) -> Result<(), ProgsError> {
+        let v1 = self.get_v(v1_id)?;
+        let v2 = self.get_v(v2_id)?;
+        self.put_f(
+            match v1 != v2 {
+                true => 1.0,
+                false => 0.0,
+            },
+            ne_id,
+        )
     }
 
     // NOT_F: Compare float to 0.0
-    fn not_f(&mut self, f_id: u16, not_id: u16) {
-        let f = self.get_f(f_id);
+    fn not_f(&mut self, f_id: i16, unused: i16, not_id: i16) -> Result<(), ProgsError> {
+        if unused != 0 {
+            return Err(ProgsError::with_msg("Nonzero arg2 to NOT_F"));
+        }
+
+        let f = self.get_f(f_id)?;
         self.put_f(
             match f == 0.0 {
                 true => 1.0,
                 false => 0.0,
             },
             not_id,
-        );
+        )
     }
 
     // NOT_V: Compare vec to { 0.0, 0.0, 0.0 }
-    fn not_v(&mut self, v_id: u16, not_id: u16) {
-        let v = self.get_v(v_id);
-        let zero_vec = Vec3::new(0.0, 0.0, 0.0);
+    fn not_v(&mut self, v_id: i16, unused: i16, not_id: i16) -> Result<(), ProgsError> {
+        if unused != 0 {
+            return Err(ProgsError::with_msg("Nonzero arg2 to NOT_V"));
+        }
+
+        let v = self.get_v(v_id)?;
+        let zero_vec = [0.0; 3];
         self.put_v(
             match v == zero_vec {
-                true => Vec3::new(1.0, 1.0, 1.0),
+                true => [1.0; 3],
                 false => zero_vec,
             },
             not_id,
-        );
+        )
     }
 
     // TODO
@@ -560,232 +952,30 @@ impl Progs {
     // TODO
     // NOT_ENT: Compare entity to ???
 
-    // EQ_F: Test equality of two floats
-    fn eq_f(&mut self, f1_id: u16, f2_id: u16, eq_id: u16) {
-        let f1 = self.get_f(f1_id);
-        let f2 = self.get_f(f2_id);
+
+    // AND: Logical AND
+    fn and(&mut self, f1_id: i16, f2_id: i16, and_id: i16) -> Result<(), ProgsError> {
+        let f1 = self.get_f(f1_id)?;
+        let f2 = self.get_f(f2_id)?;
         self.put_f(
-            match f1 == f2 {
+            match f1 != 0.0 && f2 != 0.0 {
                 true => 1.0,
                 false => 0.0,
             },
-            eq_id,
-        );
+            and_id,
+        )
     }
 
-    // EQ_V: Test equality of two vectors
-    fn eq_v(&mut self, v1_id: u16, v2_id: u16, eq_id: u16) {
-        let v1 = self.get_v(v1_id);
-        let v2 = self.get_v(v2_id);
+    // OR: Logical OR
+    fn or(&mut self, f1_id: i16, f2_id: i16, or_id: i16) -> Result<(), ProgsError> {
+        let f1 = self.get_f(f1_id)?;
+        let f2 = self.get_f(f2_id)?;
         self.put_f(
-            match v1 == v2 {
+            match f1 != 0.0 || f2 != 0.0 {
                 true => 1.0,
                 false => 0.0,
             },
-            eq_id,
-        );
+            or_id,
+        )
     }
-
-    // NE_F: Test inequality of two floats
-    fn ne_f(&mut self, f1_id: u16, f2_id: u16, ne_id: u16) {
-        let f1 = self.get_f(f1_id);
-        let f2 = self.get_f(f2_id);
-        self.put_f(
-            match f1 != f2 {
-                true => 1.0,
-                false => 0.0,
-            },
-            ne_id,
-        );
-    }
-
-    // NE_V: Test inequality of two vectors
-    fn ne_v(&mut self, v1_id: u16, v2_id: u16, ne_id: u16) {
-        let v1 = self.get_v(v1_id);
-        let v2 = self.get_v(v2_id);
-        self.put_f(
-            match v1 != v2 {
-                true => 1.0,
-                false => 0.0,
-            },
-            ne_id,
-        );
-    }
-
-    fn ne_s(&mut self, s1_id: u16, s2_id: u16, ne_id: u16) {}
 }
-
-// #[cfg(test)]
-// mod test {
-// use super::*;
-// use std::mem::{size_of, transmute};
-// use math::Vec3;
-// use progs::Progs;
-//
-// #[test]
-// fn test_progs_get_f() {
-// let to_load = 42.0;
-//
-// let data: [u8; 4];
-// unsafe {
-// data = transmute(to_load);
-// }
-// let mut progs = Progs {
-// functions: Default::default(),
-// data: data.to_vec().into_boxed_slice(),
-// statements: Default::default(),
-// };
-//
-// assert!(progs.get_f(0) == to_load);
-// }
-//
-// #[test]
-// fn test_progs_put_f() {
-// let to_store = 365.0;
-//
-// let mut progs = Progs {
-// functions: Default::default(),
-// data: vec![0, 0, 0, 0].into_boxed_slice(),
-// statements: Default::default(),
-// };
-//
-// progs.put_f(to_store, 0);
-// assert!(progs.get_f(0) == to_store);
-// }
-//
-// #[test]
-// fn test_progs_get_v() {
-// let to_load = Vec3::new(10.0, -10.0, 0.0);
-// let data: [u8; 12];
-// unsafe {
-// data = transmute(to_load);
-// }
-// let mut progs = Progs {
-// functions: Default::default(),
-// data: data.to_vec().into_boxed_slice(),
-// statements: Default::default(),
-// };
-//
-// assert!(progs.get_v(0) == to_load);
-// }
-//
-// #[test]
-// fn test_progs_put_v() {
-// let to_store = Vec3::new(245.2, 50327.99, 0.0002);
-//
-// let mut progs = Progs {
-// functions: Default::default(),
-// data: vec![0; 12].into_boxed_slice(),
-// statements: Default::default(),
-// };
-//
-//
-// progs.put_v(to_store, 0);
-// assert!(progs.get_v(0) == to_store);
-// }
-//
-// #[test]
-// fn test_progs_add_f() {
-// let f32_size = size_of::<f32>() as u16;
-// let term1 = 5.0;
-// let t1_addr = 0 * f32_size;
-// let term2 = 7.0;
-// let t2_addr = 1 * f32_size;
-// let sum_addr = 2 * f32_size;
-//
-// let mut progs = Progs {
-// functions: Default::default(),
-// data: vec![0; 12].into_boxed_slice(),
-// statements: Default::default(),
-// };
-//
-// progs.put_f(term1, t1_addr);
-// progs.put_f(term2, t2_addr);
-// progs.add_f(t1_addr as u16, t2_addr as u16, sum_addr as u16);
-// assert!(progs.get_f(sum_addr) == term1 + term2);
-// }
-//
-// #[test]
-// fn test_progs_sub_f() {
-// let f32_size = size_of::<f32>() as u16;
-// let term1 = 9.0;
-// let t1_addr = 0 * f32_size;
-// let term2 = 2.0;
-// let t2_addr = 1 * f32_size;
-// let diff_addr = 2 * f32_size;
-//
-// let mut progs = Progs {
-// functions: Default::default(),
-// data: vec![0; 12].into_boxed_slice(),
-// statements: Default::default(),
-// };
-//
-// progs.put_f(term1, t1_addr);
-// progs.put_f(term2, t2_addr);
-// progs.sub_f(t1_addr as u16, t2_addr as u16, diff_addr as u16);
-// assert!(progs.get_f(diff_addr) == term1 - term2);
-// }
-//
-// #[test]
-// fn test_progs_mul_f() {
-// let f32_size = size_of::<f32>() as u16;
-// let term1 = 3.0;
-// let t1_addr = 0 * f32_size;
-// let term2 = 8.0;
-// let t2_addr = 1 * f32_size;
-// let prod_addr = 2 * f32_size;
-//
-// let mut progs = Progs {
-// functions: Default::default(),
-// data: vec![0; 12].into_boxed_slice(),
-// statements: Default::default(),
-// };
-//
-// progs.put_f(term1, t1_addr);
-// progs.put_f(term2, t2_addr);
-// progs.mul_f(t1_addr as u16, t2_addr as u16, prod_addr as u16);
-// assert!(progs.get_f(prod_addr) == term1 * term2);
-// }
-//
-// #[test]
-// fn test_progs_div_f() {
-// let f32_size = size_of::<f32>() as u16;
-// let term1 = 6.0;
-// let t1_addr = 0 * f32_size;
-// let term2 = 4.0;
-// let t2_addr = 1 * f32_size;
-// let quot_addr = 2 * f32_size;
-//
-// let mut progs = Progs {
-// functions: Default::default(),
-// data: vec![0; 12].into_boxed_slice(),
-// statements: Default::default(),
-// };
-//
-// progs.put_f(term1, t1_addr);
-// progs.put_f(term2, t2_addr);
-// progs.div_f(t1_addr as u16, t2_addr as u16, quot_addr as u16);
-// assert!(progs.get_f(quot_addr) == term1 / term2);
-// }
-//
-// #[test]
-// fn test_progs_bitand() {
-// let f32_size = size_of::<f32>() as u16;
-// let term1: f32 = unsafe { transmute(0xFFFFFFFFu32) };
-// let t1_addr = 0 * f32_size;
-// let term2: f32 = unsafe { transmute(0xF0F0F0F0u32) };
-// let t2_addr = 1 * f32_size;
-// let result_addr = 2 * f32_size;
-//
-// let mut progs = Progs {
-// functions: Default::default(),
-// data: vec![0; 12].into_boxed_slice(),
-// statements: Default::default(),
-// };
-//
-// progs.put_f(term1, t1_addr);
-// progs.put_f(term2, t2_addr);
-// progs.bitand(t1_addr as u16, t2_addr as u16, result_addr as u16);
-// assert_eq!(progs.get_f(result_addr) as i32, term1 as i32 & term2 as i32);
-// }
-// }

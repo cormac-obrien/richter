@@ -77,7 +77,7 @@ impl Globals {
             frametime: 0.0,
             newmis: 0,
             force_retouch: 0.0,
-            mapname: StringId(0),
+            mapname: StringId::Static(0),
             serverflags: 0.0,
             total_secrets: 0.0,
             total_monsters: 0.0,
