@@ -18,7 +18,7 @@
 use std::mem::size_of;
 
 use math::Vec3;
-use progs::{FunctionId, StringId};
+use progs::FunctionId;
 
 pub const GLOBALS_COUNT: usize = 90;
 pub const GLOBALS_SIZE: usize = GLOBALS_COUNT * 4;
@@ -34,7 +34,7 @@ pub struct Globals {
     frametime: f32,
     newmis: i32,
     force_retouch: f32,
-    mapname: StringId,
+    mapname: i32,
     serverflags: f32,
     total_secrets: f32,
     total_monsters: f32,
@@ -77,7 +77,7 @@ impl Globals {
             frametime: 0.0,
             newmis: 0,
             force_retouch: 0.0,
-            mapname: StringId::Static(0),
+            mapname: 0,
             serverflags: 0.0,
             total_secrets: 0.0,
             total_monsters: 0.0,
