@@ -259,6 +259,7 @@ struct Def {
 
 pub struct ProgsLoader {
     lumps: [Lump; LumpId::Count as usize],
+    ent_field_count: usize,
     strings: Vec<u8>,
     globaldefs: Vec<Def>,
     globaldef_offsets: Vec<usize>,
@@ -274,6 +275,7 @@ impl ProgsLoader {
                 offset: 0,
                 count: 0,
             }; LumpId::Count as usize],
+            ent_field_count: 0,
             strings: Vec::new(),
             globaldefs: Vec::new(),
             globaldef_offsets: Vec::new(),
@@ -297,8 +299,8 @@ impl ProgsLoader {
             debug!("{:?}: {:?}", l, self.lumps[l]);
         }
 
-        let field_count = src.read_i32::<LittleEndian>()? as usize;
-        debug!("Field count: {}", field_count);
+        self.ent_field_count = src.read_i32::<LittleEndian>()? as usize;
+        debug!("Field count: {}", self.ent_field_count);
 
         let string_lump = &self.lumps[LumpId::Strings as usize];
         src.seek(SeekFrom::Start(string_lump.offset as u64))?;
@@ -437,6 +439,7 @@ impl ProgsLoader {
         );
 
         Ok(Progs {
+            ent_field_count: self.ent_field_count,
             functions: functions.into_boxed_slice(),
             statements: statements.into_boxed_slice(),
             strings: self.strings.into_boxed_slice(),
@@ -451,6 +454,8 @@ impl ProgsLoader {
 
 #[derive(Debug)]
 pub struct Progs {
+    ent_field_count: usize,
+
     functions: Box<[Function]>,
     statements: Box<[Statement]>,
 
@@ -508,8 +513,8 @@ impl Progs {
                 Opcode::StoreV => self.store_v(arg1, arg2, arg3).unwrap(),
                 Opcode::StoreS => self.store_s(arg1, arg2, arg3).unwrap(),
                 Opcode::StoreEnt => self.store_ent(arg1, arg2, arg3).unwrap(),
-                // Opcode::StoreFld
-                // Opcode::StoreFnc
+                Opcode::StoreFld => self.store_fld(arg1, arg2, arg3).unwrap(),
+                Opcode::StoreFnc => self.store_fnc(arg1, arg2, arg3).unwrap(),
                 // Opcode::StorePF
                 // Opcode::StorePV
                 // Opcode::StorePS
@@ -521,7 +526,7 @@ impl Progs {
                 Opcode::NotV => self.not_v(arg1, arg2, arg3).unwrap(),
                 Opcode::NotS => self.not_s(arg1, arg2, arg3).unwrap(),
                 // Opcode::NotEnt
-                // Opcode::NotFnc
+                Opcode::NotFnc => self.not_fnc(arg1, arg2, arg3).unwrap(),
                 // Opcode::If
                 // Opcode::IfNot
                 // Opcode::Call0
@@ -712,6 +717,26 @@ impl Progs {
             Some(Type::QEntity) |
             None => (),
             _ => return Err(ProgsError::with_msg("put_ent: type check failed")),
+        }
+
+        Ok(self.mem_as_mut(ofs)?.write_i32::<LittleEndian>(val)?)
+    }
+
+    fn get_fld(&self, ofs: i16) -> Result<i32, ProgsError> {
+        match self.get_type_at_offset(ofs)? {
+            Some(Type::QField) |
+            None => (),
+            _ => return Err(ProgsError::with_msg("get_fld: type check failed")),
+        }
+
+        Ok(self.mem_as_ref(ofs)?.read_i32::<LittleEndian>()?)
+    }
+
+    fn put_fld(&mut self, val: i32, ofs: i16) -> Result<(), ProgsError> {
+        match self.get_type_at_offset(ofs)? {
+            Some(Type::QField) |
+            None => (),
+            _ => return Err(ProgsError::with_msg("put_fld: type check failed")),
         }
 
         Ok(self.mem_as_mut(ofs)?.write_i32::<LittleEndian>(val)?)
@@ -1063,6 +1088,24 @@ impl Progs {
         self.put_ent(ent, dest_ofs)
     }
 
+    fn store_fld(&mut self, src_ofs: i16, dest_ofs: i16, unused: i16) -> Result<(), ProgsError> {
+        if unused != 0 {
+            return Err(ProgsError::with_msg("Nonzero arg3 to STORE_FLD"));
+        }
+
+        let fld = self.get_fld(src_ofs)?;
+        self.put_fld(fld, dest_ofs)
+    }
+
+    fn store_fnc(&mut self, src_ofs: i16, dest_ofs: i16, unused: i16) -> Result<(), ProgsError> {
+        if unused != 0 {
+            return Err(ProgsError::with_msg("Nonzero arg3 to STORE_FNC"));
+        }
+
+        let fnc = self.get_fnc(src_ofs)?;
+        self.put_fnc(fnc, dest_ofs)
+    }
+
     // NOT_F: Compare float to 0.0
     fn not_f(&mut self, f_id: i16, unused: i16, not_id: i16) -> Result<(), ProgsError> {
         if unused != 0 {
@@ -1119,12 +1162,24 @@ impl Progs {
         Ok(())
     }
 
-    // TODO
-    // NOT_FNC: Compare function to ???
+    // NOT_FNC: Compare function to null function (0)
+    fn not_fnc(&mut self, fnc_ofs: i16, unused: i16, not_ofs: i16) -> Result<(), ProgsError> {
+        if unused != 0 {
+            return Err(ProgsError::with_msg("Nonzero arg2 to NOT_FNC"));
+        }
+
+        let fnc = self.get_fnc(fnc_ofs)?;
+        self.put_f(
+            match fnc {
+                0 => 1.0,
+                _ => 0.0,
+            },
+            not_ofs,
+        )
+    }
 
     // TODO
     // NOT_ENT: Compare entity to ???
-
 
     // AND: Logical AND
     fn and(&mut self, f1_id: i16, f2_id: i16, and_id: i16) -> Result<(), ProgsError> {
