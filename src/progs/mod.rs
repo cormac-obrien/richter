@@ -169,7 +169,16 @@ impl From<::std::io::Error> for ProgsError {
 }
 
 #[derive(Debug)]
-struct FunctionId(i32);
+#[repr(C)]
+pub struct StringId(i32);
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct EntityId(i32);
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct FunctionId(i32);
 
 enum LumpId {
     Statements = 0,
@@ -391,7 +400,12 @@ impl ProgsLoader {
         }
 
         for (i, f) in self.fielddefs.iter().enumerate() {
-            debug!("{}: {:?}", i, f);
+            debug!(
+                "Field {:>3}: name={:<16} ofs={:>8}",
+                i,
+                self.get_string_as_str(f.name_ofs)?,
+                f.offset
+            );
         }
 
         assert_eq!(
@@ -449,6 +463,31 @@ impl ProgsLoader {
             fielddef_offsets: self.fielddef_offsets.into_boxed_slice(),
             memory: self.memory.into_boxed_slice(),
         })
+    }
+
+    fn get_string_as_str(&self, ofs: i32) -> Result<&str, ProgsError> {
+        if ofs < 0 {
+            return Err(ProgsError::with_msg(
+                "get_string_as_str: negative string offset",
+            ));
+        }
+
+        let ofs = ofs as usize;
+
+        if ofs > self.strings.len() {
+            return Err(ProgsError::with_msg(
+                "get_string_as_str: out-of-bounds string offset",
+            ));
+        }
+
+        let mut end_index = ofs;
+        while self.strings[end_index] != 0 {
+            end_index += 1;
+        }
+
+        Ok(
+            ::std::str::from_utf8(&self.strings[ofs..end_index]).unwrap(),
+        )
     }
 }
 
@@ -599,6 +638,31 @@ impl Progs {
             )),
             _ => Ok(&mut self.memory.as_mut()[ofs as usize]),
         }
+    }
+
+    fn get_string_as_str(&self, ofs: i32) -> Result<&str, ProgsError> {
+        if ofs < 0 {
+            return Err(ProgsError::with_msg(
+                "get_string_as_str: negative string offset",
+            ));
+        }
+
+        let ofs = ofs as usize;
+
+        if ofs > self.strings.len() {
+            return Err(ProgsError::with_msg(
+                "get_string_as_str: out-of-bounds string offset",
+            ));
+        }
+
+        let mut end_index = ofs;
+        while self.strings[end_index] != 0 {
+            end_index += 1;
+        }
+
+        Ok(
+            ::std::str::from_utf8(&self.strings[ofs..end_index]).unwrap(),
+        )
     }
 
     fn get_f(&self, ofs: i16) -> Result<f32, ProgsError> {
