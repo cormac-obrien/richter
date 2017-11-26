@@ -24,6 +24,7 @@ extern crate arrayvec;
 extern crate bitflags;
 extern crate byteorder;
 extern crate cgmath;
+extern crate chrono;
 extern crate env_logger;
 #[macro_use]
 extern crate glium;

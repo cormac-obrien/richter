@@ -8,6 +8,7 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 "bitflags" = "0.7.0"
 "byteorder" = "1.0.0"
 "cgmath" = "0.15.0"
+"chrono" = "0.4.0"
 "env_logger" = "0.3.5"
 "gfx" = "0.16.1"
 "gfx_app" = "0.5.0"

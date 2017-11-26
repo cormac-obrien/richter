@@ -110,6 +110,8 @@ use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
 
+use entity::Entity;
+
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
@@ -168,17 +170,17 @@ impl From<::std::io::Error> for ProgsError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 #[repr(C)]
-pub struct StringId(i32);
+pub struct StringId(pub i32);
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 #[repr(C)]
-pub struct EntityId(i32);
+pub struct EntityId(pub i32);
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 #[repr(C)]
-pub struct FunctionId(i32);
+pub struct FunctionId(pub i32);
 
 enum LumpId {
     Statements = 0,
@@ -512,78 +514,90 @@ pub struct Progs {
 impl Progs {
     // run through all statements and see if we crash. elegant!
     pub fn validate(&mut self) {
-        for i in 0..self.statements.len() {
-            let op = self.statements[i].opcode;
-            let arg1 = self.statements[i].arg1;
-            let arg2 = self.statements[i].arg2;
-            let arg3 = self.statements[i].arg3;
-            match op {
-                Opcode::MulF => self.mul_f(arg1, arg2, arg3).unwrap(),
-                Opcode::MulV => self.mul_v(arg1, arg2, arg3).unwrap(),
-                Opcode::MulFV => self.mul_fv(arg1, arg2, arg3).unwrap(),
-                Opcode::MulVF => self.mul_vf(arg1, arg2, arg3).unwrap(),
-                Opcode::Div => self.div(arg1, arg2, arg3).unwrap(),
-                Opcode::AddF => self.add_f(arg1, arg2, arg3).unwrap(),
-                Opcode::AddV => self.add_v(arg1, arg2, arg3).unwrap(),
-                Opcode::SubF => self.sub_f(arg1, arg2, arg3).unwrap(),
-                Opcode::SubV => self.sub_v(arg1, arg2, arg3).unwrap(),
-                Opcode::EqF => self.eq_f(arg1, arg2, arg3).unwrap(),
-                Opcode::EqV => self.eq_v(arg1, arg2, arg3).unwrap(),
-                Opcode::EqS => self.eq_s(arg1, arg2, arg3).unwrap(),
-                Opcode::EqEnt => self.eq_ent(arg1, arg2, arg3).unwrap(),
-                Opcode::EqFnc => self.eq_fnc(arg1, arg2, arg3).unwrap(),
-                Opcode::NeF => self.ne_f(arg1, arg2, arg3).unwrap(),
-                Opcode::NeV => self.ne_v(arg1, arg2, arg3).unwrap(),
-                Opcode::NeS => self.ne_s(arg1, arg2, arg3).unwrap(),
-                Opcode::NeEnt => self.ne_ent(arg1, arg2, arg3).unwrap(),
-                Opcode::NeFnc => self.ne_fnc(arg1, arg2, arg3).unwrap(),
-                Opcode::Le => self.le(arg1, arg2, arg3).unwrap(),
-                Opcode::Ge => self.ge(arg1, arg2, arg3).unwrap(),
-                Opcode::Lt => self.lt(arg1, arg2, arg3).unwrap(),
-                Opcode::Gt => self.gt(arg1, arg2, arg3).unwrap(),
-                // Opcode::LoadF
-                // Opcode::LoadV
-                // Opcode::LoadS
-                // Opcode::LoadEnt
-                // Opcode::LoadFld
-                // Opcode::LoadFnc
-                // Opcode::Address
-                Opcode::StoreF => self.store_f(arg1, arg2, arg3).unwrap(),
-                Opcode::StoreV => self.store_v(arg1, arg2, arg3).unwrap(),
-                Opcode::StoreS => self.store_s(arg1, arg2, arg3).unwrap(),
-                Opcode::StoreEnt => self.store_ent(arg1, arg2, arg3).unwrap(),
-                Opcode::StoreFld => self.store_fld(arg1, arg2, arg3).unwrap(),
-                Opcode::StoreFnc => self.store_fnc(arg1, arg2, arg3).unwrap(),
-                // Opcode::StorePF
-                // Opcode::StorePV
-                // Opcode::StorePS
-                // Opcode::StorePEnt
-                // Opcode::StorePFld
-                // Opcode::StorePFnc
-                // Opcode::Return
-                Opcode::NotF => self.not_f(arg1, arg2, arg3).unwrap(),
-                Opcode::NotV => self.not_v(arg1, arg2, arg3).unwrap(),
-                Opcode::NotS => self.not_s(arg1, arg2, arg3).unwrap(),
-                // Opcode::NotEnt
-                Opcode::NotFnc => self.not_fnc(arg1, arg2, arg3).unwrap(),
-                // Opcode::If
-                // Opcode::IfNot
-                // Opcode::Call0
-                // Opcode::Call1
-                // Opcode::Call2
-                // Opcode::Call3
-                // Opcode::Call4
-                // Opcode::Call5
-                // Opcode::Call6
-                // Opcode::Call7
-                // Opcode::Call8
-                // Opcode::State
-                // Opcode::Goto
-                Opcode::And => self.and(arg1, arg2, arg3).unwrap(),
-                Opcode::Or => self.or(arg1, arg2, arg3).unwrap(),
-                Opcode::BitAnd => self.bit_and(arg1, arg2, arg3).unwrap(),
-                Opcode::BitOr => self.bit_or(arg1, arg2, arg3).unwrap(),
-                _ => (),
+        'functions: for f in 0..self.functions.len() {
+            let name = self.get_string_as_str(self.functions[f].name_ofs).unwrap().to_owned();
+            let first = match self.functions[f].kind {
+                FunctionKind::BuiltIn(_) => continue,
+                FunctionKind::QuakeC(s) => s,
+            };
+
+            println!("FUNCTION {}: {}", f, name);
+
+            for i in first..self.statements.len() {
+                let op = self.statements[i].opcode;
+                let arg1 = self.statements[i].arg1;
+                let arg2 = self.statements[i].arg2;
+                let arg3 = self.statements[i].arg3;
+                match op {
+                    Opcode::MulF => self.mul_f(arg1, arg2, arg3).unwrap(),
+                    Opcode::MulV => self.mul_v(arg1, arg2, arg3).unwrap(),
+                    Opcode::MulFV => self.mul_fv(arg1, arg2, arg3).unwrap(),
+                    Opcode::MulVF => self.mul_vf(arg1, arg2, arg3).unwrap(),
+                    Opcode::Div => self.div(arg1, arg2, arg3).unwrap(),
+                    Opcode::AddF => self.add_f(arg1, arg2, arg3).unwrap(),
+                    Opcode::AddV => self.add_v(arg1, arg2, arg3).unwrap(),
+                    Opcode::SubF => self.sub_f(arg1, arg2, arg3).unwrap(),
+                    Opcode::SubV => self.sub_v(arg1, arg2, arg3).unwrap(),
+                    Opcode::EqF => self.eq_f(arg1, arg2, arg3).unwrap(),
+                    Opcode::EqV => self.eq_v(arg1, arg2, arg3).unwrap(),
+                    Opcode::EqS => self.eq_s(arg1, arg2, arg3).unwrap(),
+                    Opcode::EqEnt => self.eq_ent(arg1, arg2, arg3).unwrap(),
+                    Opcode::EqFnc => self.eq_fnc(arg1, arg2, arg3).unwrap(),
+                    Opcode::NeF => self.ne_f(arg1, arg2, arg3).unwrap(),
+                    Opcode::NeV => self.ne_v(arg1, arg2, arg3).unwrap(),
+                    Opcode::NeS => self.ne_s(arg1, arg2, arg3).unwrap(),
+                    Opcode::NeEnt => self.ne_ent(arg1, arg2, arg3).unwrap(),
+                    Opcode::NeFnc => self.ne_fnc(arg1, arg2, arg3).unwrap(),
+                    Opcode::Le => self.le(arg1, arg2, arg3).unwrap(),
+                    Opcode::Ge => self.ge(arg1, arg2, arg3).unwrap(),
+                    Opcode::Lt => self.lt(arg1, arg2, arg3).unwrap(),
+                    Opcode::Gt => self.gt(arg1, arg2, arg3).unwrap(),
+                    Opcode::LoadF => self.load_f(arg1, arg2, arg3).unwrap(),
+                    // Opcode::LoadV
+                    // Opcode::LoadS
+                    // Opcode::LoadEnt
+                    // Opcode::LoadFld
+                    // Opcode::LoadFnc
+                    // Opcode::Address
+                    Opcode::StoreF => self.store_f(arg1, arg2, arg3).unwrap(),
+                    Opcode::StoreV => self.store_v(arg1, arg2, arg3).unwrap(),
+                    Opcode::StoreS => self.store_s(arg1, arg2, arg3).unwrap(),
+                    Opcode::StoreEnt => self.store_ent(arg1, arg2, arg3).unwrap(),
+                    Opcode::StoreFld => self.store_fld(arg1, arg2, arg3).unwrap(),
+                    Opcode::StoreFnc => self.store_fnc(arg1, arg2, arg3).unwrap(),
+                    // Opcode::StorePF
+                    // Opcode::StorePV
+                    // Opcode::StorePS
+                    // Opcode::StorePEnt
+                    // Opcode::StorePFld
+                    // Opcode::StorePFnc
+                    // Opcode::Return
+                    Opcode::NotF => self.not_f(arg1, arg2, arg3).unwrap(),
+                    Opcode::NotV => self.not_v(arg1, arg2, arg3).unwrap(),
+                    Opcode::NotS => self.not_s(arg1, arg2, arg3).unwrap(),
+                    // Opcode::NotEnt
+                    Opcode::NotFnc => self.not_fnc(arg1, arg2, arg3).unwrap(),
+                    // Opcode::If
+                    // Opcode::IfNot
+                    // Opcode::Call0
+                    // Opcode::Call1
+                    // Opcode::Call2
+                    // Opcode::Call3
+                    // Opcode::Call4
+                    // Opcode::Call5
+                    // Opcode::Call6
+                    // Opcode::Call7
+                    // Opcode::Call8
+                    // Opcode::State
+                    // Opcode::Goto
+                    Opcode::And => self.and(arg1, arg2, arg3).unwrap(),
+                    Opcode::Or => self.or(arg1, arg2, arg3).unwrap(),
+                    Opcode::BitAnd => self.bit_and(arg1, arg2, arg3).unwrap(),
+                    Opcode::BitOr => self.bit_or(arg1, arg2, arg3).unwrap(),
+
+                    Opcode::Done | Opcode::Return => continue 'functions,
+                    _ => (),
+                }
             }
         }
     }
@@ -1109,6 +1123,15 @@ impl Progs {
             },
             gt_ofs,
         )
+    }
+
+    // LOAD_F: load float field from entity
+    fn load_f(&mut self, e_ofs: i16, e_f: i16, dest_ofs: i16) -> Result<(), ProgsError> {
+        println!("Ent: {:>3} Fld: {:>4}", e_ofs, e_f);
+        // TODO: this is a placeholder
+        let ent = Entity::with_field_count(self.ent_field_count);
+        let f = ent.get_f(e_f).unwrap();
+        self.put_f(f, dest_ofs)
     }
 
     // STORE_F

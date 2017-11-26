@@ -15,12 +15,15 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use engine;
 use progs::EntityId;
 use progs::FunctionId;
 use progs::StringId;
 
 use cgmath::Deg;
 use cgmath::Vector3;
+use cgmath::Zero;
+use chrono::Duration;
 
 // TODO:
 // - The OFS_* constants can probably be converted to enums based on their types and typechecked on
@@ -63,10 +66,10 @@ const OFS_ANGLES_X: usize = 19;
 const OFS_ANGLES_Y: usize = 20;
 const OFS_ANGLES_Z: usize = 21;
 
-const OFS_ANGLE_VELOCITY: usize = 22;
-const OFS_ANGLE_VELOCITY_X: usize = 22;
-const OFS_ANGLE_VELOCITY_Y: usize = 23;
-const OFS_ANGLE_VELOCITY_Z: usize = 24;
+const OFS_ANGULAR_VELOCITY: usize = 22;
+const OFS_ANGULAR_VELOCITY_X: usize = 22;
+const OFS_ANGULAR_VELOCITY_Y: usize = 23;
+const OFS_ANGULAR_VELOCITY_Z: usize = 24;
 
 const OFS_PUNCH_ANGLE: usize = 25;
 const OFS_PUNCH_ANGLE_X: usize = 25;
@@ -75,8 +78,8 @@ const OFS_PUNCH_ANGLE_Z: usize = 27;
 
 const OFS_CLASS_NAME: usize = 28;
 const OFS_MODEL_NAME: usize = 29;
-const OFS_FRAME: usize = 30;
-const OFS_SKIN: usize = 31;
+const OFS_FRAME_ID: usize = 30;
+const OFS_SKIN_ID: usize = 31;
 const OFS_EFFECTS: usize = 32;
 
 const OFS_MINS: usize = 33;
@@ -142,7 +145,7 @@ const OFS_TELEPORT_TIME: usize = 80;
 const OFS_ARMOR_STRENGTH: usize = 81;
 const OFS_ARMOR_VALUE: usize = 82;
 const OFS_WATER_LEVEL: usize = 83;
-const OFS_WATER_TYPE: usize = 84;
+const OFS_CONTENTS: usize = 84;
 const OFS_IDEAL_YAW: usize = 85;
 const OFS_YAW_SPEED: usize = 86;
 const OFS_AIM_ENTITY: usize = 87;
@@ -170,6 +173,8 @@ const OFS_NOISE_3: usize = 104;
 // dynamic entity fields start after this point (i.e. defined in progs.dat, not accessible here)
 const OFS_DYNAMIC_START: usize = 105;
 
+const STATIC_ADDRESS_COUNT: usize = 105;
+
 pub struct Entity {
     // index in the model list
     model_index: f32,
@@ -181,7 +186,7 @@ pub struct Entity {
     abs_max: Vector3<f32>,
 
     // how far in time this entity has been processed
-    local_time: f32,
+    local_time: Duration,
 
     // TODO find definitions for movement types
     move_type: f32,
@@ -202,7 +207,7 @@ pub struct Entity {
     angles: Vector3<Deg<f32>>,
 
     // the rate at which this entity is rotating (only in pitch and yaw)
-    angle_velocity: Vector3<Deg<f32>>,
+    angular_velocity: Vector3<Deg<f32>>,
 
     // the temporary angle modifier applied by damage and recoil
     punch_angle: Vector3<Deg<f32>>,
@@ -245,7 +250,7 @@ pub struct Entity {
     blocked_fnc: FunctionId,
 
     // time remaining until next think
-    next_think: f32,
+    next_think: Duration,
 
     // TODO: ???
     ground_entity: EntityId,
@@ -314,7 +319,7 @@ pub struct Entity {
     view_angle: Vector3<Deg<f32>>,
 
     // calculated default view angle
-    ideal_pitch: f32,
+    ideal_pitch: Deg<f32>,
 
     // screen name
     net_name: StringId,
@@ -335,7 +340,7 @@ pub struct Entity {
     max_health: f32,
 
     // time player last teleported
-    teleport_time: f32,
+    teleport_time: Duration,
 
     // percentage of incoming damage blocked (between 0 and 1)
     armor_strength: f32,
@@ -351,6 +356,9 @@ pub struct Entity {
 
     // ideal pathfinding direction (for monsters)
     ideal_yaw: Deg<f32>,
+
+    // turn rate
+    yaw_speed: Deg<f32>,
 
     // TODO: maybe entity being aimed at?
     aim_entity: EntityId,
@@ -393,4 +401,250 @@ pub struct Entity {
     noise_1: StringId,
     noise_2: StringId,
     noise_3: StringId,
+
+    dynamic_fields: Vec<[u8; 4]>,
+}
+
+impl Default for Entity {
+    fn default() -> Self {
+        Entity {
+            model_index: 0.0,
+            abs_min: Vector3::zero(),
+            abs_max: Vector3::zero(),
+            local_time: Duration::seconds(0),
+            move_type: 0.0,
+            solid: 0.0,
+            origin: Vector3::zero(),
+            old_origin: Vector3::zero(),
+            velocity: Vector3::zero(),
+            angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            angular_velocity: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            punch_angle: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            class_name: StringId(0),
+            model_name: StringId(0),
+            frame_id: 0.0,
+            skin_id: 0.0,
+            effects: 0.0,
+            mins: Vector3::zero(),
+            maxs: Vector3::zero(),
+            size: Vector3::zero(),
+            touch_fnc: FunctionId(0),
+            use_fnc: FunctionId(0),
+            think_fnc: FunctionId(0),
+            blocked_fnc: FunctionId(0),
+            next_think: Duration::seconds(0),
+            ground_entity: EntityId(0),
+            health: 0.0,
+            frags: 0.0,
+            weapon: 0.0,
+            weapon_model: StringId(0),
+            weapon_frame: 0.0,
+            current_ammo: 0.0,
+            ammo_shells: 0.0,
+            ammo_nails: 0.0,
+            ammo_rockets: 0.0,
+            ammo_cells: 0.0,
+            items: 0.0,
+            take_damage: 0.0,
+            chain: EntityId(0),
+            dead_flag: 0.0,
+            view_offset: Vector3::zero(),
+            button_0: 0.0,
+            button_1: 0.0,
+            button_2: 0.0,
+            impulse: 0.0,
+            fix_angle: 0.0,
+            view_angle: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            ideal_pitch: Deg(0.0),
+            net_name: StringId(0),
+            enemy: EntityId(0),
+            flags: 0.0,
+            colormap: 0.0,
+            team: 0.0,
+            max_health: 0.0,
+            teleport_time: Duration::seconds(0),
+            armor_strength: 0.0,
+            armor_value: 0.0,
+            water_level: 0.0,
+            contents: 0.0,
+            ideal_yaw: Deg(0.0),
+            yaw_speed: Deg(0.0),
+            aim_entity: EntityId(0),
+            goal_entity: EntityId(0),
+            spawn_flags: 0.0,
+            target: StringId(0),
+            target_name: StringId(0),
+            dmg_take: 0.0,
+            dmg_save: 0.0,
+            dmg_inflictor: EntityId(0),
+            owner: EntityId(0),
+            move_direction: Vector3::zero(),
+            message: StringId(0),
+            sounds: 0.0,
+            noise_0: StringId(0),
+            noise_1: StringId(0),
+            noise_2: StringId(0),
+            noise_3: StringId(0),
+            dynamic_fields: Vec::new(),
+        }
+    }
+}
+
+impl Entity {
+    // TODO: temp function, remove this
+    pub fn with_field_count(field_count: usize) -> Entity {
+        if field_count < STATIC_ADDRESS_COUNT {
+            panic!("Invalid field count");
+        }
+
+        let mut dynamic_fields = Vec::with_capacity(field_count - STATIC_ADDRESS_COUNT);
+        for _ in 0..field_count - STATIC_ADDRESS_COUNT {
+            dynamic_fields.push([0; 4]);
+        }
+
+        Entity {
+            dynamic_fields,
+            .. Default::default()
+        }
+    }
+
+    pub fn get_f(&self, ofs: i16) -> Result<f32, ()> {
+        if ofs < 0 {
+            panic!("negative offset");
+        }
+
+        let ofs = ofs as usize;
+
+        if ofs >= OFS_DYNAMIC_START + self.dynamic_fields.len() {
+            println!("out-of-bounds offset ({})", ofs);
+            return Ok(0.0)
+        }
+
+        if ofs < OFS_DYNAMIC_START {
+            self.get_static_f(ofs)
+        } else {
+            self.get_dynamic_f(ofs)
+        }
+    }
+
+    pub fn get_static_f(&self, ofs: usize) -> Result<f32, ()> {
+        if ofs < 0 || ofs >= OFS_DYNAMIC_START {
+            panic!("Invalid offset for static entity field");
+        }
+
+        Ok(match ofs {
+            OFS_MODEL_INDEX => self.model_index,
+
+            OFS_ABS_MIN_X => self.abs_min[0],
+            OFS_ABS_MIN_Y => self.abs_min[1],
+            OFS_ABS_MIN_Z => self.abs_min[2],
+
+            OFS_ABS_MAX_X => self.abs_max[0],
+            OFS_ABS_MAX_Y => self.abs_max[1],
+            OFS_ABS_MAX_Z => self.abs_max[2],
+
+            OFS_LOCAL_TIME => engine::duration_to_f32(self.local_time),
+            OFS_MOVE_TYPE => self.move_type,
+            OFS_SOLID => self.solid,
+
+            OFS_ORIGIN_X => self.origin[0],
+            OFS_ORIGIN_Y => self.origin[1],
+            OFS_ORIGIN_Z => self.origin[2],
+
+            OFS_OLD_ORIGIN_X => self.old_origin[0],
+            OFS_OLD_ORIGIN_Y => self.old_origin[1],
+            OFS_OLD_ORIGIN_Z => self.old_origin[2],
+
+            OFS_VELOCITY_X => self.velocity[0],
+            OFS_VELOCITY_Y => self.velocity[1],
+            OFS_VELOCITY_Z => self.velocity[2],
+
+            OFS_ANGLES_X => self.angles[0].0,
+            OFS_ANGLES_Y => self.angles[1].0,
+            OFS_ANGLES_Z => self.angles[2].0,
+
+            OFS_ANGULAR_VELOCITY_X => self.angular_velocity[0].0,
+            OFS_ANGULAR_VELOCITY_Y => self.angular_velocity[1].0,
+            OFS_ANGULAR_VELOCITY_Z => self.angular_velocity[2].0,
+
+            OFS_PUNCH_ANGLE_X => self.punch_angle[0].0,
+            OFS_PUNCH_ANGLE_Y => self.punch_angle[1].0,
+            OFS_PUNCH_ANGLE_Z => self.punch_angle[2].0,
+
+            OFS_FRAME_ID => self.frame_id,
+            OFS_SKIN_ID => self.skin_id,
+            OFS_EFFECTS => self.effects,
+
+            OFS_MINS_X => self.mins[0],
+            OFS_MINS_Y => self.mins[1],
+            OFS_MINS_Z => self.mins[2],
+
+            OFS_MAXS_X => self.maxs[0],
+            OFS_MAXS_Y => self.maxs[1],
+            OFS_MAXS_Z => self.maxs[2],
+
+            OFS_SIZE_X => self.size[0],
+            OFS_SIZE_Y => self.size[1],
+            OFS_SIZE_Z => self.size[2],
+
+            OFS_NEXT_THINK => engine::duration_to_f32(self.next_think),
+            OFS_HEALTH => self.health,
+            OFS_FRAGS => self.frags,
+            OFS_WEAPON => self.weapon,
+            OFS_WEAPON_FRAME => self.weapon_frame,
+            OFS_CURRENT_AMMO => self.current_ammo,
+            OFS_AMMO_SHELLS => self.ammo_shells,
+            OFS_AMMO_NAILS => self.ammo_nails,
+            OFS_AMMO_ROCKETS => self.ammo_rockets,
+            OFS_AMMO_CELLS => self.ammo_cells,
+            OFS_ITEMS => self.items,
+            OFS_TAKE_DAMAGE => self.take_damage,
+            OFS_DEAD_FLAG => self.dead_flag,
+
+            OFS_VIEW_OFFSET_X => self.view_offset[0],
+            OFS_VIEW_OFFSET_Y => self.view_offset[1],
+            OFS_VIEW_OFFSET_Z => self.view_offset[2],
+
+            OFS_BUTTON_0 => self.button_0,
+            OFS_BUTTON_1 => self.button_1,
+            OFS_BUTTON_2 => self.button_2,
+            OFS_IMPULSE => self.impulse,
+            OFS_FIX_ANGLE => self.fix_angle,
+
+            OFS_VIEW_ANGLE_X => self.view_angle[0].0,
+            OFS_VIEW_ANGLE_Y => self.view_angle[1].0,
+            OFS_VIEW_ANGLE_Z => self.view_angle[2].0,
+
+            OFS_IDEAL_PITCH => self.ideal_pitch.0,
+            OFS_FLAGS => self.flags,
+            OFS_COLORMAP => self.colormap,
+            OFS_TEAM => self.team,
+            OFS_MAX_HEALTH => self.max_health,
+            OFS_TELEPORT_TIME => engine::duration_to_f32(self.teleport_time),
+            OFS_ARMOR_STRENGTH => self.armor_strength,
+            OFS_ARMOR_VALUE => self.armor_value,
+            OFS_WATER_LEVEL => self.water_level,
+            OFS_CONTENTS => self.contents,
+            OFS_IDEAL_YAW => self.ideal_yaw.0,
+            OFS_YAW_SPEED => self.yaw_speed.0,
+            OFS_SPAWN_FLAGS => self.spawn_flags,
+            OFS_DMG_TAKE => self.dmg_take,
+            OFS_DMG_SAVE => self.dmg_save,
+
+            OFS_MOVE_DIRECTION_X => self.move_direction[0],
+            OFS_MOVE_DIRECTION_Y => self.move_direction[1],
+            OFS_MOVE_DIRECTION_Z => self.move_direction[2],
+
+            OFS_SOUNDS => self.sounds,
+
+            _ => {
+                println!("Invalid static float offset ({})", ofs);
+                0.0
+            }
+        })
+    }
+
+    pub fn get_dynamic_f(&self, ofs: usize) -> Result<f32, ()> {
+        Ok(0.0)
+    }
 }

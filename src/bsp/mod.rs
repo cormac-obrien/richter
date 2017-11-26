@@ -118,7 +118,7 @@
 //! The edges are stored as a pair of 16-bit integer vertex IDs.
 
 
-pub mod vk;
+// pub mod vk;
 
 use std::collections::HashMap;
 use std::error::Error;

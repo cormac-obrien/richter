@@ -20,6 +20,7 @@ extern crate glium;
 use std::fs::File;
 use std::io::Read;
 
+use chrono::Duration;
 use glium::Texture2d;
 use glium::backend::glutin_backend::GlutinFacade as Window;
 use glium::texture::RawImage2d;
@@ -80,4 +81,13 @@ pub fn tex_from_indexed(window: &Window, indices: &[u8], width: u32, height: u32
     let raw_image = RawImage2d::from_raw_rgba(rgba, (width, height));
 
     Texture2d::new(window, raw_image).unwrap()
+}
+
+// TODO: handle this unwrap? i64 can handle ~200,000 years in microseconds
+pub fn duration_to_f32(d: Duration) -> f32 {
+    d.num_microseconds().unwrap() as f32 / 1_000_000.0
+}
+
+pub fn duration_from_f32(f: f32) -> Duration {
+    Duration::microseconds((f * 1_000_000.0) as i64)
 }
