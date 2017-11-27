@@ -20,6 +20,8 @@ extern crate glium;
 use std::fs::File;
 use std::io::Read;
 
+use cgmath::Deg;
+use cgmath::Vector3;
 use chrono::Duration;
 use glium::Texture2d;
 use glium::backend::glutin_backend::GlutinFacade as Window;
@@ -84,10 +86,22 @@ pub fn tex_from_indexed(window: &Window, indices: &[u8], width: u32, height: u32
 }
 
 // TODO: handle this unwrap? i64 can handle ~200,000 years in microseconds
+#[inline]
 pub fn duration_to_f32(d: Duration) -> f32 {
     d.num_microseconds().unwrap() as f32 / 1_000_000.0
 }
 
+#[inline]
 pub fn duration_from_f32(f: f32) -> Duration {
     Duration::microseconds((f * 1_000_000.0) as i64)
+}
+
+#[inline]
+pub fn deg_vector_to_f32_vector(av: Vector3<Deg<f32>>) -> Vector3<f32> {
+    Vector3::new(av[0].0, av[1].0, av[2].0)
+}
+
+#[inline]
+pub fn f32_vector_to_deg_vector(v: Vector3<f32>) -> Vector3<Deg<f32>> {
+    Vector3::new(Deg(v[0]), Deg(v[1]), Deg(v[2]))
 }

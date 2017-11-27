@@ -20,27 +20,6 @@
 
 //! QuakeC bytecode interpreter
 //!
-//! # Opcodes
-//!
-//! - `0 DONE   ret`
-//! - `1 MUL_F  f1  f2 product`
-//! - `2 MUL_V  v1  v2 product`
-//! - `3 MUL_FV f   v  product`
-//! - `4 MUL_VF v   f  product`
-//! - `5 DIV    f   f  quotient`
-//! - `6 ADD_F  f   f  sum`
-//! - `7 ADD_V  v   v  sum`
-//! - `8 ADD_FV f   v  sum`
-//! - `9 ADD_VF v   f  sum`
-//!
-//! The function table consists of named records containing the information necessary to execute
-//! the functions they describe, including the index of the first statement in the statements table,
-//! the number, sizes and locations of the arguments, and the number of local values used by the
-//! function.
-//!
-//! The call stack consists of stack frames containing the index of the function in the function
-//! table and the index offset (from the functions first statement) of the statement to reenter on.
-//!
 //! # Loading
 //!
 //! QuakeC bytecode is typically loaded from `progs.dat` or `qwprogs.dat`. Bytecode files begin with
@@ -98,7 +77,24 @@
 //! ```
 //!
 //! Not every opcode uses three arguments, but all statements have space for three arguments anyway,
-//! probably for simplicity.
+//! probably for simplicity. The semantics of these arguments differ depending on the opcode.
+//!
+//! ## Function Definitions
+//!
+//! Function definitions contain both high-level information about the function (name and source
+//! file) and low-level information necessary to execute it (entry point, argument count, etc).
+//! Functions are stored on disk as follows:
+//!
+//! ```text
+//! statement_id: i32,     // index of first statement; negatives are built-in functions
+//! arg_start: i32,        // address to store/load first argument
+//! local_count: i32,      // number of local variables on the stack
+//! profile: i32,          // incremented every time function called
+//! fnc_name_ofs: i32,     // offset of function name in string table
+//! srcfile_name_ofs: i32, // offset of source file name in string table
+//! arg_count: i32,        // number of arguments (max. 8)
+//! arg_sizes: [u8; 8],    // sizes of each argument
+//! ```
 
 mod globals;
 mod ops;
@@ -127,8 +123,13 @@ const MAX_STACK_DEPTH: usize = 32;
 const LUMP_COUNT: usize = 6;
 const SAVE_GLOBAL: u16 = 1 << 15;
 
+// the on-disk size of a bytecode statement
 const STATEMENT_SIZE: usize = 8;
+
+// the on-disk size of a function declaration
 const FUNCTION_SIZE: usize = 36;
+
+// the on-disk size of a global or field definition
 const DEF_SIZE: usize = 8;
 
 #[derive(Debug)]
@@ -512,10 +513,37 @@ pub struct Progs {
 }
 
 impl Progs {
+    pub fn dump_functions(&self) {
+        for f in self.functions.iter() {
+            let name = self.get_string_as_str(f.name_ofs).unwrap();
+            print!("{}: ", name);
+
+            match f.kind {
+                FunctionKind::BuiltIn(_) => println!("built-in function"),
+                FunctionKind::QuakeC(o) => {
+                    println!("begins at statement {}", o);
+                    for s in self.statements.iter().skip(o) {
+                        println!(
+                            "    {:<9} {:>5} {:>5} {:>5}",
+                            format!("{:?}", s.opcode),
+                            s.arg1,
+                            s.arg2,
+                            s.arg3
+                        );
+                        if s.opcode == Opcode::Return || s.opcode == Opcode::Done {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
     // run through all statements and see if we crash. elegant!
     pub fn validate(&mut self) {
         'functions: for f in 0..self.functions.len() {
-            let name = self.get_string_as_str(self.functions[f].name_ofs).unwrap().to_owned();
+            let name = self.get_string_as_str(self.functions[f].name_ofs)
+                .unwrap()
+                .to_owned();
             let first = match self.functions[f].kind {
                 FunctionKind::BuiltIn(_) => continue,
                 FunctionKind::QuakeC(s) => s,
@@ -575,7 +603,7 @@ impl Progs {
                     Opcode::NotF => self.not_f(arg1, arg2, arg3).unwrap(),
                     Opcode::NotV => self.not_v(arg1, arg2, arg3).unwrap(),
                     Opcode::NotS => self.not_s(arg1, arg2, arg3).unwrap(),
-                    // Opcode::NotEnt
+                    Opcode::NotEnt => self.not_ent(arg1, arg2, arg3).unwrap(),
                     Opcode::NotFnc => self.not_fnc(arg1, arg2, arg3).unwrap(),
                     // Opcode::If
                     // Opcode::IfNot
@@ -630,6 +658,28 @@ impl Progs {
 
         match self.globaldef_offsets.binary_search(&(ofs as usize)) {
             Ok(o) => Ok(Some(self.globaldefs[o].type_)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn get_global_name_at_offset(&self, ofs: i16) -> Result<Option<String>, ProgsError> {
+        match self.globaldef_offsets.binary_search(&(ofs as usize)) {
+            Ok(o) => Ok(Some(
+                self.get_string_as_str(self.globaldefs[o].name_ofs as i32)
+                    .unwrap()
+                    .to_owned(),
+            )),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn get_field_name_at_offset(&self, ofs: i16) -> Result<Option<String>, ProgsError> {
+        match self.fielddef_offsets.binary_search(&(ofs as usize)) {
+            Ok(o) => Ok(Some(
+                self.get_string_as_str(self.fielddefs[o].name_ofs as i32)
+                    .unwrap()
+                    .to_owned(),
+            )),
             Err(_) => Ok(None),
         }
     }
@@ -780,11 +830,11 @@ impl Progs {
         Ok(self.mem_as_mut(ofs)?.write_i32::<LittleEndian>(val)?)
     }
 
-    fn get_ent(&self, ofs: i16) -> Result<i32, ProgsError> {
+    fn get_ent_id(&self, ofs: i16) -> Result<i32, ProgsError> {
         match self.get_type_at_offset(ofs)? {
             Some(Type::QEntity) |
             None => (),
-            _ => return Err(ProgsError::with_msg("get_ent: type check failed")),
+            _ => return Err(ProgsError::with_msg("get_ent_id: type check failed")),
         }
 
         Ok(self.mem_as_ref(ofs)?.read_i32::<LittleEndian>()?)
@@ -800,31 +850,31 @@ impl Progs {
         Ok(self.mem_as_mut(ofs)?.write_i32::<LittleEndian>(val)?)
     }
 
-    fn get_fld(&self, ofs: i16) -> Result<i32, ProgsError> {
+    fn get_fld(&self, ofs: i16) -> Result<i16, ProgsError> {
         match self.get_type_at_offset(ofs)? {
             Some(Type::QField) |
             None => (),
             _ => return Err(ProgsError::with_msg("get_fld: type check failed")),
         }
 
-        Ok(self.mem_as_ref(ofs)?.read_i32::<LittleEndian>()?)
+        Ok(self.mem_as_ref(ofs)?.read_i32::<LittleEndian>()? as i16)
     }
 
-    fn put_fld(&mut self, val: i32, ofs: i16) -> Result<(), ProgsError> {
+    fn put_fld(&mut self, val: i16, ofs: i16) -> Result<(), ProgsError> {
         match self.get_type_at_offset(ofs)? {
             Some(Type::QField) |
             None => (),
             _ => return Err(ProgsError::with_msg("put_fld: type check failed")),
         }
 
-        Ok(self.mem_as_mut(ofs)?.write_i32::<LittleEndian>(val)?)
+        Ok(self.mem_as_mut(ofs)?.write_i32::<LittleEndian>(val as i32)?)
     }
 
-    fn get_fnc(&self, ofs: i16) -> Result<i32, ProgsError> {
+    fn get_fnc_id(&self, ofs: i16) -> Result<i32, ProgsError> {
         match self.get_type_at_offset(ofs)? {
             Some(Type::QFunction) |
             None => (),
-            _ => return Err(ProgsError::with_msg("get_fnc: type check failed")),
+            _ => return Err(ProgsError::with_msg("get_fnc_id: type check failed")),
         }
 
         Ok(self.mem_as_ref(ofs)?.read_i32::<LittleEndian>()?)
@@ -978,8 +1028,8 @@ impl Progs {
 
     // EQ_ENT: Test equality of two entities (by identity)
     fn eq_ent(&mut self, e1_ofs: i16, e2_ofs: i16, eq_ofs: i16) -> Result<(), ProgsError> {
-        let e1 = self.get_ent(e1_ofs)?;
-        let e2 = self.get_ent(e2_ofs)?;
+        let e1 = self.get_ent_id(e1_ofs)?;
+        let e2 = self.get_ent_id(e2_ofs)?;
 
         self.put_f(
             match e1 == e2 {
@@ -992,8 +1042,8 @@ impl Progs {
 
     // EQ_FNC: Test equality of two functions (by identity)
     fn eq_fnc(&mut self, f1_ofs: i16, f2_ofs: i16, eq_ofs: i16) -> Result<(), ProgsError> {
-        let f1 = self.get_fnc(f1_ofs)?;
-        let f2 = self.get_fnc(f2_ofs)?;
+        let f1 = self.get_fnc_id(f1_ofs)?;
+        let f2 = self.get_fnc_id(f2_ofs)?;
 
         self.put_f(
             match f1 == f2 {
@@ -1048,8 +1098,8 @@ impl Progs {
     }
 
     fn ne_ent(&mut self, e1_ofs: i16, e2_ofs: i16, ne_ofs: i16) -> Result<(), ProgsError> {
-        let e1 = self.get_ent(e1_ofs)?;
-        let e2 = self.get_ent(e2_ofs)?;
+        let e1 = self.get_ent_id(e1_ofs)?;
+        let e2 = self.get_ent_id(e2_ofs)?;
 
         self.put_f(
             match e1 != e2 {
@@ -1061,8 +1111,8 @@ impl Progs {
     }
 
     fn ne_fnc(&mut self, f1_ofs: i16, f2_ofs: i16, ne_ofs: i16) -> Result<(), ProgsError> {
-        let f1 = self.get_fnc(f1_ofs)?;
-        let f2 = self.get_fnc(f2_ofs)?;
+        let f1 = self.get_fnc_id(f1_ofs)?;
+        let f2 = self.get_fnc_id(f2_ofs)?;
 
         self.put_f(
             match f1 != f2 {
@@ -1127,10 +1177,30 @@ impl Progs {
 
     // LOAD_F: load float field from entity
     fn load_f(&mut self, e_ofs: i16, e_f: i16, dest_ofs: i16) -> Result<(), ProgsError> {
-        println!("Ent: {:>3} Fld: {:>4}", e_ofs, e_f);
-        // TODO: this is a placeholder
+        // TODO: this function is a placeholder.
+        let ent_id = self.get_ent_id(e_ofs)?;
+
+        let ent_name = match self.get_global_name_at_offset(e_ofs)? {
+            Some(s) => s,
+            None => format!("entities[ent_id@{}]", e_ofs),
+        };
+
+        let fld_ofs = self.get_fld(e_f)?;
+
+        let fld_name = match self.get_field_name_at_offset(fld_ofs)? {
+            Some(s) => s,
+            None => String::from("anonymous"),
+        };
+
+        println!(
+            "Ent: {:>4} Fld: {:>4} ({}.{})",
+            e_ofs,
+            e_f,
+            ent_name,
+            fld_name
+        );
         let ent = Entity::with_field_count(self.ent_field_count);
-        let f = ent.get_f(e_f).unwrap();
+        let f = ent.get_f(fld_ofs).unwrap();
         self.put_f(f, dest_ofs)
     }
 
@@ -1171,7 +1241,7 @@ impl Progs {
             return Err(ProgsError::with_msg("Nonzero arg3 to STORE_ENT"));
         }
 
-        let ent = self.get_ent(src_ofs)?;
+        let ent = self.get_ent_id(src_ofs)?;
         self.put_ent(ent, dest_ofs)
     }
 
@@ -1189,7 +1259,7 @@ impl Progs {
             return Err(ProgsError::with_msg("Nonzero arg3 to STORE_FNC"));
         }
 
-        let fnc = self.get_fnc(src_ofs)?;
+        let fnc = self.get_fnc_id(src_ofs)?;
         self.put_fnc(fnc, dest_ofs)
     }
 
@@ -1250,14 +1320,14 @@ impl Progs {
     }
 
     // NOT_FNC: Compare function to null function (0)
-    fn not_fnc(&mut self, fnc_ofs: i16, unused: i16, not_ofs: i16) -> Result<(), ProgsError> {
+    fn not_fnc(&mut self, fnc_id_ofs: i16, unused: i16, not_ofs: i16) -> Result<(), ProgsError> {
         if unused != 0 {
             return Err(ProgsError::with_msg("Nonzero arg2 to NOT_FNC"));
         }
 
-        let fnc = self.get_fnc(fnc_ofs)?;
+        let fnc_id = self.get_fnc_id(fnc_id_ofs)?;
         self.put_f(
-            match fnc {
+            match fnc_id {
                 0 => 1.0,
                 _ => 0.0,
             },
@@ -1265,8 +1335,21 @@ impl Progs {
         )
     }
 
-    // TODO
-    // NOT_ENT: Compare entity to ???
+    // NOT_ENT: Compare entity to null entity (0)
+    fn not_ent(&mut self, ent_ofs: i16, unused: i16, not_ofs: i16) -> Result<(), ProgsError> {
+        if unused != 0 {
+            return Err(ProgsError::with_msg("Nonzero arg2 to NOT_ENT"));
+        }
+
+        let ent = self.get_ent_id(ent_ofs)?;
+        self.put_f(
+            match ent {
+                0 => 1.0,
+                _ => 0.0,
+            },
+            not_ofs,
+        )
+    }
 
     // AND: Logical AND
     fn and(&mut self, f1_id: i16, f2_id: i16, and_id: i16) -> Result<(), ProgsError> {

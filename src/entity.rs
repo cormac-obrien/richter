@@ -20,6 +20,8 @@ use progs::EntityId;
 use progs::FunctionId;
 use progs::StringId;
 
+use byteorder::LittleEndian;
+use byteorder::ReadBytesExt;
 use cgmath::Deg;
 use cgmath::Vector3;
 use cgmath::Zero;
@@ -504,7 +506,7 @@ impl Entity {
 
         Entity {
             dynamic_fields,
-            .. Default::default()
+            ..Default::default()
         }
     }
 
@@ -517,7 +519,7 @@ impl Entity {
 
         if ofs >= OFS_DYNAMIC_START + self.dynamic_fields.len() {
             println!("out-of-bounds offset ({})", ofs);
-            return Ok(0.0)
+            return Ok(0.0);
         }
 
         if ofs < OFS_DYNAMIC_START {
@@ -527,8 +529,8 @@ impl Entity {
         }
     }
 
-    pub fn get_static_f(&self, ofs: usize) -> Result<f32, ()> {
-        if ofs < 0 || ofs >= OFS_DYNAMIC_START {
+    fn get_static_f(&self, ofs: usize) -> Result<f32, ()> {
+        if ofs >= OFS_DYNAMIC_START {
             panic!("Invalid offset for static entity field");
         }
 
@@ -637,14 +639,70 @@ impl Entity {
 
             OFS_SOUNDS => self.sounds,
 
+            _ => return Err(()),
+        })
+    }
+
+    fn get_dynamic_f(&self, ofs: usize) -> Result<f32, ()> {
+        Ok(
+            self.dynamic_fields[ofs - OFS_DYNAMIC_START]
+                .as_ref()
+                .read_f32::<LittleEndian>()
+                .unwrap(),
+        )
+    }
+
+    fn get_v(&self, ofs: i16) -> Result<[f32; 3], ()> {
+        if ofs < 0 {
+            panic!("negative offset");
+        }
+
+        let ofs = ofs as usize;
+
+        // subtract 2 to account for size of vector
+        if ofs >= OFS_DYNAMIC_START + self.dynamic_fields.len() - 2 {
+            println!("out-of-bounds offset ({})", ofs);
+            // TODO: proper error
+            return Ok([0.0; 3]);
+        }
+
+        if ofs < OFS_DYNAMIC_START {
+            self.get_static_v(ofs)
+        } else {
+            self.get_dynamic_v(ofs)
+        }
+    }
+
+    fn get_static_v(&self, ofs: usize) -> Result<[f32; 3], ()> {
+        Ok(match ofs {
+            OFS_ABS_MIN => self.abs_min.into(),
+            OFS_ABS_MAX => self.abs_max.into(),
+            OFS_ORIGIN => self.origin.into(),
+            OFS_OLD_ORIGIN => self.old_origin.into(),
+            OFS_VELOCITY => self.velocity.into(),
+            OFS_ANGLES => engine::deg_vector_to_f32_vector(self.angles).into(),
+            OFS_ANGULAR_VELOCITY => engine::deg_vector_to_f32_vector(self.angular_velocity).into(),
+            OFS_PUNCH_ANGLE => engine::deg_vector_to_f32_vector(self.punch_angle).into(),
+            OFS_MINS => self.mins.into(),
+            OFS_MAXS => self.maxs.into(),
+            OFS_SIZE => self.size.into(),
+            OFS_VIEW_OFFSET => self.view_offset.into(),
+            OFS_VIEW_ANGLE => engine::deg_vector_to_f32_vector(self.view_angle).into(),
+            OFS_MOVE_DIRECTION => self.move_direction.into(),
             _ => {
-                println!("Invalid static float offset ({})", ofs);
-                0.0
+                println!("invalid static vector field {}", ofs);
+                [0.0; 3]
             }
         })
     }
 
-    pub fn get_dynamic_f(&self, ofs: usize) -> Result<f32, ()> {
-        Ok(0.0)
+    fn get_dynamic_v(&self, ofs: usize) -> Result<[f32; 3], ()> {
+        let mut v = [0.0; 3];
+
+        for c in 0..v.len() {
+            v[c] = self.get_dynamic_f(ofs + c)?;
+        }
+
+        Ok(v)
     }
 }
