@@ -117,9 +117,6 @@
 //!
 //! The edges are stored as a pair of 16-bit integer vertex IDs.
 
-
-// pub mod vk;
-
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -141,7 +138,7 @@ use regex::Regex;
 const VERSION: i32 = 29;
 
 const MAX_HULLS: usize = 4;
-const MAX_MODELS: usize = 256;
+pub const MAX_MODELS: usize = 256;
 const MAX_LEAVES: usize = 32767;
 const MAX_BRUSHES: usize = 4096;
 const MAX_ENTITIES: usize = 1024;
@@ -174,7 +171,8 @@ const TEX_NAME_MAX: usize = 16;
 
 const MIPLEVELS: usize = 4;
 const NUM_AMBIENTS: usize = 4;
-const MAX_LIGHTSTYLES: usize = 4;
+pub const MAX_LIGHTSTYLES: usize = 4;
+pub const MAX_SOUNDS: usize = 4;
 const MAX_TEXTURE_FRAMES: usize = 10;
 
 const ASCII_0: usize = '0' as usize;
@@ -275,7 +273,7 @@ enum BspPlaneKind {
 }
 
 struct BspPlane {
-    normal: [f32; 3],
+    normal: Vector3<f32>,
     dist: f32,
     kind: BspPlaneKind,
 }
@@ -308,9 +306,9 @@ struct BspNode {
 }
 
 struct BspTexInfo {
-    s_vector: [f32; 3],
+    s_vector: Vector3<f32>,
     s_offset: f32,
-    t_vector: [f32; 3],
+    t_vector: Vector3<f32>,
     t_offset: f32,
     tex_id: usize,
     animated: bool,
@@ -362,7 +360,7 @@ struct BspLeaf {
     max: [i16; 3],
     face_id: usize,
     face_count: usize,
-    sounds: [u8; 4],
+    sounds: [u8; MAX_SOUNDS],
 }
 
 struct BspEdge {
@@ -380,21 +378,27 @@ struct BspEdgeIndex {
     index: usize,
 }
 
-struct BspModel {
-    min: [f32; 3],
-    max: [f32; 3],
-    origin: [f32; 3],
+pub struct BspModel {
+    min: Vector3<f32>,
+    max: Vector3<f32>,
+    origin: Vector3<f32>,
     roots: [i32; MAX_HULLS],
     leaf_count: usize,
     face_id: usize,
     face_count: usize,
 }
 
+impl BspModel {
+    pub fn size(&self) -> Vector3<f32> {
+        self.max - self.min
+    }
+}
+
 pub struct Bsp {
     entities: Vec<HashMap<String, String>>,
     planes: Vec<BspPlane>,
     textures: Vec<BspTexture>,
-    vertices: Vec<[f32; 3]>,
+    vertices: Vec<Vector3<f32>>,
     visibility: Vec<u8>,
     nodes: Vec<BspNode>,
     texinfo: Vec<BspTexInfo>,
@@ -554,7 +558,7 @@ impl Bsp {
             let neg_x = reader.read_f32::<LittleEndian>()?;
             let y = reader.read_f32::<LittleEndian>()?;
             planes.push(BspPlane {
-                normal: [-neg_x, y, -neg_z],
+                normal: Vector3::new(-neg_x, y, -neg_z),
                 dist: reader.read_f32::<LittleEndian>()?,
                 kind: BspPlaneKind::from_i32(reader.read_i32::<LittleEndian>()?).unwrap(),
             });
@@ -769,7 +773,7 @@ impl Bsp {
             let neg_z = reader.read_f32::<LittleEndian>()?;
             let neg_x = reader.read_f32::<LittleEndian>()?;
             let y = reader.read_f32::<LittleEndian>()?;
-            vertices.push([-neg_x, y, -neg_z]);
+            vertices.push(Vector3::new(-neg_x, y, -neg_z));
         }
         if reader.seek(SeekFrom::Current(0))? !=
             reader.seek(SeekFrom::Start(
@@ -887,9 +891,9 @@ impl Bsp {
             let t_off = reader.read_f32::<LittleEndian>()?;
 
             texinfos.push(BspTexInfo {
-                s_vector: [-s_neg_x, s_y, -s_neg_z],
+                s_vector: Vector3::new(-s_neg_x, s_y, -s_neg_z),
                 s_offset: s_off,
-                t_vector: [-t_neg_x, t_y, -t_neg_z],
+                t_vector: Vector3::new(-t_neg_x, t_y, -t_neg_z),
                 t_offset: t_off,
 
                 tex_id: match reader.read_i32::<LittleEndian>()? {
@@ -1172,17 +1176,17 @@ impl Bsp {
             let min_neg_z = reader.read_f32::<LittleEndian>()?;
             let min_neg_x = reader.read_f32::<LittleEndian>()?;
             let min_y = reader.read_f32::<LittleEndian>()?;
-            let min = [-min_neg_x, min_y, -min_neg_z];
+            let min = Vector3::new(-min_neg_x, min_y, -min_neg_z);
 
             let max_neg_z = reader.read_f32::<LittleEndian>()?;
             let max_neg_x = reader.read_f32::<LittleEndian>()?;
             let max_y = reader.read_f32::<LittleEndian>()?;
-            let max = [-max_neg_x, max_y, -max_neg_z];
+            let max = Vector3::new(-max_neg_x, max_y, -max_neg_z);
 
             let origin_neg_z = reader.read_f32::<LittleEndian>()?;
             let origin_neg_x = reader.read_f32::<LittleEndian>()?;
             let origin_y = reader.read_f32::<LittleEndian>()?;
-            let origin = [-origin_neg_x, origin_y, -origin_neg_z];
+            let origin = Vector3::new(-origin_neg_x, origin_y, -origin_neg_z);
 
             let mut roots = [0; MAX_HULLS];
             for i in 0..roots.len() {
