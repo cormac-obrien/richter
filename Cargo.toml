@@ -5,7 +5,7 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 
 [dependencies]
 "arrayvec" = "0.3.20"
-"bitflags" = "0.7.0"
+"bitflags" = "1.0.1"
 "byteorder" = "1.0.0"
 "cgmath" = "0.15.0"
 "chrono" = "0.4.0"

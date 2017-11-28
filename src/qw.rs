@@ -333,69 +333,69 @@ impl QwSocket {
         let mut flags = MoveDeltaFlags::empty();
 
         if cmd.angles[0] != from.angles[0] {
-            flags |= MOVE_ANGLE1;
+            flags |= MoveDeltaFlags::MOVE_ANGLE1;
         }
 
         if cmd.angles[1] != from.angles[1] {
-            flags |= MOVE_ANGLE2;
+            flags |= MoveDeltaFlags::MOVE_ANGLE2;
         }
 
         if cmd.angles[2] != from.angles[2] {
-            flags |= MOVE_ANGLE3;
+            flags |= MoveDeltaFlags::MOVE_ANGLE3;
         }
 
         if cmd.forward != from.forward {
-            flags |= MOVE_FORWARD;
+            flags |= MoveDeltaFlags::MOVE_FORWARD;
         }
 
         if cmd.side != from.side {
-            flags |= MOVE_SIDE;
+            flags |= MoveDeltaFlags::MOVE_SIDE;
         }
 
         if cmd.up != from.up {
-            flags |= MOVE_UP;
+            flags |= MoveDeltaFlags::MOVE_UP;
         }
 
         if cmd.buttons != from.buttons {
-            flags |= MOVE_BUTTONS;
+            flags |= MoveDeltaFlags::MOVE_BUTTONS;
         }
 
         if cmd.impulse != from.impulse {
-            flags |= MOVE_IMPULSE;
+            flags |= MoveDeltaFlags::MOVE_IMPULSE;
         }
 
         self.write_u8(flags.bits())?;
 
         // TODO: writes
-        if flags.contains(MOVE_ANGLE1) {
+        if flags.contains(MoveDeltaFlags::MOVE_ANGLE1) {
             self.write_angle16(cmd.angles[0])?;
         }
 
-        if flags.contains(MOVE_ANGLE2) {
+        if flags.contains(MoveDeltaFlags::MOVE_ANGLE2) {
             self.write_angle16(cmd.angles[1])?;
         }
 
-        if flags.contains(MOVE_ANGLE3) {
+        if flags.contains(MoveDeltaFlags::MOVE_ANGLE3) {
             self.write_angle16(cmd.angles[2])?;
         }
 
-        if flags.contains(MOVE_FORWARD) {
+        if flags.contains(MoveDeltaFlags::MOVE_FORWARD) {
             self.write_i16::<LittleEndian>(cmd.forward)?;
         }
 
-        if flags.contains(MOVE_SIDE) {
+        if flags.contains(MoveDeltaFlags::MOVE_SIDE) {
             self.write_i16::<LittleEndian>(cmd.side)?;
         }
 
-        if flags.contains(MOVE_UP) {
+        if flags.contains(MoveDeltaFlags::MOVE_UP) {
             self.write_i16::<LittleEndian>(cmd.up)?;
         }
 
-        if flags.contains(MOVE_BUTTONS) {
+        if flags.contains(MoveDeltaFlags::MOVE_BUTTONS) {
             self.write_u8(cmd.buttons)?;
         }
 
-        if flags.contains(MOVE_IMPULSE) {
+        if flags.contains(MoveDeltaFlags::MOVE_IMPULSE) {
             self.write_u8(cmd.impulse)?;
         }
 
@@ -646,19 +646,19 @@ impl PrintPacket {
 }
 
 bitflags! {
-    pub flags PlayerInfoFlags: u16 {
-        const PF_MSEC        = 0x0001,
-        const PF_COMMAND     = 0x0002,
-        const PF_VELOCITY1   = 0x0004,
-        const PF_VELOCITY2   = 0x0008,
-        const PF_VELOCITY3   = 0x0010,
-        const PF_MODEL       = 0x0020,
-        const PF_SKINNUM     = 0x0040,
-        const PF_EFFECTS     = 0x0080,
-        const PF_WEAPONFRAME = 0x0100,
-        const PF_DEAD        = 0x0200,
-        const PF_GIB         = 0x0400,
-        const PF_NOGRAV      = 0x0800,
+    pub struct PlayerInfoFlags: u16 {
+        const PF_MSEC        = 0x0001;
+        const PF_COMMAND     = 0x0002;
+        const PF_VELOCITY1   = 0x0004;
+        const PF_VELOCITY2   = 0x0008;
+        const PF_VELOCITY3   = 0x0010;
+        const PF_MODEL       = 0x0020;
+        const PF_SKINNUM     = 0x0040;
+        const PF_EFFECTS     = 0x0080;
+        const PF_WEAPONFRAME = 0x0100;
+        const PF_DEAD        = 0x0200;
+        const PF_GIB         = 0x0400;
+        const PF_NOGRAV      = 0x0800;
     }
 }
 
@@ -694,46 +694,46 @@ impl PlayerInfoPacket {
         let frame = src.read_u8().unwrap();
 
         let mut msec = 0;
-        if flags.contains(PF_MSEC) {
+        if flags.contains(PlayerInfoFlags::PF_MSEC) {
             msec = src.read_u8().unwrap();
         }
 
         let mut delta: MoveDelta = Default::default();
-        if flags.contains(PF_COMMAND) {
+        if flags.contains(PlayerInfoFlags::PF_COMMAND) {
             delta = MoveDelta::from_bytes(&mut src).unwrap();
         }
 
         let mut vel = [0i16; 3];
 
-        if flags.contains(PF_VELOCITY1) {
+        if flags.contains(PlayerInfoFlags::PF_VELOCITY1) {
             vel[0] = src.read_i16::<LittleEndian>()?;
         }
 
-        if flags.contains(PF_VELOCITY2) {
+        if flags.contains(PlayerInfoFlags::PF_VELOCITY2) {
             vel[1] = src.read_i16::<LittleEndian>()?;
         }
 
-        if flags.contains(PF_VELOCITY3) {
+        if flags.contains(PlayerInfoFlags::PF_VELOCITY3) {
             vel[2] = src.read_i16::<LittleEndian>()?;
         }
 
         let mut model_id = 0;
-        if flags.contains(PF_MODEL) {
+        if flags.contains(PlayerInfoFlags::PF_MODEL) {
             model_id = src.read_u8().unwrap();
         }
 
         let mut skin_id = 0;
-        if flags.contains(PF_SKINNUM) {
+        if flags.contains(PlayerInfoFlags::PF_SKINNUM) {
             skin_id = src.read_u8().unwrap();
         }
 
         let mut effects = 0;
-        if flags.contains(PF_EFFECTS) {
+        if flags.contains(PlayerInfoFlags::PF_EFFECTS) {
             effects = src.read_u8().unwrap();
         }
 
         let mut weapon_frame = 0;
-        if flags.contains(PF_WEAPONFRAME) {
+        if flags.contains(PlayerInfoFlags::PF_WEAPONFRAME) {
             weapon_frame = src.read_u8().unwrap();
         }
 
@@ -981,15 +981,15 @@ pub struct MoveCmd {
 
 // Move command delta flags, https://github.com/id-Software/Quake/blob/master/QW/client/protocol.h#L171
 bitflags! {
-    pub flags MoveDeltaFlags: u8 {
-        const MOVE_ANGLE1  = 0x01,
-        const MOVE_ANGLE3  = 0x02,
-        const MOVE_FORWARD = 0x04,
-        const MOVE_SIDE    = 0x08,
-        const MOVE_UP      = 0x10,
-        const MOVE_BUTTONS = 0x20,
-        const MOVE_IMPULSE = 0x40,
-        const MOVE_ANGLE2  = 0x80,
+    struct MoveDeltaFlags: u8 {
+        const MOVE_ANGLE1  = 0x01;
+        const MOVE_ANGLE3  = 0x02;
+        const MOVE_FORWARD = 0x04;
+        const MOVE_SIDE    = 0x08;
+        const MOVE_UP      = 0x10;
+        const MOVE_BUTTONS = 0x20;
+        const MOVE_IMPULSE = 0x40;
+        const MOVE_ANGLE2  = 0x80;
     }
 }
 
@@ -1014,40 +1014,40 @@ impl MoveDelta {
 
         let mut angles = Vec3::zero();
 
-        if flags.contains(MOVE_ANGLE1) {
+        if flags.contains(MoveDeltaFlags::MOVE_ANGLE1) {
             angles[0] = src.read_i16::<LittleEndian>()? as f32 * (360.0 / 65536.0);
         }
 
-        if flags.contains(MOVE_ANGLE2) {
+        if flags.contains(MoveDeltaFlags::MOVE_ANGLE2) {
             angles[1] = src.read_i16::<LittleEndian>()? as f32 * (360.0 / 65536.0);
         }
 
-        if flags.contains(MOVE_ANGLE3) {
+        if flags.contains(MoveDeltaFlags::MOVE_ANGLE3) {
             angles[2] = src.read_i16::<LittleEndian>()? as f32 * (360.0 / 65536.0);
         }
 
         let mut forward: i16 = 0;
-        if flags.contains(MOVE_FORWARD) {
+        if flags.contains(MoveDeltaFlags::MOVE_FORWARD) {
             forward = src.read_i16::<LittleEndian>()?;
         }
 
         let mut side: i16 = 0;
-        if flags.contains(MOVE_SIDE) {
+        if flags.contains(MoveDeltaFlags::MOVE_SIDE) {
             side = src.read_i16::<LittleEndian>()?;
         }
 
         let mut up: i16 = 0;
-        if flags.contains(MOVE_UP) {
+        if flags.contains(MoveDeltaFlags::MOVE_UP) {
             up = src.read_i16::<LittleEndian>()?;
         }
 
         let mut buttons = 0;
-        if flags.contains(MOVE_BUTTONS) {
+        if flags.contains(MoveDeltaFlags::MOVE_BUTTONS) {
             buttons = src.read_u8().unwrap();
         }
 
         let mut impulse = 0;
-        if flags.contains(MOVE_IMPULSE) {
+        if flags.contains(MoveDeltaFlags::MOVE_IMPULSE) {
             impulse = src.read_u8().unwrap();
         }
 
@@ -1086,40 +1086,40 @@ const PROTOCOL_FTE: u32 = ('F' as u32) << 0 | ('T' as u32) << 8 | ('E' as u32) <
 
 // FTE extensions, https://github.com/mdeguzis/ftequake/blob/master/engine/common/protocol.h#L21
 bitflags! {
-    pub flags FteExtensions: u32 {
-        const FTE_SETVIEW           = 0x00000001,
-        const FTE_SCALE             = 0x00000002,
-        const FTE_LIGHTSTYLECOL     = 0x00000004,
-        const FTE_TRANS             = 0x00000008,
-        const FTE_VIEW2             = 0x00000010,
-        // const FTE_BULLETENS      = 0x00000020,
-        const FTE_ACCURATETIMINGS   = 0x00000040,
-        const FTE_SOUNDDBL          = 0x00000080,
-        const FTE_FATNESS           = 0x00000100,
-        const FTE_HLBSP             = 0x00000200,
-        const FTE_TE_BULLET         = 0x00000400,
-        const FTE_HULLSIZE          = 0x00000800,
-        const FTE_MODELDBL          = 0x00001000,
-        const FTE_ENTITYDBL         = 0x00002000,
-        const FTE_ENTITYDBL2        = 0x00004000,
-        const FTE_FLOATCOORDS       = 0x00008000,
-        // const FTE_VWEAP          = 0x00010000,
-        const FTE_Q2BSP             = 0x00020000,
-        const FTE_Q3BSP             = 0x00040000,
-        const FTE_COLOURMOD         = 0x00080000,
-        const FTE_SPLITSCREEN       = 0x00100000,
-        const FTE_HEXEN2            = 0x00200000,
-        const FTE_SPAWNSTATIC2      = 0x00400000,
-        const FTE_CUSTOMTEMPEFFECTS = 0x00800000,
-        const FTE_256PACKETENTITIES = 0x01000000,
-        // const FTE_NEVERUSED      = 0x02000000,
-        const FTE_SHOWPIC           = 0x04000000,
-        const FTE_SETATTACHMENT     = 0x08000000,
-        // const FTE_NEVERUSED      = 0x10000000,
-        const FTE_CHUNKEDDOWNLOADS  = 0x20000000,
-        const FTE_CSQC              = 0x40000000,
-        const FTE_DPFLAGS           = 0x80000000,
-        const FTE_BIGUSERINFOS      = 0xffffffff,
+    pub struct FteExtensions: u32 {
+        const FTE_SETVIEW           = 0x00000001;
+        const FTE_SCALE             = 0x00000002;
+        const FTE_LIGHTSTYLECOL     = 0x00000004;
+        const FTE_TRANS             = 0x00000008;
+        const FTE_VIEW2             = 0x00000010;
+        // const FTE_BULLETENS      = 0x00000020;
+        const FTE_ACCURATETIMINGS   = 0x00000040;
+        const FTE_SOUNDDBL          = 0x00000080;
+        const FTE_FATNESS           = 0x00000100;
+        const FTE_HLBSP             = 0x00000200;
+        const FTE_TE_BULLET         = 0x00000400;
+        const FTE_HULLSIZE          = 0x00000800;
+        const FTE_MODELDBL          = 0x00001000;
+        const FTE_ENTITYDBL         = 0x00002000;
+        const FTE_ENTITYDBL2        = 0x00004000;
+        const FTE_FLOATCOORDS       = 0x00008000;
+        // const FTE_VWEAP          = 0x00010000;
+        const FTE_Q2BSP             = 0x00020000;
+        const FTE_Q3BSP             = 0x00040000;
+        const FTE_COLOURMOD         = 0x00080000;
+        const FTE_SPLITSCREEN       = 0x00100000;
+        const FTE_HEXEN2            = 0x00200000;
+        const FTE_SPAWNSTATIC2      = 0x00400000;
+        const FTE_CUSTOMTEMPEFFECTS = 0x00800000;
+        const FTE_256PACKETENTITIES = 0x01000000;
+        // const FTE_NEVERUSED      = 0x02000000;
+        const FTE_SHOWPIC           = 0x04000000;
+        const FTE_SETATTACHMENT     = 0x08000000;
+        // const FTE_NEVERUSED      = 0x10000000;
+        const FTE_CHUNKEDDOWNLOADS  = 0x20000000;
+        const FTE_CSQC              = 0x40000000;
+        const FTE_DPFLAGS           = 0x80000000;
+        const FTE_BIGUSERINFOS      = 0xffffffff;
     }
 }
 
@@ -1128,14 +1128,14 @@ const PROTOCOL_FTE2: u32 = ('F' as u32) << 0 | ('T' as u32) << 8 | ('E' as u32) 
 
 // FTE2 extensions, https://github.com/mdeguzis/ftequake/blob/master/engine/common/protocol.h#L73
 bitflags! {
-    pub flags Fte2Extensions: u32 {
-        const FTE2_PRYDONCURSOR      = 0x00000001,
-        const FTE2_VOICECHAT         = 0x00000002,
-        const FTE2_SETANGLEDELTA     = 0x00000004,
-        const FTE2_REPLACEMENTDELTAS = 0x00000008,
-        const FTE2_MAXPLAYERS        = 0x00000010,
-        const FTE2_PREDINFO          = 0x00000020,
-        const FTE2_NEWSIZEENCODING   = 0x00000040,
+    pub struct Fte2Extensions: u32 {
+        const FTE2_PRYDONCURSOR      = 0x00000001;
+        const FTE2_VOICECHAT         = 0x00000002;
+        const FTE2_SETANGLEDELTA     = 0x00000004;
+        const FTE2_REPLACEMENTDELTAS = 0x00000008;
+        const FTE2_MAXPLAYERS        = 0x00000010;
+        const FTE2_PREDINFO          = 0x00000020;
+        const FTE2_NEWSIZEENCODING   = 0x00000040;
     }
 }
 
