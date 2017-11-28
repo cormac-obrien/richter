@@ -32,82 +32,86 @@ use cgmath::Vector3;
 use chrono::Duration;
 use num::FromPrimitive;
 
-pub const GLOBAL_STATIC_COUNT: usize = 64;
+pub const GLOBAL_RESERVED_START: usize = 0;
+pub const GLOBAL_STATIC_START: usize = 28;
 pub const GLOBAL_DYNAMIC_START: usize = 64;
+
+pub const GLOBAL_RESERVED_COUNT: usize = GLOBAL_STATIC_START - GLOBAL_RESERVED_START;
+pub const GLOBAL_STATIC_COUNT: usize = GLOBAL_DYNAMIC_START - GLOBAL_STATIC_START;
 
 #[derive(FromPrimitive)]
 pub enum GlobalFloatAddress {
-    Time = 3,
-    FrameTime = 4,
-    ForceRetouch = 5,
-    Deathmatch = 7,
-    Coop = 8,
-    TeamPlay = 9,
-    ServerFlags = 10,
-    TotalSecrets = 11,
-    TotalMonsters = 12,
-    FoundSecrets = 13,
-    KilledMonsters = 14,
-    Arg0 = 15,
-    Arg1 = 16,
-    Arg2 = 17,
-    Arg3 = 18,
-    Arg4 = 19,
-    Arg5 = 20,
-    Arg6 = 21,
-    Arg7 = 22,
-    Arg8 = 23,
-    Arg9 = 24,
-    Arg10 = 25,
-    Arg11 = 26,
-    Arg12 = 27,
-    Arg13 = 28,
-    Arg14 = 29,
-    Arg15 = 30,
-    VForwardX = 31,
-    VForwardY = 32,
-    VForwardZ = 33,
-    VUpX = 34,
-    VUpY = 35,
-    VUpZ = 36,
-    VRightX = 37,
-    VRightY = 38,
-    VRightZ = 39,
-    TraceAllSolid = 40,
-    TraceStartSolid = 41,
-    TraceFraction = 42,
-    TraceEndPosX = 43,
-    TraceEndPosY = 44,
-    TraceEndPosZ = 45,
-    TracePlaneNormalX = 46,
-    TracePlaneNormalY = 47,
-    TracePlaneNormalZ = 48,
-    TracePlaneDist = 49,
-    TraceInOpen = 51,
-    TraceInWater = 52,
+    Time = 31,
+    FrameTime = 32,
+    ForceRetouch = 33,
+    Deathmatch = 35,
+    Coop = 36,
+    TeamPlay = 37,
+    ServerFlags = 38,
+    TotalSecrets = 39,
+    TotalMonsters = 40,
+    FoundSecrets = 41,
+    KilledMonsters = 42,
+    Arg0 = 43,
+    Arg1 = 44,
+    Arg2 = 45,
+    Arg3 = 46,
+    Arg4 = 47,
+    Arg5 = 48,
+    Arg6 = 49,
+    Arg7 = 50,
+    Arg8 = 51,
+    Arg9 = 52,
+    Arg10 = 53,
+    Arg11 = 54,
+    Arg12 = 55,
+    Arg13 = 56,
+    Arg14 = 57,
+    Arg15 = 58,
+    VForwardX = 59,
+    VForwardY = 60,
+    VForwardZ = 61,
+    VUpX = 62,
+    VUpY = 63,
+    VUpZ = 64,
+    VRightX = 65,
+    VRightY = 66,
+    VRightZ = 67,
+    TraceAllSolid = 68,
+    TraceStartSolid = 69,
+    TraceFraction = 70,
+    TraceEndPosX = 71,
+    TraceEndPosY = 72,
+    TraceEndPosZ = 73,
+    TracePlaneNormalX = 74,
+    TracePlaneNormalY = 75,
+    TracePlaneNormalZ = 76,
+    TracePlaneDist = 77,
+    TraceInOpen = 79,
+    TraceInWater = 80,
 }
 
 #[derive(FromPrimitive)]
 pub enum GlobalVectorAddress {
-    VForward = 31,
-    VUp = 34,
-    VRight = 37,
-    TraceEndPos = 43,
-    TracePlaneNormal = 46,
+    VForward = 59,
+    VUp = 62,
+    VRight = 65,
+    TraceEndPos = 71,
+    TracePlaneNormal = 74,
 }
 
 #[derive(FromPrimitive)]
 pub enum GlobalStringAddress {
-    MapName = 6,
+    MapName = 34,
 }
 
 #[derive(FromPrimitive)]
 pub enum GlobalEntityAddress {
-    Self_ = 0,
-    Other = 1,
-    World = 2,
-    TraceEntity = 50,
-    MsgEntity = 53,
+    Self_ = 28,
+    Other = 29,
+    World = 30,
+    TraceEntity = 78,
+    MsgEntity = 81,
 }
 
 #[derive(FromPrimitive)]
@@ -115,20 +119,21 @@ pub enum GlobalFieldAddress {}
 
 #[derive(FromPrimitive)]
 pub enum GlobalFunctionAddress {
-    Main = 54,
-    StartFrame = 55,
-    PlayerPreThink = 56,
-    PlayerPostThink = 57,
-    ClientKill = 58,
-    ClientConnect = 59,
-    PutClientInServer = 60,
-    ClientDisconnect = 61,
-    SetNewArgs = 62,
-    SetChangeArgs = 63,
+    Main = 82,
+    StartFrame = 83,
+    PlayerPreThink = 84,
+    PlayerPostThink = 85,
+    ClientKill = 86,
+    ClientConnect = 87,
+    PutClientInServer = 88,
+    ClientDisconnect = 89,
+    SetNewArgs = 90,
+    SetChangeArgs = 91,
 }
 
 #[derive(Debug)]
 pub struct GlobalsStatic {
+    pub reserved: [[u8; 4]; GLOBAL_RESERVED_COUNT],
     pub self_: EntityId,
     pub other: EntityId,
     pub world: EntityId,
@@ -173,6 +178,7 @@ pub struct GlobalsStatic {
 impl GlobalsStatic {
     pub fn new() -> GlobalsStatic {
         GlobalsStatic {
+            reserved: [[0; 4]; GLOBAL_RESERVED_COUNT],
             self_: EntityId(0),
             other: EntityId(0),
             world: EntityId(0),
@@ -258,11 +264,19 @@ impl Globals {
 
         let addr = addr as usize;
 
-        if addr < GLOBAL_STATIC_COUNT {
+        if addr < GLOBAL_STATIC_START {
+            self.get_float_reserved(addr)
+        } else if addr < GLOBAL_DYNAMIC_START {
             self.get_float_static(addr)
         } else {
             self.get_dynamic_float(addr)
         }
+    }
+
+    fn get_float_reserved(&self, addr: usize) -> Result<f32, ProgsError> {
+        Ok(self.statics.reserved[addr]
+            .as_ref()
+            .read_f32::<LittleEndian>()?)
     }
 
     fn get_float_static(&self, addr: usize) -> Result<f32, ProgsError> {
@@ -348,11 +362,19 @@ impl Globals {
 
         let addr = addr as usize;
 
-        if addr < GLOBAL_STATIC_COUNT {
+        if addr < GLOBAL_STATIC_START {
+            self.put_float_reserved(val, addr)
+        } else if addr < GLOBAL_DYNAMIC_START {
             self.put_float_static(val, addr)
         } else {
             self.put_float_dynamic(val, addr)
         }
+    }
+
+    fn put_float_reserved(&mut self, val: f32, addr: usize) -> Result<(), ProgsError> {
+        Ok(self.statics.reserved[addr]
+            .as_mut()
+            .write_f32::<LittleEndian>(val)?)
     }
 
     fn put_float_static(&mut self, val: f32, addr: usize) -> Result<(), ProgsError> {
@@ -441,21 +463,30 @@ impl Globals {
 
         let addr = addr as usize;
 
-        if addr < GLOBAL_STATIC_COUNT {
-            self.get_static_vector(addr)
+        if addr < GLOBAL_STATIC_START {
+            self.get_vector_reserved(addr)
+        } else if addr < GLOBAL_DYNAMIC_START {
+            self.get_vector_static(addr)
         } else {
-            self.get_dynamic_vector(addr)
+            self.get_vector_dynamic(addr)
         }
     }
 
-    fn get_static_vector(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
+    fn get_vector_reserved(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
+        let mut v = [0.0; 3];
+        for c in 0..v.len() {
+            v[c] = self.get_float_reserved(addr + c)?;
+        }
+        Ok(v)
+    }
+
+    fn get_vector_static(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
         let v_addr = match GlobalVectorAddress::from_usize(addr) {
             Some(v) => v,
             None => {
-                return Err(ProgsError::with_msg(format!(
-                    "get_static_v: invalid static global vector address ({})",
-                    addr
-                )))
+                return Err(ProgsError::with_msg(
+                    format!("get_vector_static: invalid address ({})", addr),
+                ))
             }
         };
 
@@ -468,11 +499,11 @@ impl Globals {
         })
     }
 
-    fn get_dynamic_vector(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
+    fn get_vector_dynamic(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
         // subtract 2 from range to account for size of vector
         if addr > GLOBAL_STATIC_COUNT + self.dynamics.len() - 2 {
             return Err(ProgsError::with_msg(format!(
-                "get_dynamic_v: dynamic global vector address out of range ({})",
+                "get_vector_dynamic: address out of range ({})",
                 addr
             )));
         }
@@ -497,11 +528,21 @@ impl Globals {
 
         let addr = addr as usize;
 
-        if addr < GLOBAL_STATIC_COUNT {
+        if addr < GLOBAL_STATIC_START {
+            self.put_vector_reserved(val, addr)
+        } else if addr < GLOBAL_DYNAMIC_START {
             self.put_vector_static(val, addr)
         } else {
             self.put_vector_dynamic(val, addr)
         }
+    }
+
+    fn put_vector_reserved(&mut self, val: [f32; 3], addr: usize) -> Result<(), ProgsError> {
+        for c in 0..val.len() {
+            self.put_float_reserved(val[c], addr + c)?;
+        }
+
+        Ok(())
     }
 
     fn put_vector_static(&mut self, val: [f32; 3], addr: usize) -> Result<(), ProgsError> {
@@ -553,11 +594,19 @@ impl Globals {
 
         let addr = addr as usize;
 
-        if addr < GLOBAL_STATIC_COUNT {
+        if addr < GLOBAL_STATIC_START {
+            self.get_string_id_reserved(addr)
+        } else if addr < GLOBAL_DYNAMIC_START {
             self.get_string_id_static(addr)
         } else {
             self.get_string_id_dynamic(addr)
         }
+    }
+
+    fn get_string_id_reserved(&self, addr: usize) -> Result<StringId, ProgsError> {
+        Ok(StringId(self.statics.reserved[addr]
+            .as_ref()
+            .read_i32::<LittleEndian>()?))
     }
 
     fn get_string_id_static(&self, addr: usize) -> Result<StringId, ProgsError> {
@@ -595,11 +644,21 @@ impl Globals {
 
         let addr = addr as usize;
 
-        if addr < GLOBAL_STATIC_COUNT {
+        if addr < GLOBAL_STATIC_START {
+            self.put_string_id_reserved(val, addr)
+        } else if addr < GLOBAL_DYNAMIC_START {
             self.put_string_id_static(val, addr)
         } else {
             self.put_string_id_dynamic(val, addr)
         }
+    }
+
+    fn put_string_id_reserved(&mut self, val: StringId, addr: usize) -> Result<(), ProgsError> {
+        self.statics.reserved[addr]
+            .as_mut()
+            .write_i32::<LittleEndian>(val.0)?;
+
+        Ok(())
     }
 
     fn put_string_id_static(&mut self, val: StringId, addr: usize) -> Result<(), ProgsError> {
@@ -641,11 +700,19 @@ impl Globals {
 
         let addr = addr as usize;
 
-        if addr < GLOBAL_STATIC_COUNT {
+        if addr < GLOBAL_STATIC_START {
+            self.get_entity_id_reserved(addr)
+        } else if addr < GLOBAL_DYNAMIC_START {
             self.get_entity_id_static(addr)
         } else {
             self.get_entity_id_dynamic(addr)
         }
+    }
+
+    fn get_entity_id_reserved(&self, addr: usize) -> Result<EntityId, ProgsError> {
+        Ok(EntityId(self.statics.reserved[addr]
+            .as_ref()
+            .read_i32::<LittleEndian>()?))
     }
 
     fn get_entity_id_static(&self, addr: usize) -> Result<EntityId, ProgsError> {
@@ -687,11 +754,21 @@ impl Globals {
 
         let addr = addr as usize;
 
-        if addr < GLOBAL_STATIC_COUNT {
+        if addr < GLOBAL_STATIC_START {
+            self.put_entity_id_reserved(val, addr)
+        } else if addr < GLOBAL_DYNAMIC_START {
             self.put_entity_id_static(val, addr)
         } else {
             self.put_entity_id_dynamic(val, addr)
         }
+    }
+
+    fn put_entity_id_reserved(&mut self, val: EntityId, addr: usize) -> Result<(), ProgsError> {
+        self.statics.reserved[addr]
+            .as_mut()
+            .write_i32::<LittleEndian>(val.0)?;
+
+        Ok(())
     }
 
     fn put_entity_id_static(&mut self, val: EntityId, addr: usize) -> Result<(), ProgsError> {
@@ -742,6 +819,12 @@ impl Globals {
         } else {
             self.get_field_addr_dynamic(addr)
         }
+    }
+
+    fn get_field_addr_reserved(&self, addr: usize) -> Result<FieldAddr, ProgsError> {
+        Ok(FieldAddr(self.statics.reserved[addr]
+            .as_ref()
+            .read_i32::<LittleEndian>()?))
     }
 
     fn get_field_addr_static(&self, addr: usize) -> Result<FieldAddr, ProgsError> {
@@ -924,54 +1007,86 @@ impl Globals {
         Ok(())
     }
 
-    pub fn generic_copy(&mut self, src_addr: i16, dst_addr: i16) -> Result<(), ProgsError> {
+    pub fn reserved_copy(&mut self, src_addr: i16, dst_addr: i16) -> Result<(), ProgsError> {
         if src_addr < 0 {
             return Err(ProgsError::with_msg(format!(
-                "generic_copy: negative source address ({})",
+                "reserved_copy: negative source address ({})",
+                src_addr
+            )));
+        }
+
+        // copy byte representations
+        let mut src_val = [0; 4];
+
+        let src_addr = src_addr as usize;
+
+        if src_addr < GLOBAL_STATIC_START {
+            src_val = self.statics.reserved[src_addr];
+        } else if src_addr < GLOBAL_DYNAMIC_START {
+            if GlobalFloatAddress::from_usize(src_addr).is_some() {
+                let f = self.get_float_static(src_addr)?;
+                src_val.as_mut().write_f32::<LittleEndian>(f)?;
+            } else if GlobalStringAddress::from_usize(src_addr).is_some() {
+                let s = self.get_string_id_static(src_addr)?;
+                src_val.as_mut().write_i32::<LittleEndian>(s.0)?;
+            } else if GlobalEntityAddress::from_usize(src_addr).is_some() {
+                let e = self.get_entity_id_static(src_addr)?;
+                src_val.as_mut().write_i32::<LittleEndian>(e.0)?;
+            } else if GlobalFunctionAddress::from_usize(src_addr).is_some() {
+                let f = self.get_function_id_static(src_addr)?;
+                src_val.as_mut().write_i32::<LittleEndian>(f.0)?;
+            } else {
+                return Err(ProgsError::with_msg(format!(
+                    "reserved_copy: invalid static source address ({})",
+                    src_addr
+                )));
+            }
+        } else if src_addr < GLOBAL_DYNAMIC_START + self.dynamics.len() {
+            src_val = self.dynamics[src_addr - GLOBAL_DYNAMIC_START];
+        } else {
+            return Err(ProgsError::with_msg(format!(
+                "reserved_copy: source address out of range ({})",
                 src_addr
             )));
         }
 
         if dst_addr < 0 {
             return Err(ProgsError::with_msg(format!(
-                "generic_copy: negative destination address ({})",
+                "reserved_copy: negative destination address ({})",
                 dst_addr
             )));
         }
 
-        let src_addr = src_addr as usize;
         let dst_addr = dst_addr as usize;
 
-        if src_addr > self.dynamics.len() + GLOBAL_DYNAMIC_START {
+        if dst_addr < GLOBAL_STATIC_START {
+            self.statics.reserved[dst_addr] = src_val;
+        } else if dst_addr < GLOBAL_DYNAMIC_START {
+            if GlobalFloatAddress::from_usize(dst_addr).is_some() {
+                let f = src_val.as_ref().read_f32::<LittleEndian>()?;
+                self.put_float_static(f, dst_addr)?;
+            } else if GlobalStringAddress::from_usize(dst_addr).is_some() {
+                let s = StringId(src_val.as_ref().read_i32::<LittleEndian>()?);
+                self.put_string_id_static(s, dst_addr)?;
+            } else if GlobalEntityAddress::from_usize(dst_addr).is_some() {
+                let e = EntityId(src_val.as_ref().read_i32::<LittleEndian>()?);
+                self.put_entity_id_static(e, dst_addr)?;
+            } else if GlobalFunctionAddress::from_usize(dst_addr).is_some() {
+                let f = FunctionId(src_val.as_ref().read_i32::<LittleEndian>()?);
+                self.put_function_id_static(f, dst_addr)?;
+            } else {
+                return Err(ProgsError::with_msg(format!(
+                    "reserved_copy: invalid static destination address ({})",
+                    src_addr
+                )));
+            }
+        } else if dst_addr < GLOBAL_DYNAMIC_START + self.dynamics.len() {
+            self.dynamics[dst_addr - GLOBAL_DYNAMIC_START] = src_val;
+        } else {
             return Err(ProgsError::with_msg(format!(
-                "generic_copy: source address out of range({})",
+                "reserved_copy: destination address out of range ({})",
                 src_addr
             )));
-        }
-
-        if dst_addr > self.dynamics.len() + GLOBAL_DYNAMIC_START {
-            return Err(ProgsError::with_msg(
-                format!("generic_copy: address out of range({})", dst_addr),
-            ));
-        }
-
-        if src_addr < GLOBAL_STATIC_COUNT {
-            // don't check for vectors -- those addresses will be overlapped by floats
-            if GlobalFloatAddress::from_usize(src_addr).is_some() {
-                let f = self.get_float_static(src_addr)?;
-                self.put_float_dynamic(f, dst_addr)?;
-            } else if GlobalStringAddress::from_usize(src_addr).is_some() {
-                let s = self.get_string_id_static(src_addr)?;
-                self.put_string_id_dynamic(s, dst_addr)?;
-            } else if GlobalEntityAddress::from_usize(src_addr).is_some() {
-                let e = self.get_entity_id_static(src_addr)?;
-                self.put_entity_id_dynamic(e, dst_addr)?;
-            } else {
-                panic!("Failed to typecheck address {}", src_addr);
-            }
-        } else {
-            // just copy the memory
-            self.dynamics[dst_addr] = self.dynamics[src_addr];
         }
 
         Ok(())
