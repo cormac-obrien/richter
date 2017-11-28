@@ -19,16 +19,25 @@ extern crate env_logger;
 extern crate log;
 extern crate richter;
 
+use richter::bsp;
 use richter::entity::Entity;
 use richter::pak::Pak;
+use richter::parse;
 use richter::progs;
 
 fn main() {
     env_logger::init().unwrap();
     let mut pak = Pak::new();
     pak.add("pak0.pak").unwrap();
+
     let (mut progs, mut globals, mut entity_list) = progs::load(pak.open("progs.dat").unwrap())
         .unwrap();
+
+    let (bsp, ent_string) = bsp::load(pak.open("maps/e1m1.bsp").unwrap()).unwrap();
+
+    let ent_maps = parse::entity_maps(ent_string.as_bytes());
+    println!("{:?}", ent_maps);
+
     println!("=========\nFUNCTIONS\n=========\n");
     progs.dump_functions();
     progs.validate(&mut globals, &mut entity_list);

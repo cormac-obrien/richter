@@ -29,159 +29,153 @@ use cgmath::Deg;
 use cgmath::Vector3;
 use cgmath::Zero;
 use chrono::Duration;
-
-// TODO:
-// - The OFS_* constants can probably be converted to enums based on their types and typechecked on
-//   access using num::FromPrimitive. They also only apply to NetQuake; a different set must be
-//   defined for QuakeWorld.
+use num::FromPrimitive;
 
 const MAX_ENTITIES: usize = 600;
 const MAX_ENT_LEAVES: usize = 16;
 
-const OFS_MODEL_INDEX: usize = 0;
-
-const OFS_ABS_MIN: usize = 1;
-const OFS_ABS_MIN_X: usize = 1;
-const OFS_ABS_MIN_Y: usize = 2;
-const OFS_ABS_MIN_Z: usize = 3;
-
-const OFS_ABS_MAX: usize = 4;
-const OFS_ABS_MAX_X: usize = 4;
-const OFS_ABS_MAX_Y: usize = 5;
-const OFS_ABS_MAX_Z: usize = 6;
-
-const OFS_LOCAL_TIME: usize = 7;
-const OFS_MOVE_TYPE: usize = 8;
-const OFS_SOLID: usize = 9;
-
-const OFS_ORIGIN: usize = 10;
-const OFS_ORIGIN_X: usize = 10;
-const OFS_ORIGIN_Y: usize = 11;
-const OFS_ORIGIN_Z: usize = 12;
-
-const OFS_OLD_ORIGIN: usize = 13;
-const OFS_OLD_ORIGIN_X: usize = 13;
-const OFS_OLD_ORIGIN_Y: usize = 14;
-const OFS_OLD_ORIGIN_Z: usize = 15;
-
-const OFS_VELOCITY: usize = 16;
-const OFS_VELOCITY_X: usize = 16;
-const OFS_VELOCITY_Y: usize = 17;
-const OFS_VELOCITY_Z: usize = 18;
-
-const OFS_ANGLES: usize = 19;
-const OFS_ANGLES_X: usize = 19;
-const OFS_ANGLES_Y: usize = 20;
-const OFS_ANGLES_Z: usize = 21;
-
-const OFS_ANGULAR_VELOCITY: usize = 22;
-const OFS_ANGULAR_VELOCITY_X: usize = 22;
-const OFS_ANGULAR_VELOCITY_Y: usize = 23;
-const OFS_ANGULAR_VELOCITY_Z: usize = 24;
-
-const OFS_PUNCH_ANGLE: usize = 25;
-const OFS_PUNCH_ANGLE_X: usize = 25;
-const OFS_PUNCH_ANGLE_Y: usize = 26;
-const OFS_PUNCH_ANGLE_Z: usize = 27;
-
-const OFS_CLASS_NAME: usize = 28;
-const OFS_MODEL_NAME: usize = 29;
-const OFS_FRAME_ID: usize = 30;
-const OFS_SKIN_ID: usize = 31;
-const OFS_EFFECTS: usize = 32;
-
-const OFS_MINS: usize = 33;
-const OFS_MINS_X: usize = 33;
-const OFS_MINS_Y: usize = 34;
-const OFS_MINS_Z: usize = 35;
-
-const OFS_MAXS: usize = 36;
-const OFS_MAXS_X: usize = 36;
-const OFS_MAXS_Y: usize = 37;
-const OFS_MAXS_Z: usize = 38;
-
-const OFS_SIZE: usize = 39;
-const OFS_SIZE_X: usize = 39;
-const OFS_SIZE_Y: usize = 40;
-const OFS_SIZE_Z: usize = 41;
-
-const OFS_TOUCH_FNC: usize = 42;
-const OFS_USE_FNC: usize = 43;
-const OFS_THINK_FNC: usize = 44;
-const OFS_BLOCKED_FNC: usize = 45;
-const OFS_NEXT_THINK: usize = 46;
-const OFS_GROUND_ENTITY: usize = 47;
-const OFS_HEALTH: usize = 48;
-const OFS_FRAGS: usize = 49;
-const OFS_WEAPON: usize = 50;
-const OFS_WEAPON_MODEL: usize = 51;
-const OFS_WEAPON_FRAME: usize = 52;
-const OFS_CURRENT_AMMO: usize = 53;
-const OFS_AMMO_SHELLS: usize = 54;
-const OFS_AMMO_NAILS: usize = 55;
-const OFS_AMMO_ROCKETS: usize = 56;
-const OFS_AMMO_CELLS: usize = 57;
-const OFS_ITEMS: usize = 58;
-const OFS_TAKE_DAMAGE: usize = 59;
-const OFS_CHAIN: usize = 60;
-const OFS_DEAD_FLAG: usize = 61;
-
-const OFS_VIEW_OFFSET: usize = 62;
-const OFS_VIEW_OFFSET_X: usize = 62;
-const OFS_VIEW_OFFSET_Y: usize = 63;
-const OFS_VIEW_OFFSET_Z: usize = 64;
-
-const OFS_BUTTON_0: usize = 65;
-const OFS_BUTTON_1: usize = 66;
-const OFS_BUTTON_2: usize = 67;
-const OFS_IMPULSE: usize = 68;
-const OFS_FIX_ANGLE: usize = 69;
-
-const OFS_VIEW_ANGLE: usize = 70;
-const OFS_VIEW_ANGLE_X: usize = 70;
-const OFS_VIEW_ANGLE_Y: usize = 71;
-const OFS_VIEW_ANGLE_Z: usize = 72;
-
-const OFS_IDEAL_PITCH: usize = 73;
-const OFS_NET_NAME: usize = 74;
-const OFS_ENEMY: usize = 75;
-const OFS_FLAGS: usize = 76;
-const OFS_COLORMAP: usize = 77;
-const OFS_TEAM: usize = 78;
-const OFS_MAX_HEALTH: usize = 79;
-const OFS_TELEPORT_TIME: usize = 80;
-const OFS_ARMOR_STRENGTH: usize = 81;
-const OFS_ARMOR_VALUE: usize = 82;
-const OFS_WATER_LEVEL: usize = 83;
-const OFS_CONTENTS: usize = 84;
-const OFS_IDEAL_YAW: usize = 85;
-const OFS_YAW_SPEED: usize = 86;
-const OFS_AIM_ENTITY: usize = 87;
-const OFS_GOAL_ENTITY: usize = 88;
-const OFS_SPAWN_FLAGS: usize = 89;
-const OFS_TARGET: usize = 90;
-const OFS_TARGET_NAME: usize = 91;
-const OFS_DMG_TAKE: usize = 92;
-const OFS_DMG_SAVE: usize = 93;
-const OFS_DMG_INFLICTOR: usize = 94;
-const OFS_OWNER: usize = 95;
-
-const OFS_MOVE_DIRECTION: usize = 96;
-const OFS_MOVE_DIRECTION_X: usize = 96;
-const OFS_MOVE_DIRECTION_Y: usize = 97;
-const OFS_MOVE_DIRECTION_Z: usize = 98;
-
-const OFS_MESSAGE: usize = 99;
-const OFS_SOUNDS: usize = 100;
-const OFS_NOISE_0: usize = 101;
-const OFS_NOISE_1: usize = 102;
-const OFS_NOISE_2: usize = 103;
-const OFS_NOISE_3: usize = 104;
-
 // dynamic entity fields start after this point (i.e. defined in progs.dat, not accessible here)
-const OFS_DYNAMIC_START: usize = 105;
-
+const ADDR_DYNAMIC_START: usize = 105;
 const STATIC_ADDRESS_COUNT: usize = 105;
+
+#[derive(FromPrimitive)]
+pub enum FieldAddrFloat {
+    ModelIndex = 0,
+    AbsMinX = 1,
+    AbsMinY = 2,
+    AbsMinZ = 3,
+    AbsMaxX = 4,
+    AbsMaxY = 5,
+    AbsMaxZ = 6,
+    LocalTime = 7,
+    MoveType = 8,
+    Solid = 9,
+    OriginX = 10,
+    OriginY = 11,
+    OriginZ = 12,
+    OldOriginX = 13,
+    OldOriginY = 14,
+    OldOriginZ = 15,
+    VelocityX = 16,
+    VelocityY = 17,
+    VelocityZ = 18,
+    AnglesX = 19,
+    AnglesY = 20,
+    AnglesZ = 21,
+    AngularVelocityX = 22,
+    AngularVelocityY = 23,
+    AngularVelocityZ = 24,
+    PunchAngleX = 25,
+    PunchAngleY = 26,
+    PunchAngleZ = 27,
+    FrameId = 30,
+    SkinId = 31,
+    Effects = 32,
+    MinsX = 33,
+    MinsY = 34,
+    MinsZ = 35,
+    MaxsX = 36,
+    MaxsY = 37,
+    MaxsZ = 38,
+    SizeX = 39,
+    SizeY = 40,
+    SizeZ = 41,
+    NextThink = 46,
+    Health = 48,
+    Frags = 49,
+    Weapon = 50,
+    WeaponFrame = 52,
+    CurrentAmmo = 53,
+    AmmoShells = 54,
+    AmmoNails = 55,
+    AmmoRockets = 56,
+    AmmoCells = 57,
+    Items = 58,
+    TakeDamage = 59,
+    DeadFlag = 61,
+    ViewOffsetX = 62,
+    ViewOffsetY = 63,
+    ViewOffsetZ = 64,
+    Button0 = 65,
+    Button1 = 66,
+    Button2 = 67,
+    Impulse = 68,
+    FixAngle = 69,
+    ViewAngleX = 70,
+    ViewAngleY = 71,
+    ViewAngleZ = 72,
+    IdealPitch = 73,
+    Flags = 76,
+    Colormap = 77,
+    Team = 78,
+    MaxHealth = 79,
+    TeleportTime = 80,
+    ArmorStrength = 81,
+    ArmorValue = 82,
+    WaterLevel = 83,
+    Contents = 84,
+    IdealYaw = 85,
+    YawSpeed = 86,
+    SpawnFlags = 89,
+    DmgTake = 92,
+    DmgSave = 93,
+    MoveDirectionX = 96,
+    MoveDirectionY = 97,
+    MoveDirectionZ = 98,
+    Sounds = 100,
+}
+
+#[derive(FromPrimitive)]
+pub enum FieldAddrVector {
+    AbsMin = 1,
+    AbsMax = 4,
+    Origin = 10,
+    OldOrigin = 13,
+    Velocity = 16,
+    Angles = 19,
+    AngularVelocity = 22,
+    PunchAngle = 25,
+    Mins = 33,
+    Maxs = 36,
+    Size = 39,
+    ViewOffset = 62,
+    ViewAngle = 70,
+    MoveDirection = 96,
+}
+
+#[derive(FromPrimitive)]
+pub enum FieldAddrStringId {
+    ClassName = 28,
+    ModelName = 29,
+    WeaponModelName = 51,
+    NetName = 74,
+    Target = 90,
+    TargetName = 91,
+    Message = 99,
+    Noise0Name = 101,
+    Noise1Name = 102,
+    Noise2Name = 103,
+    Noise3Name = 104,
+}
+
+#[derive(FromPrimitive)]
+pub enum FieldAddrEntityId {
+    Ground = 47,
+    Chain = 60,
+    Enemy = 75,
+    Aim = 87,
+    Goal = 88,
+    DamageInflictor = 94,
+    Owner = 95,
+}
+
+#[derive(FromPrimitive)]
+pub enum FieldAddrFunctionId {
+    Touch = 42,
+    Use = 43,
+    Think = 44,
+    Blocked = 45,
+}
 
 #[derive(Copy, Clone)]
 pub enum MoveType {
@@ -559,203 +553,195 @@ pub struct Entity {
 }
 
 impl Entity {
-    pub fn get_float(&self, ofs: i16) -> Result<f32, ProgsError> {
-        if ofs < 0 {
+    pub fn get_float(&self, addr: i16) -> Result<f32, ProgsError> {
+        if addr < 0 {
             panic!("negative offset");
         }
 
-        let ofs = ofs as usize;
+        let addr = addr as usize;
 
-        if ofs >= OFS_DYNAMIC_START + self.dynamics.len() {
-            println!("out-of-bounds offset ({})", ofs);
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            println!("out-of-bounds offset ({})", addr);
             return Ok(0.0);
         }
 
-        if ofs < OFS_DYNAMIC_START {
-            self.get_float_static(ofs)
+        if addr < ADDR_DYNAMIC_START {
+            self.get_float_static(addr)
         } else {
-            self.get_float_dynamic(ofs)
+            self.get_float_dynamic(addr)
         }
     }
 
-    fn get_float_static(&self, ofs: usize) -> Result<f32, ProgsError> {
-        if ofs >= OFS_DYNAMIC_START {
+    fn get_float_static(&self, addr: usize) -> Result<f32, ProgsError> {
+        if addr >= ADDR_DYNAMIC_START {
             panic!("Invalid offset for static entity field");
         }
 
-        Ok(match ofs {
-            OFS_MODEL_INDEX => self.statics.model_index,
-
-            OFS_ABS_MIN_X => self.statics.abs_min[0],
-            OFS_ABS_MIN_Y => self.statics.abs_min[1],
-            OFS_ABS_MIN_Z => self.statics.abs_min[2],
-
-            OFS_ABS_MAX_X => self.statics.abs_max[0],
-            OFS_ABS_MAX_Y => self.statics.abs_max[1],
-            OFS_ABS_MAX_Z => self.statics.abs_max[2],
-
-            OFS_LOCAL_TIME => engine::duration_to_f32(self.statics.local_time),
-            OFS_MOVE_TYPE => self.statics.move_type as u32 as f32,
-            OFS_SOLID => self.statics.solid,
-
-            OFS_ORIGIN_X => self.statics.origin[0],
-            OFS_ORIGIN_Y => self.statics.origin[1],
-            OFS_ORIGIN_Z => self.statics.origin[2],
-
-            OFS_OLD_ORIGIN_X => self.statics.old_origin[0],
-            OFS_OLD_ORIGIN_Y => self.statics.old_origin[1],
-            OFS_OLD_ORIGIN_Z => self.statics.old_origin[2],
-
-            OFS_VELOCITY_X => self.statics.velocity[0],
-            OFS_VELOCITY_Y => self.statics.velocity[1],
-            OFS_VELOCITY_Z => self.statics.velocity[2],
-
-            OFS_ANGLES_X => self.statics.angles[0].0,
-            OFS_ANGLES_Y => self.statics.angles[1].0,
-            OFS_ANGLES_Z => self.statics.angles[2].0,
-
-            OFS_ANGULAR_VELOCITY_X => self.statics.angular_velocity[0].0,
-            OFS_ANGULAR_VELOCITY_Y => self.statics.angular_velocity[1].0,
-            OFS_ANGULAR_VELOCITY_Z => self.statics.angular_velocity[2].0,
-
-            OFS_PUNCH_ANGLE_X => self.statics.punch_angle[0].0,
-            OFS_PUNCH_ANGLE_Y => self.statics.punch_angle[1].0,
-            OFS_PUNCH_ANGLE_Z => self.statics.punch_angle[2].0,
-
-            OFS_FRAME_ID => self.statics.frame_id,
-            OFS_SKIN_ID => self.statics.skin_id,
-            OFS_EFFECTS => self.statics.effects.bits() as i32 as f32,
-
-            OFS_MINS_X => self.statics.mins[0],
-            OFS_MINS_Y => self.statics.mins[1],
-            OFS_MINS_Z => self.statics.mins[2],
-
-            OFS_MAXS_X => self.statics.maxs[0],
-            OFS_MAXS_Y => self.statics.maxs[1],
-            OFS_MAXS_Z => self.statics.maxs[2],
-
-            OFS_SIZE_X => self.statics.size[0],
-            OFS_SIZE_Y => self.statics.size[1],
-            OFS_SIZE_Z => self.statics.size[2],
-
-            OFS_NEXT_THINK => engine::duration_to_f32(self.statics.next_think),
-            OFS_HEALTH => self.statics.health,
-            OFS_FRAGS => self.statics.frags,
-            OFS_WEAPON => self.statics.weapon,
-            OFS_WEAPON_FRAME => self.statics.weapon_frame,
-            OFS_CURRENT_AMMO => self.statics.current_ammo,
-            OFS_AMMO_SHELLS => self.statics.ammo_shells,
-            OFS_AMMO_NAILS => self.statics.ammo_nails,
-            OFS_AMMO_ROCKETS => self.statics.ammo_rockets,
-            OFS_AMMO_CELLS => self.statics.ammo_cells,
-            OFS_ITEMS => self.statics.items,
-            OFS_TAKE_DAMAGE => self.statics.take_damage,
-            OFS_DEAD_FLAG => self.statics.dead_flag,
-
-            OFS_VIEW_OFFSET_X => self.statics.view_offset[0],
-            OFS_VIEW_OFFSET_Y => self.statics.view_offset[1],
-            OFS_VIEW_OFFSET_Z => self.statics.view_offset[2],
-
-            OFS_BUTTON_0 => self.statics.button_0,
-            OFS_BUTTON_1 => self.statics.button_1,
-            OFS_BUTTON_2 => self.statics.button_2,
-            OFS_IMPULSE => self.statics.impulse,
-            OFS_FIX_ANGLE => self.statics.fix_angle,
-
-            OFS_VIEW_ANGLE_X => self.statics.view_angle[0].0,
-            OFS_VIEW_ANGLE_Y => self.statics.view_angle[1].0,
-            OFS_VIEW_ANGLE_Z => self.statics.view_angle[2].0,
-
-            OFS_IDEAL_PITCH => self.statics.ideal_pitch.0,
-            OFS_FLAGS => self.statics.flags.bits() as i32 as f32,
-            OFS_COLORMAP => self.statics.colormap,
-            OFS_TEAM => self.statics.team,
-            OFS_MAX_HEALTH => self.statics.max_health,
-            OFS_TELEPORT_TIME => engine::duration_to_f32(self.statics.teleport_time),
-            OFS_ARMOR_STRENGTH => self.statics.armor_strength,
-            OFS_ARMOR_VALUE => self.statics.armor_value,
-            OFS_WATER_LEVEL => self.statics.water_level,
-            OFS_CONTENTS => self.statics.contents,
-            OFS_IDEAL_YAW => self.statics.ideal_yaw.0,
-            OFS_YAW_SPEED => self.statics.yaw_speed.0,
-            OFS_SPAWN_FLAGS => self.statics.spawn_flags,
-            OFS_DMG_TAKE => self.statics.dmg_take,
-            OFS_DMG_SAVE => self.statics.dmg_save,
-
-            OFS_MOVE_DIRECTION_X => self.statics.move_direction[0],
-            OFS_MOVE_DIRECTION_Y => self.statics.move_direction[1],
-            OFS_MOVE_DIRECTION_Z => self.statics.move_direction[2],
-
-            OFS_SOUNDS => self.statics.sounds,
-
-            _ => {
+        let f_addr = match FieldAddrFloat::from_usize(addr) {
+            Some(f) => f,
+            None => {
                 return Err(ProgsError::with_msg(
-                    format!("Invalid entity field address ({})", ofs),
+                    format!("get_float_static: invalid address ({})", addr),
                 ))
             }
+        };
+
+        Ok(match f_addr {
+            FieldAddrFloat::ModelIndex => self.statics.model_index,
+            FieldAddrFloat::AbsMinX => self.statics.abs_min[0],
+            FieldAddrFloat::AbsMinY => self.statics.abs_min[1],
+            FieldAddrFloat::AbsMinZ => self.statics.abs_min[2],
+            FieldAddrFloat::AbsMaxX => self.statics.abs_max[0],
+            FieldAddrFloat::AbsMaxY => self.statics.abs_max[1],
+            FieldAddrFloat::AbsMaxZ => self.statics.abs_max[2],
+            FieldAddrFloat::LocalTime => engine::duration_to_f32(self.statics.local_time),
+            FieldAddrFloat::MoveType => self.statics.move_type as u32 as f32,
+            FieldAddrFloat::Solid => self.statics.solid,
+            FieldAddrFloat::OriginX => self.statics.origin[0],
+            FieldAddrFloat::OriginY => self.statics.origin[1],
+            FieldAddrFloat::OriginZ => self.statics.origin[2],
+            FieldAddrFloat::OldOriginX => self.statics.old_origin[0],
+            FieldAddrFloat::OldOriginY => self.statics.old_origin[1],
+            FieldAddrFloat::OldOriginZ => self.statics.old_origin[2],
+            FieldAddrFloat::VelocityX => self.statics.velocity[0],
+            FieldAddrFloat::VelocityY => self.statics.velocity[1],
+            FieldAddrFloat::VelocityZ => self.statics.velocity[2],
+            FieldAddrFloat::AnglesX => self.statics.angles[0].0,
+            FieldAddrFloat::AnglesY => self.statics.angles[1].0,
+            FieldAddrFloat::AnglesZ => self.statics.angles[2].0,
+            FieldAddrFloat::AngularVelocityX => self.statics.angular_velocity[0].0,
+            FieldAddrFloat::AngularVelocityY => self.statics.angular_velocity[1].0,
+            FieldAddrFloat::AngularVelocityZ => self.statics.angular_velocity[2].0,
+            FieldAddrFloat::PunchAngleX => self.statics.punch_angle[0].0,
+            FieldAddrFloat::PunchAngleY => self.statics.punch_angle[1].0,
+            FieldAddrFloat::PunchAngleZ => self.statics.punch_angle[2].0,
+            FieldAddrFloat::FrameId => self.statics.frame_id,
+            FieldAddrFloat::SkinId => self.statics.skin_id,
+            FieldAddrFloat::Effects => self.statics.effects.bits() as i32 as f32,
+            FieldAddrFloat::MinsX => self.statics.mins[0],
+            FieldAddrFloat::MinsY => self.statics.mins[1],
+            FieldAddrFloat::MinsZ => self.statics.mins[2],
+            FieldAddrFloat::MaxsX => self.statics.maxs[0],
+            FieldAddrFloat::MaxsY => self.statics.maxs[1],
+            FieldAddrFloat::MaxsZ => self.statics.maxs[2],
+            FieldAddrFloat::SizeX => self.statics.size[0],
+            FieldAddrFloat::SizeY => self.statics.size[1],
+            FieldAddrFloat::SizeZ => self.statics.size[2],
+            FieldAddrFloat::NextThink => engine::duration_to_f32(self.statics.next_think),
+            FieldAddrFloat::Health => self.statics.health,
+            FieldAddrFloat::Frags => self.statics.frags,
+            FieldAddrFloat::Weapon => self.statics.weapon,
+            FieldAddrFloat::WeaponFrame => self.statics.weapon_frame,
+            FieldAddrFloat::CurrentAmmo => self.statics.current_ammo,
+            FieldAddrFloat::AmmoShells => self.statics.ammo_shells,
+            FieldAddrFloat::AmmoNails => self.statics.ammo_nails,
+            FieldAddrFloat::AmmoRockets => self.statics.ammo_rockets,
+            FieldAddrFloat::AmmoCells => self.statics.ammo_cells,
+            FieldAddrFloat::Items => self.statics.items,
+            FieldAddrFloat::TakeDamage => self.statics.take_damage,
+            FieldAddrFloat::DeadFlag => self.statics.dead_flag,
+            FieldAddrFloat::ViewOffsetX => self.statics.view_offset[0],
+            FieldAddrFloat::ViewOffsetY => self.statics.view_offset[1],
+            FieldAddrFloat::ViewOffsetZ => self.statics.view_offset[2],
+            FieldAddrFloat::Button0 => self.statics.button_0,
+            FieldAddrFloat::Button1 => self.statics.button_1,
+            FieldAddrFloat::Button2 => self.statics.button_2,
+            FieldAddrFloat::Impulse => self.statics.impulse,
+            FieldAddrFloat::FixAngle => self.statics.fix_angle,
+            FieldAddrFloat::ViewAngleX => self.statics.view_angle[0].0,
+            FieldAddrFloat::ViewAngleY => self.statics.view_angle[1].0,
+            FieldAddrFloat::ViewAngleZ => self.statics.view_angle[2].0,
+            FieldAddrFloat::IdealPitch => self.statics.ideal_pitch.0,
+            FieldAddrFloat::Flags => self.statics.flags.bits() as i32 as f32,
+            FieldAddrFloat::Colormap => self.statics.colormap,
+            FieldAddrFloat::Team => self.statics.team,
+            FieldAddrFloat::MaxHealth => self.statics.max_health,
+            FieldAddrFloat::TeleportTime => engine::duration_to_f32(self.statics.teleport_time),
+            FieldAddrFloat::ArmorStrength => self.statics.armor_strength,
+            FieldAddrFloat::ArmorValue => self.statics.armor_value,
+            FieldAddrFloat::WaterLevel => self.statics.water_level,
+            FieldAddrFloat::Contents => self.statics.contents,
+            FieldAddrFloat::IdealYaw => self.statics.ideal_yaw.0,
+            FieldAddrFloat::YawSpeed => self.statics.yaw_speed.0,
+            FieldAddrFloat::SpawnFlags => self.statics.spawn_flags,
+            FieldAddrFloat::DmgTake => self.statics.dmg_take,
+            FieldAddrFloat::DmgSave => self.statics.dmg_save,
+            FieldAddrFloat::MoveDirectionX => self.statics.move_direction[0],
+            FieldAddrFloat::MoveDirectionY => self.statics.move_direction[1],
+            FieldAddrFloat::MoveDirectionZ => self.statics.move_direction[2],
+            FieldAddrFloat::Sounds => self.statics.sounds,
         })
     }
 
-    fn get_float_dynamic(&self, ofs: usize) -> Result<f32, ProgsError> {
+    fn get_float_dynamic(&self, addr: usize) -> Result<f32, ProgsError> {
         Ok(
-            self.dynamics[ofs - OFS_DYNAMIC_START]
+            self.dynamics[addr - ADDR_DYNAMIC_START]
                 .as_ref()
                 .read_f32::<LittleEndian>()
                 .unwrap(),
         )
     }
 
-    fn get_vector(&self, ofs: i16) -> Result<[f32; 3], ProgsError> {
-        if ofs < 0 {
+    fn get_vector(&self, addr: i16) -> Result<[f32; 3], ProgsError> {
+        if addr < 0 {
             panic!("negative offset");
         }
 
-        let ofs = ofs as usize;
+        let addr = addr as usize;
 
         // subtract 2 to account for size of vector
-        if ofs >= OFS_DYNAMIC_START + self.dynamics.len() - 2 {
-            println!("out-of-bounds offset ({})", ofs);
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() - 2 {
+            println!("out-of-bounds offset ({})", addr);
             // TODO: proper error
             return Ok([0.0; 3]);
         }
 
-        if ofs < OFS_DYNAMIC_START {
-            self.get_vector_static(ofs)
+        if addr < ADDR_DYNAMIC_START {
+            self.get_vector_static(addr)
         } else {
-            self.get_vector_dynamic(ofs)
+            self.get_vector_dynamic(addr)
         }
     }
 
-    fn get_vector_static(&self, ofs: usize) -> Result<[f32; 3], ProgsError> {
-        Ok(match ofs {
-            OFS_ABS_MIN => self.statics.abs_min.into(),
-            OFS_ABS_MAX => self.statics.abs_max.into(),
-            OFS_ORIGIN => self.statics.origin.into(),
-            OFS_OLD_ORIGIN => self.statics.old_origin.into(),
-            OFS_VELOCITY => self.statics.velocity.into(),
-            OFS_ANGLES => engine::deg_vector_to_f32_vector(self.statics.angles).into(),
-            OFS_ANGULAR_VELOCITY => {
+    fn get_vector_static(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
+        let v_addr = match FieldAddrVector::from_usize(addr) {
+            Some(v) => v,
+            None => {
+                return Err(ProgsError::with_msg(
+                    format!("get_vector_static: invalid address ({})", addr),
+                ));
+            }
+        };
+
+        Ok(match v_addr {
+            FieldAddrVector::AbsMin => self.statics.abs_min.into(),
+            FieldAddrVector::AbsMax => self.statics.abs_max.into(),
+            FieldAddrVector::Origin => self.statics.origin.into(),
+            FieldAddrVector::OldOrigin => self.statics.old_origin.into(),
+            FieldAddrVector::Velocity => self.statics.velocity.into(),
+            FieldAddrVector::Angles => engine::deg_vector_to_f32_vector(self.statics.angles).into(),
+            FieldAddrVector::AngularVelocity => {
                 engine::deg_vector_to_f32_vector(self.statics.angular_velocity).into()
             }
-            OFS_PUNCH_ANGLE => engine::deg_vector_to_f32_vector(self.statics.punch_angle).into(),
-            OFS_MINS => self.statics.mins.into(),
-            OFS_MAXS => self.statics.maxs.into(),
-            OFS_SIZE => self.statics.size.into(),
-            OFS_VIEW_OFFSET => self.statics.view_offset.into(),
-            OFS_VIEW_ANGLE => engine::deg_vector_to_f32_vector(self.statics.view_angle).into(),
-            OFS_MOVE_DIRECTION => self.statics.move_direction.into(),
-            _ => {
-                println!("invalid static vector field {}", ofs);
-                [0.0; 3]
+            FieldAddrVector::PunchAngle => {
+                engine::deg_vector_to_f32_vector(self.statics.punch_angle).into()
             }
+            FieldAddrVector::Mins => self.statics.mins.into(),
+            FieldAddrVector::Maxs => self.statics.maxs.into(),
+            FieldAddrVector::Size => self.statics.size.into(),
+            FieldAddrVector::ViewOffset => self.statics.view_offset.into(),
+            FieldAddrVector::ViewAngle => {
+                engine::deg_vector_to_f32_vector(self.statics.view_angle).into()
+            }
+            FieldAddrVector::MoveDirection => self.statics.move_direction.into(),
         })
     }
 
-    fn get_vector_dynamic(&self, ofs: usize) -> Result<[f32; 3], ProgsError> {
+    fn get_vector_dynamic(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
         let mut v = [0.0; 3];
 
         for c in 0..v.len() {
-            v[c] = self.get_float_dynamic(ofs + c)?;
+            v[c] = self.get_float_dynamic(addr + c)?;
         }
 
         Ok(v)
@@ -783,6 +769,46 @@ impl EntityList {
         EntityList {
             field_count,
             entries,
+        }
+    }
+
+    pub fn alloc(&mut self) -> Result<EntityId, ProgsError> {
+        for (i, entry) in self.entries.iter().enumerate() {
+            if let &EntityListEntry::Free(_) = entry {
+                return Ok(EntityId(i as i32));
+            }
+        }
+
+        Err(ProgsError::with_msg("No entity slots available"))
+    }
+
+    pub fn free(&mut self, entity_id: usize) -> Result<(), ProgsError> {
+        if entity_id > self.entries.len() {
+            return Err(ProgsError::with_msg(
+                format!("Invalid entity ID ({})", entity_id),
+            ));
+        }
+
+        if let EntityListEntry::Free(_) = self.entries[entity_id] {
+            return Ok(());
+        }
+
+        self.entries[entity_id] = EntityListEntry::Free(Duration::zero());
+        Ok(())
+    }
+
+    pub fn try_get_entity_mut(&mut self, entity_id: usize) -> Result<&mut Entity, ProgsError> {
+        if entity_id > self.entries.len() {
+            return Err(ProgsError::with_msg(
+                format!("Invalid entity ID ({})", entity_id),
+            ));
+        }
+
+        match self.entries[entity_id] {
+            EntityListEntry::Free(_) => Err(ProgsError::with_msg(
+                format!("No entity at list entry {}", entity_id),
+            )),
+            EntityListEntry::NotFree(ref mut e) => Ok(e),
         }
     }
 

@@ -33,6 +33,7 @@ extern crate glutin;
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
+#[macro_use]
 extern crate nom;
 extern crate num;
 #[macro_use]
@@ -61,8 +62,10 @@ pub mod math;
 pub mod mdl;
 pub mod net;
 pub mod pak;
+pub mod parse;
 pub mod progs;
 pub mod qw;
+pub mod server;
 // pub mod sprite;
 pub mod util;
 pub mod wad;

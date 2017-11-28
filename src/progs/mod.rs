@@ -101,6 +101,7 @@ mod ops;
 
 use std::error::Error;
 use std::fmt;
+use std::io::BufReader;
 use std::io::Cursor;
 use std::io::Read;
 use std::io::Seek;
@@ -121,7 +122,9 @@ use self::ops::Opcode;
 use self::globals::Globals;
 use self::globals::GlobalsStatic;
 use self::globals::GLOBAL_DYNAMIC_START;
+use self::globals::GLOBAL_RESERVED_COUNT;
 use self::globals::GLOBAL_STATIC_COUNT;
+use self::globals::GLOBAL_STATIC_START;
 
 const VERSION: i32 = 6;
 const CRC: i32 = 5927;
@@ -288,7 +291,7 @@ struct FieldDef {
 }
 
 pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
-    let mut src = Cursor::new(data);
+    let mut src = BufReader::new(Cursor::new(data));
     assert!(src.read_i32::<LittleEndian>()? == VERSION);
     assert!(src.read_i32::<LittleEndian>()? == CRC);
 
@@ -316,10 +319,24 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         &mut strings,
     )?;
 
+    assert_eq!(
+        src.seek(SeekFrom::Current(0))?,
+        src.seek(SeekFrom::Start(
+            (string_lump.offset + string_lump.count) as u64,
+        ))?
+    );
+
     let function_lump = &lumps[LumpId::Functions as usize];
     src.seek(SeekFrom::Start(function_lump.offset as u64))?;
     let mut functions = Vec::with_capacity(function_lump.count);
-    for _ in 0..function_lump.count {
+    for i in 0..function_lump.count {
+        assert_eq!(
+            src.seek(SeekFrom::Current(0))?,
+            src.seek(SeekFrom::Start(
+                (function_lump.offset + i * FUNCTION_SIZE) as u64,
+            ))?
+        );
+
         let kind = match src.read_i32::<LittleEndian>()? {
             x if x < 0 => FunctionKind::BuiltIn(-x as usize),
             x => FunctionKind::QuakeC(x as usize),
@@ -438,6 +455,7 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
 
     // load static globals
     let static_globals = {
+        let reserved = [[0; 4]; GLOBAL_RESERVED_COUNT];
         let self_ = EntityId(src.read_i32::<LittleEndian>()?);
         let other = EntityId(src.read_i32::<LittleEndian>()?);
         let world = EntityId(src.read_i32::<LittleEndian>()?);
@@ -502,6 +520,7 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         let set_change_args = FunctionId(src.read_i32::<LittleEndian>()?);
 
         GlobalsStatic {
+            reserved,
             self_,
             other,
             world,
@@ -635,6 +654,13 @@ impl Progs {
                 let arg1 = self.statements[i].arg1;
                 let arg2 = self.statements[i].arg2;
                 let arg3 = self.statements[i].arg3;
+                println!(
+                    "    {:<9} {:>5} {:>5} {:>5}",
+                    format!("{:?}", op),
+                    arg1,
+                    arg2,
+                    arg3
+                );
                 match op {
                     Opcode::MulF => mul_f(globals, arg1, arg2, arg3).unwrap(),
                     Opcode::MulV => mul_v(globals, arg1, arg2, arg3).unwrap(),
@@ -659,7 +685,7 @@ impl Progs {
                     Opcode::Ge => ge(globals, arg1, arg2, arg3).unwrap(),
                     Opcode::Lt => lt(globals, arg1, arg2, arg3).unwrap(),
                     Opcode::Gt => gt(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::LoadF => load_f(globals, entities, arg1, arg2, arg3).unwrap(),
+                    // Opcode::LoadF => load_f(globals, entities, arg1, arg2, arg3).unwrap(),
                     // Opcode::LoadV
                     // Opcode::LoadS
                     // Opcode::LoadEnt
@@ -1069,7 +1095,7 @@ fn store_f(
         return Err(ProgsError::with_msg("Nonzero arg3 to STORE_F"));
     }
 
-    let f = globals.get_float(src_ofs).unwrap();
+    let f = globals.get_float(src_ofs)?;
     globals.put_float(f, dest_ofs)
 }
 
@@ -1084,10 +1110,24 @@ fn store_v(
         return Err(ProgsError::with_msg("Nonzero arg3 to STORE_V"));
     }
 
-    // we have to use the generic copy because STORE_V is used to copy function arguments (see
-    // https://github.com/id-Software/Quake-Tools/blob/master/qcc/pr_comp.c#L362) into the global
-    // argument slots.
-    globals.generic_copy(src_ofs, dest_ofs)
+    if dest_ofs > 0 && dest_ofs < GLOBAL_STATIC_START as i16 {
+        // we have to use the reserved copy because STORE_V is used to copy function arguments (see
+        // https://github.com/id-Software/Quake-Tools/blob/master/qcc/pr_comp.c#L362) into the global
+        // argument slots.
+        for c in 0..3 {
+            globals.reserved_copy(
+                src_ofs + c as i16,
+                dest_ofs + c as i16,
+            )?;
+        }
+    } else {
+        for c in 0..3 {
+            let f = globals.get_float(src_ofs + c)?;
+            globals.put_float(f, dest_ofs + c)?;
+        }
+    }
+
+    Ok(())
 }
 
 fn store_s(
