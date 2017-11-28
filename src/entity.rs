@@ -15,9 +15,12 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use std::ops::Index;
+
 use engine;
 use progs::EntityId;
 use progs::FunctionId;
+use progs::ProgsError;
 use progs::StringId;
 
 use byteorder::LittleEndian;
@@ -31,6 +34,9 @@ use chrono::Duration;
 // - The OFS_* constants can probably be converted to enums based on their types and typechecked on
 //   access using num::FromPrimitive. They also only apply to NetQuake; a different set must be
 //   defined for QuakeWorld.
+
+const MAX_ENTITIES: usize = 600;
+const MAX_ENT_LEAVES: usize = 16;
 
 const OFS_MODEL_INDEX: usize = 0;
 
@@ -177,7 +183,49 @@ const OFS_DYNAMIC_START: usize = 105;
 
 const STATIC_ADDRESS_COUNT: usize = 105;
 
-pub struct Entity {
+#[derive(Copy, Clone)]
+pub enum MoveType {
+    None = 0,
+    AngleNoClip = 1,
+    AngleClip = 2,
+    Walk = 3,
+    Step = 4,
+    Fly = 5,
+    Toss = 6,
+    Push = 7,
+    NoClip = 8,
+    FlyMissile = 9,
+    Bounce = 10,
+}
+
+bitflags! {
+    pub struct EntityFlags: u16 {
+        const FLY            = 0b0000000000001;
+        const SWIM           = 0b0000000000010;
+        const CONVEYOR       = 0b0000000000100;
+        const CLIENT         = 0b0000000001000;
+        const IN_WATER       = 0b0000000010000;
+        const MONSTER        = 0b0000000100000;
+        const GOD_MODE       = 0b0000001000000;
+        const NO_TARGET      = 0b0000010000000;
+        const ITEM           = 0b0000100000000;
+        const ON_GROUND      = 0b0001000000000;
+        const PARTIAL_GROUND = 0b0010000000000;
+        const WATER_JUMP     = 0b0100000000000;
+        const JUMP_RELEASED  = 0b1000000000000;
+    }
+}
+
+bitflags! {
+    pub struct EntityEffects: u16 {
+        const BRIGHT_FIELD = 0b0001;
+        const MUZZLE_FLASH = 0b0010;
+        const BRIGHT_LIGHT = 0b0100;
+        const DIM_LIGHT    = 0b1000;
+    }
+}
+
+pub struct EntityStatic {
     // index in the model list
     model_index: f32,
 
@@ -191,7 +239,7 @@ pub struct Entity {
     local_time: Duration,
 
     // TODO find definitions for movement types
-    move_type: f32,
+    move_type: MoveType,
 
     // is this entity solid (i.e. does it have collision)
     solid: f32,
@@ -226,9 +274,8 @@ pub struct Entity {
     // skin index in the alias model
     skin_id: f32,
 
-    // TODO: better explanation
     // model effects
-    effects: f32,
+    effects: EntityEffects,
 
     // minimum extent of entity relative to origin
     mins: Vector3<f32>,
@@ -329,8 +376,8 @@ pub struct Entity {
     // this entity's enemy (for monsters)
     enemy: EntityId,
 
-    // TODO: ?
-    flags: f32,
+    // various state flags
+    flags: EntityFlags,
 
     // player colors in multiplayer
     colormap: f32,
@@ -403,18 +450,16 @@ pub struct Entity {
     noise_1: StringId,
     noise_2: StringId,
     noise_3: StringId,
-
-    dynamic_fields: Vec<[u8; 4]>,
 }
 
-impl Default for Entity {
+impl Default for EntityStatic {
     fn default() -> Self {
-        Entity {
+        EntityStatic {
             model_index: 0.0,
             abs_min: Vector3::zero(),
             abs_max: Vector3::zero(),
             local_time: Duration::seconds(0),
-            move_type: 0.0,
+            move_type: MoveType::None,
             solid: 0.0,
             origin: Vector3::zero(),
             old_origin: Vector3::zero(),
@@ -426,7 +471,7 @@ impl Default for Entity {
             model_name: StringId(0),
             frame_id: 0.0,
             skin_id: 0.0,
-            effects: 0.0,
+            effects: EntityEffects::empty(),
             mins: Vector3::zero(),
             maxs: Vector3::zero(),
             size: Vector3::zero(),
@@ -460,7 +505,7 @@ impl Default for Entity {
             ideal_pitch: Deg(0.0),
             net_name: StringId(0),
             enemy: EntityId(0),
-            flags: 0.0,
+            flags: EntityFlags::empty(),
             colormap: 0.0,
             team: 0.0,
             max_health: 0.0,
@@ -487,172 +532,180 @@ impl Default for Entity {
             noise_1: StringId(0),
             noise_2: StringId(0),
             noise_3: StringId(0),
-            dynamic_fields: Vec::new(),
         }
     }
 }
 
+pub struct EntityState {
+    origin: Vector3<f32>,
+    angles: Vector3<Deg<f32>>,
+    model_id: usize,
+    frame_id: usize,
+
+    // TODO: more specific types for these
+    colormap: i32,
+    skin: i32,
+    effects: i32,
+}
+
+pub struct Entity {
+    // TODO: figure out how to link entities into the world
+    // link: SomeType,
+    leaf_count: usize,
+    leaf_ids: [u16; MAX_ENT_LEAVES],
+    baseline: EntityState,
+    statics: EntityStatic,
+    dynamics: Vec<[u8; 4]>,
+}
+
 impl Entity {
-    // TODO: temp function, remove this
-    pub fn with_field_count(field_count: usize) -> Entity {
-        if field_count < STATIC_ADDRESS_COUNT {
-            panic!("Invalid field count");
-        }
-
-        let mut dynamic_fields = Vec::with_capacity(field_count - STATIC_ADDRESS_COUNT);
-        for _ in 0..field_count - STATIC_ADDRESS_COUNT {
-            dynamic_fields.push([0; 4]);
-        }
-
-        Entity {
-            dynamic_fields,
-            ..Default::default()
-        }
-    }
-
-    pub fn get_f(&self, ofs: i16) -> Result<f32, ()> {
+    pub fn get_float(&self, ofs: i16) -> Result<f32, ProgsError> {
         if ofs < 0 {
             panic!("negative offset");
         }
 
         let ofs = ofs as usize;
 
-        if ofs >= OFS_DYNAMIC_START + self.dynamic_fields.len() {
+        if ofs >= OFS_DYNAMIC_START + self.dynamics.len() {
             println!("out-of-bounds offset ({})", ofs);
             return Ok(0.0);
         }
 
         if ofs < OFS_DYNAMIC_START {
-            self.get_static_f(ofs)
+            self.get_float_static(ofs)
         } else {
-            self.get_dynamic_f(ofs)
+            self.get_float_dynamic(ofs)
         }
     }
 
-    fn get_static_f(&self, ofs: usize) -> Result<f32, ()> {
+    fn get_float_static(&self, ofs: usize) -> Result<f32, ProgsError> {
         if ofs >= OFS_DYNAMIC_START {
             panic!("Invalid offset for static entity field");
         }
 
         Ok(match ofs {
-            OFS_MODEL_INDEX => self.model_index,
+            OFS_MODEL_INDEX => self.statics.model_index,
 
-            OFS_ABS_MIN_X => self.abs_min[0],
-            OFS_ABS_MIN_Y => self.abs_min[1],
-            OFS_ABS_MIN_Z => self.abs_min[2],
+            OFS_ABS_MIN_X => self.statics.abs_min[0],
+            OFS_ABS_MIN_Y => self.statics.abs_min[1],
+            OFS_ABS_MIN_Z => self.statics.abs_min[2],
 
-            OFS_ABS_MAX_X => self.abs_max[0],
-            OFS_ABS_MAX_Y => self.abs_max[1],
-            OFS_ABS_MAX_Z => self.abs_max[2],
+            OFS_ABS_MAX_X => self.statics.abs_max[0],
+            OFS_ABS_MAX_Y => self.statics.abs_max[1],
+            OFS_ABS_MAX_Z => self.statics.abs_max[2],
 
-            OFS_LOCAL_TIME => engine::duration_to_f32(self.local_time),
-            OFS_MOVE_TYPE => self.move_type,
-            OFS_SOLID => self.solid,
+            OFS_LOCAL_TIME => engine::duration_to_f32(self.statics.local_time),
+            OFS_MOVE_TYPE => self.statics.move_type as u32 as f32,
+            OFS_SOLID => self.statics.solid,
 
-            OFS_ORIGIN_X => self.origin[0],
-            OFS_ORIGIN_Y => self.origin[1],
-            OFS_ORIGIN_Z => self.origin[2],
+            OFS_ORIGIN_X => self.statics.origin[0],
+            OFS_ORIGIN_Y => self.statics.origin[1],
+            OFS_ORIGIN_Z => self.statics.origin[2],
 
-            OFS_OLD_ORIGIN_X => self.old_origin[0],
-            OFS_OLD_ORIGIN_Y => self.old_origin[1],
-            OFS_OLD_ORIGIN_Z => self.old_origin[2],
+            OFS_OLD_ORIGIN_X => self.statics.old_origin[0],
+            OFS_OLD_ORIGIN_Y => self.statics.old_origin[1],
+            OFS_OLD_ORIGIN_Z => self.statics.old_origin[2],
 
-            OFS_VELOCITY_X => self.velocity[0],
-            OFS_VELOCITY_Y => self.velocity[1],
-            OFS_VELOCITY_Z => self.velocity[2],
+            OFS_VELOCITY_X => self.statics.velocity[0],
+            OFS_VELOCITY_Y => self.statics.velocity[1],
+            OFS_VELOCITY_Z => self.statics.velocity[2],
 
-            OFS_ANGLES_X => self.angles[0].0,
-            OFS_ANGLES_Y => self.angles[1].0,
-            OFS_ANGLES_Z => self.angles[2].0,
+            OFS_ANGLES_X => self.statics.angles[0].0,
+            OFS_ANGLES_Y => self.statics.angles[1].0,
+            OFS_ANGLES_Z => self.statics.angles[2].0,
 
-            OFS_ANGULAR_VELOCITY_X => self.angular_velocity[0].0,
-            OFS_ANGULAR_VELOCITY_Y => self.angular_velocity[1].0,
-            OFS_ANGULAR_VELOCITY_Z => self.angular_velocity[2].0,
+            OFS_ANGULAR_VELOCITY_X => self.statics.angular_velocity[0].0,
+            OFS_ANGULAR_VELOCITY_Y => self.statics.angular_velocity[1].0,
+            OFS_ANGULAR_VELOCITY_Z => self.statics.angular_velocity[2].0,
 
-            OFS_PUNCH_ANGLE_X => self.punch_angle[0].0,
-            OFS_PUNCH_ANGLE_Y => self.punch_angle[1].0,
-            OFS_PUNCH_ANGLE_Z => self.punch_angle[2].0,
+            OFS_PUNCH_ANGLE_X => self.statics.punch_angle[0].0,
+            OFS_PUNCH_ANGLE_Y => self.statics.punch_angle[1].0,
+            OFS_PUNCH_ANGLE_Z => self.statics.punch_angle[2].0,
 
-            OFS_FRAME_ID => self.frame_id,
-            OFS_SKIN_ID => self.skin_id,
-            OFS_EFFECTS => self.effects,
+            OFS_FRAME_ID => self.statics.frame_id,
+            OFS_SKIN_ID => self.statics.skin_id,
+            OFS_EFFECTS => self.statics.effects.bits() as i32 as f32,
 
-            OFS_MINS_X => self.mins[0],
-            OFS_MINS_Y => self.mins[1],
-            OFS_MINS_Z => self.mins[2],
+            OFS_MINS_X => self.statics.mins[0],
+            OFS_MINS_Y => self.statics.mins[1],
+            OFS_MINS_Z => self.statics.mins[2],
 
-            OFS_MAXS_X => self.maxs[0],
-            OFS_MAXS_Y => self.maxs[1],
-            OFS_MAXS_Z => self.maxs[2],
+            OFS_MAXS_X => self.statics.maxs[0],
+            OFS_MAXS_Y => self.statics.maxs[1],
+            OFS_MAXS_Z => self.statics.maxs[2],
 
-            OFS_SIZE_X => self.size[0],
-            OFS_SIZE_Y => self.size[1],
-            OFS_SIZE_Z => self.size[2],
+            OFS_SIZE_X => self.statics.size[0],
+            OFS_SIZE_Y => self.statics.size[1],
+            OFS_SIZE_Z => self.statics.size[2],
 
-            OFS_NEXT_THINK => engine::duration_to_f32(self.next_think),
-            OFS_HEALTH => self.health,
-            OFS_FRAGS => self.frags,
-            OFS_WEAPON => self.weapon,
-            OFS_WEAPON_FRAME => self.weapon_frame,
-            OFS_CURRENT_AMMO => self.current_ammo,
-            OFS_AMMO_SHELLS => self.ammo_shells,
-            OFS_AMMO_NAILS => self.ammo_nails,
-            OFS_AMMO_ROCKETS => self.ammo_rockets,
-            OFS_AMMO_CELLS => self.ammo_cells,
-            OFS_ITEMS => self.items,
-            OFS_TAKE_DAMAGE => self.take_damage,
-            OFS_DEAD_FLAG => self.dead_flag,
+            OFS_NEXT_THINK => engine::duration_to_f32(self.statics.next_think),
+            OFS_HEALTH => self.statics.health,
+            OFS_FRAGS => self.statics.frags,
+            OFS_WEAPON => self.statics.weapon,
+            OFS_WEAPON_FRAME => self.statics.weapon_frame,
+            OFS_CURRENT_AMMO => self.statics.current_ammo,
+            OFS_AMMO_SHELLS => self.statics.ammo_shells,
+            OFS_AMMO_NAILS => self.statics.ammo_nails,
+            OFS_AMMO_ROCKETS => self.statics.ammo_rockets,
+            OFS_AMMO_CELLS => self.statics.ammo_cells,
+            OFS_ITEMS => self.statics.items,
+            OFS_TAKE_DAMAGE => self.statics.take_damage,
+            OFS_DEAD_FLAG => self.statics.dead_flag,
 
-            OFS_VIEW_OFFSET_X => self.view_offset[0],
-            OFS_VIEW_OFFSET_Y => self.view_offset[1],
-            OFS_VIEW_OFFSET_Z => self.view_offset[2],
+            OFS_VIEW_OFFSET_X => self.statics.view_offset[0],
+            OFS_VIEW_OFFSET_Y => self.statics.view_offset[1],
+            OFS_VIEW_OFFSET_Z => self.statics.view_offset[2],
 
-            OFS_BUTTON_0 => self.button_0,
-            OFS_BUTTON_1 => self.button_1,
-            OFS_BUTTON_2 => self.button_2,
-            OFS_IMPULSE => self.impulse,
-            OFS_FIX_ANGLE => self.fix_angle,
+            OFS_BUTTON_0 => self.statics.button_0,
+            OFS_BUTTON_1 => self.statics.button_1,
+            OFS_BUTTON_2 => self.statics.button_2,
+            OFS_IMPULSE => self.statics.impulse,
+            OFS_FIX_ANGLE => self.statics.fix_angle,
 
-            OFS_VIEW_ANGLE_X => self.view_angle[0].0,
-            OFS_VIEW_ANGLE_Y => self.view_angle[1].0,
-            OFS_VIEW_ANGLE_Z => self.view_angle[2].0,
+            OFS_VIEW_ANGLE_X => self.statics.view_angle[0].0,
+            OFS_VIEW_ANGLE_Y => self.statics.view_angle[1].0,
+            OFS_VIEW_ANGLE_Z => self.statics.view_angle[2].0,
 
-            OFS_IDEAL_PITCH => self.ideal_pitch.0,
-            OFS_FLAGS => self.flags,
-            OFS_COLORMAP => self.colormap,
-            OFS_TEAM => self.team,
-            OFS_MAX_HEALTH => self.max_health,
-            OFS_TELEPORT_TIME => engine::duration_to_f32(self.teleport_time),
-            OFS_ARMOR_STRENGTH => self.armor_strength,
-            OFS_ARMOR_VALUE => self.armor_value,
-            OFS_WATER_LEVEL => self.water_level,
-            OFS_CONTENTS => self.contents,
-            OFS_IDEAL_YAW => self.ideal_yaw.0,
-            OFS_YAW_SPEED => self.yaw_speed.0,
-            OFS_SPAWN_FLAGS => self.spawn_flags,
-            OFS_DMG_TAKE => self.dmg_take,
-            OFS_DMG_SAVE => self.dmg_save,
+            OFS_IDEAL_PITCH => self.statics.ideal_pitch.0,
+            OFS_FLAGS => self.statics.flags.bits() as i32 as f32,
+            OFS_COLORMAP => self.statics.colormap,
+            OFS_TEAM => self.statics.team,
+            OFS_MAX_HEALTH => self.statics.max_health,
+            OFS_TELEPORT_TIME => engine::duration_to_f32(self.statics.teleport_time),
+            OFS_ARMOR_STRENGTH => self.statics.armor_strength,
+            OFS_ARMOR_VALUE => self.statics.armor_value,
+            OFS_WATER_LEVEL => self.statics.water_level,
+            OFS_CONTENTS => self.statics.contents,
+            OFS_IDEAL_YAW => self.statics.ideal_yaw.0,
+            OFS_YAW_SPEED => self.statics.yaw_speed.0,
+            OFS_SPAWN_FLAGS => self.statics.spawn_flags,
+            OFS_DMG_TAKE => self.statics.dmg_take,
+            OFS_DMG_SAVE => self.statics.dmg_save,
 
-            OFS_MOVE_DIRECTION_X => self.move_direction[0],
-            OFS_MOVE_DIRECTION_Y => self.move_direction[1],
-            OFS_MOVE_DIRECTION_Z => self.move_direction[2],
+            OFS_MOVE_DIRECTION_X => self.statics.move_direction[0],
+            OFS_MOVE_DIRECTION_Y => self.statics.move_direction[1],
+            OFS_MOVE_DIRECTION_Z => self.statics.move_direction[2],
 
-            OFS_SOUNDS => self.sounds,
+            OFS_SOUNDS => self.statics.sounds,
 
-            _ => return Err(()),
+            _ => {
+                return Err(ProgsError::with_msg(
+                    format!("Invalid entity field address ({})", ofs),
+                ))
+            }
         })
     }
 
-    fn get_dynamic_f(&self, ofs: usize) -> Result<f32, ()> {
+    fn get_float_dynamic(&self, ofs: usize) -> Result<f32, ProgsError> {
         Ok(
-            self.dynamic_fields[ofs - OFS_DYNAMIC_START]
+            self.dynamics[ofs - OFS_DYNAMIC_START]
                 .as_ref()
                 .read_f32::<LittleEndian>()
                 .unwrap(),
         )
     }
 
-    fn get_v(&self, ofs: i16) -> Result<[f32; 3], ()> {
+    fn get_vector(&self, ofs: i16) -> Result<[f32; 3], ProgsError> {
         if ofs < 0 {
             panic!("negative offset");
         }
@@ -660,35 +713,37 @@ impl Entity {
         let ofs = ofs as usize;
 
         // subtract 2 to account for size of vector
-        if ofs >= OFS_DYNAMIC_START + self.dynamic_fields.len() - 2 {
+        if ofs >= OFS_DYNAMIC_START + self.dynamics.len() - 2 {
             println!("out-of-bounds offset ({})", ofs);
             // TODO: proper error
             return Ok([0.0; 3]);
         }
 
         if ofs < OFS_DYNAMIC_START {
-            self.get_static_v(ofs)
+            self.get_vector_static(ofs)
         } else {
-            self.get_dynamic_v(ofs)
+            self.get_vector_dynamic(ofs)
         }
     }
 
-    fn get_static_v(&self, ofs: usize) -> Result<[f32; 3], ()> {
+    fn get_vector_static(&self, ofs: usize) -> Result<[f32; 3], ProgsError> {
         Ok(match ofs {
-            OFS_ABS_MIN => self.abs_min.into(),
-            OFS_ABS_MAX => self.abs_max.into(),
-            OFS_ORIGIN => self.origin.into(),
-            OFS_OLD_ORIGIN => self.old_origin.into(),
-            OFS_VELOCITY => self.velocity.into(),
-            OFS_ANGLES => engine::deg_vector_to_f32_vector(self.angles).into(),
-            OFS_ANGULAR_VELOCITY => engine::deg_vector_to_f32_vector(self.angular_velocity).into(),
-            OFS_PUNCH_ANGLE => engine::deg_vector_to_f32_vector(self.punch_angle).into(),
-            OFS_MINS => self.mins.into(),
-            OFS_MAXS => self.maxs.into(),
-            OFS_SIZE => self.size.into(),
-            OFS_VIEW_OFFSET => self.view_offset.into(),
-            OFS_VIEW_ANGLE => engine::deg_vector_to_f32_vector(self.view_angle).into(),
-            OFS_MOVE_DIRECTION => self.move_direction.into(),
+            OFS_ABS_MIN => self.statics.abs_min.into(),
+            OFS_ABS_MAX => self.statics.abs_max.into(),
+            OFS_ORIGIN => self.statics.origin.into(),
+            OFS_OLD_ORIGIN => self.statics.old_origin.into(),
+            OFS_VELOCITY => self.statics.velocity.into(),
+            OFS_ANGLES => engine::deg_vector_to_f32_vector(self.statics.angles).into(),
+            OFS_ANGULAR_VELOCITY => {
+                engine::deg_vector_to_f32_vector(self.statics.angular_velocity).into()
+            }
+            OFS_PUNCH_ANGLE => engine::deg_vector_to_f32_vector(self.statics.punch_angle).into(),
+            OFS_MINS => self.statics.mins.into(),
+            OFS_MAXS => self.statics.maxs.into(),
+            OFS_SIZE => self.statics.size.into(),
+            OFS_VIEW_OFFSET => self.statics.view_offset.into(),
+            OFS_VIEW_ANGLE => engine::deg_vector_to_f32_vector(self.statics.view_angle).into(),
+            OFS_MOVE_DIRECTION => self.statics.move_direction.into(),
             _ => {
                 println!("invalid static vector field {}", ofs);
                 [0.0; 3]
@@ -696,13 +751,61 @@ impl Entity {
         })
     }
 
-    fn get_dynamic_v(&self, ofs: usize) -> Result<[f32; 3], ()> {
+    fn get_vector_dynamic(&self, ofs: usize) -> Result<[f32; 3], ProgsError> {
         let mut v = [0.0; 3];
 
         for c in 0..v.len() {
-            v[c] = self.get_dynamic_f(ofs + c)?;
+            v[c] = self.get_float_dynamic(ofs + c)?;
         }
 
         Ok(v)
+    }
+}
+
+pub enum EntityListEntry {
+    Free(Duration),
+    NotFree(Entity),
+}
+
+pub struct EntityList {
+    field_count: usize,
+    entries: Box<[EntityListEntry]>,
+}
+
+impl EntityList {
+    pub fn with_field_count(field_count: usize) -> EntityList {
+        let mut entries = Vec::new();
+        for _ in 0..MAX_ENTITIES {
+            entries.push(EntityListEntry::Free(Duration::zero()));
+        }
+        let entries = entries.into_boxed_slice();
+
+        EntityList {
+            field_count,
+            entries,
+        }
+    }
+
+    pub fn try_get_entity(&self, entity_id: usize) -> Result<&Entity, ProgsError> {
+        if entity_id > self.entries.len() {
+            return Err(ProgsError::with_msg(
+                format!("Invalid entity ID ({})", entity_id),
+            ));
+        }
+
+        match self.entries[entity_id] {
+            EntityListEntry::Free(_) => Err(ProgsError::with_msg(
+                format!("No entity at list entry {}", entity_id),
+            )),
+            EntityListEntry::NotFree(ref e) => Ok(e),
+        }
+    }
+}
+
+impl Index<usize> for EntityList {
+    type Output = EntityListEntry;
+
+    fn index(&self, i: usize) -> &Self::Output {
+        &self.entries[i]
     }
 }
