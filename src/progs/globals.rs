@@ -342,7 +342,7 @@ impl Globals {
     }
 
     fn get_dynamic_float(&self, addr: usize) -> Result<f32, ProgsError> {
-        if addr > GLOBAL_STATIC_COUNT + self.dynamics.len() {
+        if addr > GLOBAL_RESERVED_COUNT + GLOBAL_STATIC_COUNT + self.dynamics.len() {
             return Err(ProgsError::with_msg(format!(
                 "get_float_dynamic: address out of range ({})",
                 addr
@@ -443,7 +443,7 @@ impl Globals {
     }
 
     fn put_float_dynamic(&mut self, val: f32, addr: usize) -> Result<(), ProgsError> {
-        if addr > GLOBAL_STATIC_COUNT + self.dynamics.len() {
+        if addr > GLOBAL_RESERVED_COUNT + GLOBAL_STATIC_COUNT + self.dynamics.len() {
             return Err(ProgsError::with_msg(format!(
                 "put_float_dynamic: address out of range ({})",
                 addr
@@ -501,7 +501,7 @@ impl Globals {
 
     fn get_vector_dynamic(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
         // subtract 2 from range to account for size of vector
-        if addr > GLOBAL_STATIC_COUNT + self.dynamics.len() - 2 {
+        if addr > GLOBAL_RESERVED_COUNT + GLOBAL_STATIC_COUNT + self.dynamics.len() - 2 {
             return Err(ProgsError::with_msg(format!(
                 "get_vector_dynamic: address out of range ({})",
                 addr
@@ -571,7 +571,7 @@ impl Globals {
 
     fn put_vector_dynamic(&mut self, val: [f32; 3], addr: usize) -> Result<(), ProgsError> {
         // subtract 2 from range to account for size of vector
-        if addr > GLOBAL_STATIC_COUNT + self.dynamics.len() - 2 {
+        if addr > GLOBAL_RESERVED_COUNT + GLOBAL_STATIC_COUNT + self.dynamics.len() - 2 {
             return Err(ProgsError::with_msg(format!(
                 "put_vector_dynamic: dynamic global vector address out of range ({})",
                 addr
@@ -625,7 +625,7 @@ impl Globals {
     }
 
     fn get_string_id_dynamic(&self, addr: usize) -> Result<StringId, ProgsError> {
-        if addr > GLOBAL_STATIC_COUNT + self.dynamics.len() {
+        if addr > GLOBAL_RESERVED_COUNT + GLOBAL_STATIC_COUNT + self.dynamics.len() {
             return Err(ProgsError::with_msg(format!(
                 "get_string_id_dynamic: address out of range ({})",
                 addr
@@ -679,7 +679,7 @@ impl Globals {
     }
 
     fn put_string_id_dynamic(&mut self, val: StringId, addr: usize) -> Result<(), ProgsError> {
-        if addr > GLOBAL_STATIC_COUNT + self.dynamics.len() {
+        if addr > GLOBAL_RESERVED_COUNT + GLOBAL_STATIC_COUNT + self.dynamics.len() {
             return Err(ProgsError::with_msg(format!(
                 "put_string_id_dynamic: address out of range ({})",
                 addr
@@ -735,7 +735,7 @@ impl Globals {
     }
 
     fn get_entity_id_dynamic(&self, addr: usize) -> Result<EntityId, ProgsError> {
-        if addr > GLOBAL_STATIC_COUNT + self.dynamics.len() {
+        if addr > GLOBAL_RESERVED_COUNT + GLOBAL_STATIC_COUNT + self.dynamics.len() {
             return Err(ProgsError::with_msg(format!(
                 "get_entity_id_dynamic: address out of range ({})",
                 addr
@@ -793,7 +793,7 @@ impl Globals {
     }
 
     fn put_entity_id_dynamic(&mut self, val: EntityId, addr: usize) -> Result<(), ProgsError> {
-        if addr > GLOBAL_STATIC_COUNT + self.dynamics.len() {
+        if addr > GLOBAL_RESERVED_COUNT + GLOBAL_STATIC_COUNT + self.dynamics.len() {
             return Err(ProgsError::with_msg(format!(
                 "put_entity_id_dynamic: address out of range ({})",
                 addr
@@ -843,7 +843,7 @@ impl Globals {
     }
 
     fn get_field_addr_dynamic(&self, addr: usize) -> Result<FieldAddr, ProgsError> {
-        if addr > GLOBAL_STATIC_COUNT + self.dynamics.len() {
+        if addr > GLOBAL_RESERVED_COUNT + GLOBAL_STATIC_COUNT + self.dynamics.len() {
             return Err(ProgsError::with_msg(format!(
                 "get_field_addr_dynamic: address out of range ({})",
                 addr
@@ -885,7 +885,7 @@ impl Globals {
     }
 
     fn put_field_addr_dynamic(&mut self, val: FieldAddr, addr: usize) -> Result<(), ProgsError> {
-        if addr > GLOBAL_STATIC_COUNT + self.dynamics.len() {
+        if addr > GLOBAL_RESERVED_COUNT + GLOBAL_STATIC_COUNT + self.dynamics.len() {
             return Err(ProgsError::with_msg(format!(
                 "put_field_addr_dynamic: address out of range ({})",
                 addr
@@ -939,7 +939,7 @@ impl Globals {
     }
 
     fn get_function_id_dynamic(&self, addr: usize) -> Result<FunctionId, ProgsError> {
-        if addr > GLOBAL_STATIC_COUNT + self.dynamics.len() {
+        if addr > GLOBAL_RESERVED_COUNT + GLOBAL_STATIC_COUNT + self.dynamics.len() {
             return Err(ProgsError::with_msg(format!(
                 "get_function_id_dynamic: address out of range ({})",
                 addr
@@ -993,7 +993,7 @@ impl Globals {
     }
 
     fn put_function_id_dynamic(&mut self, val: FunctionId, addr: usize) -> Result<(), ProgsError> {
-        if addr > GLOBAL_STATIC_COUNT + self.dynamics.len() {
+        if addr > GLOBAL_RESERVED_COUNT + GLOBAL_STATIC_COUNT + self.dynamics.len() {
             return Err(ProgsError::with_msg(format!(
                 "put_function_id_dynamic: address out of range ({})",
                 addr

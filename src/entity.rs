@@ -911,6 +911,72 @@ impl Entity {
         Ok(v)
     }
 
+    pub fn put_vector(&mut self, val: [f32; 3], addr: i16) -> Result<(), ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        // subtract 2 to account for size of vector
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() - 2 {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.put_vector_static(val, addr)
+        } else {
+            self.put_vector_dynamic(val, addr)
+        }
+    }
+
+    fn put_vector_static(&mut self, val: [f32; 3], addr: usize) -> Result<(), ProgsError> {
+        let v_addr = match FieldAddrVector::from_usize(addr) {
+            Some(v) => v,
+            None => {
+                return Err(ProgsError::with_msg(
+                    format!("put_vector_static: invalid address ({})", addr),
+                ));
+            }
+        };
+
+        Ok(match v_addr {
+            FieldAddrVector::AbsMin => self.statics.abs_min = Vector3::from(val),
+            FieldAddrVector::AbsMax => self.statics.abs_max = Vector3::from(val),
+            FieldAddrVector::Origin => self.statics.origin = Vector3::from(val),
+            FieldAddrVector::OldOrigin => self.statics.old_origin = Vector3::from(val),
+            FieldAddrVector::Velocity => self.statics.velocity = Vector3::from(val),
+            FieldAddrVector::Angles => {
+                self.statics.angles = engine::deg_vector_from_f32_vector(Vector3::from(val))
+            }
+            FieldAddrVector::AngularVelocity => {
+                self.statics.angular_velocity =
+                    engine::deg_vector_from_f32_vector(Vector3::from(val))
+            }
+            FieldAddrVector::PunchAngle => {
+                self.statics.punch_angle = engine::deg_vector_from_f32_vector(Vector3::from(val))
+            }
+            FieldAddrVector::Mins => self.statics.mins = Vector3::from(val),
+            FieldAddrVector::Maxs => self.statics.maxs = Vector3::from(val),
+            FieldAddrVector::Size => self.statics.size = Vector3::from(val),
+            FieldAddrVector::ViewOffset => self.statics.view_offset = Vector3::from(val),
+            FieldAddrVector::ViewAngle => {
+                self.statics.view_angle = engine::deg_vector_from_f32_vector(Vector3::from(val))
+            }
+            FieldAddrVector::MoveDirection => self.statics.move_direction = Vector3::from(val),
+        })
+    }
+
+    fn put_vector_dynamic(&mut self, val: [f32; 3], addr: usize) -> Result<(), ProgsError> {
+        for c in 0..val.len() {
+            self.put_float_dynamic(val[c], addr + c)?;
+        }
+
+        Ok(())
+    }
+
     pub fn get_string_id(&self, addr: i16) -> Result<StringId, ProgsError> {
         if addr < 0 {
             panic!("negative offset");
@@ -962,6 +1028,59 @@ impl Entity {
             .read_i32::<LittleEndian>()?))
     }
 
+    pub fn put_string_id(&mut self, val: StringId, addr: i16) -> Result<(), ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.put_string_id_static(val, addr)
+        } else {
+            self.put_string_id_dynamic(val, addr)
+        }
+    }
+
+    fn put_string_id_static(&mut self, val: StringId, addr: usize) -> Result<(), ProgsError> {
+        let s_addr = match FieldAddrStringId::from_usize(addr) {
+            Some(s) => s,
+            None => {
+                return Err(ProgsError::with_msg(
+                    format!("put_string_id_static: invalid address ({})", addr),
+                ));
+            }
+        };
+
+        Ok(match s_addr {
+            FieldAddrStringId::ClassName => self.statics.class_name = val,
+            FieldAddrStringId::ModelName => self.statics.model_name = val,
+            FieldAddrStringId::WeaponModelName => self.statics.weapon_model_name = val,
+            FieldAddrStringId::NetName => self.statics.net_name = val,
+            FieldAddrStringId::Target => self.statics.target = val,
+            FieldAddrStringId::TargetName => self.statics.target_name = val,
+            FieldAddrStringId::Message => self.statics.message = val,
+            FieldAddrStringId::Noise0Name => self.statics.noise_0 = val,
+            FieldAddrStringId::Noise1Name => self.statics.noise_1 = val,
+            FieldAddrStringId::Noise2Name => self.statics.noise_2 = val,
+            FieldAddrStringId::Noise3Name => self.statics.noise_3 = val,
+        })
+    }
+
+    fn put_string_id_dynamic(&mut self, val: StringId, addr: usize) -> Result<(), ProgsError> {
+        self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_mut()
+            .write_i32::<LittleEndian>(val.0)?;
+
+        Ok(())
+    }
+
     pub fn get_entity_id(&self, addr: i16) -> Result<EntityId, ProgsError> {
         if addr < 0 {
             panic!("negative offset");
@@ -1009,6 +1128,55 @@ impl Entity {
             .read_i32::<LittleEndian>()?))
     }
 
+    pub fn put_entity_id(&mut self, val: EntityId, addr: i16) -> Result<(), ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.put_entity_id_static(val, addr)
+        } else {
+            self.put_entity_id_dynamic(val, addr)
+        }
+    }
+
+    fn put_entity_id_static(&mut self, val: EntityId, addr: usize) -> Result<(), ProgsError> {
+        let s_addr = match FieldAddrEntityId::from_usize(addr) {
+            Some(s) => s,
+            None => {
+                return Err(ProgsError::with_msg(
+                    format!("put_entity_id_static: invalid address ({})", addr),
+                ));
+            }
+        };
+
+        Ok(match s_addr {
+            FieldAddrEntityId::Ground => self.statics.ground_entity = val,
+            FieldAddrEntityId::Chain => self.statics.chain = val,
+            FieldAddrEntityId::Enemy => self.statics.enemy = val,
+            FieldAddrEntityId::Aim => self.statics.aim_entity = val,
+            FieldAddrEntityId::Goal => self.statics.goal_entity = val,
+            FieldAddrEntityId::DmgInflictor => self.statics.dmg_inflictor = val,
+            FieldAddrEntityId::Owner => self.statics.owner = val,
+        })
+    }
+
+    fn put_entity_id_dynamic(&mut self, val: EntityId, addr: usize) -> Result<(), ProgsError> {
+        self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_mut()
+            .write_i32::<LittleEndian>(val.0)?;
+
+        Ok(())
+    }
+
     pub fn get_function_id(&self, addr: i16) -> Result<FunctionId, ProgsError> {
         if addr < 0 {
             panic!("negative offset");
@@ -1052,6 +1220,53 @@ impl Entity {
         Ok(FunctionId(self.dynamics[addr - ADDR_DYNAMIC_START]
             .as_ref()
             .read_i32::<LittleEndian>()?))
+    }
+
+    pub fn put_function_id(&mut self, val: FunctionId, addr: i16) -> Result<(), ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.put_function_id_static(val, addr)
+        } else {
+            self.put_function_id_dynamic(val, addr)
+        }
+    }
+
+    fn put_function_id_static(&mut self, val: FunctionId, addr: usize) -> Result<(), ProgsError> {
+        let s_addr = match FieldAddrFunctionId::from_usize(addr) {
+            Some(s) => s,
+            None => {
+                return Err(ProgsError::with_msg(format!(
+                    "put_function_id_static: invalid address ({})",
+                    addr
+                )));
+            }
+        };
+
+        Ok(match s_addr {
+            FieldAddrFunctionId::Touch => self.statics.touch_fnc = val,
+            FieldAddrFunctionId::Use => self.statics.use_fnc = val,
+            FieldAddrFunctionId::Think => self.statics.think_fnc = val,
+            FieldAddrFunctionId::Blocked => self.statics.blocked_fnc = val,
+        })
+    }
+
+    fn put_function_id_dynamic(&mut self, val: FunctionId, addr: usize) -> Result<(), ProgsError> {
+        self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_mut()
+            .write_i32::<LittleEndian>(val.0)?;
+
+        Ok(())
     }
 }
 

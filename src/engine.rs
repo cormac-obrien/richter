@@ -102,6 +102,6 @@ pub fn deg_vector_to_f32_vector(av: Vector3<Deg<f32>>) -> Vector3<f32> {
 }
 
 #[inline]
-pub fn f32_vector_to_deg_vector(v: Vector3<f32>) -> Vector3<Deg<f32>> {
+pub fn deg_vector_from_f32_vector(v: Vector3<f32>) -> Vector3<Deg<f32>> {
     Vector3::new(Deg(v[0]), Deg(v[1]), Deg(v[2]))
 }

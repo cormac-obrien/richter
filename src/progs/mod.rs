@@ -704,11 +704,11 @@ impl Progs {
                     Opcode::StoreFld => store_fld(globals, arg1, arg2, arg3).unwrap(),
                     Opcode::StoreFnc => store_fnc(globals, arg1, arg2, arg3).unwrap(),
                     Opcode::StorePF => storep_f(globals, entities, arg1, arg2, arg3).unwrap(),
-                    // Opcode::StorePV
-                    // Opcode::StorePS
-                    // Opcode::StorePEnt
-                    // Opcode::StorePFld
-                    // Opcode::StorePFnc
+                    Opcode::StorePV => storep_v(globals, entities, arg1, arg2, arg3).unwrap(),
+                    Opcode::StorePS => storep_s(globals, entities, arg1, arg2, arg3).unwrap(),
+                    Opcode::StorePEnt => storep_ent(globals, entities, arg1, arg2, arg3).unwrap(),
+                    Opcode::StorePFld => panic!("storep_fld not implemented"),
+                    Opcode::StorePFnc => storep_fnc(globals, entities, arg1, arg2, arg3).unwrap(),
                     // Opcode::Return
                     Opcode::NotF => not_f(globals, arg1, arg2, arg3).unwrap(),
                     Opcode::NotV => not_v(globals, arg1, arg2, arg3).unwrap(),
@@ -1274,7 +1274,7 @@ fn store_fnc(
 }
 
 fn storep_f(
-    globals: &mut Globals,
+    globals: &Globals,
     entities: &mut EntityList,
     src_float_addr: i16,
     dst_ent_fld_addr: i16,
@@ -1289,6 +1289,78 @@ fn storep_f(
     entities
         .try_get_entity_mut(ent_fld_addr.entity_id)?
         .put_float(f, ent_fld_addr.field_addr as i16)
+}
+
+fn storep_v(
+    globals: &mut Globals,
+    entities: &mut EntityList,
+    src_vector_addr: i16,
+    dst_ent_fld_addr: i16,
+    unused: i16,
+) -> Result<(), ProgsError> {
+    if unused != 0 {
+        return Err(ProgsError::with_msg("storep_v: nonzero arg3"));
+    }
+
+    let v = globals.get_vector(src_vector_addr)?;
+    let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
+    entities
+        .try_get_entity_mut(ent_fld_addr.entity_id)?
+        .put_vector(v, ent_fld_addr.field_addr as i16)
+}
+
+fn storep_s(
+    globals: &Globals,
+    entities: &mut EntityList,
+    src_string_id_addr: i16,
+    dst_ent_fld_addr: i16,
+    unused: i16,
+) -> Result<(), ProgsError> {
+    if unused != 0 {
+        return Err(ProgsError::with_msg("storep_s: nonzero arg3"));
+    }
+
+    let s = globals.get_string_id(src_string_id_addr)?;
+    let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
+    entities
+        .try_get_entity_mut(ent_fld_addr.entity_id)?
+        .put_string_id(s, ent_fld_addr.field_addr as i16)
+}
+
+fn storep_ent(
+    globals: &Globals,
+    entities: &mut EntityList,
+    src_entity_id_addr: i16,
+    dst_ent_fld_addr: i16,
+    unused: i16,
+) -> Result<(), ProgsError> {
+    if unused != 0 {
+        return Err(ProgsError::with_msg("storep_ent: nonzero arg3"));
+    }
+
+    let e = globals.get_entity_id(src_entity_id_addr)?;
+    let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
+    entities
+        .try_get_entity_mut(ent_fld_addr.entity_id)?
+        .put_entity_id(e, ent_fld_addr.field_addr as i16)
+}
+
+fn storep_fnc(
+    globals: &Globals,
+    entities: &mut EntityList,
+    src_function_id_addr: i16,
+    dst_ent_fld_addr: i16,
+    unused: i16,
+) -> Result<(), ProgsError> {
+    if unused != 0 {
+        return Err(ProgsError::with_msg("storep_fnc: nonzero arg3"));
+    }
+
+    let f = globals.get_function_id(src_function_id_addr)?;
+    let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
+    entities
+        .try_get_entity_mut(ent_fld_addr.entity_id)?
+        .put_function_id(f, ent_fld_addr.field_addr as i16)
 }
 
 // NOT_F: Compare float to 0.0
