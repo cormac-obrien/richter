@@ -1007,6 +1007,44 @@ impl Globals {
         Ok(())
     }
 
+    pub fn get_entity_field(&self, addr: i16) -> Result<i32, ProgsError> {
+        if addr < 0 {
+            return Err(ProgsError::with_msg(
+                format!("get_entity_field: negative address ({})", addr),
+            ));
+        }
+
+        let addr = addr as usize;
+
+        if addr < GLOBAL_DYNAMIC_START {
+            panic!("get_entity_field: address must be dynamic");
+        }
+
+        Ok(self.dynamics[addr - GLOBAL_DYNAMIC_START]
+            .as_ref()
+            .read_i32::<LittleEndian>()?)
+    }
+
+    pub fn put_entity_field(&mut self, val: i32, addr: i16) -> Result<(), ProgsError> {
+        if addr < 0 {
+            return Err(ProgsError::with_msg(
+                format!("put_entity_field: negative address ({})", addr),
+            ));
+        }
+
+        let addr = addr as usize;
+
+        if addr < GLOBAL_DYNAMIC_START {
+            panic!("put_entity_field: address must be dynamic");
+        }
+
+        self.dynamics[addr - GLOBAL_DYNAMIC_START]
+            .as_mut()
+            .write_i32::<LittleEndian>(val)?;
+
+        Ok(())
+    }
+
     pub fn reserved_copy(&mut self, src_addr: i16, dst_addr: i16) -> Result<(), ProgsError> {
         if src_addr < 0 {
             return Err(ProgsError::with_msg(format!(

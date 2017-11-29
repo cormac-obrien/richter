@@ -40,5 +40,7 @@ fn main() {
 
     println!("=========\nFUNCTIONS\n=========\n");
     progs.dump_functions();
+
+    entity_list.fill_all_uninitialized();
     progs.validate(&mut globals, &mut entity_list);
 }

@@ -199,6 +199,13 @@ pub struct FieldAddr(pub i32);
 #[repr(C)]
 pub struct FunctionId(pub i32);
 
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[repr(C)]
+pub struct EntityFieldAddr {
+    pub entity_id: usize,
+    pub field_addr: usize,
+}
+
 enum LumpId {
     Statements = 0,
     GlobalDefs = 1,
@@ -284,7 +291,7 @@ pub struct GlobalDef {
 }
 
 #[derive(Debug)]
-struct FieldDef {
+pub struct FieldDef {
     type_: Type,
     offset: u16,
     name_ofs: i32,
@@ -309,8 +316,8 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         debug!("{:?}: {:?}", l, lumps[l]);
     }
 
-    let ent_field_count = src.read_i32::<LittleEndian>()? as usize;
-    debug!("Field count: {}", ent_field_count);
+    let ent_addr_count = src.read_i32::<LittleEndian>()? as usize;
+    debug!("Field count: {}", ent_addr_count);
 
     let string_lump = &lumps[LumpId::Strings as usize];
     src.seek(SeekFrom::Start(string_lump.offset as u64))?;
@@ -398,7 +405,7 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
 
     let fielddef_lump = &lumps[LumpId::Fielddefs as usize];
     src.seek(SeekFrom::Start(fielddef_lump.offset as u64))?;
-    let mut fielddefs = Vec::new();
+    let mut field_defs = Vec::new();
     for _ in 0..fielddef_lump.count {
         let type_ = src.read_u16::<LittleEndian>()?;
         let offset = src.read_u16::<LittleEndian>()?;
@@ -409,7 +416,7 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
                 "Save flag not allowed in field definitions",
             ));
         }
-        fielddefs.push(FieldDef {
+        field_defs.push(FieldDef {
             type_: Type::from_u16(type_).unwrap(),
             offset: offset,
             name_ofs: name_ofs,
@@ -586,7 +593,6 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         functions: functions.into_boxed_slice(),
         statements: statements.into_boxed_slice(),
         strings: strings_rc.clone(),
-        fielddefs: fielddefs.into_boxed_slice(),
     };
 
     let globals = Globals {
@@ -596,7 +602,7 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         dynamics: dynamic_globals,
     };
 
-    let entity_list = EntityList::with_field_count(ent_field_count);
+    let entity_list = EntityList::new(ent_addr_count, field_defs.into_boxed_slice());
 
     Ok((progs, globals, entity_list))
 }
@@ -606,7 +612,6 @@ pub struct Progs {
     functions: Box<[Function]>,
     statements: Box<[Statement]>,
     strings: Rc<Box<[u8]>>,
-    fielddefs: Box<[FieldDef]>,
 }
 
 impl Progs {
@@ -685,20 +690,20 @@ impl Progs {
                     Opcode::Ge => ge(globals, arg1, arg2, arg3).unwrap(),
                     Opcode::Lt => lt(globals, arg1, arg2, arg3).unwrap(),
                     Opcode::Gt => gt(globals, arg1, arg2, arg3).unwrap(),
-                    // Opcode::LoadF => load_f(globals, entities, arg1, arg2, arg3).unwrap(),
-                    // Opcode::LoadV
-                    // Opcode::LoadS
-                    // Opcode::LoadEnt
-                    // Opcode::LoadFld
-                    // Opcode::LoadFnc
-                    // Opcode::Address
+                    Opcode::LoadF => load_f(globals, entities, arg1, arg2, arg3).unwrap(),
+                    Opcode::LoadV => load_v(globals, entities, arg1, arg2, arg3).unwrap(),
+                    Opcode::LoadS => load_s(globals, entities, arg1, arg2, arg3).unwrap(),
+                    Opcode::LoadEnt => load_ent(globals, entities, arg1, arg2, arg3).unwrap(),
+                    Opcode::LoadFld => panic!("load_fld not implemented"),
+                    Opcode::LoadFnc => load_fnc(globals, entities, arg1, arg2, arg3).unwrap(),
+                    Opcode::Address => address(globals, entities, arg1, arg2, arg3).unwrap(),
                     Opcode::StoreF => store_f(globals, arg1, arg2, arg3).unwrap(),
                     Opcode::StoreV => store_v(globals, arg1, arg2, arg3).unwrap(),
                     Opcode::StoreS => store_s(globals, arg1, arg2, arg3).unwrap(),
                     Opcode::StoreEnt => store_ent(globals, arg1, arg2, arg3).unwrap(),
                     Opcode::StoreFld => store_fld(globals, arg1, arg2, arg3).unwrap(),
                     Opcode::StoreFnc => store_fnc(globals, arg1, arg2, arg3).unwrap(),
-                    // Opcode::StorePF
+                    Opcode::StorePF => storep_f(globals, entities, arg1, arg2, arg3).unwrap(),
                     // Opcode::StorePV
                     // Opcode::StorePS
                     // Opcode::StorePEnt
@@ -1084,6 +1089,88 @@ fn load_f(
     globals.put_float(f, dest_ofs)
 }
 
+// LOAD_V: load vector field from entity
+fn load_v(
+    globals: &mut Globals,
+    entity_list: &EntityList,
+    ent_id_addr: i16,
+    ent_vector_addr: i16,
+    dest_addr: i16,
+) -> Result<(), ProgsError> {
+    let ent_id = globals.get_entity_id(ent_id_addr)?;
+    let ent_vector = globals.get_field_addr(ent_vector_addr)?;
+    let v = entity_list.try_get_entity(ent_id.0 as usize)?.get_vector(
+        ent_vector.0 as
+            i16,
+    )?;
+    globals.put_vector(v, dest_addr)
+}
+
+fn load_s(
+    globals: &mut Globals,
+    entity_list: &EntityList,
+    ent_id_addr: i16,
+    ent_string_id_addr: i16,
+    dest_addr: i16,
+) -> Result<(), ProgsError> {
+    let ent_id = globals.get_entity_id(ent_id_addr)?;
+    let ent_string_id = globals.get_field_addr(ent_string_id_addr)?;
+    let s = entity_list
+        .try_get_entity(ent_id.0 as usize)?
+        .get_string_id(ent_string_id.0 as i16)?;
+    globals.put_string_id(s, dest_addr)
+}
+
+fn load_ent(
+    globals: &mut Globals,
+    entity_list: &EntityList,
+    ent_id_addr: i16,
+    ent_entity_id_addr: i16,
+    dest_addr: i16,
+) -> Result<(), ProgsError> {
+    let ent_id = globals.get_entity_id(ent_id_addr)?;
+    let ent_entity_id = globals.get_field_addr(ent_entity_id_addr)?;
+    let e = entity_list
+        .try_get_entity(ent_id.0 as usize)?
+        .get_entity_id(ent_entity_id.0 as i16)?;
+    globals.put_entity_id(e, dest_addr)
+}
+
+fn load_fnc(
+    globals: &mut Globals,
+    entity_list: &EntityList,
+    ent_id_addr: i16,
+    ent_function_id_addr: i16,
+    dest_addr: i16,
+) -> Result<(), ProgsError> {
+    let ent_id = globals.get_entity_id(ent_id_addr)?;
+    let fnc_function_id = globals.get_field_addr(ent_function_id_addr)?;
+    let f = entity_list
+        .try_get_entity(ent_id.0 as usize)?
+        .get_function_id(fnc_function_id.0 as i16)?;
+    globals.put_function_id(f, dest_addr)
+}
+
+fn address(
+    globals: &mut Globals,
+    entity_list: &EntityList,
+    ent_id_addr: i16,
+    fld_addr_addr: i16,
+    dest_addr: i16,
+) -> Result<(), ProgsError> {
+    let ent_id = globals.get_entity_id(ent_id_addr)?;
+    let fld_addr = globals.get_field_addr(fld_addr_addr)?;
+    globals.put_entity_field(
+        entity_list.ent_fld_addr_to_i32(EntityFieldAddr {
+            entity_id: ent_id.0 as usize,
+            field_addr: fld_addr.0 as usize,
+        }),
+        dest_addr,
+    )?;
+
+    Ok(())
+}
+
 // STORE_F
 fn store_f(
     globals: &mut Globals,
@@ -1184,6 +1271,24 @@ fn store_fnc(
 
     let fnc = globals.get_function_id(src_ofs)?;
     globals.put_function_id(fnc, dest_ofs)
+}
+
+fn storep_f(
+    globals: &mut Globals,
+    entities: &mut EntityList,
+    src_float_addr: i16,
+    dst_ent_fld_addr: i16,
+    unused: i16,
+) -> Result<(), ProgsError> {
+    if unused != 0 {
+        return Err(ProgsError::with_msg("storep_f: nonzero arg3"));
+    }
+
+    let f = globals.get_float(src_float_addr)?;
+    let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
+    entities
+        .try_get_entity_mut(ent_fld_addr.entity_id)?
+        .put_float(f, ent_fld_addr.field_addr as i16)
 }
 
 // NOT_F: Compare float to 0.0

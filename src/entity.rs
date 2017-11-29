@@ -15,16 +15,20 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use std::collections::HashMap;
 use std::ops::Index;
 
 use engine;
+use progs::EntityFieldAddr;
 use progs::EntityId;
+use progs::FieldDef;
 use progs::FunctionId;
 use progs::ProgsError;
 use progs::StringId;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
+use byteorder::WriteBytesExt;
 use cgmath::Deg;
 use cgmath::Vector3;
 use cgmath::Zero;
@@ -165,7 +169,7 @@ pub enum FieldAddrEntityId {
     Enemy = 75,
     Aim = 87,
     Goal = 88,
-    DamageInflictor = 94,
+    DmgInflictor = 94,
     Owner = 95,
 }
 
@@ -177,7 +181,7 @@ pub enum FieldAddrFunctionId {
     Blocked = 45,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, FromPrimitive)]
 pub enum MoveType {
     None = 0,
     AngleNoClip = 1,
@@ -308,7 +312,7 @@ pub struct EntityStatic {
     weapon: f32,
 
     // alias model for the equipped weapon
-    weapon_model: StringId,
+    weapon_model_name: StringId,
 
     // animation frame for the weapon model
     weapon_frame: f32,
@@ -478,7 +482,7 @@ impl Default for EntityStatic {
             health: 0.0,
             frags: 0.0,
             weapon: 0.0,
-            weapon_model: StringId(0),
+            weapon_model_name: StringId(0),
             weapon_frame: 0.0,
             current_ammo: 0.0,
             ammo_shells: 0.0,
@@ -542,6 +546,20 @@ pub struct EntityState {
     effects: i32,
 }
 
+impl EntityState {
+    pub fn uninitialized() -> EntityState {
+        EntityState {
+            origin: Vector3::new(0.0, 0.0, 0.0),
+            angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            model_id: 0,
+            frame_id: 0,
+            colormap: 0,
+            skin: 0,
+            effects: 0,
+        }
+    }
+}
+
 pub struct Entity {
     // TODO: figure out how to link entities into the world
     // link: SomeType,
@@ -561,8 +579,9 @@ impl Entity {
         let addr = addr as usize;
 
         if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
-            println!("out-of-bounds offset ({})", addr);
-            return Ok(0.0);
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
         }
 
         if addr < ADDR_DYNAMIC_START {
@@ -674,15 +693,160 @@ impl Entity {
     }
 
     fn get_float_dynamic(&self, addr: usize) -> Result<f32, ProgsError> {
-        Ok(
-            self.dynamics[addr - ADDR_DYNAMIC_START]
-                .as_ref()
-                .read_f32::<LittleEndian>()
-                .unwrap(),
-        )
+        Ok(self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_ref()
+            .read_f32::<LittleEndian>()?)
     }
 
-    fn get_vector(&self, addr: i16) -> Result<[f32; 3], ProgsError> {
+    pub fn put_float(&mut self, val: f32, addr: i16) -> Result<(), ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.put_float_static(val, addr)
+        } else {
+            self.put_float_dynamic(val, addr)
+        }
+    }
+
+    fn put_float_static(&mut self, val: f32, addr: usize) -> Result<(), ProgsError> {
+        if addr >= ADDR_DYNAMIC_START {
+            panic!("Invalid offset for static entity field");
+        }
+
+        let f_addr = match FieldAddrFloat::from_usize(addr) {
+            Some(f) => f,
+            None => {
+                return Err(ProgsError::with_msg(
+                    format!("put_float_static: invalid address ({})", addr),
+                ))
+            }
+        };
+
+        match f_addr {
+            FieldAddrFloat::ModelIndex => self.statics.model_index = val,
+            FieldAddrFloat::AbsMinX => self.statics.abs_min[0] = val,
+            FieldAddrFloat::AbsMinY => self.statics.abs_min[1] = val,
+            FieldAddrFloat::AbsMinZ => self.statics.abs_min[2] = val,
+            FieldAddrFloat::AbsMaxX => self.statics.abs_max[0] = val,
+            FieldAddrFloat::AbsMaxY => self.statics.abs_max[1] = val,
+            FieldAddrFloat::AbsMaxZ => self.statics.abs_max[2] = val,
+            FieldAddrFloat::LocalTime => self.statics.local_time = engine::duration_from_f32(val),
+            FieldAddrFloat::MoveType => {
+                self.statics.move_type = MoveType::from_u32(val as u32).unwrap()
+            }
+            FieldAddrFloat::Solid => self.statics.solid = val,
+            FieldAddrFloat::OriginX => self.statics.origin[0] = val,
+            FieldAddrFloat::OriginY => self.statics.origin[1] = val,
+            FieldAddrFloat::OriginZ => self.statics.origin[2] = val,
+            FieldAddrFloat::OldOriginX => self.statics.old_origin[0] = val,
+            FieldAddrFloat::OldOriginY => self.statics.old_origin[1] = val,
+            FieldAddrFloat::OldOriginZ => self.statics.old_origin[2] = val,
+            FieldAddrFloat::VelocityX => self.statics.velocity[0] = val,
+            FieldAddrFloat::VelocityY => self.statics.velocity[1] = val,
+            FieldAddrFloat::VelocityZ => self.statics.velocity[2] = val,
+            FieldAddrFloat::AnglesX => self.statics.angles[0] = Deg(val),
+            FieldAddrFloat::AnglesY => self.statics.angles[1] = Deg(val),
+            FieldAddrFloat::AnglesZ => self.statics.angles[2] = Deg(val),
+            FieldAddrFloat::AngularVelocityX => self.statics.angular_velocity[0] = Deg(val),
+            FieldAddrFloat::AngularVelocityY => self.statics.angular_velocity[1] = Deg(val),
+            FieldAddrFloat::AngularVelocityZ => self.statics.angular_velocity[2] = Deg(val),
+            FieldAddrFloat::PunchAngleX => self.statics.punch_angle[0] = Deg(val),
+            FieldAddrFloat::PunchAngleY => self.statics.punch_angle[1] = Deg(val),
+            FieldAddrFloat::PunchAngleZ => self.statics.punch_angle[2] = Deg(val),
+            FieldAddrFloat::FrameId => self.statics.frame_id = val,
+            FieldAddrFloat::SkinId => self.statics.skin_id = val,
+            FieldAddrFloat::Effects => {
+                self.statics.effects = EntityEffects::from_bits(val as u16).unwrap()
+            }
+            FieldAddrFloat::MinsX => self.statics.mins[0] = val,
+            FieldAddrFloat::MinsY => self.statics.mins[1] = val,
+            FieldAddrFloat::MinsZ => self.statics.mins[2] = val,
+            FieldAddrFloat::MaxsX => self.statics.maxs[0] = val,
+            FieldAddrFloat::MaxsY => self.statics.maxs[1] = val,
+            FieldAddrFloat::MaxsZ => self.statics.maxs[2] = val,
+            FieldAddrFloat::SizeX => self.statics.size[0] = val,
+            FieldAddrFloat::SizeY => self.statics.size[1] = val,
+            FieldAddrFloat::SizeZ => self.statics.size[2] = val,
+            FieldAddrFloat::NextThink => self.statics.next_think = engine::duration_from_f32(val),
+            FieldAddrFloat::Health => self.statics.health = val,
+            FieldAddrFloat::Frags => self.statics.frags = val,
+            FieldAddrFloat::Weapon => self.statics.weapon = val,
+            FieldAddrFloat::WeaponFrame => self.statics.weapon_frame = val,
+            FieldAddrFloat::CurrentAmmo => self.statics.current_ammo = val,
+            FieldAddrFloat::AmmoShells => self.statics.ammo_shells = val,
+            FieldAddrFloat::AmmoNails => self.statics.ammo_nails = val,
+            FieldAddrFloat::AmmoRockets => self.statics.ammo_rockets = val,
+            FieldAddrFloat::AmmoCells => self.statics.ammo_cells = val,
+            FieldAddrFloat::Items => self.statics.items = val,
+            FieldAddrFloat::TakeDamage => self.statics.take_damage = val,
+            FieldAddrFloat::DeadFlag => self.statics.dead_flag = val,
+            FieldAddrFloat::ViewOffsetX => self.statics.view_offset[0] = val,
+            FieldAddrFloat::ViewOffsetY => self.statics.view_offset[1] = val,
+            FieldAddrFloat::ViewOffsetZ => self.statics.view_offset[2] = val,
+            FieldAddrFloat::Button0 => self.statics.button_0 = val,
+            FieldAddrFloat::Button1 => self.statics.button_1 = val,
+            FieldAddrFloat::Button2 => self.statics.button_2 = val,
+            FieldAddrFloat::Impulse => self.statics.impulse = val,
+            FieldAddrFloat::FixAngle => self.statics.fix_angle = val,
+            FieldAddrFloat::ViewAngleX => self.statics.view_angle[0] = Deg(val),
+            FieldAddrFloat::ViewAngleY => self.statics.view_angle[1] = Deg(val),
+            FieldAddrFloat::ViewAngleZ => self.statics.view_angle[2] = Deg(val),
+            FieldAddrFloat::IdealPitch => self.statics.ideal_pitch = Deg(val),
+            FieldAddrFloat::Flags => {
+                self.statics.flags = match EntityFlags::from_bits(val as u16) {
+                    Some(f) => f,
+                    None => {
+                        warn!(
+                            "invalid entity flags ({:b}), converting to none",
+                            val as u16
+                        );
+                        EntityFlags::empty()
+                    }
+                }
+            }
+            FieldAddrFloat::Colormap => self.statics.colormap = val,
+            FieldAddrFloat::Team => self.statics.team = val,
+            FieldAddrFloat::MaxHealth => self.statics.max_health = val,
+            FieldAddrFloat::TeleportTime => {
+                self.statics.teleport_time = engine::duration_from_f32(val)
+            }
+            FieldAddrFloat::ArmorStrength => self.statics.armor_strength = val,
+            FieldAddrFloat::ArmorValue => self.statics.armor_value = val,
+            FieldAddrFloat::WaterLevel => self.statics.water_level = val,
+            FieldAddrFloat::Contents => self.statics.contents = val,
+            FieldAddrFloat::IdealYaw => self.statics.ideal_yaw = Deg(val),
+            FieldAddrFloat::YawSpeed => self.statics.yaw_speed = Deg(val),
+            FieldAddrFloat::SpawnFlags => self.statics.spawn_flags = val,
+            FieldAddrFloat::DmgTake => self.statics.dmg_take = val,
+            FieldAddrFloat::DmgSave => self.statics.dmg_save = val,
+            FieldAddrFloat::MoveDirectionX => self.statics.move_direction[0] = val,
+            FieldAddrFloat::MoveDirectionY => self.statics.move_direction[1] = val,
+            FieldAddrFloat::MoveDirectionZ => self.statics.move_direction[2] = val,
+            FieldAddrFloat::Sounds => self.statics.sounds = val,
+        }
+
+        Ok(())
+    }
+
+    fn put_float_dynamic(&mut self, val: f32, addr: usize) -> Result<(), ProgsError> {
+        self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_mut()
+            .write_f32::<LittleEndian>(val)?;
+
+        Ok(())
+    }
+
+    pub fn get_vector(&self, addr: i16) -> Result<[f32; 3], ProgsError> {
         if addr < 0 {
             panic!("negative offset");
         }
@@ -691,9 +855,9 @@ impl Entity {
 
         // subtract 2 to account for size of vector
         if addr >= ADDR_DYNAMIC_START + self.dynamics.len() - 2 {
-            println!("out-of-bounds offset ({})", addr);
-            // TODO: proper error
-            return Ok([0.0; 3]);
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
         }
 
         if addr < ADDR_DYNAMIC_START {
@@ -746,6 +910,149 @@ impl Entity {
 
         Ok(v)
     }
+
+    pub fn get_string_id(&self, addr: i16) -> Result<StringId, ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.get_string_id_static(addr)
+        } else {
+            self.get_string_id_dynamic(addr)
+        }
+    }
+
+    fn get_string_id_static(&self, addr: usize) -> Result<StringId, ProgsError> {
+        let s_addr = match FieldAddrStringId::from_usize(addr) {
+            Some(s) => s,
+            None => {
+                return Err(ProgsError::with_msg(
+                    format!("get_string_id_static: invalid address ({})", addr),
+                ));
+            }
+        };
+
+        Ok(match s_addr {
+            FieldAddrStringId::ClassName => self.statics.class_name,
+            FieldAddrStringId::ModelName => self.statics.model_name,
+            FieldAddrStringId::WeaponModelName => self.statics.weapon_model_name,
+            FieldAddrStringId::NetName => self.statics.net_name,
+            FieldAddrStringId::Target => self.statics.target,
+            FieldAddrStringId::TargetName => self.statics.target_name,
+            FieldAddrStringId::Message => self.statics.message,
+            FieldAddrStringId::Noise0Name => self.statics.noise_0,
+            FieldAddrStringId::Noise1Name => self.statics.noise_1,
+            FieldAddrStringId::Noise2Name => self.statics.noise_2,
+            FieldAddrStringId::Noise3Name => self.statics.noise_3,
+        })
+    }
+
+    fn get_string_id_dynamic(&self, addr: usize) -> Result<StringId, ProgsError> {
+        Ok(StringId(self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_ref()
+            .read_i32::<LittleEndian>()?))
+    }
+
+    pub fn get_entity_id(&self, addr: i16) -> Result<EntityId, ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.get_entity_id_static(addr)
+        } else {
+            self.get_entity_id_dynamic(addr)
+        }
+    }
+
+    fn get_entity_id_static(&self, addr: usize) -> Result<EntityId, ProgsError> {
+        let s_addr = match FieldAddrEntityId::from_usize(addr) {
+            Some(s) => s,
+            None => {
+                return Err(ProgsError::with_msg(
+                    format!("get_entity_id_static: invalid address ({})", addr),
+                ));
+            }
+        };
+
+        Ok(match s_addr {
+            FieldAddrEntityId::Ground => self.statics.ground_entity,
+            FieldAddrEntityId::Chain => self.statics.chain,
+            FieldAddrEntityId::Enemy => self.statics.enemy,
+            FieldAddrEntityId::Aim => self.statics.aim_entity,
+            FieldAddrEntityId::Goal => self.statics.goal_entity,
+            FieldAddrEntityId::DmgInflictor => self.statics.dmg_inflictor,
+            FieldAddrEntityId::Owner => self.statics.owner,
+        })
+    }
+
+    fn get_entity_id_dynamic(&self, addr: usize) -> Result<EntityId, ProgsError> {
+        Ok(EntityId(self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_ref()
+            .read_i32::<LittleEndian>()?))
+    }
+
+    pub fn get_function_id(&self, addr: i16) -> Result<FunctionId, ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.get_function_id_static(addr)
+        } else {
+            self.get_function_id_dynamic(addr)
+        }
+    }
+
+    fn get_function_id_static(&self, addr: usize) -> Result<FunctionId, ProgsError> {
+        let s_addr = match FieldAddrFunctionId::from_usize(addr) {
+            Some(s) => s,
+            None => {
+                return Err(ProgsError::with_msg(format!(
+                    "get_function_id_static: invalid address ({})",
+                    addr
+                )));
+            }
+        };
+
+        Ok(match s_addr {
+            FieldAddrFunctionId::Touch => self.statics.touch_fnc,
+            FieldAddrFunctionId::Use => self.statics.use_fnc,
+            FieldAddrFunctionId::Think => self.statics.think_fnc,
+            FieldAddrFunctionId::Blocked => self.statics.blocked_fnc,
+        })
+    }
+
+    fn get_function_id_dynamic(&self, addr: usize) -> Result<FunctionId, ProgsError> {
+        Ok(FunctionId(self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_ref()
+            .read_i32::<LittleEndian>()?))
+    }
 }
 
 pub enum EntityListEntry {
@@ -754,12 +1061,21 @@ pub enum EntityListEntry {
 }
 
 pub struct EntityList {
-    field_count: usize,
+    addr_count: usize,
+    field_defs: Box<[FieldDef]>,
     entries: Box<[EntityListEntry]>,
 }
 
 impl EntityList {
-    pub fn with_field_count(field_count: usize) -> EntityList {
+    /// Initializes a new entity list with the given parameters.
+    pub fn new(addr_count: usize, field_defs: Box<[FieldDef]>) -> EntityList {
+        if addr_count < STATIC_ADDRESS_COUNT {
+            panic!(
+                "EntityList::new: addr_count must be at least {} (was {})",
+                STATIC_ADDRESS_COUNT,
+                addr_count
+            );
+        }
         let mut entries = Vec::new();
         for _ in 0..MAX_ENTITIES {
             entries.push(EntityListEntry::Free(Duration::zero()));
@@ -767,19 +1083,95 @@ impl EntityList {
         let entries = entries.into_boxed_slice();
 
         EntityList {
-            field_count,
+            addr_count,
+            field_defs,
             entries,
         }
     }
 
-    pub fn alloc(&mut self) -> Result<EntityId, ProgsError> {
+    /// Convert an entity ID and field address to an internal representation used by the VM.
+    ///
+    /// This representation should be compatible with the one used by the original Quake.
+    pub fn ent_fld_addr_to_i32(&self, ent_fld_addr: EntityFieldAddr) -> i32 {
+        let total_addr = (ent_fld_addr.entity_id * self.addr_count + ent_fld_addr.field_addr) * 4;
+
+        if total_addr > ::std::i32::MAX as usize {
+            panic!("ent_fld_addr_to_i32: total_addr overflow");
+        }
+
+        total_addr as i32
+    }
+
+    /// Convert the internal representation of a field offset back to struct form.
+    pub fn ent_fld_addr_from_i32(&self, val: i32) -> EntityFieldAddr {
+        if val < 0 {
+            panic!("ent_fld_addr_from_i32: negative value ({})", val);
+        }
+
+        if val % 4 != 0 {
+            panic!("ent_fld_addr_from_i32: value % 4 != 0 ({})", val);
+        }
+
+        let total_addr = val as usize / 4;
+        EntityFieldAddr {
+            entity_id: total_addr / self.addr_count,
+            field_addr: total_addr % self.addr_count,
+        }
+    }
+
+    // TODO: delete this
+    // for testing purposes only
+    pub fn fill_all_uninitialized(&mut self) {
+        for i in 0..self.entries.len() {
+            self.entries[i] = EntityListEntry::NotFree(Entity {
+                leaf_count: 0,
+                leaf_ids: [0; MAX_ENT_LEAVES],
+                baseline: EntityState::uninitialized(),
+                statics: EntityStatic::default(),
+                dynamics: self.gen_dynamics(),
+            });
+        }
+    }
+
+    fn gen_dynamics(&self) -> Vec<[u8; 4]> {
+        let mut v = Vec::with_capacity(self.addr_count);
+        for _ in 0..self.addr_count {
+            v.push([0; 4]);
+        }
+        v
+    }
+
+    fn find_free_entry(&self) -> Result<usize, ProgsError> {
         for (i, entry) in self.entries.iter().enumerate() {
             if let &EntityListEntry::Free(_) = entry {
-                return Ok(EntityId(i as i32));
+                return Ok(i);
             }
         }
 
-        Err(ProgsError::with_msg("No entity slots available"))
+        Err(ProgsError::with_msg("no free entries"))
+    }
+
+    pub fn alloc_uninitialized(&mut self) -> Result<EntityId, ProgsError> {
+        let entry_id = self.find_free_entry()?;
+
+        self.entries[entry_id] = EntityListEntry::NotFree(Entity {
+            leaf_count: 0,
+            leaf_ids: [0; MAX_ENT_LEAVES],
+            baseline: EntityState::uninitialized(),
+            statics: EntityStatic::default(),
+            dynamics: self.gen_dynamics(),
+        });
+
+        Ok(EntityId(entry_id as i32))
+    }
+
+    pub fn alloc_from_map(mut map: HashMap<&str, &str>) -> Result<EntityId, ProgsError> {
+        let class_name = match map.get("classname") {
+            Some(c) => c,
+            None => return Err(ProgsError::with_msg("alloc_from_map: no classname")),
+        };
+
+        panic!("unimplemented")
     }
 
     pub fn free(&mut self, entity_id: usize) -> Result<(), ProgsError> {
