@@ -506,14 +506,40 @@ pub fn load(data: &[u8]) -> Result<(Bsp, String), BspError> {
     let tex_count = tex_count as usize;
     let mut tex_offsets = Vec::with_capacity(tex_count);
     for _ in 0..tex_count {
-        tex_offsets.push(reader.read_i32::<LittleEndian>()? as usize);
+        let ofs = reader.read_i32::<LittleEndian>()?;
+
+        tex_offsets.push(match ofs {
+            o if o < -1 => {
+                return Err(BspError::with_msg(
+                    format!("negative texture offset ({})", ofs),
+                ))
+            }
+            -1 => None,
+            o => Some(o as usize),
+        });
     }
 
     let mut textures = Vec::with_capacity(tex_count);
     for t in 0..tex_count {
-        reader.seek(SeekFrom::Start(
-            (tex_lump.offset + tex_offsets[t]) as u64,
-        ))?;
+        let tex_ofs = match tex_offsets[t] {
+            Some(o) => o,
+
+            None => {
+                textures.push(BspTexture {
+                    name: String::new(),
+                    width: 0,
+                    height: 0,
+                    mipmaps: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+                    next: None,
+                });
+
+                continue;
+            }
+        };
+
+        reader.seek(
+            SeekFrom::Start((tex_lump.offset + tex_ofs) as u64),
+        )?;
         let mut tex_name_bytes = [0u8; TEX_NAME_MAX];
         reader.read(&mut tex_name_bytes)?;
         let len = tex_name_bytes
@@ -543,7 +569,7 @@ pub fn load(data: &[u8]) -> Result<(Bsp, String), BspError> {
         for m in 0..MIPLEVELS {
             let factor = 2usize.pow(m as u32);
             let mipmap_size = (width as usize / factor) * (height as usize / factor);
-            let offset = tex_lump.offset + tex_offsets[t] + mip_offsets[m];
+            let offset = tex_lump.offset + tex_ofs + mip_offsets[m];
             reader.seek(SeekFrom::Start(offset as u64))?;
             (&mut reader).take(mipmap_size as u64).read_to_end(
                 &mut mipmaps[m],

@@ -1,4 +1,4 @@
-// Copyright © 2017 Cormac O'Brien.
+// Copyright © 2017 Cormac O'Brien
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this software
 // and associated documentation files (the "Software"), to deal in the Software without
@@ -15,35 +15,53 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-extern crate env_logger;
-extern crate log;
-extern crate nom;
-extern crate richter;
-
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
-use std::collections::HashSet;
 
-use richter::bsp;
-use richter::entity::Entity;
-use richter::pak::Pak;
-use richter::parse;
-use richter::progs;
+// Parse quoted strings
+named!(
+    quoted <&str>,
+    map_res!(
+        delimited!(
+            tag!("\""),
+            take_until_s!("\""),
+            tag!("\"")
+        ),
+        ::std::str::from_utf8
+    )
+);
 
-use nom::IResult;
+// Parse a pair of quoted strings separated by a space and followed by a newline
+named!(
+    key_val <(&str, &str)>,
+    terminated!(
+        separated_pair!(
+            quoted,
+            tag!(" "),
+            quoted
+        ),
+        tag!("\n")
+    )
+);
 
-fn main() {
-    env_logger::init().unwrap();
-    let mut pak = Pak::new();
-    pak.add("pak0.pak").unwrap();
+named!(
+    entity_map <HashMap<&str, &str>>,
+    map!(
+        delimited!(
+            tag!("{\n"),
+            many0!(key_val),
+            tag!("}\n")
+        ),
+        |tuples| {
+            let mut map = HashMap::new();
+            for (k, v) in tuples {
+                map.insert(k, v);
+            }
+            map
+        }
+    )
+);
 
-    let (mut progs, mut globals, mut entity_list) = progs::load(pak.open("progs.dat").unwrap())
-        .unwrap();
-
-    println!("=========\nFUNCTIONS\n=========\n");
-    progs.dump_functions();
-
-
-    entity_list.fill_all_uninitialized();
-    progs.validate(&mut globals, &mut entity_list);
-}
+named!(
+    pub entity_maps <Vec<HashMap<&str, &str>>>,
+    many0!(entity_map)
+);

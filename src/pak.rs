@@ -186,8 +186,11 @@ impl Pak {
     /// let progs_dat = pak.open("progs.dat").unwrap();
     /// # }
     /// ```
-    pub fn open(&self, path: &str) -> Option<&[u8]> {
-        match self.0.get(path) {
+    pub fn open<S>(&self, path: S) -> Option<&[u8]>
+    where
+        S: AsRef<str>,
+    {
+        match self.0.get(path.as_ref()) {
             Some(data) => Some(&data),
             None => None,
         }

@@ -109,12 +109,10 @@ use std::io::SeekFrom;
 use std::rc::Rc;
 
 use engine;
-use entity::Entity;
 use entity::EntityList;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
-use byteorder::WriteBytesExt;
 use cgmath::Vector3;
 use num::FromPrimitive;
 
@@ -573,7 +571,7 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
     let mut dynamic_globals = Vec::with_capacity(globals_lump.count - GLOBAL_DYNAMIC_START);
     for _ in 0..globals_lump.count - GLOBAL_DYNAMIC_START {
         let mut block = [0; 4];
-        src.read(&mut block);
+        src.read(&mut block)?;
 
         // TODO: this is fine for now because we're using LittleEndian for all in-memory
         // operations, but we'll want to switch to native endianness for speed soon
