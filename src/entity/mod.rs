@@ -81,7 +81,7 @@ impl EntityState {
 pub struct Entity {
     // TODO: figure out how to link entities into the world
     // link: SomeType,
-    string_table: Rc<RefCell<StringTable>>,
+    string_table: Rc<StringTable>,
     leaf_count: usize,
     leaf_ids: [u16; MAX_ENT_LEAVES],
     baseline: EntityState,
@@ -255,10 +255,11 @@ impl Entity {
     }
 
     fn get_string_id_dynamic(&self, addr: usize) -> Result<StringId, ProgsError> {
-        Ok(self.string_table.borrow().id_from_i32(self.dynamics
-            [addr - ADDR_DYNAMIC_START]
-            .as_ref()
-            .read_i32::<LittleEndian>()?)?)
+        Ok(self.string_table.id_from_i32(
+            self.dynamics[addr - ADDR_DYNAMIC_START]
+                .as_ref()
+                .read_i32::<LittleEndian>()?,
+        )?)
     }
 
     pub fn put_string_id(&mut self, val: StringId, addr: i16) -> Result<(), ProgsError> {
@@ -390,7 +391,7 @@ impl Entity {
     fn get_function_id_dynamic(&self, addr: usize) -> Result<FunctionId, ProgsError> {
         Ok(FunctionId(self.dynamics[addr - ADDR_DYNAMIC_START]
             .as_ref()
-            .read_i32::<LittleEndian>()?))
+            .read_i32::<LittleEndian>()? as usize))
     }
 
     pub fn put_function_id(&mut self, val: FunctionId, addr: i16) -> Result<(), ProgsError> {
@@ -422,7 +423,7 @@ impl Entity {
     fn put_function_id_dynamic(&mut self, val: FunctionId, addr: usize) -> Result<(), ProgsError> {
         self.dynamics[addr - ADDR_DYNAMIC_START]
             .as_mut()
-            .write_i32::<LittleEndian>(val.0)?;
+            .write_i32::<LittleEndian>(val.try_into()?)?;
 
         Ok(())
     }
@@ -435,7 +436,7 @@ pub enum EntityListEntry {
 
 pub struct EntityList {
     addr_count: usize,
-    string_table: Rc<RefCell<StringTable>>,
+    string_table: Rc<StringTable>,
     field_defs: Box<[FieldDef]>,
     entries: Box<[EntityListEntry]>,
 }
@@ -444,7 +445,7 @@ impl EntityList {
     /// Initializes a new entity list with the given parameters.
     pub fn new(
         addr_count: usize,
-        string_table: Rc<RefCell<StringTable>>,
+        string_table: Rc<StringTable>,
         field_defs: Box<[FieldDef]>,
     ) -> EntityList {
         if addr_count < STATIC_ADDRESS_COUNT {
@@ -473,10 +474,10 @@ impl EntityList {
         S: AsRef<str>,
     {
         let name = name.as_ref();
-        let name_id = self.string_table.borrow().find(name).unwrap();
+        let name_id = self.string_table.find(name).unwrap();
 
         match self.field_defs.iter().find(|def| {
-            self.string_table.borrow().get(def.name_id).unwrap() == name
+            self.string_table.get(def.name_id).unwrap() == name
         }) {
             Some(d) => Ok(d),
             None => Err(ProgsError::with_msg(format!("no field with name {}", name))),
@@ -608,7 +609,7 @@ impl EntityList {
 
                         Type::QString => {
                             ent.put_string_id(
-                                self.string_table.borrow_mut().insert(val),
+                                self.string_table.insert(val),
                                 def.offset as i16,
                             )?;
                         }

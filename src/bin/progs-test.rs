@@ -37,7 +37,7 @@ fn main() {
     let mut pak = Pak::new();
     pak.add("pak0.pak").unwrap();
 
-    let (mut progs, mut globals, mut entity_list) = progs::load(pak.open("progs.dat").unwrap())
+    let (functions, mut globals, mut entity_list) = progs::load(pak.open("progs.dat").unwrap())
         .unwrap();
 
     let (bsp, ent_string) = bsp::load(pak.open("maps/e1m1.bsp").unwrap()).unwrap();
@@ -51,5 +51,5 @@ fn main() {
         entity_list.alloc_from_map(m).unwrap();
     }
 
-    progs.validate(&mut globals, &mut entity_list);
+    progs::validate(&functions, &mut globals, &mut entity_list);
 }

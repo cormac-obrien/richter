@@ -15,9 +15,6 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-// TODO:
-// - dynamic string handling
-
 //! QuakeC bytecode interpreter
 //!
 //! # Loading
@@ -96,9 +93,11 @@
 //! arg_sizes: [u8; 8],    // sizes of each argument
 //! ```
 
+mod functions;
 mod globals;
 mod ops;
 
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -120,6 +119,12 @@ use cgmath::Vector3;
 use num::FromPrimitive;
 
 use self::ops::Opcode;
+use self::functions::FunctionDef;
+pub use self::functions::FunctionId;
+use self::functions::FunctionKind;
+use self::functions::Functions;
+use self::functions::MAX_ARGS;
+use self::functions::Statement;
 use self::globals::Globals;
 use self::globals::GlobalsStatic;
 use self::globals::GLOBAL_DYNAMIC_START;
@@ -129,7 +134,6 @@ use self::globals::GLOBAL_STATIC_START;
 
 const VERSION: i32 = 6;
 const CRC: i32 = 5927;
-const MAX_ARGS: usize = 8;
 const MAX_STACK_DEPTH: usize = 32;
 const LUMP_COUNT: usize = 6;
 const SAVE_GLOBAL: u16 = 1 << 15;
@@ -216,10 +220,6 @@ pub struct FieldAddr(pub i32);
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
-pub struct FunctionId(pub i32);
-
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
-#[repr(C)]
 pub struct EntityFieldAddr {
     pub entity_id: usize,
     pub field_addr: usize,
@@ -247,54 +247,6 @@ pub enum Type {
     QPointer = 7,
 }
 
-#[derive(Debug)]
-#[repr(C)]
-struct Statement {
-    opcode: Opcode,
-    arg1: i16,
-    arg2: i16,
-    arg3: i16,
-}
-
-impl Statement {
-    fn new(op: i16, arg1: i16, arg2: i16, arg3: i16) -> Result<Statement, ProgsError> {
-        let opcode = match Opcode::from_i16(op) {
-            Some(o) => o,
-            None => return Err(ProgsError::with_msg(format!("Bad opcode 0x{:x}", op))),
-        };
-
-        Ok(Statement {
-            opcode: opcode,
-            arg1: arg1,
-            arg2: arg2,
-            arg3: arg3,
-        })
-    }
-}
-
-#[derive(Debug)]
-enum FunctionKind {
-    BuiltIn(usize),
-    QuakeC(usize),
-}
-
-#[derive(Debug)]
-struct Function {
-    kind: FunctionKind,
-    arg_start: usize,
-    locals: usize,
-    name_id: StringId,
-    srcfile_id: StringId,
-    argc: usize,
-    argsz: [u8; MAX_ARGS],
-}
-
-#[derive(Debug)]
-struct StackFrame {
-    instr_id: i32,
-    func_id: u32,
-}
-
 #[derive(Copy, Clone, Debug)]
 struct Lump {
     offset: usize,
@@ -318,8 +270,8 @@ pub struct FieldDef {
 
 #[derive(Debug)]
 pub struct StringTable {
-    byte_count: usize,
-    table: HashMap<StringId, String>,
+    byte_count: Cell<usize>,
+    table: RefCell<HashMap<StringId, String>>,
 }
 
 impl StringTable {
@@ -337,8 +289,8 @@ impl StringTable {
         }
 
         StringTable {
-            byte_count: data.len(),
-            table,
+            byte_count: Cell::new(data.len()),
+            table: RefCell::new(table),
         }
     }
 
@@ -346,34 +298,36 @@ impl StringTable {
     where
         S: AsRef<str>,
     {
-        match self.table.iter().find(|&(_, &ref v)| v == target.as_ref()) {
+        match self.table.borrow().iter().find(|&(_, &ref v)| {
+            v == target.as_ref()
+        }) {
             Some((&ref k, _)) => Some(*k),
             None => None,
         }
     }
 
-    pub fn get(&self, id: StringId) -> Option<&str> {
-        match self.table.get(&id) {
-            Some(s) => Some(s.as_str()),
+    pub fn get(&self, id: StringId) -> Option<String> {
+        match self.table.borrow().get(&id) {
+            Some(s) => Some(s.to_owned()),
             None => None,
         }
     }
 
-    pub fn insert<S>(&mut self, value: S) -> StringId
+    pub fn insert<S>(&self, value: S) -> StringId
     where
         S: AsRef<str>,
     {
         let s = value.as_ref().to_owned();
-        let id = StringId(self.byte_count);
+        let id = StringId(self.byte_count.get());
         let len = s.len();
 
         println!("StringTable: inserting {}", s);
-        match self.table.insert(id, s) {
+        match self.table.borrow_mut().insert(id, s) {
             Some(_) => panic!("duplicate ID in string table"),
             None => (),
         }
 
-        self.byte_count += len;
+        self.byte_count.set(self.byte_count.get() + len);
 
         id
     }
@@ -385,7 +339,7 @@ impl StringTable {
 
         let id = StringId(value as usize);
 
-        if self.table.contains_key(&id) {
+        if self.table.borrow().contains_key(&id) {
             Ok(id)
         } else {
             Err(ProgsError::with_msg(format!("no string with ID {}", value)))
@@ -393,7 +347,7 @@ impl StringTable {
     }
 }
 
-pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
+pub fn load(data: &[u8]) -> Result<(Functions, Globals, EntityList), ProgsError> {
     let mut src = BufReader::new(Cursor::new(data));
     assert!(src.read_i32::<LittleEndian>()? == VERSION);
     assert!(src.read_i32::<LittleEndian>()? == CRC);
@@ -415,13 +369,15 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
     let ent_addr_count = src.read_i32::<LittleEndian>()? as usize;
     debug!("Field count: {}", ent_addr_count);
 
+    // Read string data and construct StringTable
+
     let string_lump = &lumps[LumpId::Strings as usize];
     src.seek(SeekFrom::Start(string_lump.offset as u64))?;
     let mut strings = Vec::new();
     (&mut src).take(string_lump.count as u64).read_to_end(
         &mut strings,
     )?;
-    let str_tbl = StringTable::new(strings);
+    let string_table = Rc::new(StringTable::new(strings));
 
     assert_eq!(
         src.seek(SeekFrom::Current(0))?,
@@ -430,9 +386,11 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         ))?
     );
 
+    // Read function definitions and statements and construct Functions
+
     let function_lump = &lumps[LumpId::Functions as usize];
     src.seek(SeekFrom::Start(function_lump.offset as u64))?;
-    let mut functions = Vec::with_capacity(function_lump.count);
+    let mut function_defs = Vec::with_capacity(function_lump.count);
     for i in 0..function_lump.count {
         assert_eq!(
             src.seek(SeekFrom::Current(0))?,
@@ -452,14 +410,14 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         // throw away profile variable
         let _ = src.read_i32::<LittleEndian>()?;
 
-        let name_id = str_tbl.id_from_i32(src.read_i32::<LittleEndian>()?)?;
-        let srcfile_id = str_tbl.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let name_id = string_table.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let srcfile_id = string_table.id_from_i32(src.read_i32::<LittleEndian>()?)?;
 
         let argc = src.read_i32::<LittleEndian>()?;
         let mut argsz = [0; MAX_ARGS];
         src.read(&mut argsz)?;
 
-        functions.push(Function {
+        function_defs.push(FunctionDef {
             kind: kind,
             arg_start: arg_start as usize,
             locals: locals as usize,
@@ -478,13 +436,39 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         ))?
     );
 
+    let statement_lump = &lumps[LumpId::Statements as usize];
+    src.seek(SeekFrom::Start(statement_lump.offset as u64))?;
+    let mut statements = Vec::with_capacity(statement_lump.count);
+    for _ in 0..statement_lump.count {
+        statements.push(Statement::new(
+            src.read_i16::<LittleEndian>()?,
+            src.read_i16::<LittleEndian>()?,
+            src.read_i16::<LittleEndian>()?,
+            src.read_i16::<LittleEndian>()?,
+        )?);
+    }
+
+    assert_eq!(
+        src.seek(SeekFrom::Current(0))?,
+        src.seek(SeekFrom::Start(
+            (statement_lump.offset + statement_lump.count * STATEMENT_SIZE) as
+                u64,
+        ))?
+    );
+
+    let functions = Functions {
+        string_table: string_table.clone(),
+        defs: function_defs.into_boxed_slice(),
+        statements: statements.into_boxed_slice(),
+    };
+
     let globaldef_lump = &lumps[LumpId::GlobalDefs as usize];
     src.seek(SeekFrom::Start(globaldef_lump.offset as u64))?;
     let mut globaldefs = Vec::new();
     for _ in 0..globaldef_lump.count {
         let type_ = src.read_u16::<LittleEndian>()?;
         let offset = src.read_u16::<LittleEndian>()?;
-        let name_id = str_tbl.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let name_id = string_table.id_from_i32(src.read_i32::<LittleEndian>()?)?;
         globaldefs.push(GlobalDef {
             save: type_ & SAVE_GLOBAL != 0,
             type_: Type::from_u16(type_ & !SAVE_GLOBAL).unwrap(),
@@ -507,7 +491,7 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
     for _ in 0..fielddef_lump.count {
         let type_ = src.read_u16::<LittleEndian>()?;
         let offset = src.read_u16::<LittleEndian>()?;
-        let name_id = str_tbl.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let name_id = string_table.id_from_i32(src.read_i32::<LittleEndian>()?)?;
 
         if type_ & SAVE_GLOBAL != 0 {
             return Err(ProgsError::with_msg(
@@ -526,26 +510,6 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         src.seek(SeekFrom::Start(
             (fielddef_lump.offset +
                  fielddef_lump.count * DEF_SIZE) as u64,
-        ))?
-    );
-
-    let statement_lump = &lumps[LumpId::Statements as usize];
-    src.seek(SeekFrom::Start(statement_lump.offset as u64))?;
-    let mut statements = Vec::with_capacity(statement_lump.count);
-    for _ in 0..statement_lump.count {
-        statements.push(Statement::new(
-            src.read_i16::<LittleEndian>()?,
-            src.read_i16::<LittleEndian>()?,
-            src.read_i16::<LittleEndian>()?,
-            src.read_i16::<LittleEndian>()?,
-        )?);
-    }
-
-    assert_eq!(
-        src.seek(SeekFrom::Current(0))?,
-        src.seek(SeekFrom::Start(
-            (statement_lump.offset + statement_lump.count * STATEMENT_SIZE) as
-                u64,
         ))?
     );
 
@@ -616,16 +580,16 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         let trace_in_open = src.read_f32::<LittleEndian>()?;
         let trace_in_water = src.read_f32::<LittleEndian>()?;
         let msg_entity = EntityId(src.read_i32::<LittleEndian>()?);
-        let main = FunctionId(src.read_i32::<LittleEndian>()?);
-        let start_frame = FunctionId(src.read_i32::<LittleEndian>()?);
-        let player_pre_think = FunctionId(src.read_i32::<LittleEndian>()?);
-        let player_post_think = FunctionId(src.read_i32::<LittleEndian>()?);
-        let client_kill = FunctionId(src.read_i32::<LittleEndian>()?);
-        let client_connect = FunctionId(src.read_i32::<LittleEndian>()?);
-        let put_client_in_server = FunctionId(src.read_i32::<LittleEndian>()?);
-        let client_disconnect = FunctionId(src.read_i32::<LittleEndian>()?);
-        let set_new_args = FunctionId(src.read_i32::<LittleEndian>()?);
-        let set_change_args = FunctionId(src.read_i32::<LittleEndian>()?);
+        let main = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let start_frame = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let player_pre_think = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let player_post_think = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let client_kill = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let client_connect = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let put_client_in_server = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let client_disconnect = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let set_new_args = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let set_change_args = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
 
         GlobalsStatic {
             reserved,
@@ -688,14 +652,6 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         ))?
     );
 
-    let string_table = Rc::new(RefCell::new(str_tbl));
-
-    let progs = Progs {
-        string_table: string_table.clone(),
-        functions: functions.into_boxed_slice(),
-        statements: statements.into_boxed_slice(),
-    };
-
     let globals = Globals {
         string_table: string_table.clone(),
         defs: globaldefs.into_boxed_slice(),
@@ -709,168 +665,141 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         field_defs.into_boxed_slice(),
     );
 
-    Ok((progs, globals, entity_list))
+    Ok((functions, globals, entity_list))
 }
 
 #[derive(Debug)]
-pub struct Progs {
-    functions: Box<[Function]>,
-    statements: Box<[Statement]>,
-    string_table: Rc<RefCell<StringTable>>,
+struct StackFrame {
+    instr_id: usize,
+    func_id: FunctionId,
 }
 
-impl Progs {
-    pub fn dump_functions(&self) {
-        for f in self.functions.iter() {
-            let name = self.string_table
-                .borrow()
-                .get(f.name_id)
-                .unwrap()
-                .to_owned();
-            print!("{}: ", name);
+pub struct ExecutionContext {
+    pc: usize,
+    current_function: FunctionId,
+    call_stack: Vec<StackFrame>,
+    local_stack: Vec<[u8; 4]>,
+}
 
-            match f.kind {
-                FunctionKind::BuiltIn(_) => println!("built-in function"),
-                FunctionKind::QuakeC(o) => {
-                    println!("begins at statement {}", o);
-                    for s in self.statements.iter().skip(o) {
-                        println!(
-                            "    {:<9} {:>5} {:>5} {:>5}",
-                            format!("{:?}", s.opcode),
-                            s.arg1,
-                            s.arg2,
-                            s.arg3
-                        );
-                        if s.opcode == Opcode::Return || s.opcode == Opcode::Done {
-                            break;
-                        }
-                    }
-                }
-            }
+impl ExecutionContext {
+    pub fn enter_function(&mut self, f: FunctionId) {
+        self.call_stack.push(StackFrame {
+            instr_id: self.pc,
+            func_id: self.current_function,
+        });
+
+        if self.call_stack.len() > MAX_STACK_DEPTH {
+            panic!("call stack overflow");
         }
     }
 
-    // run through all statements and see if we crash. elegant!
-    pub fn validate(&mut self, globals: &mut Globals, entities: &mut EntityList) {
-        'functions: for f in 0..self.functions.len() {
-            let name = self.string_table
-                .borrow()
-                .get(self.functions[f].name_id)
-                .unwrap()
-                .to_owned();
+    pub fn leave_function(&self) {}
 
-            let first = match self.functions[f].kind {
-                FunctionKind::BuiltIn(_) => continue,
-                FunctionKind::QuakeC(s) => s,
-            };
+    pub fn execute_program(&self) {}
+}
 
-            println!("FUNCTION {}: {}", f, name);
+// run through all statements and see if we crash. elegant!
+pub fn validate(functions: &Functions, globals: &mut Globals, entities: &mut EntityList) {
+    'functions: for f in 0..functions.defs.len() {
+        let name = functions
+            .string_table
+            .get(functions.defs[f].name_id)
+            .unwrap()
+            .to_owned();
 
-            for i in first..self.statements.len() {
-                let op = self.statements[i].opcode;
-                let arg1 = self.statements[i].arg1;
-                let arg2 = self.statements[i].arg2;
-                let arg3 = self.statements[i].arg3;
-                println!(
-                    "    {:<9} {:>5} {:>5} {:>5}",
-                    format!("{:?}", op),
-                    arg1,
-                    arg2,
-                    arg3
-                );
-                match op {
-                    Opcode::MulF => mul_f(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::MulV => mul_v(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::MulFV => mul_fv(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::MulVF => mul_vf(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::Div => div(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::AddF => add_f(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::AddV => add_v(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::SubF => sub_f(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::SubV => sub_v(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::EqF => eq_f(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::EqV => eq_v(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::EqS => eq_s(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::EqEnt => eq_ent(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::EqFnc => eq_fnc(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::NeF => ne_f(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::NeV => ne_v(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::NeS => ne_s(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::NeEnt => ne_ent(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::NeFnc => ne_fnc(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::Le => le(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::Ge => ge(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::Lt => lt(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::Gt => gt(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::LoadF => load_f(globals, entities, arg1, arg2, arg3).unwrap(),
-                    Opcode::LoadV => load_v(globals, entities, arg1, arg2, arg3).unwrap(),
-                    Opcode::LoadS => load_s(globals, entities, arg1, arg2, arg3).unwrap(),
-                    Opcode::LoadEnt => load_ent(globals, entities, arg1, arg2, arg3).unwrap(),
-                    Opcode::LoadFld => panic!("load_fld not implemented"),
-                    Opcode::LoadFnc => load_fnc(globals, entities, arg1, arg2, arg3).unwrap(),
-                    Opcode::Address => address(globals, entities, arg1, arg2, arg3).unwrap(),
-                    Opcode::StoreF => store_f(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::StoreV => store_v(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::StoreS => store_s(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::StoreEnt => store_ent(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::StoreFld => store_fld(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::StoreFnc => store_fnc(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::StorePF => storep_f(globals, entities, arg1, arg2, arg3).unwrap(),
-                    Opcode::StorePV => storep_v(globals, entities, arg1, arg2, arg3).unwrap(),
-                    Opcode::StorePS => storep_s(globals, entities, arg1, arg2, arg3).unwrap(),
-                    Opcode::StorePEnt => storep_ent(globals, entities, arg1, arg2, arg3).unwrap(),
-                    Opcode::StorePFld => panic!("storep_fld not implemented"),
-                    Opcode::StorePFnc => storep_fnc(globals, entities, arg1, arg2, arg3).unwrap(),
-                    // Opcode::Return
-                    Opcode::NotF => not_f(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::NotV => not_v(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::NotS => not_s(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::NotEnt => not_ent(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::NotFnc => not_fnc(globals, arg1, arg2, arg3).unwrap(),
-                    // Opcode::If
-                    // Opcode::IfNot
-                    // Opcode::Call0
-                    // Opcode::Call1
-                    // Opcode::Call2
-                    // Opcode::Call3
-                    // Opcode::Call4
-                    // Opcode::Call5
-                    // Opcode::Call6
-                    // Opcode::Call7
-                    // Opcode::Call8
-                    // Opcode::State
-                    // Opcode::Goto
-                    Opcode::And => and(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::Or => or(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::BitAnd => bit_and(globals, arg1, arg2, arg3).unwrap(),
-                    Opcode::BitOr => bit_or(globals, arg1, arg2, arg3).unwrap(),
+        let first = match functions.defs[f].kind {
+            FunctionKind::BuiltIn(_) => continue,
+            FunctionKind::QuakeC(s) => s,
+        };
 
-                    Opcode::Done | Opcode::Return => continue 'functions,
-                    _ => (),
-                }
-            }
-        }
-    }
+        println!("FUNCTION {}: {}", f, name);
 
-    fn execute(&mut self, function_id: FunctionId) {
-        let mut callstack: Vec<StackFrame> = Vec::new();
+        for i in first..functions.statements.len() {
+            let op = functions.statements[i].opcode;
+            let arg1 = functions.statements[i].arg1;
+            let arg2 = functions.statements[i].arg2;
+            let arg3 = functions.statements[i].arg3;
+            println!(
+                "    {:<9} {:>5} {:>5} {:>5}",
+                format!("{:?}", op),
+                arg1,
+                arg2,
+                arg3
+            );
+            match op {
+                Opcode::MulF => mul_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::MulV => mul_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::MulFV => mul_fv(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::MulVF => mul_vf(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::Div => div(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::AddF => add_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::AddV => add_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::SubF => sub_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::SubV => sub_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::EqF => eq_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::EqV => eq_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::EqS => eq_s(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::EqEnt => eq_ent(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::EqFnc => eq_fnc(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NeF => ne_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NeV => ne_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NeS => ne_s(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NeEnt => ne_ent(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NeFnc => ne_fnc(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::Le => le(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::Ge => ge(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::Lt => lt(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::Gt => gt(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::LoadF => load_f(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::LoadV => load_v(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::LoadS => load_s(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::LoadEnt => load_ent(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::LoadFld => panic!("load_fld not implemented"),
+                Opcode::LoadFnc => load_fnc(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::Address => address(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::StoreF => store_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::StoreV => store_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::StoreS => store_s(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::StoreEnt => store_ent(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::StoreFld => store_fld(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::StoreFnc => store_fnc(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::StorePF => storep_f(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::StorePV => storep_v(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::StorePS => storep_s(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::StorePEnt => storep_ent(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::StorePFld => panic!("storep_fld not implemented"),
+                Opcode::StorePFnc => storep_fnc(globals, entities, arg1, arg2, arg3).unwrap(),
+                // Opcode::Return
+                Opcode::NotF => not_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NotV => not_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NotS => not_s(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NotEnt => not_ent(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NotFnc => not_fnc(globals, arg1, arg2, arg3).unwrap(),
+                // Opcode::If
+                // Opcode::IfNot
+                // Opcode::Call0
+                // Opcode::Call1
+                // Opcode::Call2
+                // Opcode::Call3
+                // Opcode::Call4
+                // Opcode::Call5
+                // Opcode::Call6
+                // Opcode::Call7
+                // Opcode::Call8
+                // Opcode::State
+                // Opcode::Goto
+                Opcode::And => and(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::Or => or(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::BitAnd => bit_and(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::BitOr => bit_or(globals, arg1, arg2, arg3).unwrap(),
 
-        let pc = self.enter_function(function_id);
-
-        loop {
-            let st = &self.statements[pc];
-            match st.opcode {
-                Opcode::Done | Opcode::Return => (),
+                Opcode::Done | Opcode::Return => continue 'functions,
                 _ => (),
             }
         }
     }
-
-    fn enter_function(&mut self, function_id: FunctionId) -> usize {
-        let function = &self.functions[function_id.0 as usize];
-        0
-    }
 }
+
 
 // MUL_F: Float multiplication
 fn mul_f(globals: &mut Globals, f1_id: i16, f2_id: i16, prod_id: i16) -> Result<(), ProgsError> {
@@ -1485,13 +1414,11 @@ fn not_s(globals: &mut Globals, s_ofs: i16, unused: i16, not_ofs: i16) -> Result
         return Err(ProgsError::with_msg("not_s: negative string offset"));
     }
 
-    let s = {
-        let str_tbl = globals.string_table.borrow();
-        str_tbl
-            .get(str_tbl.id_from_i32(s_ofs as i32)?)
-            .unwrap()
-            .to_owned()
-    };
+    let s = globals
+        .string_table
+        .get(globals.string_table.id_from_i32(s_ofs as i32)?)
+        .unwrap()
+        .to_owned();
 
     if s_ofs == 0 || s == "" {
         globals.put_float(1.0, not_ofs)?;

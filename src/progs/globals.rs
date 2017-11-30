@@ -227,7 +227,7 @@ impl GlobalsStatic {
 
 #[derive(Debug)]
 pub struct Globals {
-    pub string_table: Rc<RefCell<StringTable>>,
+    pub string_table: Rc<StringTable>,
     pub defs: Box<[GlobalDef]>,
     pub statics: GlobalsStatic,
     pub dynamics: Vec<[u8; 4]>,
@@ -582,11 +582,9 @@ impl Globals {
     }
 
     fn get_string_id_reserved(&self, addr: usize) -> Result<StringId, ProgsError> {
-        Ok(self.string_table.borrow().id_from_i32(
-            self.statics.reserved[addr]
-                .as_ref()
-                .read_i32::<LittleEndian>()?,
-        )?)
+        Ok(self.string_table.id_from_i32(self.statics.reserved[addr]
+            .as_ref()
+            .read_i32::<LittleEndian>()?)?)
     }
 
     fn get_string_id_static(&self, addr: usize) -> Result<StringId, ProgsError> {
@@ -612,7 +610,7 @@ impl Globals {
             )));
         }
 
-        Ok(self.string_table.borrow().id_from_i32(self.dynamics[addr]
+        Ok(self.string_table.id_from_i32(self.dynamics[addr]
             .as_ref()
             .read_i32::<LittleEndian>()?)?)
     }
@@ -928,7 +926,7 @@ impl Globals {
 
         Ok(FunctionId(self.dynamics[addr - GLOBAL_DYNAMIC_START]
             .as_ref()
-            .read_i32::<LittleEndian>()?))
+            .read_i32::<LittleEndian>()? as usize))
     }
 
     pub fn put_function_id(&mut self, val: FunctionId, addr: i16) -> Result<(), ProgsError> {
@@ -982,7 +980,7 @@ impl Globals {
 
         self.dynamics[addr - GLOBAL_DYNAMIC_START]
             .as_mut()
-            .write_i32::<LittleEndian>(val.0)?;
+            .write_i32::<LittleEndian>(val.try_into()?)?;
 
         Ok(())
     }
@@ -1052,7 +1050,7 @@ impl Globals {
                 src_val.as_mut().write_i32::<LittleEndian>(e.0)?;
             } else if GlobalFunctionAddress::from_usize(src_addr).is_some() {
                 let f = self.get_function_id_static(src_addr)?;
-                src_val.as_mut().write_i32::<LittleEndian>(f.0)?;
+                src_val.as_mut().write_i32::<LittleEndian>(f.try_into()?)?;
             } else {
                 return Err(ProgsError::with_msg(format!(
                     "reserved_copy: invalid static source address ({})",
@@ -1084,15 +1082,15 @@ impl Globals {
                 let f = src_val.as_ref().read_f32::<LittleEndian>()?;
                 self.put_float_static(f, dst_addr)?;
             } else if GlobalStringAddress::from_usize(dst_addr).is_some() {
-                let s = self.string_table.borrow().id_from_i32(src_val
-                    .as_ref()
-                    .read_i32::<LittleEndian>()?)?;
+                let s = self.string_table.id_from_i32(
+                    src_val.as_ref().read_i32::<LittleEndian>()?,
+                )?;
                 self.put_string_id_static(s, dst_addr)?;
             } else if GlobalEntityAddress::from_usize(dst_addr).is_some() {
                 let e = EntityId(src_val.as_ref().read_i32::<LittleEndian>()?);
                 self.put_entity_id_static(e, dst_addr)?;
             } else if GlobalFunctionAddress::from_usize(dst_addr).is_some() {
-                let f = FunctionId(src_val.as_ref().read_i32::<LittleEndian>()?);
+                let f = FunctionId(src_val.as_ref().read_i32::<LittleEndian>()? as usize);
                 self.put_function_id_static(f, dst_addr)?;
             } else {
                 return Err(ProgsError::with_msg(format!(
