@@ -40,9 +40,6 @@ fn main() {
     let (mut progs, mut globals, mut entity_list) = progs::load(pak.open("progs.dat").unwrap())
         .unwrap();
 
-    println!("=========\nFUNCTIONS\n=========\n");
-    progs.dump_functions();
-
     let (bsp, ent_string) = bsp::load(pak.open("maps/e1m1.bsp").unwrap()).unwrap();
 
     let maps = match parse::entity_maps(ent_string.as_bytes()) {
@@ -50,9 +47,9 @@ fn main() {
         _ => panic!("parse failed"),
     };
 
-    // for m in maps {
-    // entity_list.alloc_from_map(m).unwrap();
-    // }
+    for m in maps {
+        entity_list.alloc_from_map(m).unwrap();
+    }
 
     progs.validate(&mut globals, &mut entity_list);
 }

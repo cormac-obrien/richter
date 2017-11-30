@@ -475,12 +475,12 @@ impl EntityList {
         let name = name.as_ref();
         let name_id = self.string_table.borrow().find(name).unwrap();
 
-        Ok(
-            self.field_defs
-                .iter()
-                .find(|def| def.name_id == name_id)
-                .unwrap(),
-        )
+        match self.field_defs.iter().find(|def| {
+            self.string_table.borrow().get(def.name_id).unwrap() == name
+        }) {
+            Some(d) => Ok(d),
+            None => Err(ProgsError::with_msg(format!("no field with name {}", name))),
+        }
     }
 
     /// Convert an entity ID and field address to an internal representation used by the VM.
@@ -565,14 +565,20 @@ impl EntityList {
     ///
     /// aaaaaaaaaaaaaaaaaaaa
     pub fn alloc_from_map(&mut self, map: HashMap<&str, &str>) -> Result<EntityId, ProgsError> {
-        let mut dynamics = self.gen_dynamics();
-        let mut gen_statics = GenericEntityStatics::default();
+        let mut ent = Entity {
+            leaf_count: 0,
+            leaf_ids: [0; MAX_ENT_LEAVES],
+            baseline: EntityState::uninitialized(),
+            string_table: self.string_table.clone(),
+            statics: EntityStatics::Generic(GenericEntityStatics::default()),
+            dynamics: self.gen_dynamics(),
+        };
 
         // TODO
         // for now, only handle the attributes that actually appear in the bsp maps.
         // this will (probably) need to be fixed to support custom maps.
-        for (k, v) in map.iter() {
-            match *k {
+        for (key, val) in map.iter() {
+            match *key {
                 // ignore keys starting with an underscore
                 k if k.starts_with("_") => (),
 
@@ -580,48 +586,66 @@ impl EntityList {
                     // this is referred to in the original source as "anglehack" -- essentially,
                     // only the yaw (Y) value is given. see
                     // https://github.com/id-Software/Quake/blob/master/WinQuake/pr_edict.c#L826-L834
-                    gen_statics.angles = Vector3::new(Deg(0.0), Deg(v.parse().unwrap()), Deg(0.0));
+                    let def = self.find_def("angles")?.clone();
+                    ent.put_vector(
+                        [0.0, val.parse().unwrap(), 0.0],
+                        def.offset as i16,
+                    )?;
                 }
 
-                // assign static fields directly
-                "classname" => gen_statics.class_name = self.string_table.borrow().find(v).unwrap(),
-                "health" => gen_statics.health = v.parse().unwrap(),
-                "message" => gen_statics.message = self.string_table.borrow().find(v).unwrap(),
-                "model" => gen_statics.model_name = self.string_table.borrow().find(v).unwrap(),
-                "origin" => gen_statics.origin = parse::vector3(v).unwrap(),
-                "sounds" => gen_statics.sounds = v.parse().unwrap(),
-                "spawnflags" => gen_statics.spawn_flags = v.parse().unwrap(),
-                "target" => gen_statics.target = self.string_table.borrow().find(v).unwrap(),
-                "targetname" => {
-                    gen_statics.target_name = self.string_table.borrow().find(v).unwrap()
+                "light" => {
+                    // more fun hacks brought to you by Carmack & Friends
+                    let def = self.find_def("light_lev")?.clone();
+                    ent.put_float(val.parse().unwrap(), def.offset as i16)?;
                 }
 
-                "count" | "delay" | "dmg" | "height" | "killtarget" | "light" | "lip" |
-                "mangle" | "map" | "speed" | "style" | "wad" | "wait" | "worldtype" => {
-                    let def = self.find_def(k)?;
-                    let addr = def.offset as usize;
+                k => {
+                    let def = self.find_def(k)?.clone();
 
-                    println!("{:?}", def);
+                    match def.type_ {
+                        // void has no value, skip it
+                        Type::QVoid => (),
+
+                        Type::QString => {
+                            ent.put_string_id(
+                                self.string_table.borrow_mut().insert(val),
+                                def.offset as i16,
+                            )?;
+                        }
+
+                        Type::QFloat => ent.put_float(val.parse().unwrap(), def.offset as i16)?,
+                        Type::QVector => {
+                            ent.put_vector(
+                                parse::vector3_components(val).unwrap(),
+                                def.offset as i16,
+                            )?
+                        }
+                        Type::QEntity => {
+                            let id: usize = val.parse().unwrap();
+
+                            if id > MAX_ENTITIES {
+                                panic!("out-of-bounds entity access");
+                            }
+
+                            match self.entries[id] {
+                                EntityListEntry::Free(_) => panic!("no entity with id {}", id),
+                                EntityListEntry::NotFree(_) => (),
+                            }
+
+                            ent.put_entity_id(EntityId(id as i32), def.offset as i16)?
+                        }
+                        Type::QField => panic!("attempted to store field of type Field in entity"),
+                        Type::QFunction => {
+                            // TODO: need to validate this against function table
+                        }
+                        _ => (),
+                    }
                 }
-
-                _ => panic!("No handler for key {}", k),
             }
         }
 
-        let class_name = match map.get("classname") {
-            Some(v) => v,
-            None => return Err(ProgsError::with_msg("entity has no class name")),
-        };
-
         let entry_id = self.find_free_entry()?;
-        self.entries[entry_id] = EntityListEntry::NotFree(Entity {
-            string_table: self.string_table.clone(),
-            leaf_count: 0,
-            leaf_ids: [0; MAX_ENT_LEAVES],
-            baseline: EntityState::uninitialized(),
-            statics: EntityStatics::Generic(gen_statics),
-            dynamics: self.gen_dynamics(),
-        });
+        self.entries[entry_id] = EntityListEntry::NotFree(ent);
 
         Ok(EntityId(entry_id as i32))
     }

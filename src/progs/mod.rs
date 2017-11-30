@@ -331,6 +331,7 @@ impl StringTable {
             if data[i] == 0 {
                 let string = ::std::str::from_utf8(&data[first..i]).unwrap();
                 table.insert(StringId(first), string.to_owned());
+                println!("StringTable: inserted {} with ID {}", string, first);
                 first = i + 1;
             }
         }
@@ -358,7 +359,7 @@ impl StringTable {
         }
     }
 
-    pub fn insert<S>(&mut self, value: S)
+    pub fn insert<S>(&mut self, value: S) -> StringId
     where
         S: AsRef<str>,
     {
@@ -366,12 +367,15 @@ impl StringTable {
         let id = StringId(self.byte_count);
         let len = s.len();
 
+        println!("StringTable: inserting {}", s);
         match self.table.insert(id, s) {
             Some(_) => panic!("duplicate ID in string table"),
             None => (),
         }
 
         self.byte_count += len;
+
+        id
     }
 
     pub fn id_from_i32(&self, value: i32) -> Result<StringId, ProgsError> {

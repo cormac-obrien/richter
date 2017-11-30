@@ -68,6 +68,35 @@ named!(
     many0!(entity_map)
 );
 
+pub fn vector3_components<S>(src: S) -> Option<[f32; 3]>
+where
+    S: AsRef<str>,
+{
+    let src = src.as_ref();
+
+    let components: Vec<_> = src.split(" ").collect();
+    if components.len() != 3 {
+        return None;
+    }
+
+    let x: f32 = match components[0].parse().ok() {
+        Some(p) => p,
+        None => return None,
+    };
+
+    let y: f32 = match components[1].parse().ok() {
+        Some(p) => p,
+        None => return None,
+    };
+
+    let z: f32 = match components[2].parse().ok() {
+        Some(p) => p,
+        None => return None,
+    };
+
+    Some([x, y, z])
+}
+
 pub fn vector3<S>(src: S) -> Option<Vector3<f32>>
 where
     S: AsRef<str>,
