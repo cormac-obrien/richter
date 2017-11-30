@@ -105,4 +105,14 @@ impl Functions {
             ))
         }
     }
+
+    pub fn get_def(&self, id: FunctionId) -> Result<&FunctionDef, ProgsError> {
+        if id.0 >= self.defs.len() {
+            Err(ProgsError::with_msg(
+                format!("No function with ID {}", id.0),
+            ))
+        } else {
+            Ok(&self.defs[id.0])
+        }
+    }
 }

@@ -134,7 +134,8 @@ use self::globals::GLOBAL_STATIC_START;
 
 const VERSION: i32 = 6;
 const CRC: i32 = 5927;
-const MAX_STACK_DEPTH: usize = 32;
+const MAX_CALL_STACK_DEPTH: usize = 32;
+const MAX_LOCAL_STACK_DEPTH: usize = 2048;
 const LUMP_COUNT: usize = 6;
 const SAVE_GLOBAL: u16 = 1 << 15;
 
@@ -247,6 +248,14 @@ pub enum Type {
     QPointer = 7,
 }
 
+pub enum Value {
+    QString(StringId),
+    QFloat(f32),
+    QEntity(EntityId),
+    QField(FieldAddr),
+    QFunction(FunctionId),
+}
+
 #[derive(Copy, Clone, Debug)]
 struct Lump {
     offset: usize,
@@ -271,6 +280,7 @@ pub struct FieldDef {
 #[derive(Debug)]
 pub struct StringTable {
     byte_count: Cell<usize>,
+    lump: String,
     table: RefCell<HashMap<StringId, String>>,
 }
 
@@ -278,18 +288,9 @@ impl StringTable {
     pub fn new(data: Vec<u8>) -> StringTable {
         let mut table = HashMap::new();
 
-        let mut first = 0;
-        for i in 0..data.len() {
-            if data[i] == 0 {
-                let string = ::std::str::from_utf8(&data[first..i]).unwrap();
-                table.insert(StringId(first), string.to_owned());
-                println!("StringTable: inserted {} with ID {}", string, first);
-                first = i + 1;
-            }
-        }
-
         StringTable {
             byte_count: Cell::new(data.len()),
+            lump: String::from_utf8(data).unwrap(),
             table: RefCell::new(table),
         }
     }
@@ -298,18 +299,39 @@ impl StringTable {
     where
         S: AsRef<str>,
     {
-        match self.table.borrow().iter().find(|&(_, &ref v)| {
-            v == target.as_ref()
-        }) {
-            Some((&ref k, _)) => Some(*k),
+        let target = target.as_ref();
+
+        if let Some(id) = self.lump.find(target) {
+            return Some(StringId(id));
+        }
+
+        match self.table.borrow().iter().find(|&(_, &ref v)| v == target) {
+            Some((k, _)) => Some(*k),
             None => None,
         }
     }
 
     pub fn get(&self, id: StringId) -> Option<String> {
-        match self.table.borrow().get(&id) {
-            Some(s) => Some(s.to_owned()),
-            None => None,
+        if id.0 < self.lump.len() {
+            let mut nul_byte = id.0;
+
+            for i in id.0..self.lump.len() {
+                if self.lump.as_bytes()[i] == 0 {
+                    nul_byte = i;
+                    break;
+                }
+            }
+
+            Some(
+                ::std::str::from_utf8(&self.lump.as_bytes()[id.0..nul_byte])
+                    .unwrap()
+                    .to_owned(),
+            )
+        } else {
+            match self.table.borrow().get(&id) {
+                Some(s) => Some(s.to_owned()),
+                None => None,
+            }
         }
     }
 
@@ -339,7 +361,7 @@ impl StringTable {
 
         let id = StringId(value as usize);
 
-        if self.table.borrow().contains_key(&id) {
+        if id.0 < self.lump.len() || self.table.borrow().contains_key(&id) {
             Ok(id)
         } else {
             Err(ProgsError::with_msg(format!("no string with ID {}", value)))
@@ -347,6 +369,9 @@ impl StringTable {
     }
 }
 
+/// Loads all data from a `progs.dat` file.
+///
+/// This returns objects representing the necessary context to execute QuakeC bytecode.
 pub fn load(data: &[u8]) -> Result<(Functions, Globals, EntityList), ProgsError> {
     let mut src = BufReader::new(Cursor::new(data));
     assert!(src.read_i32::<LittleEndian>()? == VERSION);
@@ -522,127 +547,13 @@ pub fn load(data: &[u8]) -> Result<(Functions, Globals, EntityList), ProgsError>
         ));
     }
 
-    // load static globals
-    let static_globals = {
-        let reserved = [[0; 4]; GLOBAL_RESERVED_COUNT];
-        let self_ = EntityId(src.read_i32::<LittleEndian>()?);
-        let other = EntityId(src.read_i32::<LittleEndian>()?);
-        let world = EntityId(src.read_i32::<LittleEndian>()?);
-        let time = engine::duration_from_f32(src.read_f32::<LittleEndian>()?);
-        let frame_time = engine::duration_from_f32(src.read_f32::<LittleEndian>()?);
-        let force_retouch = src.read_f32::<LittleEndian>()?;
-        let map_name = StringId(match src.read_i32::<LittleEndian>()? {
-            id if id < 0 => return Err(ProgsError::with_msg("negative string id")),
-            id => id as usize,
-        });
-        let deathmatch = src.read_f32::<LittleEndian>()?;
-        let coop = src.read_f32::<LittleEndian>()?;
-        let team_play = src.read_f32::<LittleEndian>()?;
-        let server_flags = src.read_f32::<LittleEndian>()?;
-        let total_secrets = src.read_f32::<LittleEndian>()?;
-        let total_monsters = src.read_f32::<LittleEndian>()?;
-        let found_secrets = src.read_f32::<LittleEndian>()?;
-        let killed_monsters = src.read_f32::<LittleEndian>()?;
-        let mut args = [0.0; 16];
-        for i in 0..args.len() {
-            args[i] = src.read_f32::<LittleEndian>()?;
-        }
-        let v_forward = Vector3::new(
-            src.read_f32::<LittleEndian>()?,
-            src.read_f32::<LittleEndian>()?,
-            src.read_f32::<LittleEndian>()?,
-        );
-        let v_up = Vector3::new(
-            src.read_f32::<LittleEndian>()?,
-            src.read_f32::<LittleEndian>()?,
-            src.read_f32::<LittleEndian>()?,
-        );
-        let v_right = Vector3::new(
-            src.read_f32::<LittleEndian>()?,
-            src.read_f32::<LittleEndian>()?,
-            src.read_f32::<LittleEndian>()?,
-        );
-        let trace_all_solid = src.read_f32::<LittleEndian>()?;
-        let trace_start_solid = src.read_f32::<LittleEndian>()?;
-        let trace_fraction = src.read_f32::<LittleEndian>()?;
-        let trace_end_pos = Vector3::new(
-            src.read_f32::<LittleEndian>()?,
-            src.read_f32::<LittleEndian>()?,
-            src.read_f32::<LittleEndian>()?,
-        );
-        let trace_plane_normal = Vector3::new(
-            src.read_f32::<LittleEndian>()?,
-            src.read_f32::<LittleEndian>()?,
-            src.read_f32::<LittleEndian>()?,
-        );
-        let trace_plane_dist = src.read_f32::<LittleEndian>()?;
-        let trace_ent = EntityId(src.read_i32::<LittleEndian>()?);
-        let trace_in_open = src.read_f32::<LittleEndian>()?;
-        let trace_in_water = src.read_f32::<LittleEndian>()?;
-        let msg_entity = EntityId(src.read_i32::<LittleEndian>()?);
-        let main = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
-        let start_frame = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
-        let player_pre_think = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
-        let player_post_think = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
-        let client_kill = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
-        let client_connect = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
-        let put_client_in_server = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
-        let client_disconnect = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
-        let set_new_args = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
-        let set_change_args = functions.id_from_i32(src.read_i32::<LittleEndian>()?)?;
-
-        GlobalsStatic {
-            reserved,
-            self_,
-            other,
-            world,
-            time,
-            frame_time,
-            force_retouch,
-            map_name,
-            deathmatch,
-            coop,
-            team_play,
-            server_flags,
-            total_secrets,
-            total_monsters,
-            found_secrets,
-            killed_monsters,
-            args,
-            v_forward,
-            v_up,
-            v_right,
-            trace_all_solid,
-            trace_start_solid,
-            trace_fraction,
-            trace_end_pos,
-            trace_plane_normal,
-            trace_plane_dist,
-            trace_ent,
-            trace_in_open,
-            trace_in_water,
-            msg_entity,
-            main,
-            start_frame,
-            player_pre_think,
-            player_post_think,
-            client_kill,
-            client_connect,
-            put_client_in_server,
-            client_disconnect,
-            set_new_args,
-            set_change_args,
-        }
-    };
-
-    let mut dynamic_globals = Vec::with_capacity(globals_lump.count - GLOBAL_DYNAMIC_START);
-    for _ in 0..globals_lump.count - GLOBAL_DYNAMIC_START {
+    let mut addrs = Vec::with_capacity(globals_lump.count);
+    for _ in 0..globals_lump.count {
         let mut block = [0; 4];
         src.read(&mut block)?;
 
-        // TODO: this is fine for now because we're using LittleEndian for all in-memory
-        // operations, but we'll want to switch to native endianness for speed soon
-        dynamic_globals.push(block);
+        // TODO: handle endian conversions (BigEndian systems should use BigEndian internally)
+        addrs.push(block);
     }
 
     assert_eq!(
@@ -655,8 +566,7 @@ pub fn load(data: &[u8]) -> Result<(Functions, Globals, EntityList), ProgsError>
     let globals = Globals {
         string_table: string_table.clone(),
         defs: globaldefs.into_boxed_slice(),
-        statics: static_globals,
-        dynamics: dynamic_globals,
+        addrs: addrs.into_boxed_slice(),
     };
 
     let entity_list = EntityList::new(
@@ -678,24 +588,71 @@ pub struct ExecutionContext {
     pc: usize,
     current_function: FunctionId,
     call_stack: Vec<StackFrame>,
-    local_stack: Vec<[u8; 4]>,
+    local_stack: Vec<Value>,
 }
 
 impl ExecutionContext {
-    pub fn enter_function(&mut self, f: FunctionId) {
+    fn enter_function(&mut self, functions: &Functions, globals: &mut Globals, f: FunctionId) {
+        let def = functions.get_def(f).unwrap();
+
+        // save stack frame
         self.call_stack.push(StackFrame {
             instr_id: self.pc,
             func_id: self.current_function,
         });
 
-        if self.call_stack.len() > MAX_STACK_DEPTH {
+        // check call stack overflow
+        if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
             panic!("call stack overflow");
+        }
+
+        // preemptively check local stack overflow
+        if self.local_stack.len() + def.locals > MAX_LOCAL_STACK_DEPTH {
+            panic!("local stack overflow");
+        }
+
+        // save locals to stack
+        for i in 0..def.locals {
+            let addr = def.arg_start + i;
+            match globals.type_at_addr(addr).unwrap() {
+                Some(Type::QFloat) |
+                Some(Type::QVector) |
+                None => {
+                    self.local_stack.push(Value::QFloat(
+                        globals.get_float(addr as i16).unwrap(),
+                    ));
+                }
+                Some(Type::QString) => {
+                    self.local_stack.push(Value::QString(
+                        globals.get_string_id(addr as i16).unwrap(),
+                    ));
+                }
+                Some(Type::QEntity) => {
+                    self.local_stack.push(Value::QEntity(
+                        globals.get_entity_id(addr as i16).unwrap(),
+                    ))
+                }
+                Some(Type::QFunction) => {
+                    self.local_stack.push(Value::QFunction(
+                        globals.get_function_id(addr as i16).unwrap(),
+                    ))
+                }
+                _ => unimplemented!(),
+            }
         }
     }
 
-    pub fn leave_function(&self) {}
+    fn leave_function(&self) {}
 
-    pub fn execute_program(&self) {}
+    pub fn execute_program(
+        &self,
+        functions: &Functions,
+        globals: &mut Globals,
+        entities: &mut EntityList,
+        f: FunctionId,
+    ) {
+        let def = functions.get_def(f).unwrap();
+    }
 }
 
 // run through all statements and see if we crash. elegant!
@@ -1210,7 +1167,7 @@ fn store_v(
         // https://github.com/id-Software/Quake-Tools/blob/master/qcc/pr_comp.c#L362) into the global
         // argument slots.
         for c in 0..3 {
-            globals.reserved_copy(
+            globals.untyped_copy(
                 src_ofs + c as i16,
                 dest_ofs + c as i16,
             )?;
