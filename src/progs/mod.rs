@@ -99,6 +99,9 @@
 mod globals;
 mod ops;
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::convert::TryInto;
 use std::error::Error;
 use std::fmt;
 use std::io::BufReader;
@@ -181,9 +184,27 @@ impl From<::std::io::Error> for ProgsError {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, Hash, PartialEq)]
 #[repr(C)]
-pub struct StringId(pub i32);
+pub struct StringId(usize);
+
+impl TryInto<i32> for StringId {
+    type Error = ProgsError;
+
+    fn try_into(self) -> Result<i32, Self::Error> {
+        if self.0 > ::std::i32::MAX as usize {
+            Err(ProgsError::with_msg("string id out of i32 range"))
+        } else {
+            Ok(self.0 as i32)
+        }
+    }
+}
+
+impl StringId {
+    pub fn new() -> StringId {
+        StringId(0)
+    }
+}
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
@@ -215,7 +236,7 @@ enum LumpId {
 
 #[derive(Copy, Clone, Debug, FromPrimitive, PartialEq)]
 #[repr(u16)]
-enum Type {
+pub enum Type {
     QVoid = 0,
     QString = 1,
     QFloat = 2,
@@ -262,8 +283,8 @@ struct Function {
     kind: FunctionKind,
     arg_start: usize,
     locals: usize,
-    name_ofs: i32,
-    srcfile_ofs: i32,
+    name_id: StringId,
+    srcfile_id: StringId,
     argc: usize,
     argsz: [u8; MAX_ARGS],
 }
@@ -285,14 +306,87 @@ pub struct GlobalDef {
     save: bool,
     type_: Type,
     offset: u16,
-    name_ofs: i32,
+    name_id: StringId,
 }
 
 #[derive(Debug)]
 pub struct FieldDef {
-    type_: Type,
-    offset: u16,
-    name_ofs: i32,
+    pub type_: Type,
+    pub offset: u16,
+    pub name_id: StringId,
+}
+
+#[derive(Debug)]
+pub struct StringTable {
+    byte_count: usize,
+    table: HashMap<StringId, String>,
+}
+
+impl StringTable {
+    pub fn new(data: Vec<u8>) -> StringTable {
+        let mut table = HashMap::new();
+
+        let mut first = 0;
+        for i in 0..data.len() {
+            if data[i] == 0 {
+                let string = ::std::str::from_utf8(&data[first..i]).unwrap();
+                table.insert(StringId(first), string.to_owned());
+                first = i + 1;
+            }
+        }
+
+        StringTable {
+            byte_count: data.len(),
+            table,
+        }
+    }
+
+    pub fn find<S>(&self, target: S) -> Option<StringId>
+    where
+        S: AsRef<str>,
+    {
+        match self.table.iter().find(|&(_, &ref v)| v == target.as_ref()) {
+            Some((&ref k, _)) => Some(*k),
+            None => None,
+        }
+    }
+
+    pub fn get(&self, id: StringId) -> Option<&str> {
+        match self.table.get(&id) {
+            Some(s) => Some(s.as_str()),
+            None => None,
+        }
+    }
+
+    pub fn insert<S>(&mut self, value: S)
+    where
+        S: AsRef<str>,
+    {
+        let s = value.as_ref().to_owned();
+        let id = StringId(self.byte_count);
+        let len = s.len();
+
+        match self.table.insert(id, s) {
+            Some(_) => panic!("duplicate ID in string table"),
+            None => (),
+        }
+
+        self.byte_count += len;
+    }
+
+    pub fn id_from_i32(&self, value: i32) -> Result<StringId, ProgsError> {
+        if value < 0 {
+            return Err(ProgsError::with_msg("id < 0"));
+        }
+
+        let id = StringId(value as usize);
+
+        if self.table.contains_key(&id) {
+            Ok(id)
+        } else {
+            Err(ProgsError::with_msg(format!("no string with ID {}", value)))
+        }
+    }
 }
 
 pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
@@ -323,6 +417,7 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
     (&mut src).take(string_lump.count as u64).read_to_end(
         &mut strings,
     )?;
+    let str_tbl = StringTable::new(strings);
 
     assert_eq!(
         src.seek(SeekFrom::Current(0))?,
@@ -346,14 +441,15 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
             x if x < 0 => FunctionKind::BuiltIn(-x as usize),
             x => FunctionKind::QuakeC(x as usize),
         };
+
         let arg_start = src.read_i32::<LittleEndian>()?;
         let locals = src.read_i32::<LittleEndian>()?;
 
         // throw away profile variable
         let _ = src.read_i32::<LittleEndian>()?;
 
-        let name_ofs = src.read_i32::<LittleEndian>()?;
-        let srcfile_ofs = src.read_i32::<LittleEndian>()?;
+        let name_id = str_tbl.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let srcfile_id = str_tbl.id_from_i32(src.read_i32::<LittleEndian>()?)?;
 
         let argc = src.read_i32::<LittleEndian>()?;
         let mut argsz = [0; MAX_ARGS];
@@ -363,10 +459,10 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
             kind: kind,
             arg_start: arg_start as usize,
             locals: locals as usize,
-            name_ofs: name_ofs,
-            srcfile_ofs: srcfile_ofs,
+            name_id,
+            srcfile_id,
             argc: argc as usize,
-            argsz: argsz,
+            argsz,
         });
     }
 
@@ -384,12 +480,12 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
     for _ in 0..globaldef_lump.count {
         let type_ = src.read_u16::<LittleEndian>()?;
         let offset = src.read_u16::<LittleEndian>()?;
-        let name_ofs = src.read_i32::<LittleEndian>()?;
+        let name_id = str_tbl.id_from_i32(src.read_i32::<LittleEndian>()?)?;
         globaldefs.push(GlobalDef {
             save: type_ & SAVE_GLOBAL != 0,
             type_: Type::from_u16(type_ & !SAVE_GLOBAL).unwrap(),
-            offset: offset,
-            name_ofs: name_ofs,
+            offset,
+            name_id,
         });
     }
 
@@ -407,7 +503,7 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
     for _ in 0..fielddef_lump.count {
         let type_ = src.read_u16::<LittleEndian>()?;
         let offset = src.read_u16::<LittleEndian>()?;
-        let name_ofs = src.read_i32::<LittleEndian>()?;
+        let name_id = str_tbl.id_from_i32(src.read_i32::<LittleEndian>()?)?;
 
         if type_ & SAVE_GLOBAL != 0 {
             return Err(ProgsError::with_msg(
@@ -416,8 +512,8 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         }
         field_defs.push(FieldDef {
             type_: Type::from_u16(type_).unwrap(),
-            offset: offset,
-            name_ofs: name_ofs,
+            offset,
+            name_id,
         });
     }
 
@@ -467,7 +563,10 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         let time = engine::duration_from_f32(src.read_f32::<LittleEndian>()?);
         let frame_time = engine::duration_from_f32(src.read_f32::<LittleEndian>()?);
         let force_retouch = src.read_f32::<LittleEndian>()?;
-        let map_name = StringId(src.read_i32::<LittleEndian>()?);
+        let map_name = StringId(match src.read_i32::<LittleEndian>()? {
+            id if id < 0 => return Err(ProgsError::with_msg("negative string id")),
+            id => id as usize,
+        });
         let deathmatch = src.read_f32::<LittleEndian>()?;
         let coop = src.read_f32::<LittleEndian>()?;
         let team_play = src.read_f32::<LittleEndian>()?;
@@ -585,22 +684,26 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
         ))?
     );
 
-    let strings_rc = Rc::new(strings.into_boxed_slice());
+    let string_table = Rc::new(RefCell::new(str_tbl));
 
     let progs = Progs {
+        string_table: string_table.clone(),
         functions: functions.into_boxed_slice(),
         statements: statements.into_boxed_slice(),
-        strings: strings_rc.clone(),
     };
 
     let globals = Globals {
-        strings: strings_rc.clone(),
+        string_table: string_table.clone(),
         defs: globaldefs.into_boxed_slice(),
         statics: static_globals,
         dynamics: dynamic_globals,
     };
 
-    let entity_list = EntityList::new(ent_addr_count, field_defs.into_boxed_slice());
+    let entity_list = EntityList::new(
+        ent_addr_count,
+        string_table.clone(),
+        field_defs.into_boxed_slice(),
+    );
 
     Ok((progs, globals, entity_list))
 }
@@ -609,13 +712,17 @@ pub fn load(data: &[u8]) -> Result<(Progs, Globals, EntityList), ProgsError> {
 pub struct Progs {
     functions: Box<[Function]>,
     statements: Box<[Statement]>,
-    strings: Rc<Box<[u8]>>,
+    string_table: Rc<RefCell<StringTable>>,
 }
 
 impl Progs {
     pub fn dump_functions(&self) {
         for f in self.functions.iter() {
-            let name = self.get_string_as_str(f.name_ofs).unwrap();
+            let name = self.string_table
+                .borrow()
+                .get(f.name_id)
+                .unwrap()
+                .to_owned();
             print!("{}: ", name);
 
             match f.kind {
@@ -642,9 +749,12 @@ impl Progs {
     // run through all statements and see if we crash. elegant!
     pub fn validate(&mut self, globals: &mut Globals, entities: &mut EntityList) {
         'functions: for f in 0..self.functions.len() {
-            let name = self.get_string_as_str(self.functions[f].name_ofs)
+            let name = self.string_table
+                .borrow()
+                .get(self.functions[f].name_id)
                 .unwrap()
                 .to_owned();
+
             let first = match self.functions[f].kind {
                 FunctionKind::BuiltIn(_) => continue,
                 FunctionKind::QuakeC(s) => s,
@@ -755,31 +865,6 @@ impl Progs {
     fn enter_function(&mut self, function_id: FunctionId) -> usize {
         let function = &self.functions[function_id.0 as usize];
         0
-    }
-
-    fn get_string_as_str(&self, ofs: i32) -> Result<&str, ProgsError> {
-        if ofs < 0 {
-            return Err(ProgsError::with_msg(
-                "get_string_as_str: negative string offset",
-            ));
-        }
-
-        let ofs = ofs as usize;
-
-        if ofs > self.strings.len() {
-            return Err(ProgsError::with_msg(
-                "get_string_as_str: out-of-bounds string offset",
-            ));
-        }
-
-        let mut end_index = ofs;
-        while self.strings[end_index] != 0 {
-            end_index += 1;
-        }
-
-        Ok(
-            ::std::str::from_utf8(&self.strings[ofs..end_index]).unwrap(),
-        )
     }
 }
 
@@ -908,10 +993,6 @@ fn eq_s(globals: &mut Globals, s1_ofs: i16, s2_ofs: i16, eq_ofs: i16) -> Result<
         return Err(ProgsError::with_msg("eq_s: negative string offset"));
     }
 
-    if s1_ofs as usize > globals.strings.len() || s2_ofs as usize > globals.strings.len() {
-        return Err(ProgsError::with_msg("not_s: out-of-bounds string offset"));
-    }
-
     if s1_ofs == s2_ofs || globals.get_string_id(s1_ofs)? == globals.get_string_id(s2_ofs)? {
         globals.put_float(1.0, eq_ofs)
     } else {
@@ -977,10 +1058,6 @@ fn ne_v(globals: &mut Globals, v1_ofs: i16, v2_ofs: i16, ne_ofs: i16) -> Result<
 fn ne_s(globals: &mut Globals, s1_ofs: i16, s2_ofs: i16, ne_ofs: i16) -> Result<(), ProgsError> {
     if s1_ofs < 0 || s2_ofs < 0 {
         return Err(ProgsError::with_msg("eq_s: negative string offset"));
-    }
-
-    if s1_ofs as usize > globals.strings.len() || s2_ofs as usize > globals.strings.len() {
-        return Err(ProgsError::with_msg("not_s: out-of-bounds string offset"));
     }
 
     if s1_ofs != s2_ofs && globals.get_string_id(s1_ofs)? != globals.get_string_id(s2_ofs)? {
@@ -1404,11 +1481,15 @@ fn not_s(globals: &mut Globals, s_ofs: i16, unused: i16, not_ofs: i16) -> Result
         return Err(ProgsError::with_msg("not_s: negative string offset"));
     }
 
-    if s_ofs as usize > globals.strings.len() {
-        return Err(ProgsError::with_msg("not_s: out-of-bounds string offset"));
-    }
+    let s = {
+        let str_tbl = globals.string_table.borrow();
+        str_tbl
+            .get(str_tbl.id_from_i32(s_ofs as i32)?)
+            .unwrap()
+            .to_owned()
+    };
 
-    if s_ofs == 0 || globals.strings[s_ofs as usize] == 0 {
+    if s_ofs == 0 || s == "" {
         globals.put_float(1.0, not_ofs)?;
     } else {
         globals.put_float(0.0, not_ofs)?;

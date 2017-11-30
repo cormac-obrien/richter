@@ -17,6 +17,8 @@
 
 use std::collections::HashMap;
 
+use cgmath::Vector3;
+
 // Parse quoted strings
 named!(
     quoted <&str>,
@@ -65,3 +67,32 @@ named!(
     pub entity_maps <Vec<HashMap<&str, &str>>>,
     many0!(entity_map)
 );
+
+pub fn vector3<S>(src: S) -> Option<Vector3<f32>>
+where
+    S: AsRef<str>,
+{
+    let src = src.as_ref();
+
+    let components: Vec<_> = src.split(" ").collect();
+    if components.len() != 3 {
+        return None;
+    }
+
+    let x: f32 = match components[0].parse().ok() {
+        Some(p) => p,
+        None => return None,
+    };
+
+    let y: f32 = match components[1].parse().ok() {
+        Some(p) => p,
+        None => return None,
+    };
+
+    let z: f32 = match components[2].parse().ok() {
+        Some(p) => p,
+        None => return None,
+    };
+
+    Some(Vector3::new(x, y, z))
+}

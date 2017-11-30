@@ -16,7 +16,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use engine;
-use entity::ADDR_DYNAMIC_START;
 use progs::EntityId;
 use progs::FunctionId;
 use progs::StringId;
@@ -28,7 +27,7 @@ use cgmath::Zero;
 use chrono::Duration;
 use num::FromPrimitive;
 
-#[derive(FromPrimitive)]
+#[derive(Debug, FromPrimitive)]
 pub enum FieldAddrFloat {
     ModelIndex = 0,
     AbsMinX = 1,
@@ -115,7 +114,7 @@ pub enum FieldAddrFloat {
     Sounds = 100,
 }
 
-#[derive(FromPrimitive)]
+#[derive(Debug, FromPrimitive)]
 pub enum FieldAddrVector {
     AbsMin = 1,
     AbsMax = 4,
@@ -133,7 +132,7 @@ pub enum FieldAddrVector {
     MoveDirection = 96,
 }
 
-#[derive(FromPrimitive)]
+#[derive(Debug, FromPrimitive)]
 pub enum FieldAddrStringId {
     ClassName = 28,
     ModelName = 29,
@@ -148,7 +147,7 @@ pub enum FieldAddrStringId {
     Noise3Name = 104,
 }
 
-#[derive(FromPrimitive)]
+#[derive(Debug, FromPrimitive)]
 pub enum FieldAddrEntityId {
     Ground = 47,
     Chain = 60,
@@ -159,7 +158,7 @@ pub enum FieldAddrEntityId {
     Owner = 95,
 }
 
-#[derive(FromPrimitive)]
+#[derive(Debug, FromPrimitive)]
 pub enum FieldAddrFunctionId {
     Touch = 42,
     Use = 43,
@@ -209,6 +208,28 @@ bitflags! {
     }
 }
 
+fn float_addr(addr: usize) -> Result<FieldAddrFloat, ProgsError> {
+    match FieldAddrFloat::from_usize(addr) {
+        Some(f) => Ok(f),
+        None => {
+            Err(ProgsError::with_msg(
+                format!("float_addr: invalid address ({})", addr),
+            ))
+        }
+    }
+}
+
+fn vector_addr(addr: usize) -> Result<FieldAddrVector, ProgsError> {
+    match FieldAddrVector::from_usize(addr) {
+        Some(v) => Ok(v),
+        None => {
+            Err(ProgsError::with_msg(
+                format!("vector_addr: invalid address ({})", addr),
+            ))
+        }
+    }
+}
+
 /// Statically defined fields for an entity.
 ///
 /// The different variants represent different classes of entity.
@@ -216,250 +237,279 @@ pub enum EntityStatics {
     Generic(GenericEntityStatics),
 }
 
+/// Static variables for an ambient noise entity.
+pub struct AmbientEntityStatics {
+    pub class_name: StringId,
+    pub origin: Vector3<f32>,
+}
+
+impl AmbientEntityStatics {
+    pub fn get_float(&self, addr: usize) -> Result<f32, ProgsError> {
+        Ok(match float_addr(addr)? {
+            FieldAddrFloat::OriginX => self.origin[0],
+            FieldAddrFloat::OriginY => self.origin[1],
+            FieldAddrFloat::OriginZ => self.origin[2],
+            f => panic!("attempted access of {:?} on AmbientEntityStatics", f),
+        })
+    }
+
+    pub fn put_float(&mut self, val: f32, addr: usize) -> Result<(), ProgsError> {
+        match float_addr(addr)? {
+            FieldAddrFloat::OriginX => self.origin[0] = val,
+            FieldAddrFloat::OriginY => self.origin[1] = val,
+            FieldAddrFloat::OriginZ => self.origin[2] = val,
+            f => panic!("attempted access of {:?} on AmbientEntityStatics", f),
+        }
+
+        Ok(())
+    }
+
+    pub fn get_vector(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
+        Ok(match vector_addr(addr)? {
+            FieldAddrVector::Origin => self.origin.into(),
+            v => panic!("attempted access of {:?} on AmbientEntityStatics", v),
+        })
+    }
+
+    pub fn put_vector(&mut self, val: [f32; 3], addr: usize) -> Result<(), ProgsError> {
+        Ok(match vector_addr(addr)? {
+            FieldAddrVector::Origin => self.origin = Vector3::from(val),
+            v => panic!("attempted access of {:?} on AmbientEntityStatics", v),
+        })
+    }
+}
+
 /// Statically defined fields which may apply to any entity.
 pub struct GenericEntityStatics {
     // index in the model list
-    model_index: f32,
+    pub model_index: f32,
 
     // absolute minimum extent of entity
-    abs_min: Vector3<f32>,
+    pub abs_min: Vector3<f32>,
 
     // absolute maximum extent of entity
-    abs_max: Vector3<f32>,
+    pub abs_max: Vector3<f32>,
 
     // how far in time this entity has been processed
-    local_time: Duration,
+    pub local_time: Duration,
 
     // TODO find definitions for movement types
-    move_type: MoveType,
+    pub move_type: MoveType,
 
     // is this entity solid (i.e. does it have collision)
-    solid: f32,
+    pub solid: f32,
 
     // this entity's current position
-    origin: Vector3<f32>,
+    pub origin: Vector3<f32>,
 
     // this entity's position prior to last movement
-    old_origin: Vector3<f32>,
+    pub old_origin: Vector3<f32>,
 
     // this entity's velocity vector
-    velocity: Vector3<f32>,
+    pub velocity: Vector3<f32>,
 
     // this entity's pitch, yaw, and roll
-    angles: Vector3<Deg<f32>>,
+    pub angles: Vector3<Deg<f32>>,
 
     // the rate at which this entity is rotating (only in pitch and yaw)
-    angular_velocity: Vector3<Deg<f32>>,
+    pub angular_velocity: Vector3<Deg<f32>>,
 
     // the temporary angle modifier applied by damage and recoil
-    punch_angle: Vector3<Deg<f32>>,
+    pub punch_angle: Vector3<Deg<f32>>,
 
     // entity class name
-    class_name: StringId,
+    pub class_name: StringId,
 
     // name of alias model (MDL) associated with this entity
-    model_name: StringId,
+    pub model_name: StringId,
 
     // animation frame in the alias model
-    frame_id: f32,
+    pub frame_id: f32,
 
     // skin index in the alias model
-    skin_id: f32,
+    pub skin_id: f32,
 
     // model effects
-    effects: EntityEffects,
+    pub effects: EntityEffects,
 
     // minimum extent of entity relative to origin
-    mins: Vector3<f32>,
+    pub mins: Vector3<f32>,
 
     // maximum extent of entity relative to origin
-    maxs: Vector3<f32>,
+    pub maxs: Vector3<f32>,
 
     // dimensions of this entity (maxs - mins)
-    size: Vector3<f32>,
+    pub size: Vector3<f32>,
 
     // function to call when another entity collides with this one
-    touch_fnc: FunctionId,
+    pub touch_fnc: FunctionId,
 
     // function to call when +use is issued on this entity
-    use_fnc: FunctionId,
+    pub use_fnc: FunctionId,
 
     // function to call when next_think elapses
-    think_fnc: FunctionId,
+    pub think_fnc: FunctionId,
 
     // function to call when this entity is blocked from movement
-    blocked_fnc: FunctionId,
+    pub blocked_fnc: FunctionId,
 
     // time remaining until next think
-    next_think: Duration,
+    pub next_think: Duration,
 
     // TODO: ???
-    ground_entity: EntityId,
+    pub ground_entity: EntityId,
 
     // current health
-    health: f32,
+    pub health: f32,
 
     // current kill count (multiplayer)
-    frags: f32,
+    pub frags: f32,
 
     // equipped weapon (bitflags)
-    weapon: f32,
+    pub weapon: f32,
 
     // alias model for the equipped weapon
-    weapon_model_name: StringId,
+    pub weapon_model_name: StringId,
 
     // animation frame for the weapon model
-    weapon_frame: f32,
+    pub weapon_frame: f32,
 
     // ammo for current weapon
-    current_ammo: f32,
+    pub current_ammo: f32,
 
     // shotgun ammo remaining
-    ammo_shells: f32,
+    pub ammo_shells: f32,
 
     // nailgun ammo remaining
-    ammo_nails: f32,
+    pub ammo_nails: f32,
 
     // rockets remaining
-    ammo_rockets: f32,
+    pub ammo_rockets: f32,
 
     // energy cells remaining (for lightning gun)
-    ammo_cells: f32,
+    pub ammo_cells: f32,
 
     // bitflags representing what items player has
-    items: f32,
+    pub items: f32,
 
     // can this entity be damaged?
-    take_damage: f32,
+    pub take_damage: f32,
 
     // next entity in a chained list
-    chain: EntityId,
+    pub chain: EntityId,
 
     // is this entity dead?
-    dead_flag: f32,
+    pub dead_flag: f32,
 
     // position of camera relative to origin
-    view_offset: Vector3<f32>,
+    pub view_offset: Vector3<f32>,
 
     // +fire
-    button_0: f32,
+    pub button_0: f32,
 
     // +use
-    button_1: f32,
+    pub button_1: f32,
 
     // +jump
-    button_2: f32,
+    pub button_2: f32,
 
     // TODO: document impulse
-    impulse: f32,
+    pub impulse: f32,
 
     // TODO: something to do with updating player angle
-    fix_angle: f32,
+    pub fix_angle: f32,
 
     // player view angle
-    view_angle: Vector3<Deg<f32>>,
+    pub view_angle: Vector3<Deg<f32>>,
 
     // calculated default view angle
-    ideal_pitch: Deg<f32>,
+    pub ideal_pitch: Deg<f32>,
 
     // screen name
-    net_name: StringId,
+    pub net_name: StringId,
 
     // this entity's enemy (for monsters)
-    enemy: EntityId,
+    pub enemy: EntityId,
 
     // various state flags
-    flags: EntityFlags,
+    pub flags: EntityFlags,
 
     // player colors in multiplayer
-    colormap: f32,
+    pub colormap: f32,
 
     // team number in multiplayer
-    team: f32,
+    pub team: f32,
 
     // maximum player health
-    max_health: f32,
+    pub max_health: f32,
 
     // time player last teleported
-    teleport_time: Duration,
+    pub teleport_time: Duration,
 
     // percentage of incoming damage blocked (between 0 and 1)
-    armor_strength: f32,
+    pub armor_strength: f32,
 
     // armor points remaining
-    armor_value: f32,
+    pub armor_value: f32,
 
     // how submerged this entity is, 0 (none) -> 3 (full)
-    water_level: f32,
+    pub water_level: f32,
 
     // one of the CONTENTS_* constants (bspfile.h)
-    contents: f32,
+    pub contents: f32,
 
     // ideal pathfinding direction (for monsters)
-    ideal_yaw: Deg<f32>,
+    pub ideal_yaw: Deg<f32>,
 
     // turn rate
-    yaw_speed: Deg<f32>,
+    pub yaw_speed: Deg<f32>,
 
     // TODO: maybe entity being aimed at?
-    aim_entity: EntityId,
+    pub aim_entity: EntityId,
 
     // monster's goal entity
-    goal_entity: EntityId,
+    pub goal_entity: EntityId,
 
     // meaning differs based on classname
-    spawn_flags: f32,
+    pub spawn_flags: f32,
 
-    // monster's target
-    target: StringId,
+    // target_name of the entity to activate
+    pub target: StringId,
 
-    // name of target
-    target_name: StringId,
+    // this entity's activation name
+    pub target_name: StringId,
 
     // damage accumulator
-    dmg_take: f32,
+    pub dmg_take: f32,
 
     // damage block accumulator?
-    dmg_save: f32,
+    pub dmg_save: f32,
 
     // which entity inflicted damage
-    dmg_inflictor: EntityId,
+    pub dmg_inflictor: EntityId,
 
     // entity that owns this entity
-    owner: EntityId,
+    pub owner: EntityId,
 
     // which direction this entity should move
-    move_direction: Vector3<f32>,
+    pub move_direction: Vector3<f32>,
 
     // message to display on entity trigger
-    message: StringId,
+    pub message: StringId,
 
     // sound ID
-    sounds: f32,
+    pub sounds: f32,
 
     // sounds played on noise channels
-    noise_0: StringId,
-    noise_1: StringId,
-    noise_2: StringId,
-    noise_3: StringId,
+    pub noise_0: StringId,
+    pub noise_1: StringId,
+    pub noise_2: StringId,
+    pub noise_3: StringId,
 }
 
 impl GenericEntityStatics {
     pub fn get_float(&self, addr: usize) -> Result<f32, ProgsError> {
-        if addr >= ADDR_DYNAMIC_START {
-            panic!("Invalid offset for static entity field");
-        }
-
-        let f_addr = match FieldAddrFloat::from_usize(addr) {
-            Some(f) => f,
-            None => {
-                return Err(ProgsError::with_msg(
-                    format!("get_float_static: invalid address ({})", addr),
-                ))
-            }
-        };
-
-        Ok(match f_addr {
+        Ok(match float_addr(addr)? {
             FieldAddrFloat::ModelIndex => self.model_index,
             FieldAddrFloat::AbsMinX => self.abs_min[0],
             FieldAddrFloat::AbsMinY => self.abs_min[1],
@@ -547,20 +597,7 @@ impl GenericEntityStatics {
     }
 
     pub fn put_float(&mut self, val: f32, addr: usize) -> Result<(), ProgsError> {
-        if addr >= ADDR_DYNAMIC_START {
-            panic!("Invalid offset for static entity field");
-        }
-
-        let f_addr = match FieldAddrFloat::from_usize(addr) {
-            Some(f) => f,
-            None => {
-                return Err(ProgsError::with_msg(
-                    format!("put_float_static: invalid address ({})", addr),
-                ))
-            }
-        };
-
-        match f_addr {
+        match float_addr(addr)? {
             FieldAddrFloat::ModelIndex => self.model_index = val,
             FieldAddrFloat::AbsMinX => self.abs_min[0] = val,
             FieldAddrFloat::AbsMinY => self.abs_min[1] = val,
@@ -874,8 +911,8 @@ impl Default for GenericEntityStatics {
             angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
             angular_velocity: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
             punch_angle: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            class_name: StringId(0),
-            model_name: StringId(0),
+            class_name: StringId::new(),
+            model_name: StringId::new(),
             frame_id: 0.0,
             skin_id: 0.0,
             effects: EntityEffects::empty(),
@@ -891,7 +928,7 @@ impl Default for GenericEntityStatics {
             health: 0.0,
             frags: 0.0,
             weapon: 0.0,
-            weapon_model_name: StringId(0),
+            weapon_model_name: StringId::new(),
             weapon_frame: 0.0,
             current_ammo: 0.0,
             ammo_shells: 0.0,
@@ -910,7 +947,7 @@ impl Default for GenericEntityStatics {
             fix_angle: 0.0,
             view_angle: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
             ideal_pitch: Deg(0.0),
-            net_name: StringId(0),
+            net_name: StringId::new(),
             enemy: EntityId(0),
             flags: EntityFlags::empty(),
             colormap: 0.0,
@@ -926,19 +963,19 @@ impl Default for GenericEntityStatics {
             aim_entity: EntityId(0),
             goal_entity: EntityId(0),
             spawn_flags: 0.0,
-            target: StringId(0),
-            target_name: StringId(0),
+            target: StringId::new(),
+            target_name: StringId::new(),
             dmg_take: 0.0,
             dmg_save: 0.0,
             dmg_inflictor: EntityId(0),
             owner: EntityId(0),
             move_direction: Vector3::zero(),
-            message: StringId(0),
+            message: StringId::new(),
             sounds: 0.0,
-            noise_0: StringId(0),
-            noise_1: StringId(0),
-            noise_2: StringId(0),
-            noise_3: StringId(0),
+            noise_0: StringId::new(),
+            noise_1: StringId::new(),
+            noise_2: StringId::new(),
+            noise_3: StringId::new(),
         }
     }
 }

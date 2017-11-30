@@ -15,6 +15,8 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use std::cell::RefCell;
+use std::convert::TryInto;
 use std::rc::Rc;
 
 use engine;
@@ -24,6 +26,7 @@ use progs::FunctionId;
 use progs::GlobalDef;
 use progs::ProgsError;
 use progs::StringId;
+use progs::StringTable;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
@@ -224,38 +227,13 @@ impl GlobalsStatic {
 
 #[derive(Debug)]
 pub struct Globals {
-    pub strings: Rc<Box<[u8]>>,
+    pub string_table: Rc<RefCell<StringTable>>,
     pub defs: Box<[GlobalDef]>,
     pub statics: GlobalsStatic,
     pub dynamics: Vec<[u8; 4]>,
 }
 
 impl Globals {
-    fn get_string_as_str(&self, ofs: i32) -> Result<&str, ProgsError> {
-        if ofs < 0 {
-            return Err(ProgsError::with_msg(
-                "get_string_as_str: negative string offset",
-            ));
-        }
-
-        let ofs = ofs as usize;
-
-        if ofs > self.strings.len() {
-            return Err(ProgsError::with_msg(
-                "get_string_as_str: out-of-bounds string offset",
-            ));
-        }
-
-        let mut end_index = ofs;
-        while self.strings[end_index] != 0 {
-            end_index += 1;
-        }
-
-        Ok(
-            ::std::str::from_utf8(&self.strings[ofs..end_index]).unwrap(),
-        )
-    }
-
     /// Attempts to retrieve an `f32` from the given virtual address.
     pub fn get_float(&self, addr: i16) -> Result<f32, ProgsError> {
         if addr < 0 {
@@ -604,9 +582,11 @@ impl Globals {
     }
 
     fn get_string_id_reserved(&self, addr: usize) -> Result<StringId, ProgsError> {
-        Ok(StringId(self.statics.reserved[addr]
-            .as_ref()
-            .read_i32::<LittleEndian>()?))
+        Ok(self.string_table.borrow().id_from_i32(
+            self.statics.reserved[addr]
+                .as_ref()
+                .read_i32::<LittleEndian>()?,
+        )?)
     }
 
     fn get_string_id_static(&self, addr: usize) -> Result<StringId, ProgsError> {
@@ -632,9 +612,9 @@ impl Globals {
             )));
         }
 
-        Ok(StringId(self.dynamics[addr - GLOBAL_DYNAMIC_START]
+        Ok(self.string_table.borrow().id_from_i32(self.dynamics[addr]
             .as_ref()
-            .read_i32::<LittleEndian>()?))
+            .read_i32::<LittleEndian>()?)?)
     }
 
     pub fn put_string_id(&mut self, val: StringId, addr: i16) -> Result<(), ProgsError> {
@@ -656,7 +636,7 @@ impl Globals {
     fn put_string_id_reserved(&mut self, val: StringId, addr: usize) -> Result<(), ProgsError> {
         self.statics.reserved[addr]
             .as_mut()
-            .write_i32::<LittleEndian>(val.0)?;
+            .write_i32::<LittleEndian>(val.try_into()?)?;
 
         Ok(())
     }
@@ -688,7 +668,7 @@ impl Globals {
 
         self.dynamics[addr - GLOBAL_DYNAMIC_START]
             .as_mut()
-            .write_i32::<LittleEndian>(val.0)?;
+            .write_i32::<LittleEndian>(val.try_into()?)?;
 
         Ok(())
     }
@@ -1066,7 +1046,7 @@ impl Globals {
                 src_val.as_mut().write_f32::<LittleEndian>(f)?;
             } else if GlobalStringAddress::from_usize(src_addr).is_some() {
                 let s = self.get_string_id_static(src_addr)?;
-                src_val.as_mut().write_i32::<LittleEndian>(s.0)?;
+                src_val.as_mut().write_i32::<LittleEndian>(s.try_into()?)?;
             } else if GlobalEntityAddress::from_usize(src_addr).is_some() {
                 let e = self.get_entity_id_static(src_addr)?;
                 src_val.as_mut().write_i32::<LittleEndian>(e.0)?;
@@ -1104,7 +1084,9 @@ impl Globals {
                 let f = src_val.as_ref().read_f32::<LittleEndian>()?;
                 self.put_float_static(f, dst_addr)?;
             } else if GlobalStringAddress::from_usize(dst_addr).is_some() {
-                let s = StringId(src_val.as_ref().read_i32::<LittleEndian>()?);
+                let s = self.string_table.borrow().id_from_i32(src_val
+                    .as_ref()
+                    .read_i32::<LittleEndian>()?)?;
                 self.put_string_id_static(s, dst_addr)?;
             } else if GlobalEntityAddress::from_usize(dst_addr).is_some() {
                 let e = EntityId(src_val.as_ref().read_i32::<LittleEndian>()?);

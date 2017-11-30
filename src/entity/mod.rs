@@ -17,18 +17,25 @@
 
 mod statics;
 
+use self::statics::AmbientEntityStatics;
 use self::statics::EntityStatics;
 use self::statics::GenericEntityStatics;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::ops::Index;
+use std::rc::Rc;
 
+use parse;
 use progs::EntityFieldAddr;
 use progs::EntityId;
 use progs::FieldDef;
 use progs::FunctionId;
 use progs::ProgsError;
 use progs::StringId;
+use progs::StringTable;
+use progs::Type;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
@@ -74,6 +81,7 @@ impl EntityState {
 pub struct Entity {
     // TODO: figure out how to link entities into the world
     // link: SomeType,
+    string_table: Rc<RefCell<StringTable>>,
     leaf_count: usize,
     leaf_ids: [u16; MAX_ENT_LEAVES],
     baseline: EntityState,
@@ -247,9 +255,10 @@ impl Entity {
     }
 
     fn get_string_id_dynamic(&self, addr: usize) -> Result<StringId, ProgsError> {
-        Ok(StringId(self.dynamics[addr - ADDR_DYNAMIC_START]
+        Ok(self.string_table.borrow().id_from_i32(self.dynamics
+            [addr - ADDR_DYNAMIC_START]
             .as_ref()
-            .read_i32::<LittleEndian>()?))
+            .read_i32::<LittleEndian>()?)?)
     }
 
     pub fn put_string_id(&mut self, val: StringId, addr: i16) -> Result<(), ProgsError> {
@@ -281,7 +290,7 @@ impl Entity {
     fn put_string_id_dynamic(&mut self, val: StringId, addr: usize) -> Result<(), ProgsError> {
         self.dynamics[addr - ADDR_DYNAMIC_START]
             .as_mut()
-            .write_i32::<LittleEndian>(val.0)?;
+            .write_i32::<LittleEndian>(val.try_into()?)?;
 
         Ok(())
     }
@@ -426,13 +435,18 @@ pub enum EntityListEntry {
 
 pub struct EntityList {
     addr_count: usize,
+    string_table: Rc<RefCell<StringTable>>,
     field_defs: Box<[FieldDef]>,
     entries: Box<[EntityListEntry]>,
 }
 
 impl EntityList {
     /// Initializes a new entity list with the given parameters.
-    pub fn new(addr_count: usize, field_defs: Box<[FieldDef]>) -> EntityList {
+    pub fn new(
+        addr_count: usize,
+        string_table: Rc<RefCell<StringTable>>,
+        field_defs: Box<[FieldDef]>,
+    ) -> EntityList {
         if addr_count < STATIC_ADDRESS_COUNT {
             panic!(
                 "EntityList::new: addr_count must be at least {} (was {})",
@@ -448,9 +462,25 @@ impl EntityList {
 
         EntityList {
             addr_count,
+            string_table,
             field_defs,
             entries,
         }
+    }
+
+    fn find_def<S>(&self, name: S) -> Result<&FieldDef, ProgsError>
+    where
+        S: AsRef<str>,
+    {
+        let name = name.as_ref();
+        let name_id = self.string_table.borrow().find(name).unwrap();
+
+        Ok(
+            self.field_defs
+                .iter()
+                .find(|def| def.name_id == name_id)
+                .unwrap(),
+        )
     }
 
     /// Convert an entity ID and field address to an internal representation used by the VM.
@@ -488,6 +518,7 @@ impl EntityList {
     pub fn fill_all_uninitialized(&mut self) {
         for i in 0..self.entries.len() {
             self.entries[i] = EntityListEntry::NotFree(Entity {
+                string_table: self.string_table.clone(),
                 leaf_count: 0,
                 leaf_ids: [0; MAX_ENT_LEAVES],
                 baseline: EntityState::uninitialized(),
@@ -519,6 +550,7 @@ impl EntityList {
         let entry_id = self.find_free_entry()?;
 
         self.entries[entry_id] = EntityListEntry::NotFree(Entity {
+            string_table: self.string_table.clone(),
             leaf_count: 0,
             leaf_ids: [0; MAX_ENT_LEAVES],
             baseline: EntityState::uninitialized(),
@@ -529,13 +561,69 @@ impl EntityList {
         Ok(EntityId(entry_id as i32))
     }
 
-    pub fn alloc_from_map(mut map: HashMap<&str, &str>) -> Result<EntityId, ProgsError> {
+    /// Allocate a new entity, initializing its fields with the given data.
+    ///
+    /// aaaaaaaaaaaaaaaaaaaa
+    pub fn alloc_from_map(&mut self, map: HashMap<&str, &str>) -> Result<EntityId, ProgsError> {
+        let mut dynamics = self.gen_dynamics();
+        let mut gen_statics = GenericEntityStatics::default();
+
+        // TODO
+        // for now, only handle the attributes that actually appear in the bsp maps.
+        // this will (probably) need to be fixed to support custom maps.
+        for (k, v) in map.iter() {
+            match *k {
+                // ignore keys starting with an underscore
+                k if k.starts_with("_") => (),
+
+                "angle" => {
+                    // this is referred to in the original source as "anglehack" -- essentially,
+                    // only the yaw (Y) value is given. see
+                    // https://github.com/id-Software/Quake/blob/master/WinQuake/pr_edict.c#L826-L834
+                    gen_statics.angles = Vector3::new(Deg(0.0), Deg(v.parse().unwrap()), Deg(0.0));
+                }
+
+                // assign static fields directly
+                "classname" => gen_statics.class_name = self.string_table.borrow().find(v).unwrap(),
+                "health" => gen_statics.health = v.parse().unwrap(),
+                "message" => gen_statics.message = self.string_table.borrow().find(v).unwrap(),
+                "model" => gen_statics.model_name = self.string_table.borrow().find(v).unwrap(),
+                "origin" => gen_statics.origin = parse::vector3(v).unwrap(),
+                "sounds" => gen_statics.sounds = v.parse().unwrap(),
+                "spawnflags" => gen_statics.spawn_flags = v.parse().unwrap(),
+                "target" => gen_statics.target = self.string_table.borrow().find(v).unwrap(),
+                "targetname" => {
+                    gen_statics.target_name = self.string_table.borrow().find(v).unwrap()
+                }
+
+                "count" | "delay" | "dmg" | "height" | "killtarget" | "light" | "lip" |
+                "mangle" | "map" | "speed" | "style" | "wad" | "wait" | "worldtype" => {
+                    let def = self.find_def(k)?;
+                    let addr = def.offset as usize;
+
+                    println!("{:?}", def);
+                }
+
+                _ => panic!("No handler for key {}", k),
+            }
+        }
+
         let class_name = match map.get("classname") {
-            Some(c) => c,
-            None => return Err(ProgsError::with_msg("alloc_from_map: no classname")),
+            Some(v) => v,
+            None => return Err(ProgsError::with_msg("entity has no class name")),
         };
 
-        panic!("unimplemented")
+        let entry_id = self.find_free_entry()?;
+        self.entries[entry_id] = EntityListEntry::NotFree(Entity {
+            string_table: self.string_table.clone(),
+            leaf_count: 0,
+            leaf_ids: [0; MAX_ENT_LEAVES],
+            baseline: EntityState::uninitialized(),
+            statics: EntityStatics::Generic(gen_statics),
+            dynamics: self.gen_dynamics(),
+        });
+
+        Ok(EntityId(entry_id as i32))
     }
 
     pub fn free(&mut self, entity_id: usize) -> Result<(), ProgsError> {

@@ -43,7 +43,16 @@ fn main() {
     println!("=========\nFUNCTIONS\n=========\n");
     progs.dump_functions();
 
+    let (bsp, ent_string) = bsp::load(pak.open("maps/e1m1.bsp").unwrap()).unwrap();
 
-    entity_list.fill_all_uninitialized();
+    let maps = match parse::entity_maps(ent_string.as_bytes()) {
+        IResult::Done(_, m) => m,
+        _ => panic!("parse failed"),
+    };
+
+    // for m in maps {
+    // entity_list.alloc_from_map(m).unwrap();
+    // }
+
     progs.validate(&mut globals, &mut entity_list);
 }

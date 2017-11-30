@@ -18,6 +18,7 @@
 #![feature(collections_range)]
 #![feature(custom_derive)]
 #![feature(manually_drop)]
+#![feature(try_from)]
 
 extern crate arrayvec;
 #[macro_use]
