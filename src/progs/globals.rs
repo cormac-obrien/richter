@@ -283,12 +283,25 @@ impl GlobalsStatic {
 
 #[derive(Debug)]
 pub struct Globals {
-    pub string_table: Rc<StringTable>,
-    pub defs: Box<[GlobalDef]>,
-    pub addrs: Box<[[u8; 4]]>,
+    string_table: Rc<StringTable>,
+    defs: Box<[GlobalDef]>,
+    addrs: Box<[[u8; 4]]>,
 }
 
 impl Globals {
+    /// Constructs a new `Globals` object.
+    pub fn new(
+        string_table: Rc<StringTable>,
+        defs: Box<[GlobalDef]>,
+        addrs: Box<[[u8; 4]]>,
+    ) -> Globals {
+        Globals {
+            string_table,
+            defs,
+            addrs,
+        }
+    }
+
     /// Performs a type check at `addr` with type `type_`.
     ///
     /// The type check allows checking `QFloat` against `QVector` and vice-versa, since vectors have

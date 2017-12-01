@@ -577,11 +577,11 @@ pub fn load(data: &[u8]) -> Result<(Functions, Globals, EntityList), ProgsError>
         ))?
     );
 
-    let globals = Globals {
-        string_table: string_table.clone(),
-        defs: globaldefs.into_boxed_slice(),
-        addrs: addrs.into_boxed_slice(),
-    };
+    let globals = Globals::new(
+        string_table.clone(),
+        globaldefs.into_boxed_slice(),
+        addrs.into_boxed_slice(),
+    );
 
     let entity_list = EntityList::new(
         ent_addr_count,
@@ -693,6 +693,7 @@ impl ExecutionContext {
     ) -> Result<(), ProgsError> {
         let mut runaway = 100000;
 
+        // this allows us to call execute_program() recursively with the same local and call stacks
         let exit_depth = self.call_stack.len();
 
         self.enter_function(functions, globals, f)?;
@@ -1649,13 +1650,9 @@ fn not_s(globals: &mut Globals, s_ofs: i16, unused: i16, not_ofs: i16) -> Result
         return Err(ProgsError::with_msg("not_s: negative string offset"));
     }
 
-    let s = globals
-        .string_table
-        .get(globals.string_table.id_from_i32(s_ofs as i32)?)
-        .unwrap()
-        .to_owned();
+    let s = globals.get_string_id(s_ofs)?;
 
-    if s_ofs == 0 || s == "" {
+    if s_ofs == 0 || s.0 == 0 {
         globals.put_float(1.0, not_ofs)?;
     } else {
         globals.put_float(0.0, not_ofs)?;
