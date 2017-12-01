@@ -108,7 +108,7 @@ uniform mat4 u_transform;
 
 void main() {
     f_texcoord = v_texcoord;
-    gl_Position = u_transform * vec4(v_position, 1.0);
+    gl_Position = u_transform * vec4(-v_position.y, v_position.z, -v_position.x, 1.0);
 }
 "#
                 .as_bytes(),

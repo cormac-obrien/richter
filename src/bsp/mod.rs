@@ -479,12 +479,12 @@ pub fn load(data: &[u8]) -> Result<(Bsp, String), BspError> {
     }
     let mut planes = Vec::with_capacity(plane_count);
     for _ in 0..plane_count {
-        // Quake coordinates to standard right-handed coordinates
-        let neg_z = reader.read_f32::<LittleEndian>()?;
-        let neg_x = reader.read_f32::<LittleEndian>()?;
-        let y = reader.read_f32::<LittleEndian>()?;
         planes.push(BspPlane {
-            normal: Vector3::new(-neg_x, y, -neg_z),
+            normal: Vector3::new(
+                reader.read_f32::<LittleEndian>()?,
+                reader.read_f32::<LittleEndian>()?,
+                reader.read_f32::<LittleEndian>()?,
+            ),
             dist: reader.read_f32::<LittleEndian>()?,
             kind: BspPlaneKind::from_i32(reader.read_i32::<LittleEndian>()?).unwrap(),
         });
@@ -721,11 +721,11 @@ pub fn load(data: &[u8]) -> Result<(Bsp, String), BspError> {
     }
     let mut vertices = Vec::with_capacity(vert_count);
     for _ in 0..vert_count {
-        // Quake coordinates to standard right-handed coordinates
-        let neg_z = reader.read_f32::<LittleEndian>()?;
-        let neg_x = reader.read_f32::<LittleEndian>()?;
-        let y = reader.read_f32::<LittleEndian>()?;
-        vertices.push(Vector3::new(-neg_x, y, -neg_z));
+        vertices.push(Vector3::new(
+            reader.read_f32::<LittleEndian>()?,
+            reader.read_f32::<LittleEndian>()?,
+            reader.read_f32::<LittleEndian>()?,
+        ));
     }
     if reader.seek(SeekFrom::Current(0))? !=
         reader.seek(SeekFrom::Start(
@@ -782,15 +782,17 @@ pub fn load(data: &[u8]) -> Result<(Bsp, String), BspError> {
             b => BspNodeChild::Node(b as usize),
         };
 
-        let min_neg_z = reader.read_i16::<LittleEndian>()?;
-        let min_neg_x = reader.read_i16::<LittleEndian>()?;
-        let min_y = reader.read_i16::<LittleEndian>()?;
-        let min = [-min_neg_x, min_y, -min_neg_z];
+        let min = [
+            reader.read_i16::<LittleEndian>()?,
+            reader.read_i16::<LittleEndian>()?,
+            reader.read_i16::<LittleEndian>()?,
+        ];
 
-        let max_neg_z = reader.read_i16::<LittleEndian>()?;
-        let max_neg_x = reader.read_i16::<LittleEndian>()?;
-        let max_y = reader.read_i16::<LittleEndian>()?;
-        let max = [-max_neg_x, max_y, -max_neg_z];
+        let max = [
+            reader.read_i16::<LittleEndian>()?,
+            reader.read_i16::<LittleEndian>()?,
+            reader.read_i16::<LittleEndian>()?,
+        ];
 
         let face_id = reader.read_i16::<LittleEndian>()?;
         if face_id < 0 {
@@ -830,23 +832,19 @@ pub fn load(data: &[u8]) -> Result<(Bsp, String), BspError> {
     let texinfo_count = texinfo_lump.size / TEXINFO_SIZE;
     let mut texinfos = Vec::with_capacity(texinfo_count);
     for _ in 0..texinfo_count {
-        let s_neg_z = reader.read_f32::<LittleEndian>()?;
-        let s_neg_x = reader.read_f32::<LittleEndian>()?;
-        let s_y = reader.read_f32::<LittleEndian>()?;
-
-        let s_off = reader.read_f32::<LittleEndian>()?;
-
-        let t_neg_z = reader.read_f32::<LittleEndian>()?;
-        let t_neg_x = reader.read_f32::<LittleEndian>()?;
-        let t_y = reader.read_f32::<LittleEndian>()?;
-
-        let t_off = reader.read_f32::<LittleEndian>()?;
-
         texinfos.push(BspTexInfo {
-            s_vector: Vector3::new(-s_neg_x, s_y, -s_neg_z),
-            s_offset: s_off,
-            t_vector: Vector3::new(-t_neg_x, t_y, -t_neg_z),
-            t_offset: t_off,
+            s_vector: Vector3::new(
+                reader.read_f32::<LittleEndian>()?,
+                reader.read_f32::<LittleEndian>()?,
+                reader.read_f32::<LittleEndian>()?,
+            ),
+            s_offset: reader.read_f32::<LittleEndian>()?,
+            t_vector: Vector3::new(
+                reader.read_f32::<LittleEndian>()?,
+                reader.read_f32::<LittleEndian>()?,
+                reader.read_f32::<LittleEndian>()?,
+            ),
+            t_offset: reader.read_f32::<LittleEndian>()?,
 
             tex_id: match reader.read_i32::<LittleEndian>()? {
                 t if t < 0 || t as usize > tex_count => {
@@ -995,15 +993,17 @@ pub fn load(data: &[u8]) -> Result<(Bsp, String), BspError> {
             x => Some(x as usize),
         };
 
-        let min_neg_z = reader.read_i16::<LittleEndian>()?;
-        let min_neg_x = reader.read_i16::<LittleEndian>()?;
-        let min_y = reader.read_i16::<LittleEndian>()?;
-        let min = [-min_neg_x, min_y, -min_neg_z];
+        let min = [
+            reader.read_i16::<LittleEndian>()?,
+            reader.read_i16::<LittleEndian>()?,
+            reader.read_i16::<LittleEndian>()?,
+        ];
 
-        let max_neg_z = reader.read_i16::<LittleEndian>()?;
-        let max_neg_x = reader.read_i16::<LittleEndian>()?;
-        let max_y = reader.read_i16::<LittleEndian>()?;
-        let max = [-max_neg_x, max_y, -max_neg_z];
+        let max = [
+            reader.read_i16::<LittleEndian>()?,
+            reader.read_i16::<LittleEndian>()?,
+            reader.read_i16::<LittleEndian>()?,
+        ];
 
         let face_id = reader.read_u16::<LittleEndian>()? as usize;
         let face_count = reader.read_u16::<LittleEndian>()? as usize;
@@ -1123,20 +1123,23 @@ pub fn load(data: &[u8]) -> Result<(Bsp, String), BspError> {
     }
     let mut models = Vec::with_capacity(model_count);
     for _ in 0..model_count {
-        let min_neg_z = reader.read_f32::<LittleEndian>()?;
-        let min_neg_x = reader.read_f32::<LittleEndian>()?;
-        let min_y = reader.read_f32::<LittleEndian>()?;
-        let min = Vector3::new(-min_neg_x, min_y, -min_neg_z);
+        let min = Vector3::new(
+            reader.read_f32::<LittleEndian>()?,
+            reader.read_f32::<LittleEndian>()?,
+            reader.read_f32::<LittleEndian>()?,
+        );
 
-        let max_neg_z = reader.read_f32::<LittleEndian>()?;
-        let max_neg_x = reader.read_f32::<LittleEndian>()?;
-        let max_y = reader.read_f32::<LittleEndian>()?;
-        let max = Vector3::new(-max_neg_x, max_y, -max_neg_z);
+        let max = Vector3::new(
+            reader.read_f32::<LittleEndian>()?,
+            reader.read_f32::<LittleEndian>()?,
+            reader.read_f32::<LittleEndian>()?,
+        );
 
-        let origin_neg_z = reader.read_f32::<LittleEndian>()?;
-        let origin_neg_x = reader.read_f32::<LittleEndian>()?;
-        let origin_y = reader.read_f32::<LittleEndian>()?;
-        let origin = Vector3::new(-origin_neg_x, origin_y, -origin_neg_z);
+        let origin = Vector3::new(
+            reader.read_f32::<LittleEndian>()?,
+            reader.read_f32::<LittleEndian>()?,
+            reader.read_f32::<LittleEndian>()?,
+        );
 
         let mut roots = [0; MAX_HULLS];
         for i in 0..roots.len() {
