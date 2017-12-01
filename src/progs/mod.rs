@@ -112,6 +112,7 @@ use std::rc::Rc;
 
 use engine;
 use entity::EntityList;
+use entity::FieldAddrFloat;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
@@ -125,9 +126,10 @@ use self::functions::FunctionKind;
 use self::functions::Functions;
 use self::functions::MAX_ARGS;
 use self::functions::Statement;
-use self::globals::Globals;
 use self::globals::GlobalEntityAddress;
 use self::globals::GlobalFloatAddress;
+use self::globals::Globals;
+use self::globals::GlobalsError;
 use self::globals::GlobalsStatic;
 use self::globals::GLOBAL_ADDR_ARG_0;
 use self::globals::GLOBAL_ADDR_RETURN;
@@ -157,6 +159,7 @@ const MAX_ENTITIES: usize = 600;
 #[derive(Debug)]
 pub enum ProgsError {
     Io(::std::io::Error),
+    Globals(GlobalsError),
     Other(String),
 }
 
@@ -172,7 +175,14 @@ impl ProgsError {
 impl fmt::Display for ProgsError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            ProgsError::Io(ref err) => err.fmt(f),
+            ProgsError::Io(ref err) => {
+                write!(f, "I/O error: ")?;
+                err.fmt(f)
+            }
+            ProgsError::Globals(ref err) => {
+                write!(f, "Globals error: ")?;
+                err.fmt(f)
+            }
             ProgsError::Other(ref msg) => write!(f, "{}", msg),
         }
     }
@@ -182,6 +192,7 @@ impl Error for ProgsError {
     fn description(&self) -> &str {
         match *self {
             ProgsError::Io(ref err) => err.description(),
+            ProgsError::Globals(ref err) => err.description(),
             ProgsError::Other(ref msg) => &msg,
         }
     }
@@ -190,6 +201,12 @@ impl Error for ProgsError {
 impl From<::std::io::Error> for ProgsError {
     fn from(error: ::std::io::Error) -> Self {
         ProgsError::Io(error)
+    }
+}
+
+impl From<GlobalsError> for ProgsError {
+    fn from(error: GlobalsError) -> Self {
+        ProgsError::Globals(error)
     }
 }
 
@@ -673,6 +690,12 @@ impl ExecutionContext {
         self.enter_function(functions, globals, f);
 
         while self.call_stack.len() != exit_depth {
+            runaway -= 1;
+
+            if runaway == 0 {
+                panic!("runaway program");
+            }
+
             let op = functions.statements[self.pc].opcode;
             let arg1 = functions.statements[self.pc].arg1;
             let arg2 = functions.statements[self.pc].arg2;
@@ -764,24 +787,37 @@ impl ExecutionContext {
                     let self_ent = entities.try_get_entity_mut(self_id.0 as usize).unwrap();
                     let next_think_time =
                         globals.get_float(GlobalFloatAddress::Time as i16).unwrap() + 0.1;
-                    // self_ent.put_float
+
+                    self_ent
+                        .put_float(next_think_time, FieldAddrFloat::NextThink as i16)
+                        .unwrap();
+
+                    let frame_id = globals.get_float(arg1).unwrap();
+                    self_ent
+                        .put_float(frame_id, FieldAddrFloat::FrameId as i16)
+                        .unwrap();
                 }
 
                 Opcode::Goto => {
                     self.pc = (self.pc as isize + globals.get_int(arg1).unwrap() as isize) as usize;
+
+                    continue;
                 }
 
                 Opcode::Call0 | Opcode::Call1 | Opcode::Call2 | Opcode::Call3 | Opcode::Call4 |
                 Opcode::Call5 | Opcode::Call6 | Opcode::Call7 | Opcode::Call8 => {
                     let arg_count = op as usize - Opcode::Call0 as usize;
-                    if globals.get_function_id(arg1).unwrap().0 == 0 {
+
+                    let f_to_call = globals.get_function_id(arg1).unwrap();
+                    if f_to_call.0 == 0 {
                         panic!("NULL function");
                     }
 
-                    let def = functions.get_def(f).unwrap();
+                    let def = functions.get_def(f_to_call).unwrap();
                     match def.kind {
                         FunctionKind::BuiltIn(i) => {
                             println!("built-in function {}", i);
+                            unimplemented!();
                         }
 
                         FunctionKind::QuakeC(i) => {
@@ -919,7 +955,9 @@ pub fn validate(functions: &Functions, globals: &mut Globals, entities: &mut Ent
 fn mul_f(globals: &mut Globals, f1_id: i16, f2_id: i16, prod_id: i16) -> Result<(), ProgsError> {
     let f1 = globals.get_float(f1_id)?;
     let f2 = globals.get_float(f2_id)?;
-    globals.put_float(f1 * f2, prod_id)
+    globals.put_float(f1 * f2, prod_id)?;
+
+    Ok(())
 }
 
 // MUL_V: Vector dot-product
@@ -932,7 +970,9 @@ fn mul_v(globals: &mut Globals, v1_id: i16, v2_id: i16, dot_id: i16) -> Result<(
     for c in 0..3 {
         dot += v1[c] * v2[c];
     }
-    globals.put_float(dot, dot_id)
+    globals.put_float(dot, dot_id)?;
+
+    Ok(())
 }
 
 // MUL_FV: Component-wise multiplication of vector by scalar
@@ -945,7 +985,9 @@ fn mul_fv(globals: &mut Globals, f_id: i16, v_id: i16, prod_id: i16) -> Result<(
         prod[c] = v[c] * f;
     }
 
-    globals.put_vector(prod, prod_id)
+    globals.put_vector(prod, prod_id)?;
+
+    Ok(())
 }
 
 // MUL_VF: Component-wise multiplication of vector by scalar
@@ -958,21 +1000,27 @@ fn mul_vf(globals: &mut Globals, v_id: i16, f_id: i16, prod_id: i16) -> Result<(
         prod[c] = v[c] * f;
     }
 
-    globals.put_vector(prod, prod_id)
+    globals.put_vector(prod, prod_id)?;
+
+    Ok(())
 }
 
 // DIV: Float division
 fn div(globals: &mut Globals, f1_id: i16, f2_id: i16, quot_id: i16) -> Result<(), ProgsError> {
     let f1 = globals.get_float(f1_id)?;
     let f2 = globals.get_float(f2_id)?;
-    globals.put_float(f1 / f2, quot_id)
+    globals.put_float(f1 / f2, quot_id)?;
+
+    Ok(())
 }
 
 // ADD_F: Float addition
 fn add_f(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, sum_ofs: i16) -> Result<(), ProgsError> {
     let f1 = globals.get_float(f1_ofs)?;
     let f2 = globals.get_float(f2_ofs)?;
-    globals.put_float(f1 + f2, sum_ofs)
+    globals.put_float(f1 + f2, sum_ofs)?;
+
+    Ok(())
 }
 
 // ADD_V: Vector addition
@@ -985,14 +1033,18 @@ fn add_v(globals: &mut Globals, v1_id: i16, v2_id: i16, sum_id: i16) -> Result<(
         sum[c] = v1[c] + v2[c];
     }
 
-    globals.put_vector(sum, sum_id)
+    globals.put_vector(sum, sum_id)?;
+
+    Ok(())
 }
 
 // SUB_F: Float subtraction
 fn sub_f(globals: &mut Globals, f1_id: i16, f2_id: i16, diff_id: i16) -> Result<(), ProgsError> {
     let f1 = globals.get_float(f1_id)?;
     let f2 = globals.get_float(f2_id)?;
-    globals.put_float(f1 - f2, diff_id)
+    globals.put_float(f1 - f2, diff_id)?;
+
+    Ok(())
 }
 
 // SUB_V: Vector subtraction
@@ -1005,7 +1057,9 @@ fn sub_v(globals: &mut Globals, v1_id: i16, v2_id: i16, diff_id: i16) -> Result<
         diff[c] = v1[c] - v2[c];
     }
 
-    globals.put_vector(diff, diff_id)
+    globals.put_vector(diff, diff_id)?;
+
+    Ok(())
 }
 
 // EQ_F: Test equality of two floats
@@ -1018,7 +1072,9 @@ fn eq_f(globals: &mut Globals, f1_id: i16, f2_id: i16, eq_id: i16) -> Result<(),
             false => 0.0,
         },
         eq_id,
-    )
+    )?;
+
+    Ok(())
 }
 
 // EQ_V: Test equality of two vectors
@@ -1031,7 +1087,9 @@ fn eq_v(globals: &mut Globals, v1_id: i16, v2_id: i16, eq_id: i16) -> Result<(),
             false => 0.0,
         },
         eq_id,
-    )
+    )?;
+
+    Ok(())
 }
 
 // EQ_S: Test equality of two strings
@@ -1041,10 +1099,12 @@ fn eq_s(globals: &mut Globals, s1_ofs: i16, s2_ofs: i16, eq_ofs: i16) -> Result<
     }
 
     if s1_ofs == s2_ofs || globals.get_string_id(s1_ofs)? == globals.get_string_id(s2_ofs)? {
-        globals.put_float(1.0, eq_ofs)
+        globals.put_float(1.0, eq_ofs)?;
     } else {
-        globals.put_float(0.0, eq_ofs)
+        globals.put_float(0.0, eq_ofs)?;
     }
+
+    Ok(())
 }
 
 // EQ_ENT: Test equality of two entities (by identity)
@@ -1058,7 +1118,9 @@ fn eq_ent(globals: &mut Globals, e1_ofs: i16, e2_ofs: i16, eq_ofs: i16) -> Resul
             false => 0.0,
         },
         eq_ofs,
-    )
+    )?;
+
+    Ok(())
 }
 
 // EQ_FNC: Test equality of two functions (by identity)
@@ -1072,7 +1134,9 @@ fn eq_fnc(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, eq_ofs: i16) -> Resul
             false => 0.0,
         },
         eq_ofs,
-    )
+    )?;
+
+    Ok(())
 }
 
 // NE_F: Test inequality of two floats
@@ -1085,7 +1149,9 @@ fn ne_f(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, ne_ofs: i16) -> Result<
             false => 0.0,
         },
         ne_ofs,
-    )
+    )?;
+
+    Ok(())
 }
 
 // NE_V: Test inequality of two vectors
@@ -1098,7 +1164,9 @@ fn ne_v(globals: &mut Globals, v1_ofs: i16, v2_ofs: i16, ne_ofs: i16) -> Result<
             false => 0.0,
         },
         ne_ofs,
-    )
+    )?;
+
+    Ok(())
 }
 
 // NE_S: Test inequality of two strings
@@ -1108,10 +1176,12 @@ fn ne_s(globals: &mut Globals, s1_ofs: i16, s2_ofs: i16, ne_ofs: i16) -> Result<
     }
 
     if s1_ofs != s2_ofs && globals.get_string_id(s1_ofs)? != globals.get_string_id(s2_ofs)? {
-        globals.put_float(1.0, ne_ofs)
+        globals.put_float(1.0, ne_ofs)?;
     } else {
-        globals.put_float(0.0, ne_ofs)
+        globals.put_float(0.0, ne_ofs)?;
     }
+
+    Ok(())
 }
 
 fn ne_ent(globals: &mut Globals, e1_ofs: i16, e2_ofs: i16, ne_ofs: i16) -> Result<(), ProgsError> {
@@ -1124,7 +1194,9 @@ fn ne_ent(globals: &mut Globals, e1_ofs: i16, e2_ofs: i16, ne_ofs: i16) -> Resul
             false => 0.0,
         },
         ne_ofs,
-    )
+    )?;
+
+    Ok(())
 }
 
 fn ne_fnc(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, ne_ofs: i16) -> Result<(), ProgsError> {
@@ -1137,7 +1209,9 @@ fn ne_fnc(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, ne_ofs: i16) -> Resul
             false => 0.0,
         },
         ne_ofs,
-    )
+    )?;
+
+    Ok(())
 }
 
 // LE: Less than or equal to comparison
@@ -1150,7 +1224,9 @@ fn le(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, le_ofs: i16) -> Result<()
             false => 0.0,
         },
         le_ofs,
-    )
+    )?;
+
+    Ok(())
 }
 
 // GE: Greater than or equal to comparison
@@ -1163,7 +1239,9 @@ fn ge(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, ge_ofs: i16) -> Result<()
             false => 0.0,
         },
         ge_ofs,
-    )
+    )?;
+
+    Ok(())
 }
 
 // LT: Less than comparison
@@ -1176,7 +1254,9 @@ fn lt(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, lt_ofs: i16) -> Result<()
             false => 0.0,
         },
         lt_ofs,
-    )
+    )?;
+
+    Ok(())
 }
 
 // GT: Greater than comparison
@@ -1189,7 +1269,9 @@ fn gt(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, gt_ofs: i16) -> Result<()
             false => 0.0,
         },
         gt_ofs,
-    )
+    )?;
+
+    Ok(())
 }
 
 // LOAD_F: load float field from entity
@@ -1208,7 +1290,9 @@ fn load_f(
         fld_ofs.0 as
             i16,
     )?;
-    globals.put_float(f, dest_ofs)
+    globals.put_float(f, dest_ofs)?;
+
+    Ok(())
 }
 
 // LOAD_V: load vector field from entity
@@ -1225,7 +1309,9 @@ fn load_v(
         ent_vector.0 as
             i16,
     )?;
-    globals.put_vector(v, dest_addr)
+    globals.put_vector(v, dest_addr)?;
+
+    Ok(())
 }
 
 fn load_s(
@@ -1240,7 +1326,9 @@ fn load_s(
     let s = entity_list
         .try_get_entity(ent_id.0 as usize)?
         .get_string_id(ent_string_id.0 as i16)?;
-    globals.put_string_id(s, dest_addr)
+    globals.put_string_id(s, dest_addr)?;
+
+    Ok(())
 }
 
 fn load_ent(
@@ -1255,7 +1343,9 @@ fn load_ent(
     let e = entity_list
         .try_get_entity(ent_id.0 as usize)?
         .get_entity_id(ent_entity_id.0 as i16)?;
-    globals.put_entity_id(e, dest_addr)
+    globals.put_entity_id(e, dest_addr)?;
+
+    Ok(())
 }
 
 fn load_fnc(
@@ -1270,7 +1360,9 @@ fn load_fnc(
     let f = entity_list
         .try_get_entity(ent_id.0 as usize)?
         .get_function_id(fnc_function_id.0 as i16)?;
-    globals.put_function_id(f, dest_addr)
+    globals.put_function_id(f, dest_addr)?;
+
+    Ok(())
 }
 
 fn address(
@@ -1305,7 +1397,9 @@ fn store_f(
     }
 
     let f = globals.get_float(src_ofs)?;
-    globals.put_float(f, dest_ofs)
+    globals.put_float(f, dest_ofs)?;
+
+    Ok(())
 }
 
 // STORE_V
@@ -1350,7 +1444,9 @@ fn store_s(
     }
 
     let s = globals.get_string_id(src_ofs)?;
-    globals.put_string_id(s, dest_ofs)
+    globals.put_string_id(s, dest_ofs)?;
+
+    Ok(())
 }
 
 fn store_ent(
@@ -1364,7 +1460,9 @@ fn store_ent(
     }
 
     let ent = globals.get_entity_id(src_ofs)?;
-    globals.put_entity_id(ent, dest_ofs)
+    globals.put_entity_id(ent, dest_ofs)?;
+
+    Ok(())
 }
 
 fn store_fld(
@@ -1378,7 +1476,9 @@ fn store_fld(
     }
 
     let fld = globals.get_field_addr(src_ofs)?;
-    globals.put_field_addr(fld, dest_ofs)
+    globals.put_field_addr(fld, dest_ofs)?;
+
+    Ok(())
 }
 
 fn store_fnc(
@@ -1392,7 +1492,9 @@ fn store_fnc(
     }
 
     let fnc = globals.get_function_id(src_ofs)?;
-    globals.put_function_id(fnc, dest_ofs)
+    globals.put_function_id(fnc, dest_ofs)?;
+
+    Ok(())
 }
 
 fn storep_f(
@@ -1410,7 +1512,9 @@ fn storep_f(
     let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
     entities
         .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_float(f, ent_fld_addr.field_addr as i16)
+        .put_float(f, ent_fld_addr.field_addr as i16)?;
+
+    Ok(())
 }
 
 fn storep_v(
@@ -1428,7 +1532,9 @@ fn storep_v(
     let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
     entities
         .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_vector(v, ent_fld_addr.field_addr as i16)
+        .put_vector(v, ent_fld_addr.field_addr as i16)?;
+
+    Ok(())
 }
 
 fn storep_s(
@@ -1446,7 +1552,9 @@ fn storep_s(
     let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
     entities
         .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_string_id(s, ent_fld_addr.field_addr as i16)
+        .put_string_id(s, ent_fld_addr.field_addr as i16)?;
+
+    Ok(())
 }
 
 fn storep_ent(
@@ -1464,7 +1572,9 @@ fn storep_ent(
     let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
     entities
         .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_entity_id(e, ent_fld_addr.field_addr as i16)
+        .put_entity_id(e, ent_fld_addr.field_addr as i16)?;
+
+    Ok(())
 }
 
 fn storep_fnc(
@@ -1482,7 +1592,9 @@ fn storep_fnc(
     let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
     entities
         .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_function_id(f, ent_fld_addr.field_addr as i16)
+        .put_function_id(f, ent_fld_addr.field_addr as i16)?;
+
+    Ok(())
 }
 
 // NOT_F: Compare float to 0.0
@@ -1498,7 +1610,9 @@ fn not_f(globals: &mut Globals, f_id: i16, unused: i16, not_id: i16) -> Result<(
             false => 0.0,
         },
         not_id,
-    )
+    )?;
+
+    Ok(())
 }
 
 // NOT_V: Compare vec to { 0.0, 0.0, 0.0 }
@@ -1515,7 +1629,9 @@ fn not_v(globals: &mut Globals, v_id: i16, unused: i16, not_id: i16) -> Result<(
             false => zero_vec,
         },
         not_id,
-    )
+    )?;
+
+    Ok(())
 }
 
 // NOT_S: Compare string to null string
@@ -1561,7 +1677,9 @@ fn not_fnc(
             _ => 0.0,
         },
         not_ofs,
-    )
+    )?;
+
+    Ok(())
 }
 
 // NOT_ENT: Compare entity to null entity (0)
@@ -1582,7 +1700,9 @@ fn not_ent(
             _ => 0.0,
         },
         not_ofs,
-    )
+    )?;
+
+    Ok(())
 }
 
 // AND: Logical AND
@@ -1595,7 +1715,9 @@ fn and(globals: &mut Globals, f1_id: i16, f2_id: i16, and_id: i16) -> Result<(),
             false => 0.0,
         },
         and_id,
-    )
+    )?;
+
+    Ok(())
 }
 
 // OR: Logical OR
@@ -1608,7 +1730,9 @@ fn or(globals: &mut Globals, f1_id: i16, f2_id: i16, or_id: i16) -> Result<(), P
             false => 0.0,
         },
         or_id,
-    )
+    )?;
+
+    Ok(())
 }
 
 // BIT_AND: Bitwise AND
@@ -1621,7 +1745,12 @@ fn bit_and(
     let f1 = globals.get_float(f1_ofs)?;
     let f2 = globals.get_float(f2_ofs)?;
 
-    globals.put_float((f1 as i32 & f2 as i32) as f32, bit_and_ofs)
+    globals.put_float(
+        (f1 as i32 & f2 as i32) as f32,
+        bit_and_ofs,
+    )?;
+
+    Ok(())
 }
 
 // BIT_OR: Bitwise OR
@@ -1634,5 +1763,10 @@ fn bit_or(
     let f1 = globals.get_float(f1_ofs)?;
     let f2 = globals.get_float(f2_ofs)?;
 
-    globals.put_float((f1 as i32 | f2 as i32) as f32, bit_or_ofs)
+    globals.put_float(
+        (f1 as i32 | f2 as i32) as f32,
+        bit_or_ofs,
+    )?;
+
+    Ok(())
 }

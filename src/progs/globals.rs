@@ -15,16 +15,15 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::cell::RefCell;
 use std::convert::TryInto;
+use std::error::Error;
+use std::fmt;
 use std::rc::Rc;
 
-use engine;
 use progs::EntityId;
 use progs::FieldAddr;
 use progs::FunctionId;
 use progs::GlobalDef;
-use progs::ProgsError;
 use progs::StringId;
 use progs::StringTable;
 use progs::Type;
@@ -53,6 +52,51 @@ pub const GLOBAL_ADDR_ARG_4: usize = 16;
 pub const GLOBAL_ADDR_ARG_5: usize = 19;
 pub const GLOBAL_ADDR_ARG_6: usize = 22;
 pub const GLOBAL_ADDR_ARG_7: usize = 25;
+
+#[derive(Debug)]
+pub enum GlobalsError {
+    Io(::std::io::Error),
+    Address(isize),
+    Other(String),
+}
+
+impl GlobalsError {
+    pub fn with_msg<S>(msg: S) -> Self
+    where
+        S: AsRef<str>,
+    {
+        GlobalsError::Other(msg.as_ref().to_owned())
+    }
+}
+
+impl fmt::Display for GlobalsError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            GlobalsError::Io(ref err) => {
+                write!(f, "I/O error: ")?;
+                err.fmt(f)
+            }
+            GlobalsError::Address(val) => write!(f, "Invalid address ({})", val),
+            GlobalsError::Other(ref msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl Error for GlobalsError {
+    fn description(&self) -> &str {
+        match *self {
+            GlobalsError::Io(ref err) => err.description(),
+            GlobalsError::Address(_) => "Invalid address",
+            GlobalsError::Other(ref msg) => &msg,
+        }
+    }
+}
+
+impl From<::std::io::Error> for GlobalsError {
+    fn from(error: ::std::io::Error) -> Self {
+        GlobalsError::Io(error)
+    }
+}
 
 #[derive(FromPrimitive)]
 pub enum GlobalFloatAddress {
@@ -245,7 +289,7 @@ pub struct Globals {
 }
 
 impl Globals {
-    fn type_check(&self, addr: usize, type_: Type) -> Result<(), ProgsError> {
+    fn type_check(&self, addr: usize, type_: Type) -> Result<(), GlobalsError> {
         match self.defs.iter().find(|def| def.offset as usize == addr) {
             Some(d) => {
                 if type_ == d.type_ {
@@ -255,18 +299,16 @@ impl Globals {
                 } else if type_ == Type::QVector && d.type_ == Type::QFloat {
                     return Ok(());
                 } else {
-                    return Err(ProgsError::with_msg("type check failed"));
+                    return Err(GlobalsError::with_msg("type check failed"));
                 }
             }
             None => return Ok(()),
         }
     }
 
-    pub fn type_at_addr(&self, addr: usize) -> Result<Option<Type>, ProgsError> {
+    pub fn type_at_addr(&self, addr: usize) -> Result<Option<Type>, GlobalsError> {
         if addr > self.addrs.len() {
-            return Err(ProgsError::with_msg(
-                format!("address is out of range ({})", addr),
-            ));
+            return Err(GlobalsError::Address(addr as isize));
         }
 
         Ok(match self.defs.iter().find(
@@ -277,95 +319,87 @@ impl Globals {
         })
     }
 
-    pub fn get_addr(&self, addr: i16) -> Result<&[u8], ProgsError> {
+    pub fn get_addr(&self, addr: i16) -> Result<&[u8], GlobalsError> {
         if addr < 0 {
-            return Err(ProgsError::with_msg("get_addr: negative address"));
+            return Err(GlobalsError::Address(addr as isize));
         }
 
         let addr = addr as usize;
 
         if addr > self.addrs.len() {
-            return Err(ProgsError::with_msg(
-                format!("address out of range ({})", addr),
-            ));
+            return Err(GlobalsError::Address(addr as isize));
         }
 
         Ok(&self.addrs[addr])
     }
 
-    pub fn get_addr_mut(&mut self, addr: i16) -> Result<&mut [u8], ProgsError> {
+    pub fn get_addr_mut(&mut self, addr: i16) -> Result<&mut [u8], GlobalsError> {
         if addr < 0 {
-            return Err(ProgsError::with_msg("get_addr: negative address"));
+            return Err(GlobalsError::Address(addr as isize));
         }
 
         let addr = addr as usize;
 
         if addr > self.addrs.len() {
-            return Err(ProgsError::with_msg(
-                format!("address out of range ({})", addr),
-            ));
+            return Err(GlobalsError::Address(addr as isize));
         }
 
         Ok(&mut self.addrs[addr])
     }
 
-    pub fn get_bytes(&self, addr: i16) -> Result<[u8; 4], ProgsError> {
+    pub fn get_bytes(&self, addr: i16) -> Result<[u8; 4], GlobalsError> {
         if addr < 0 {
-            return Err(ProgsError::with_msg("get_bytes: negative address"));
+            return Err(GlobalsError::Address(addr as isize));
         }
 
         let addr = addr as usize;
 
         if addr > self.addrs.len() {
-            return Err(ProgsError::with_msg(
-                format!("address out of range ({})", addr),
-            ));
+            return Err(GlobalsError::Address(addr as isize));
         }
 
         Ok(self.addrs[addr])
     }
 
-    pub fn put_bytes(&mut self, val: [u8; 4], addr: i16) -> Result<(), ProgsError> {
+    pub fn put_bytes(&mut self, val: [u8; 4], addr: i16) -> Result<(), GlobalsError> {
         if addr < 0 {
-            return Err(ProgsError::with_msg("put_bytes: negative address"));
+            return Err(GlobalsError::Address(addr as isize));
         }
 
         let addr = addr as usize;
 
         if addr > self.addrs.len() {
-            return Err(ProgsError::with_msg(
-                format!("address out of range ({})", addr),
-            ));
+            return Err(GlobalsError::Address(addr as isize));
         }
 
         self.addrs[addr] = val;
         Ok(())
     }
 
-    pub fn get_int(&self, addr: i16) -> Result<i32, ProgsError> {
+    pub fn get_int(&self, addr: i16) -> Result<i32, GlobalsError> {
         Ok(self.get_addr(addr)?.read_i32::<LittleEndian>()?)
     }
 
-    pub fn put_int(&mut self, val: i32, addr: i16) -> Result<(), ProgsError> {
+    pub fn put_int(&mut self, val: i32, addr: i16) -> Result<(), GlobalsError> {
         self.get_addr_mut(addr)?.write_i32::<LittleEndian>(val)?;
         Ok(())
     }
 
     /// Attempts to retrieve an `f32` from the given virtual address.
-    pub fn get_float(&self, addr: i16) -> Result<f32, ProgsError> {
+    pub fn get_float(&self, addr: i16) -> Result<f32, GlobalsError> {
         self.type_check(addr as usize, Type::QFloat)?;
         Ok(self.get_addr(addr)?.read_f32::<LittleEndian>()?)
     }
 
     /// Attempts to store an `f32` at the given virtual address.
-    pub fn put_float(&mut self, val: f32, addr: i16) -> Result<(), ProgsError> {
+    pub fn put_float(&mut self, val: f32, addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QFloat)?;
         self.get_addr_mut(addr)?.write_f32::<LittleEndian>(val)?;
         Ok(())
     }
 
     /// Attempts to load an `[f32; 3]` from the given address.
-    pub fn get_vector(&self, addr: i16) -> Result<[f32; 3], ProgsError> {
+    pub fn get_vector(&self, addr: i16) -> Result<[f32; 3], GlobalsError> {
         self.type_check(addr as usize, Type::QVector)?;
 
         let mut v = [0.0; 3];
@@ -378,7 +412,7 @@ impl Globals {
     }
 
     /// Attempts to store an `[f32; 3]` at the given address.
-    pub fn put_vector(&mut self, val: [f32; 3], addr: i16) -> Result<(), ProgsError> {
+    pub fn put_vector(&mut self, val: [f32; 3], addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QVector)?;
 
         for i in 0..3 {
@@ -388,62 +422,77 @@ impl Globals {
         Ok(())
     }
 
-    pub fn get_string_id(&self, addr: i16) -> Result<StringId, ProgsError> {
+    pub fn get_string_id(&self, addr: i16) -> Result<StringId, GlobalsError> {
+        self.type_check(addr as usize, Type::QString)?;
+
         Ok(StringId(
             self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize,
         ))
     }
 
-    pub fn put_string_id(&mut self, val: StringId, addr: i16) -> Result<(), ProgsError> {
+    pub fn put_string_id(&mut self, val: StringId, addr: i16) -> Result<(), GlobalsError> {
+        self.type_check(addr as usize, Type::QString)?;
+
         self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
-            val.try_into()?,
+            val.try_into().unwrap(),
         )?;
         Ok(())
     }
 
-    pub fn get_entity_id(&self, addr: i16) -> Result<EntityId, ProgsError> {
+    pub fn get_entity_id(&self, addr: i16) -> Result<EntityId, GlobalsError> {
+        self.type_check(addr as usize, Type::QEntity)?;
+
         Ok(EntityId(self.get_addr(addr)?.read_i32::<LittleEndian>()?))
     }
 
-    pub fn put_entity_id(&mut self, val: EntityId, addr: i16) -> Result<(), ProgsError> {
+    pub fn put_entity_id(&mut self, val: EntityId, addr: i16) -> Result<(), GlobalsError> {
+        self.type_check(addr as usize, Type::QEntity)?;
+
         self.get_addr_mut(addr)?.write_i32::<LittleEndian>(val.0)?;
         Ok(())
     }
 
-    pub fn get_field_addr(&self, addr: i16) -> Result<FieldAddr, ProgsError> {
+    pub fn get_field_addr(&self, addr: i16) -> Result<FieldAddr, GlobalsError> {
+        self.type_check(addr as usize, Type::QField)?;
+
         Ok(FieldAddr(self.get_addr(addr)?.read_i32::<LittleEndian>()?))
     }
 
-    pub fn put_field_addr(&mut self, val: FieldAddr, addr: i16) -> Result<(), ProgsError> {
+    pub fn put_field_addr(&mut self, val: FieldAddr, addr: i16) -> Result<(), GlobalsError> {
+        self.type_check(addr as usize, Type::QField)?;
+
         self.get_addr_mut(addr)?.write_i32::<LittleEndian>(val.0)?;
         Ok(())
     }
 
-    pub fn get_function_id(&self, addr: i16) -> Result<FunctionId, ProgsError> {
+    pub fn get_function_id(&self, addr: i16) -> Result<FunctionId, GlobalsError> {
+        self.type_check(addr as usize, Type::QFunction)?;
+
         Ok(FunctionId(
             self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize,
         ))
     }
 
+    pub fn put_function_id(&mut self, val: FunctionId, addr: i16) -> Result<(), GlobalsError> {
+        self.type_check(addr as usize, Type::QFunction)?;
 
-    pub fn put_function_id(&mut self, val: FunctionId, addr: i16) -> Result<(), ProgsError> {
         self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
-            val.try_into()?,
+            val.try_into().unwrap(),
         )?;
         Ok(())
     }
 
 
-    pub fn get_entity_field(&self, addr: i16) -> Result<i32, ProgsError> {
+    pub fn get_entity_field(&self, addr: i16) -> Result<i32, GlobalsError> {
         Ok(self.get_addr(addr)?.read_i32::<LittleEndian>()?)
     }
 
-    pub fn put_entity_field(&mut self, val: i32, addr: i16) -> Result<(), ProgsError> {
+    pub fn put_entity_field(&mut self, val: i32, addr: i16) -> Result<(), GlobalsError> {
         self.get_addr_mut(addr)?.write_i32::<LittleEndian>(val)?;
         Ok(())
     }
 
-    pub fn untyped_copy(&mut self, src_addr: i16, dst_addr: i16) -> Result<(), ProgsError> {
+    pub fn untyped_copy(&mut self, src_addr: i16, dst_addr: i16) -> Result<(), GlobalsError> {
         let src = self.get_addr(src_addr)?.to_owned();
         let dst = self.get_addr_mut(dst_addr)?;
 

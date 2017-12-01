@@ -20,6 +20,7 @@ mod statics;
 use self::statics::AmbientEntityStatics;
 use self::statics::EntityStatics;
 use self::statics::GenericEntityStatics;
+pub use self::statics::FieldAddrFloat;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
