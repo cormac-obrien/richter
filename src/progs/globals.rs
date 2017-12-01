@@ -289,7 +289,12 @@ pub struct Globals {
 }
 
 impl Globals {
-    fn type_check(&self, addr: usize, type_: Type) -> Result<(), GlobalsError> {
+    /// Performs a type check at `addr` with type `type_`.
+    ///
+    /// The type check allows checking `QFloat` against `QVector` and vice-versa, since vectors have
+    /// overlapping definitions with their x-components (e.g. a vector `origin` and its x-component
+    /// `origin_X` will have the same address).
+    pub fn type_check(&self, addr: usize, type_: Type) -> Result<(), GlobalsError> {
         match self.defs.iter().find(|def| def.offset as usize == addr) {
             Some(d) => {
                 if type_ == d.type_ {
@@ -306,19 +311,7 @@ impl Globals {
         }
     }
 
-    pub fn type_at_addr(&self, addr: usize) -> Result<Option<Type>, GlobalsError> {
-        if addr > self.addrs.len() {
-            return Err(GlobalsError::Address(addr as isize));
-        }
-
-        Ok(match self.defs.iter().find(
-            |def| def.offset as usize == addr,
-        ) {
-            Some(d) => Some(d.type_),
-            None => None,
-        })
-    }
-
+    /// Returns a reference to the memory at the given address.
     pub fn get_addr(&self, addr: i16) -> Result<&[u8], GlobalsError> {
         if addr < 0 {
             return Err(GlobalsError::Address(addr as isize));
@@ -333,6 +326,7 @@ impl Globals {
         Ok(&self.addrs[addr])
     }
 
+    /// Returns a mutable reference to the memory at the given address.
     pub fn get_addr_mut(&mut self, addr: i16) -> Result<&mut [u8], GlobalsError> {
         if addr < 0 {
             return Err(GlobalsError::Address(addr as isize));
@@ -347,6 +341,7 @@ impl Globals {
         Ok(&mut self.addrs[addr])
     }
 
+    /// Returns a copy of the memory at the given address.
     pub fn get_bytes(&self, addr: i16) -> Result<[u8; 4], GlobalsError> {
         if addr < 0 {
             return Err(GlobalsError::Address(addr as isize));
@@ -361,6 +356,10 @@ impl Globals {
         Ok(self.addrs[addr])
     }
 
+    /// Writes the provided data to the memory at the given address.
+    ///
+    /// This can be used to circumvent the type checker in cases where an operation is not dependent
+    /// of the type of the data.
     pub fn put_bytes(&mut self, val: [u8; 4], addr: i16) -> Result<(), GlobalsError> {
         if addr < 0 {
             return Err(GlobalsError::Address(addr as isize));
@@ -376,29 +375,31 @@ impl Globals {
         Ok(())
     }
 
+    /// Loads an `i32` from the given virtual address.
     pub fn get_int(&self, addr: i16) -> Result<i32, GlobalsError> {
         Ok(self.get_addr(addr)?.read_i32::<LittleEndian>()?)
     }
 
+    /// Loads an `i32` from the given virtual address.
     pub fn put_int(&mut self, val: i32, addr: i16) -> Result<(), GlobalsError> {
         self.get_addr_mut(addr)?.write_i32::<LittleEndian>(val)?;
         Ok(())
     }
 
-    /// Attempts to retrieve an `f32` from the given virtual address.
+    /// Loads an `f32` from the given virtual address.
     pub fn get_float(&self, addr: i16) -> Result<f32, GlobalsError> {
         self.type_check(addr as usize, Type::QFloat)?;
         Ok(self.get_addr(addr)?.read_f32::<LittleEndian>()?)
     }
 
-    /// Attempts to store an `f32` at the given virtual address.
+    /// Stores an `f32` at the given virtual address.
     pub fn put_float(&mut self, val: f32, addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QFloat)?;
         self.get_addr_mut(addr)?.write_f32::<LittleEndian>(val)?;
         Ok(())
     }
 
-    /// Attempts to load an `[f32; 3]` from the given address.
+    /// Loads an `[f32; 3]` from the given virtual address.
     pub fn get_vector(&self, addr: i16) -> Result<[f32; 3], GlobalsError> {
         self.type_check(addr as usize, Type::QVector)?;
 
@@ -411,7 +412,7 @@ impl Globals {
         Ok(v)
     }
 
-    /// Attempts to store an `[f32; 3]` at the given address.
+    /// Stores an `[f32; 3]` at the given virtual address.
     pub fn put_vector(&mut self, val: [f32; 3], addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QVector)?;
 
@@ -422,6 +423,7 @@ impl Globals {
         Ok(())
     }
 
+    /// Loads a `StringId` from the given virtual address.
     pub fn get_string_id(&self, addr: i16) -> Result<StringId, GlobalsError> {
         self.type_check(addr as usize, Type::QString)?;
 
@@ -430,6 +432,7 @@ impl Globals {
         ))
     }
 
+    /// Stores a `StringId` at the given virtual address.
     pub fn put_string_id(&mut self, val: StringId, addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QString)?;
 
@@ -439,12 +442,14 @@ impl Globals {
         Ok(())
     }
 
+    /// Loads an `EntityId` from the given virtual address.
     pub fn get_entity_id(&self, addr: i16) -> Result<EntityId, GlobalsError> {
         self.type_check(addr as usize, Type::QEntity)?;
 
         Ok(EntityId(self.get_addr(addr)?.read_i32::<LittleEndian>()?))
     }
 
+    /// Stores an `EntityId` at the given virtual address.
     pub fn put_entity_id(&mut self, val: EntityId, addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QEntity)?;
 
@@ -452,36 +457,38 @@ impl Globals {
         Ok(())
     }
 
+    /// Loads a `FieldAddr` from the given virtual address.
     pub fn get_field_addr(&self, addr: i16) -> Result<FieldAddr, GlobalsError> {
         self.type_check(addr as usize, Type::QField)?;
 
         Ok(FieldAddr(self.get_addr(addr)?.read_i32::<LittleEndian>()?))
     }
 
+    /// Stores a `FieldAddr` at the given virtual address.
     pub fn put_field_addr(&mut self, val: FieldAddr, addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QField)?;
-
         self.get_addr_mut(addr)?.write_i32::<LittleEndian>(val.0)?;
         Ok(())
     }
 
+    /// Loads a `FunctionId` from the given virtual address.
     pub fn get_function_id(&self, addr: i16) -> Result<FunctionId, GlobalsError> {
         self.type_check(addr as usize, Type::QFunction)?;
-
         Ok(FunctionId(
             self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize,
         ))
     }
 
+    /// Stores a `FunctionId` at the given virtual address.
     pub fn put_function_id(&mut self, val: FunctionId, addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QFunction)?;
-
         self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
             val.try_into().unwrap(),
         )?;
         Ok(())
     }
 
+    // TODO: typecheck these with QPointer?
 
     pub fn get_entity_field(&self, addr: i16) -> Result<i32, GlobalsError> {
         Ok(self.get_addr(addr)?.read_i32::<LittleEndian>()?)
@@ -492,6 +499,7 @@ impl Globals {
         Ok(())
     }
 
+    /// Copies the data at `src_addr` to `dst_addr` without type checking.
     pub fn untyped_copy(&mut self, src_addr: i16, dst_addr: i16) -> Result<(), GlobalsError> {
         let src = self.get_addr(src_addr)?.to_owned();
         let dst = self.get_addr_mut(dst_addr)?;
