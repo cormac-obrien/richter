@@ -293,12 +293,10 @@ pub struct StringTable {
 
 impl StringTable {
     pub fn new(data: Vec<u8>) -> StringTable {
-        let mut table = HashMap::new();
-
         StringTable {
             byte_count: Cell::new(data.len()),
             lump: String::from_utf8(data).unwrap(),
-            table: RefCell::new(table),
+            table: RefCell::new(HashMap::new()),
         }
     }
 
