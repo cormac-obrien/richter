@@ -72,35 +72,35 @@ fn transcribe_clcmd<'a>(src: &'a [u8]) -> String {
 
                 result += &format!("flags={:08b} ", flags.bits());
 
-                if flags.contains(qw::MOVE_ANGLE1) {
+                if flags.contains(MoveDeltaFlags::MOVE_ANGLE1) {
                     result += &format!("angle1={} ", curs.read_u16::<LittleEndian>().unwrap());
                 }
 
-                if flags.contains(qw::MOVE_ANGLE2) {
+                if flags.contains(MoveDeltaFlags::MOVE_ANGLE2) {
                     result += &format!("angle2={} ", curs.read_u16::<LittleEndian>().unwrap());
                 }
 
-                if flags.contains(qw::MOVE_ANGLE3) {
+                if flags.contains(MoveDeltaFlags::MOVE_ANGLE3) {
                     result += &format!("angle3={} ", curs.read_u16::<LittleEndian>().unwrap());
                 }
 
-                if flags.contains(qw::MOVE_FORWARD) {
+                if flags.contains(MoveDeltaFlags::MOVE_FORWARD) {
                     result += &format!("forward={} ", curs.read_u16::<LittleEndian>().unwrap());
                 }
 
-                if flags.contains(qw::MOVE_SIDE) {
+                if flags.contains(MoveDeltaFlags::MOVE_SIDE) {
                     result += &format!("side={} ", curs.read_u16::<LittleEndian>().unwrap());
                 }
 
-                if flags.contains(qw::MOVE_UP) {
+                if flags.contains(MoveDeltaFlags::MOVE_UP) {
                     result += &format!("up={} ", curs.read_u16::<LittleEndian>().unwrap());
                 }
 
-                if flags.contains(qw::MOVE_BUTTONS) {
+                if flags.contains(MoveDeltaFlags::MOVE_BUTTONS) {
                     result += &format!("buttons={} ", curs.read_u8().unwrap());
                 }
 
-                if flags.contains(qw::MOVE_IMPULSE) {
+                if flags.contains(MoveDeltaFlags::MOVE_IMPULSE) {
                     result += &format!("impulse={} ", curs.read_u8().unwrap());
                 }
 
