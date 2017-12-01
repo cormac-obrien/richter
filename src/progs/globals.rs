@@ -43,6 +43,17 @@ pub const GLOBAL_DYNAMIC_START: usize = 64;
 pub const GLOBAL_RESERVED_COUNT: usize = GLOBAL_STATIC_START - GLOBAL_RESERVED_START;
 pub const GLOBAL_STATIC_COUNT: usize = GLOBAL_DYNAMIC_START - GLOBAL_STATIC_START;
 
+pub const GLOBAL_ADDR_NULL: usize = 0;
+pub const GLOBAL_ADDR_RETURN: usize = 1;
+pub const GLOBAL_ADDR_ARG_0: usize = 4;
+pub const GLOBAL_ADDR_ARG_1: usize = 7;
+pub const GLOBAL_ADDR_ARG_2: usize = 10;
+pub const GLOBAL_ADDR_ARG_3: usize = 13;
+pub const GLOBAL_ADDR_ARG_4: usize = 16;
+pub const GLOBAL_ADDR_ARG_5: usize = 19;
+pub const GLOBAL_ADDR_ARG_6: usize = 22;
+pub const GLOBAL_ADDR_ARG_7: usize = 25;
+
 #[derive(FromPrimitive)]
 pub enum GlobalFloatAddress {
     Time = 31,
@@ -234,6 +245,23 @@ pub struct Globals {
 }
 
 impl Globals {
+    fn type_check(&self, addr: usize, type_: Type) -> Result<(), ProgsError> {
+        match self.defs.iter().find(|def| def.offset as usize == addr) {
+            Some(d) => {
+                if type_ == d.type_ {
+                    return Ok(());
+                } else if type_ == Type::QFloat && d.type_ == Type::QVector {
+                    return Ok(());
+                } else if type_ == Type::QVector && d.type_ == Type::QFloat {
+                    return Ok(());
+                } else {
+                    return Err(ProgsError::with_msg("type check failed"));
+                }
+            }
+            None => return Ok(()),
+        }
+    }
+
     pub fn type_at_addr(&self, addr: usize) -> Result<Option<Type>, ProgsError> {
         if addr > self.addrs.len() {
             return Err(ProgsError::with_msg(
@@ -281,19 +309,65 @@ impl Globals {
         Ok(&mut self.addrs[addr])
     }
 
+    pub fn get_bytes(&self, addr: i16) -> Result<[u8; 4], ProgsError> {
+        if addr < 0 {
+            return Err(ProgsError::with_msg("get_bytes: negative address"));
+        }
+
+        let addr = addr as usize;
+
+        if addr > self.addrs.len() {
+            return Err(ProgsError::with_msg(
+                format!("address out of range ({})", addr),
+            ));
+        }
+
+        Ok(self.addrs[addr])
+    }
+
+    pub fn put_bytes(&mut self, val: [u8; 4], addr: i16) -> Result<(), ProgsError> {
+        if addr < 0 {
+            return Err(ProgsError::with_msg("put_bytes: negative address"));
+        }
+
+        let addr = addr as usize;
+
+        if addr > self.addrs.len() {
+            return Err(ProgsError::with_msg(
+                format!("address out of range ({})", addr),
+            ));
+        }
+
+        self.addrs[addr] = val;
+        Ok(())
+    }
+
+    pub fn get_int(&self, addr: i16) -> Result<i32, ProgsError> {
+        Ok(self.get_addr(addr)?.read_i32::<LittleEndian>()?)
+    }
+
+    pub fn put_int(&mut self, val: i32, addr: i16) -> Result<(), ProgsError> {
+        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(val)?;
+        Ok(())
+    }
+
     /// Attempts to retrieve an `f32` from the given virtual address.
     pub fn get_float(&self, addr: i16) -> Result<f32, ProgsError> {
+        self.type_check(addr as usize, Type::QFloat)?;
         Ok(self.get_addr(addr)?.read_f32::<LittleEndian>()?)
     }
 
     /// Attempts to store an `f32` at the given virtual address.
     pub fn put_float(&mut self, val: f32, addr: i16) -> Result<(), ProgsError> {
+        self.type_check(addr as usize, Type::QFloat)?;
         self.get_addr_mut(addr)?.write_f32::<LittleEndian>(val)?;
         Ok(())
     }
 
     /// Attempts to load an `[f32; 3]` from the given address.
     pub fn get_vector(&self, addr: i16) -> Result<[f32; 3], ProgsError> {
+        self.type_check(addr as usize, Type::QVector)?;
+
         let mut v = [0.0; 3];
 
         for i in 0..3 {
@@ -305,6 +379,8 @@ impl Globals {
 
     /// Attempts to store an `[f32; 3]` at the given address.
     pub fn put_vector(&mut self, val: [f32; 3], addr: i16) -> Result<(), ProgsError> {
+        self.type_check(addr as usize, Type::QVector)?;
+
         for i in 0..3 {
             self.put_float(val[i], addr + i as i16)?;
         }

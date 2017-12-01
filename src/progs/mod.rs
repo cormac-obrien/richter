@@ -126,7 +126,11 @@ use self::functions::Functions;
 use self::functions::MAX_ARGS;
 use self::functions::Statement;
 use self::globals::Globals;
+use self::globals::GlobalEntityAddress;
+use self::globals::GlobalFloatAddress;
 use self::globals::GlobalsStatic;
+use self::globals::GLOBAL_ADDR_ARG_0;
+use self::globals::GLOBAL_ADDR_RETURN;
 use self::globals::GLOBAL_DYNAMIC_START;
 use self::globals::GLOBAL_RESERVED_COUNT;
 use self::globals::GLOBAL_STATIC_COUNT;
@@ -588,7 +592,7 @@ pub struct ExecutionContext {
     pc: usize,
     current_function: FunctionId,
     call_stack: Vec<StackFrame>,
-    local_stack: Vec<Value>,
+    local_stack: Vec<[u8; 4]>,
 }
 
 impl ExecutionContext {
@@ -613,45 +617,198 @@ impl ExecutionContext {
 
         // save locals to stack
         for i in 0..def.locals {
-            let addr = def.arg_start + i;
-            match globals.type_at_addr(addr).unwrap() {
-                Some(Type::QFloat) |
-                Some(Type::QVector) |
-                None => {
-                    self.local_stack.push(Value::QFloat(
-                        globals.get_float(addr as i16).unwrap(),
-                    ));
-                }
-                Some(Type::QString) => {
-                    self.local_stack.push(Value::QString(
-                        globals.get_string_id(addr as i16).unwrap(),
-                    ));
-                }
-                Some(Type::QEntity) => {
-                    self.local_stack.push(Value::QEntity(
-                        globals.get_entity_id(addr as i16).unwrap(),
-                    ))
-                }
-                Some(Type::QFunction) => {
-                    self.local_stack.push(Value::QFunction(
-                        globals.get_function_id(addr as i16).unwrap(),
-                    ))
-                }
-                _ => unimplemented!(),
+            self.local_stack.push(
+                globals
+                    .get_bytes((def.arg_start + i) as i16)
+                    .unwrap(),
+            );
+        }
+
+        for arg in 0..def.argc {
+            for component in 0..def.argsz[arg] as usize {
+                let val = globals
+                    .get_bytes((GLOBAL_ADDR_ARG_0 + arg * 3 + component) as i16)
+                    .unwrap();
+                globals.put_bytes(val, def.arg_start as i16).unwrap();
             }
+        }
+
+        self.current_function = f;
+
+        match def.kind {
+            FunctionKind::BuiltIn(_) => {
+                panic!("built-in functions should not be called with enter_function()")
+            }
+            FunctionKind::QuakeC(pc) => self.pc = pc,
         }
     }
 
-    fn leave_function(&self) {}
+    fn leave_function(&mut self, functions: &Functions, globals: &mut Globals, f: FunctionId) {
+        let def = functions.get_def(f).unwrap();
+
+        for i in (0..def.locals).rev() {
+            globals
+                .put_bytes(self.local_stack.pop().unwrap(), (def.arg_start + i) as i16)
+                .unwrap();
+        }
+
+        let frame = self.call_stack.pop().unwrap();
+        self.current_function = frame.func_id;
+        self.pc = frame.instr_id;
+    }
 
     pub fn execute_program(
-        &self,
+        &mut self,
         functions: &Functions,
         globals: &mut Globals,
         entities: &mut EntityList,
         f: FunctionId,
     ) {
         let def = functions.get_def(f).unwrap();
+
+        let mut runaway = 100000;
+
+        let exit_depth = self.call_stack.len();
+
+        self.enter_function(functions, globals, f);
+
+        while self.call_stack.len() != exit_depth {
+            let op = functions.statements[self.pc].opcode;
+            let arg1 = functions.statements[self.pc].arg1;
+            let arg2 = functions.statements[self.pc].arg2;
+            let arg3 = functions.statements[self.pc].arg3;
+
+            println!(
+                "    {:<9} {:>5} {:>5} {:>5}",
+                format!("{:?}", op),
+                arg1,
+                arg2,
+                arg3
+            );
+
+            match op {
+                Opcode::MulF => mul_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::MulV => mul_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::MulFV => mul_fv(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::MulVF => mul_vf(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::Div => div(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::AddF => add_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::AddV => add_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::SubF => sub_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::SubV => sub_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::EqF => eq_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::EqV => eq_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::EqS => eq_s(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::EqEnt => eq_ent(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::EqFnc => eq_fnc(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NeF => ne_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NeV => ne_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NeS => ne_s(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NeEnt => ne_ent(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NeFnc => ne_fnc(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::Le => le(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::Ge => ge(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::Lt => lt(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::Gt => gt(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::LoadF => load_f(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::LoadV => load_v(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::LoadS => load_s(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::LoadEnt => load_ent(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::LoadFld => panic!("load_fld not implemented"),
+                Opcode::LoadFnc => load_fnc(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::Address => address(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::StoreF => store_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::StoreV => store_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::StoreS => store_s(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::StoreEnt => store_ent(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::StoreFld => store_fld(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::StoreFnc => store_fnc(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::StorePF => storep_f(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::StorePV => storep_v(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::StorePS => storep_s(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::StorePEnt => storep_ent(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::StorePFld => panic!("storep_fld not implemented"),
+                Opcode::StorePFnc => storep_fnc(globals, entities, arg1, arg2, arg3).unwrap(),
+                Opcode::NotF => not_f(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NotV => not_v(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NotS => not_s(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NotEnt => not_ent(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::NotFnc => not_fnc(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::And => and(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::Or => or(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::BitAnd => bit_and(globals, arg1, arg2, arg3).unwrap(),
+                Opcode::BitOr => bit_or(globals, arg1, arg2, arg3).unwrap(),
+
+                Opcode::If => {
+                    if globals.get_int(arg1).unwrap() != 0 {
+                        self.pc = (self.pc as isize + globals.get_int(arg2).unwrap() as isize) as
+                            usize;
+                    }
+
+                    continue;
+                }
+
+                Opcode::IfNot => {
+                    if globals.get_int(arg1).unwrap() == 0 {
+                        self.pc = (self.pc as isize + globals.get_int(arg2).unwrap() as isize) as
+                            usize;
+                    }
+
+                    continue;
+                }
+
+                Opcode::State => {
+                    let self_id = globals
+                        .get_entity_id(GlobalEntityAddress::Self_ as i16)
+                        .unwrap();
+                    let self_ent = entities.try_get_entity_mut(self_id.0 as usize).unwrap();
+                    let next_think_time =
+                        globals.get_float(GlobalFloatAddress::Time as i16).unwrap() + 0.1;
+                    // self_ent.put_float
+                }
+
+                Opcode::Goto => {
+                    self.pc = (self.pc as isize + globals.get_int(arg1).unwrap() as isize) as usize;
+                }
+
+                Opcode::Call0 | Opcode::Call1 | Opcode::Call2 | Opcode::Call3 | Opcode::Call4 |
+                Opcode::Call5 | Opcode::Call6 | Opcode::Call7 | Opcode::Call8 => {
+                    let arg_count = op as usize - Opcode::Call0 as usize;
+                    if globals.get_function_id(arg1).unwrap().0 == 0 {
+                        panic!("NULL function");
+                    }
+
+                    let def = functions.get_def(f).unwrap();
+                    match def.kind {
+                        FunctionKind::BuiltIn(i) => {
+                            println!("built-in function {}", i);
+                        }
+
+                        FunctionKind::QuakeC(i) => {
+                            self.enter_function(functions, globals, FunctionId(i));
+                            continue;
+                        }
+                    }
+                }
+
+                Opcode::Done | Opcode::Return => {
+                    let val1 = globals.get_bytes(arg1).unwrap();
+                    let val2 = globals.get_bytes(arg2).unwrap();
+                    let val3 = globals.get_bytes(arg3).unwrap();
+                    globals.put_bytes(val1, GLOBAL_ADDR_RETURN as i16);
+                    globals.put_bytes(val2, (GLOBAL_ADDR_RETURN + 1) as i16);
+                    globals.put_bytes(val3, (GLOBAL_ADDR_RETURN + 2) as i16);
+
+                    let f = self.current_function;
+                    self.leave_function(functions, globals, f);
+
+                    // skip incrementing self.pc
+                    continue;
+                }
+            }
+
+            self.pc += 1;
+        }
     }
 }
 
