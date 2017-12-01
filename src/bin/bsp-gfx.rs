@@ -145,7 +145,9 @@ void main() {
         )
         .unwrap();
 
-    let bsp = richter::bsp::Bsp::load("pak0.pak.d/maps/e1m1.bsp").unwrap();
+    let mut pak = richter::pak::Pak::new();
+    pak.add("pak0.pak").unwrap();
+    let (bsp, _) = richter::bsp::load(pak.open("maps/e1m1.bsp").unwrap()).unwrap();
 
     let textures = bsp.gen_textures(|tex| {
         // TODO: get all mipmaps
