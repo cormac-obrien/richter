@@ -15,7 +15,6 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#![feature(collections_range)]
 #![feature(custom_derive)]
 #![feature(try_from)]
 
@@ -53,7 +52,6 @@ pub mod entity;
 pub mod event;
 pub mod gfx;
 pub mod input;
-pub mod load;
 pub mod lump;
 pub mod math;
 pub mod mdl;
@@ -64,4 +62,3 @@ pub mod progs;
 pub mod qw;
 // pub mod sprite;
 pub mod util;
-pub mod wad;
