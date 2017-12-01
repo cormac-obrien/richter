@@ -31,6 +31,9 @@ use progs::Type;
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
+use cgmath::Deg;
+use cgmath::Euler;
+use cgmath::Matrix3;
 use cgmath::Vector3;
 use chrono::Duration;
 use num::FromPrimitive;
@@ -522,5 +525,77 @@ impl Globals {
         }
 
         Ok(())
+    }
+
+    /// Calculate `v_forward`, `v_right` and `v_up` from `angles`.
+    ///
+    /// This requires some careful coordinate system transformations. Angle vectors are stored
+    /// as `[pitch, yaw, roll]` -- that is, rotations about the lateral (right), vertical (up), and
+    /// longitudinal (forward) axes respectively. However, Quake's coordinate system maps `x` to the
+    /// longitudinal (forward) axis, `y` to the *negative* lateral (leftward) axis, and `z` to the
+    /// vertical (up) axis. As a result, the rotation matrix has to be calculated from `[roll,
+    /// -pitch, yaw]` instead.
+    pub fn make_vectors(&mut self) -> Result<(), GlobalsError> {
+        let angles = self.get_vector(GLOBAL_ADDR_ARG_0 as i16)?;
+
+        let rotation_matrix = make_vectors(angles);
+
+        self.put_vector(
+            rotation_matrix.x.into(),
+            GlobalVectorAddress::VForward as i16,
+        )?;
+        self.put_vector(
+            rotation_matrix.y.into(),
+            GlobalVectorAddress::VRight as i16,
+        )?;
+        self.put_vector(
+            rotation_matrix.z.into(),
+            GlobalVectorAddress::VUp as i16,
+        )?;
+
+        Ok(())
+    }
+}
+
+fn make_vectors(angles: [f32; 3]) -> Matrix3<f32> {
+    let pitch = Deg(-angles[0]);
+    let yaw = Deg(angles[1]);
+    let roll = Deg(angles[2]);
+
+    Matrix3::from(Euler::new(roll, pitch, yaw))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use cgmath::SquareMatrix;
+
+    #[test]
+    fn test_make_vectors_no_rotation() {
+        let angles_zero = [0.0; 3];
+        let result = make_vectors(angles_zero);
+        assert_eq!(Matrix3::identity(), result);
+    }
+
+    #[test]
+    fn test_make_vectors_pitch() {
+        let pitch_90 = [90.0, 0.0, 0.0];
+        let result = make_vectors(pitch_90);
+        assert_eq!(Matrix3::from_angle_y(Deg(-90.0)), result);
+    }
+
+    #[test]
+    fn test_make_vectors_yaw() {
+        let yaw_90 = [0.0, 90.0, 0.0];
+        let result = make_vectors(yaw_90);
+        assert_eq!(Matrix3::from_angle_z(Deg(90.0)), result);
+    }
+
+    #[test]
+    fn test_make_vectors_roll() {
+        let roll_90 = [0.0, 0.0, 90.0];
+        let result = make_vectors(roll_90);
+        assert_eq!(Matrix3::from_angle_x(Deg(90.0)), result);
     }
 }
