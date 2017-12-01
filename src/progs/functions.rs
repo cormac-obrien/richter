@@ -70,8 +70,85 @@ impl TryInto<i32> for FunctionId {
 
 #[derive(Debug)]
 pub enum FunctionKind {
-    BuiltIn(usize),
+    BuiltIn(BuiltinFunctionId),
     QuakeC(usize),
+}
+
+#[derive(Copy, Clone, Debug, FromPrimitive)]
+pub enum BuiltinFunctionId {
+    // pr_builtin[0] is the null function
+    MakeVectors = 1,
+    SetOrigin = 2,
+    SetModel = 3,
+    SetSize = 4,
+    // pr_builtin[5] (PF_setabssize) was never implemented
+    Break = 6,
+    Random = 7,
+    Sound = 8,
+    Normalize = 9,
+    Error = 10,
+    ObjError = 11,
+    VLen = 12,
+    VecToYaw = 13,
+    Spawn = 14,
+    Remove = 15,
+    TraceLine = 16,
+    CheckClient = 17,
+    Find = 18,
+    PrecacheSound = 19,
+    PrecacheModel = 20,
+    StuffCmd = 21,
+    FindRadius = 22,
+    BPrint = 23,
+    SPrint = 24,
+    DPrint = 25,
+    FToS = 26,
+    VToS = 27,
+    CoreDump = 28,
+    TraceOn = 29,
+    TraceOff = 30,
+    EPrint = 31,
+    WalkMove = 32,
+    // pr_builtin[33] is not implemented
+    DropToFloor = 34,
+    LightStyle = 35,
+    RInt = 36,
+    Floor = 37,
+    Ceil = 38,
+    // pr_builtin[39] is not implemented
+    CheckBottom = 40,
+    PointContents = 41,
+    // pr_builtin[42] is not implemented
+    FAbs = 43,
+    Aim = 44,
+    Cvar = 45,
+    LocalCmd = 46,
+    NextEnt = 47,
+    Particle = 48,
+    ChangeYaw = 49,
+    // pr_builtin[50] is not implemented
+    VecToAngles = 51,
+    WriteByte = 52,
+    WriteChar = 53,
+    WriteShort = 54,
+    WriteLong = 55,
+    WriteCoord = 56,
+    WriteAngle = 57,
+    WriteString = 58,
+    WriteEntity = 59,
+    // pr_builtin[60] through pr_builtin[66] are only defined for Quake 2
+    MoveToGoal = 67,
+    PrecacheFile = 68,
+    MakeStatic = 69,
+    ChangeLevel = 70,
+    // pr_builtin[71] is not implemented
+    CvarSet = 72,
+    CenterPrint = 73,
+    AmbientSound = 74,
+    PrecacheModel2 = 75,
+    PrecacheSound2 = 76,
+    PrecacheFile2 = 77,
+    SetSpawnArgs = 78,
 }
 
 #[derive(Debug)]

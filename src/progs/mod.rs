@@ -118,6 +118,7 @@ use byteorder::ReadBytesExt;
 use num::FromPrimitive;
 
 use self::ops::Opcode;
+use self::functions::BuiltinFunctionId;
 use self::functions::FunctionDef;
 pub use self::functions::FunctionId;
 use self::functions::FunctionKind;
@@ -260,14 +261,6 @@ pub enum Type {
     QField = 5,
     QFunction = 6,
     QPointer = 7,
-}
-
-pub enum Value {
-    QString(StringId),
-    QFloat(f32),
-    QEntity(EntityId),
-    QField(FieldAddr),
-    QFunction(FunctionId),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -439,7 +432,16 @@ pub fn load(data: &[u8]) -> Result<(Functions, Globals, EntityList), ProgsError>
         );
 
         let kind = match src.read_i32::<LittleEndian>()? {
-            x if x < 0 => FunctionKind::BuiltIn(-x as usize),
+            x if x < 0 => {
+                match BuiltinFunctionId::from_i32(-x) {
+                    Some(f) => FunctionKind::BuiltIn(f),
+                    None => {
+                        return Err(ProgsError::with_msg(
+                            format!("Invalid built-in function ID {}", -x),
+                        ))
+                    }
+                }
+            }
             x => FunctionKind::QuakeC(x as usize),
         };
 
@@ -820,7 +822,7 @@ impl ExecutionContext {
                     let def = functions.get_def(f_to_call)?;
                     match def.kind {
                         FunctionKind::BuiltIn(i) => {
-                            println!("built-in function {}", i);
+                            println!("built-in function {:?}", i);
                             unimplemented!();
                         }
 
