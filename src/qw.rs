@@ -981,7 +981,7 @@ pub struct MoveCmd {
 
 // Move command delta flags, https://github.com/id-Software/Quake/blob/master/QW/client/protocol.h#L171
 bitflags! {
-    struct MoveDeltaFlags: u8 {
+    pub struct MoveDeltaFlags: u8 {
         const MOVE_ANGLE1  = 0x01;
         const MOVE_ANGLE3  = 0x02;
         const MOVE_FORWARD = 0x04;
