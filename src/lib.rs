@@ -17,7 +17,6 @@
 
 #![feature(collections_range)]
 #![feature(custom_derive)]
-#![feature(manually_drop)]
 #![feature(try_from)]
 
 extern crate arrayvec;
@@ -42,10 +41,7 @@ extern crate num_derive;
 extern crate rand;
 extern crate regex;
 extern crate time;
-#[macro_use]
 extern crate vulkano;
-#[macro_use]
-extern crate vulkano_shader_derive;
 extern crate vulkano_win;
 extern crate winit;
 
@@ -66,7 +62,6 @@ pub mod pak;
 pub mod parse;
 pub mod progs;
 pub mod qw;
-pub mod server;
 // pub mod sprite;
 pub mod util;
 pub mod wad;
