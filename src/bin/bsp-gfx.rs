@@ -147,27 +147,35 @@ void main() {
 
     let mut pak = richter::pak::Pak::new();
     pak.add("pak0.pak").unwrap();
-    let (bsp, _) = richter::bsp::load(pak.open("maps/e1m1.bsp").unwrap()).unwrap();
+    let (worldmodel, _, _) = richter::bsp::load(pak.open("maps/e1m1.bsp").unwrap()).unwrap();
 
-    let textures = bsp.gen_textures(|tex| {
-        // TODO: get all mipmaps
-        let mipmap_0 = richter::engine::indexed_to_rgba(&tex.mipmaps[0]);
+    let textures = worldmodel
+        .bsp_data()
+        .textures()
+        .iter()
+        .map(|tex| {
+            let mipmap_full =
+                richter::engine::indexed_to_rgba(tex.mipmap(richter::bsp::BspTextureMipmap::Full));
+            let (width, height) = tex.dimensions();
 
-        let (_, view) = factory
-            .create_texture_immutable_u8::<ColorFormat>(
-                gfx::texture::Kind::D2(
-                    tex.width as u16,
-                    tex.height as u16,
-                    gfx::texture::AaMode::Single,
-                ),
-                &[&mipmap_0],
-            )
-            .unwrap();
+            let (_, view) =
+                factory
+                    .create_texture_immutable_u8::<ColorFormat>(
+                        gfx::texture::Kind::D2(
+                            width as u16,
+                            height as u16,
+                            gfx::texture::AaMode::Single,
+                        ),
+                        &[&mipmap_full],
+                    )
+                    .unwrap();
 
-        view
-    });
+            view
+        })
+        .collect::<Vec<_>>();
 
-    let (face_data, vertex_data): (Vec<Face>, Vec<Vertex>) = bsp.gen_render_data_interleaved();
+    let (face_data, vertex_data): (Vec<Face>, Vec<Vertex>) =
+        worldmodel.bsp_data().gen_render_data_interleaved();
     let vertex_buffer = factory.create_vertex_buffer(&vertex_data);
 
     let sampler = factory.create_sampler(gfx::texture::SamplerInfo::new(
