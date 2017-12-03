@@ -17,12 +17,10 @@
 
 mod statics;
 
-use self::statics::AmbientEntityStatics;
 use self::statics::EntityStatics;
 use self::statics::GenericEntityStatics;
 pub use self::statics::FieldAddrFloat;
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::ops::Index;
@@ -43,7 +41,6 @@ use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 use cgmath::Deg;
 use cgmath::Vector3;
-use cgmath::Zero;
 use chrono::Duration;
 
 const MAX_ENTITIES: usize = 600;
@@ -515,21 +512,6 @@ impl EntityList {
         }
     }
 
-    // TODO: delete this
-    // for testing purposes only
-    pub fn fill_all_uninitialized(&mut self) {
-        for i in 0..self.entries.len() {
-            self.entries[i] = EntityListEntry::NotFree(Entity {
-                string_table: self.string_table.clone(),
-                leaf_count: 0,
-                leaf_ids: [0; MAX_ENT_LEAVES],
-                baseline: EntityState::uninitialized(),
-                statics: EntityStatics::Generic(GenericEntityStatics::default()),
-                dynamics: self.gen_dynamics(),
-            });
-        }
-    }
-
     fn gen_dynamics(&self) -> Vec<[u8; 4]> {
         let mut v = Vec::with_capacity(self.addr_count);
         for _ in 0..self.addr_count {
@@ -563,9 +545,18 @@ impl EntityList {
         Ok(EntityId(entry_id as i32))
     }
 
-    /// Allocate a new entity, initializing its fields with the given data.
+    /// Allocate a new entity and initialize it with the data in the given map.
     ///
-    /// aaaaaaaaaaaaaaaaaaaa
+    /// For each entry in `map`, this will locate a field definition for the entry key, parse the
+    /// entry value to the correct type, and store it at that field.
+    ///
+    /// ## Special cases
+    ///
+    /// There are two cases where the keys do not directly correspond to entity fields:
+    ///
+    /// - `angle`: This allows QuakeEd to write a single value instead of a set of Euler angles.
+    ///   The value should be interpreted as the second component of the `angles` field.
+    /// - `light`: This is simply an alias for `light_lev`.
     pub fn alloc_from_map(&mut self, map: HashMap<&str, &str>) -> Result<EntityId, ProgsError> {
         let mut ent = Entity {
             leaf_count: 0,
@@ -576,9 +567,6 @@ impl EntityList {
             dynamics: self.gen_dynamics(),
         };
 
-        // TODO
-        // for now, only handle the attributes that actually appear in the bsp maps.
-        // this will (probably) need to be fixed to support custom maps.
         for (key, val) in map.iter() {
             match *key {
                 // ignore keys starting with an underscore
