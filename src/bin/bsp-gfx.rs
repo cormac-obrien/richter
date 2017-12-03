@@ -25,6 +25,13 @@ extern crate gfx_window_glutin;
 extern crate glutin;
 extern crate richter;
 
+use cgmath::Angle;
+use cgmath::Deg;
+use cgmath::Euler;
+use cgmath::Matrix3;
+use cgmath::Matrix4;
+use cgmath::Rad;
+use cgmath::Vector3;
 use chrono::Utc;
 use gfx::Device;
 use gfx::Factory;
@@ -113,6 +120,7 @@ uniform mat4 u_transform;
 
 void main() {
     f_texcoord = v_texcoord;
+    // gl_Position = u_transform * vec4(v_position.xyz, 1.0);
     gl_Position = u_transform * vec4(-v_position.y, v_position.z, -v_position.x, 1.0);
 }
 "#
@@ -190,28 +198,71 @@ void main() {
 
     let (fb_width, fb_height) = window.window().get_inner_size_pixels().unwrap();
 
+    let perspective = cgmath::perspective(
+        cgmath::Rad::from(Deg(75.0)),
+        fb_width as f32 / fb_height as f32,
+        1.0,
+        1024.0,
+    );
+
     let mut data = pipe::Data {
         vertex_buffer: vertex_buffer,
-        transform: cgmath::perspective(
-            cgmath::Deg(75.0),
-            fb_width as f32 / fb_height as f32,
-            1.0,
-            1024.0,
-        ).into(),
+        transform: perspective.into(),
         sampler: (textures[0].clone(), sampler),
         out_color: color,
         out_depth: depth,
     };
 
+    let mut move_forward = false;
+    let mut move_back = false;
+    let mut move_left = false;
+    let mut move_right = false;
+    let mut move_up = false;
+    let mut move_down = false;
+
+    let mut look_left = false;
+    let mut look_right = false;
+    let mut look_up = false;
+    let mut look_down = false;
+
+    let mut camera_pos = Vector3::new(0.0, 0.0, 0.0);
+    let mut camera_angles = Euler::new(Rad(0.0), Rad(0.0), Rad(0.0));
+
     let start_time = Utc::now();
+    let mut prev_frame_time = Utc::now().signed_duration_since(start_time);
     let mut exit = false;
     loop {
+        let frame_time = Utc::now().signed_duration_since(start_time);
+        let frame_duration = frame_time - prev_frame_time;
+
         events_loop.poll_events(|event| if let glutin::Event::WindowEvent {
             event, ..
         } = event
         {
             match event {
                 glutin::WindowEvent::Closed => exit = true,
+                glutin::WindowEvent::KeyboardInput { device_id, input } => {
+                    let pressed = match input.state {
+                        glutin::ElementState::Pressed => true,
+                        glutin::ElementState::Released => false,
+                    };
+
+                    if let Some(key) = input.virtual_keycode {
+                        match key {
+                            glutin::VirtualKeyCode::W => move_forward = pressed,
+                            glutin::VirtualKeyCode::A => move_left = pressed,
+                            glutin::VirtualKeyCode::S => move_back = pressed,
+                            glutin::VirtualKeyCode::D => move_right = pressed,
+                            glutin::VirtualKeyCode::Space => move_up = pressed,
+                            glutin::VirtualKeyCode::LControl => move_down = pressed,
+                            glutin::VirtualKeyCode::Up => look_up = pressed,
+                            glutin::VirtualKeyCode::Down => look_down = pressed,
+                            glutin::VirtualKeyCode::Left => look_left = pressed,
+                            glutin::VirtualKeyCode::Right => look_right = pressed,
+                            _ => (),
+                        }
+                    }
+                }
                 _ => (),
             }
         });
@@ -220,8 +271,68 @@ void main() {
             break;
         }
 
-        let frame_time = Utc::now().signed_duration_since(start_time);
+        // turn rate of Pi radians per second
+        let turn_rate = Rad(::std::f32::consts::PI) * frame_duration.num_milliseconds() as f32 /
+            1000.0;
+
+        if look_up {
+            camera_angles.x -= turn_rate;
+            if camera_angles.x < Rad::from(Deg(-90.0)) {
+                camera_angles.x = Rad::from(Deg(-90.0));
+            }
+        }
+
+        if look_down {
+            camera_angles.x += turn_rate;
+            if camera_angles.x > Rad::from(Deg(90.0)) {
+                camera_angles.x = Rad::from(Deg(90.0));
+            }
+        }
+
+        if look_right {
+            camera_angles.y += turn_rate;
+        }
+
+        if look_left {
+            camera_angles.y -= turn_rate;
+        }
+
+        let rotation = Matrix3::from(camera_angles);
+
+        let mut move_vector = Vector3::new(0.0, 0.0, 0.0);
+
+        if move_forward {
+            move_vector.x -= camera_angles.y.sin();
+            move_vector.z += camera_angles.y.cos();
+        }
+
+        if move_back {
+            move_vector.x += camera_angles.y.sin();
+            move_vector.z -= camera_angles.y.cos();
+        }
+
+        if move_left {
+            move_vector.x += camera_angles.y.cos();
+            move_vector.z += camera_angles.y.sin();
+        }
+
+        if move_right {
+            move_vector.x -= camera_angles.y.cos();
+            move_vector.z -= camera_angles.y.sin();
+        }
+
+        if move_up {
+            move_vector.y -= 1.0;
+        }
+
+        if move_down {
+            move_vector.y += 1.0;
+        }
+
+        camera_pos += move_vector;
+
         encoder.clear(&data.out_color, [0.0, 0.0, 0.0, 1.0]);
+        encoder.clear_depth(&data.out_depth, 1.0);
         for f in face_data.iter() {
             let slice = gfx::Slice {
                 start: 0,
@@ -235,11 +346,15 @@ void main() {
                 f.tex_id,
                 frame_time,
             );
-            data.sampler.0 = textures[f.tex_id].clone();
+            data.sampler.0 = textures[frame].clone();
+            data.transform = (perspective * Matrix4::from(rotation) *
+                                  Matrix4::from_translation(camera_pos)).into();
             encoder.draw(&slice, &pso, &data);
         }
         encoder.flush(&mut device);
         window.swap_buffers().unwrap();
         device.cleanup();
+
+        prev_frame_time = frame_time;
     }
 }
