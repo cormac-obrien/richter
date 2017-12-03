@@ -95,8 +95,7 @@
 //! ## Vertex positions
 //!
 //! The vertex positions are stored as 3-component vectors of `float`. The Quake coordinate system
-//! defines X as the longitudinal axis, Y as the lateral axis, and Z as the vertical axis. *During
-//! loading, Richter converts coordinates to a standard right-handed coordinate system.*
+//! defines X as the longitudinal axis, Y as the lateral axis, and Z as the vertical axis.
 //!
 //! # Visibility lists
 //!
