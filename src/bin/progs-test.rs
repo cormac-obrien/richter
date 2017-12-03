@@ -40,7 +40,8 @@ fn main() {
     let (functions, mut globals, mut entity_list) = progs::load(pak.open("progs.dat").unwrap())
         .unwrap();
 
-    let (bsp, ent_string) = bsp::load(pak.open("maps/e1m1.bsp").unwrap()).unwrap();
+    let (world_model, sub_models, ent_string) = bsp::load(pak.open("maps/e1m1.bsp").unwrap())
+        .unwrap();
 
     let maps = match parse::entity_maps(ent_string.as_bytes()) {
         IResult::Done(_, m) => m,
