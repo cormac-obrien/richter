@@ -223,6 +223,7 @@ impl From<::std::io::Error> for BspError {
     }
 }
 
+#[derive(Debug, FromPrimitive)]
 enum BspLumpId {
     Entities = 0,
     Planes = 1,
@@ -520,7 +521,6 @@ impl BspData {
             // debug!("Frame: start {} end {} current {}", start_ms, end_ms, frame_time_ms);
 
             if frame_time_ms > start_ms && frame_time_ms < end_ms {
-                debug!("Using texture {}", self.textures[frame_id].name);
                 return frame_id;
             }
 
@@ -622,8 +622,8 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
         };
 
         debug!(
-            "Lump {:>2}: Offset = 0x{:>08x} | Size = 0x{:>08x}",
-            l,
+            "{: <14} Offset = 0x{:>08x} | Size = 0x{:>08x}",
+            format!("{:?}:", BspLumpId::from_usize(l).unwrap()),
             offset,
             size
         );
