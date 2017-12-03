@@ -15,7 +15,9 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+extern crate chrono;
 extern crate cgmath;
+extern crate env_logger;
 #[macro_use]
 extern crate gfx;
 extern crate gfx_device_gl;
@@ -23,6 +25,7 @@ extern crate gfx_window_glutin;
 extern crate glutin;
 extern crate richter;
 
+use chrono::Utc;
 use gfx::Device;
 use gfx::Factory;
 use gfx::traits::FactoryExt;
@@ -78,6 +81,8 @@ impl From<(usize, usize, usize)> for Face {
 }
 
 fn main() {
+    env_logger::init().unwrap();
+
     let mut events_loop = glutin::EventsLoop::new();
     let window_builder = glutin::WindowBuilder::new().with_title("BSP renderer: gfx-rs backend");
     let context_builder = glutin::ContextBuilder::new()
@@ -198,6 +203,7 @@ void main() {
         out_depth: depth,
     };
 
+    let start_time = Utc::now();
     let mut exit = false;
     loop {
         events_loop.poll_events(|event| if let glutin::Event::WindowEvent {
@@ -214,6 +220,7 @@ void main() {
             break;
         }
 
+        let frame_time = Utc::now().signed_duration_since(start_time);
         encoder.clear(&data.out_color, [0.0, 0.0, 0.0, 1.0]);
         for f in face_data.iter() {
             let slice = gfx::Slice {
@@ -224,6 +231,10 @@ void main() {
                 buffer: gfx::IndexBuffer::Auto,
             };
 
+            let frame = worldmodel.bsp_data().texture_frame_for_time(
+                f.tex_id,
+                frame_time,
+            );
             data.sampler.0 = textures[f.tex_id].clone();
             encoder.draw(&slice, &pso, &data);
         }
