@@ -215,6 +215,17 @@ impl CvarRegistry {
             None => Err(())
         }
     }
+
+    pub fn set<S>(&mut self, name: S, value: S) -> Result<(), ()> where S: AsRef<str> {
+        debug!("cvar assignment: {} {}", name.as_ref(), value.as_ref());
+        match self.cvars.get_mut(name.as_ref()) {
+            Some(s) => {
+                s.val = value.as_ref().to_owned();
+                Ok(())
+            }
+            None => Err(())
+        }
+    }
 }
 
 /// The line of text currently being edited in the console.

@@ -123,7 +123,7 @@ use self::functions::BuiltinFunctionId;
 use self::functions::FunctionDef;
 pub use self::functions::FunctionId;
 use self::functions::FunctionKind;
-use self::functions::Functions;
+pub use self::functions::Functions;
 use self::functions::MAX_ARGS;
 use self::functions::Statement;
 pub use self::globals::GlobalAddrEntity;
@@ -133,6 +133,7 @@ pub use self::globals::GlobalAddrVector;
 pub use self::globals::Globals;
 pub use self::globals::GlobalsError;
 use self::globals::GLOBAL_ADDR_ARG_0;
+use self::globals::GLOBAL_ADDR_ARG_1;
 use self::globals::GLOBAL_ADDR_RETURN;
 use self::globals::GLOBAL_STATIC_COUNT;
 use self::globals::GLOBAL_STATIC_START;
@@ -593,6 +594,7 @@ pub fn load(data: &[u8]) -> Result<(ExecutionContext, Globals, EntityList), Prog
     let entity_list = EntityList::new(
         ent_addr_count,
         string_table.clone(),
+        functions_rc.clone(),
         field_defs.into_boxed_slice(),
     );
 
@@ -720,7 +722,7 @@ impl ExecutionContext {
             let b = self.functions.statements[self.pc].arg2;
             let c = self.functions.statements[self.pc].arg3;
 
-            println!("    {:<9} {:>5} {:>5} {:>5}", format!("{:?}", op), a, b, c);
+            debug!("    {:<9} {:>5} {:>5} {:>5}", format!("{:?}", op), a, b, c);
 
             match op {
                 Opcode::MulF => mul_f(globals, a, b, c)?,
@@ -776,19 +778,19 @@ impl ExecutionContext {
                 Opcode::BitOr => bit_or(globals, a, b, c)?,
 
                 Opcode::If => {
+                    debug!("If: cond == {}", globals.get_int(a)?);
                     if globals.get_int(a)? != 0 {
-                        self.pc = (self.pc as isize + globals.get_int(b)? as isize) as usize;
+                        self.pc = (self.pc as isize + b as isize) as usize;
+                        continue;
                     }
-
-                    continue;
                 }
 
                 Opcode::IfNot => {
+                    debug!("IfNot: cond == {}", globals.get_int(a)?);
                     if globals.get_int(a)? == 0 {
-                        self.pc = (self.pc as isize + globals.get_int(b)? as isize) as usize;
+                        self.pc = (self.pc as isize + b as isize) as usize;
+                        continue;
                     }
-
-                    continue;
                 }
 
                 Opcode::State => {
@@ -821,8 +823,11 @@ impl ExecutionContext {
                         panic!("NULL function");
                     }
 
+                    let name_id = self.functions.get_def(f_to_call)?.name_id;
+                    let name = self.string_table.get(name_id).unwrap();
+
                     if let FunctionKind::BuiltIn(b) = self.functions.get_def(f_to_call)?.kind {
-                        debug!("Calling built-in function {:?}", b);
+                        debug!("Calling built-in function {}", name);
                         match b {
                             BuiltinFunctionId::MakeVectors => globals.make_vectors()?,
                             BuiltinFunctionId::SetOrigin => unimplemented!(),
@@ -836,7 +841,10 @@ impl ExecutionContext {
                             BuiltinFunctionId::ObjError => unimplemented!(),
                             BuiltinFunctionId::VLen => unimplemented!(),
                             BuiltinFunctionId::VecToYaw => unimplemented!(),
-                            BuiltinFunctionId::Spawn => unimplemented!(),
+                            BuiltinFunctionId::Spawn => {
+                                let new_ent = entities.alloc_uninitialized()?;
+                                globals.put_entity_id(new_ent, GLOBAL_ADDR_RETURN as i16)?;
+                            }
                             BuiltinFunctionId::Remove => unimplemented!(),
                             BuiltinFunctionId::TraceLine => unimplemented!(),
                             BuiltinFunctionId::CheckClient => unimplemented!(),
@@ -887,7 +895,13 @@ impl ExecutionContext {
                             BuiltinFunctionId::PrecacheFile => unimplemented!(),
                             BuiltinFunctionId::MakeStatic => unimplemented!(),
                             BuiltinFunctionId::ChangeLevel => unimplemented!(),
-                            BuiltinFunctionId::CvarSet => unimplemented!(),
+                            BuiltinFunctionId::CvarSet => {
+                                let var_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
+                                let var = self.string_table.get(var_id).unwrap();
+                                let val_id = globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
+                                let val = self.string_table.get(val_id).unwrap();
+                                cvars.set(var, val).unwrap();
+                            }
                             BuiltinFunctionId::CenterPrint => unimplemented!(),
                             BuiltinFunctionId::AmbientSound => unimplemented!(),
                             BuiltinFunctionId::PrecacheModel2 => unimplemented!(),
@@ -895,7 +909,9 @@ impl ExecutionContext {
                             BuiltinFunctionId::PrecacheFile2 => unimplemented!(),
                             BuiltinFunctionId::SetSpawnArgs => unimplemented!(),
                         }
+                        debug!("Returning from built-in function {}", name);
                     } else {
+                        debug!("Calling QuakeC function {}", name);
                         self.enter_function(globals, f_to_call)?;
                     }
                 }
@@ -908,16 +924,39 @@ impl ExecutionContext {
                     globals.put_bytes(val2, (GLOBAL_ADDR_RETURN + 1) as i16)?;
                     globals.put_bytes(val3, (GLOBAL_ADDR_RETURN + 2) as i16)?;
 
+                    debug!("Returning from QuakeC function");
                     self.leave_function(globals)?;
-
-                    // skip incrementing self.pc
-                    continue;
                 }
             }
 
             self.pc += 1;
         }
 
+        Ok(())
+    }
+
+    pub fn execute_program_by_name<S>(
+        &mut self,
+        globals: &mut Globals,
+        entities: &mut EntityList,
+        cvars: &mut CvarRegistry,
+        name: S,
+    ) -> Result<(), ProgsError>
+    where
+        S: AsRef<str>,
+    {
+        let name_id = self.string_table.find(name).unwrap();
+        // TODO: implement find_function_by_name
+        let func_id = FunctionId(
+            self.functions
+                .defs
+                .iter()
+                .enumerate()
+                .find(|&(_, ref def)| def.name_id == name_id)
+                .unwrap()
+                .0,
+        );
+        self.execute_program(globals, entities, cvars, func_id)?;
         Ok(())
     }
 }
@@ -943,7 +982,7 @@ pub fn validate(functions: &Functions, globals: &mut Globals, entities: &mut Ent
             let arg1 = functions.statements[i].arg1;
             let arg2 = functions.statements[i].arg2;
             let arg3 = functions.statements[i].arg3;
-            println!(
+            debug!(
                 "    {:<9} {:>5} {:>5} {:>5}",
                 format!("{:?}", op),
                 arg1,

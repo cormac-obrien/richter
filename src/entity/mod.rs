@@ -26,11 +26,15 @@ use std::convert::TryInto;
 use std::ops::Index;
 use std::rc::Rc;
 
+use console::CvarRegistry;
 use parse;
 use progs::EntityFieldAddr;
 use progs::EntityId;
+use progs::ExecutionContext;
 use progs::FieldDef;
 use progs::FunctionId;
+use progs::Functions;
+use progs::Globals;
 use progs::ProgsError;
 use progs::StringId;
 use progs::StringTable;
@@ -435,6 +439,7 @@ pub enum EntityListEntry {
 pub struct EntityList {
     addr_count: usize,
     string_table: Rc<StringTable>,
+    functions: Rc<Functions>,
     field_defs: Box<[FieldDef]>,
     entries: Box<[EntityListEntry]>,
 }
@@ -444,6 +449,7 @@ impl EntityList {
     pub fn new(
         addr_count: usize,
         string_table: Rc<StringTable>,
+        functions: Rc<Functions>,
         field_defs: Box<[FieldDef]>,
     ) -> EntityList {
         if addr_count < STATIC_ADDRESS_COUNT {
@@ -462,6 +468,7 @@ impl EntityList {
         EntityList {
             addr_count,
             string_table,
+            functions,
             field_defs,
             entries,
         }
@@ -548,7 +555,8 @@ impl EntityList {
     /// Allocate a new entity and initialize it with the data in the given map.
     ///
     /// For each entry in `map`, this will locate a field definition for the entry key, parse the
-    /// entry value to the correct type, and store it at that field.
+    /// entry value to the correct type, and store it at that field. It will then locate the spawn
+    /// method for the entity's `classname` and execute it.
     ///
     /// ## Special cases
     ///
@@ -557,7 +565,13 @@ impl EntityList {
     /// - `angle`: This allows QuakeEd to write a single value instead of a set of Euler angles.
     ///   The value should be interpreted as the second component of the `angles` field.
     /// - `light`: This is simply an alias for `light_lev`.
-    pub fn alloc_from_map(&mut self, map: HashMap<&str, &str>) -> Result<EntityId, ProgsError> {
+    pub fn alloc_from_map(
+        &mut self,
+        execution_context: &mut ExecutionContext,
+        globals: &mut Globals,
+        cvars: &mut CvarRegistry,
+        map: HashMap<&str, &str>,
+    ) -> Result<EntityId, ProgsError> {
         let mut ent = Entity {
             leaf_count: 0,
             leaf_ids: [0; MAX_ENT_LEAVES],
@@ -632,6 +646,18 @@ impl EntityList {
                     }
                 }
             }
+        }
+
+        match map.get("classname") {
+            Some(c) => {
+                execution_context.execute_program_by_name(
+                    globals,
+                    self,
+                    cvars,
+                    c,
+                )?
+            }
+            None => return Err(ProgsError::with_msg("No entity for classname, can't spawn")),
         }
 
         let entry_id = self.find_free_entry()?;
