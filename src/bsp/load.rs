@@ -37,7 +37,7 @@ use bsp::BspLeaf;
 use bsp::BspLeafContents;
 use bsp::BspModel;
 use bsp::BspPlane;
-use bsp::BspPlaneKind;
+use bsp::BspPlaneAxis;
 use bsp::BspRenderNode;
 use bsp::BspRenderNodeChild;
 use bsp::BspTexInfo;
@@ -218,9 +218,12 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
                 reader.read_f32::<LittleEndian>()?,
             ),
             dist: reader.read_f32::<LittleEndian>()?,
-            kind: BspPlaneKind::from_i32(reader.read_i32::<LittleEndian>()?).unwrap(),
+            axis: BspPlaneAxis::from_i32(reader.read_i32::<LittleEndian>()?),
         });
     }
+
+    let planes_rc = Rc::new(planes.into_boxed_slice());
+
     if reader.seek(SeekFrom::Current(0))? !=
         reader.seek(SeekFrom::Start(
             plane_lump.offset + plane_lump.size as u64,
@@ -703,22 +706,6 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
         )));
     }
 
-    // TODO: figure out what these are used for, if anything. There don't seem to be references to
-    // them in most of the original Quake code (grep for 'hulls\[\d\]').
-    let hull_1 = BspCollisionHull {
-        collision_node_id: 0,
-        collision_node_count,
-        mins: Vector3::new(-16.0, -16.0, -24.0),
-        maxs: Vector3::new(16.0, 16.0, 32.0),
-    };
-
-    let hull_2 = BspCollisionHull {
-        collision_node_id: 0,
-        collision_node_count,
-        mins: Vector3::new(-32.0, -32.0, -24.0),
-        maxs: Vector3::new(32.0, 32.0, 64.0),
-    };
-
     let mut collision_nodes = Vec::with_capacity(collision_node_count);
     for _ in 0..collision_node_count {
         let plane_id = match reader.read_i32::<LittleEndian>()? {
@@ -749,6 +736,26 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
         });
     }
 
+    let collision_nodes_rc = Rc::new(collision_nodes.into_boxed_slice());
+
+    let hull_1 = BspCollisionHull {
+        planes: planes_rc.clone(),
+        collision_nodes: collision_nodes_rc.clone(),
+        collision_node_id: 0,
+        collision_node_count,
+        mins: Vector3::new(-16.0, -16.0, -24.0),
+        maxs: Vector3::new(16.0, 16.0, 32.0),
+    };
+
+    let hull_2 = BspCollisionHull {
+        planes: planes_rc.clone(),
+        collision_nodes: collision_nodes_rc.clone(),
+        collision_node_id: 0,
+        collision_node_count,
+        mins: Vector3::new(-32.0, -32.0, -24.0),
+        maxs: Vector3::new(32.0, 32.0, 64.0),
+    };
+
     if reader.seek(SeekFrom::Current(0))? !=
         reader.seek(SeekFrom::Start(
             collision_node_lump.offset +
@@ -773,7 +780,15 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
 
     let mut leaves = Vec::with_capacity(leaf_count);
     for _ in 0..leaf_count {
-        let contents = reader.read_i32::<LittleEndian>()?;
+        // note the negation here (the constants are negative in the original engine to differentiate
+        // them from plane IDs)
+        let contents_id = -reader.read_i32::<LittleEndian>()?;
+
+        let contents = match BspLeafContents::from_i32(contents_id) {
+            Some(c) => c,
+            None => return Err(BspError::with_msg(format!("Invalid leaf contents ({})", contents_id))),
+        };
+
         let vis_offset = match reader.read_i32::<LittleEndian>()? {
             x if x < -1 => return Err(BspError::with_msg("Invalid visibility data offset")),
             -1 => None,
@@ -897,8 +912,37 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
 
+    // see Mod_MakeHull0,
+    // https://github.com/id-Software/Quake/blob/master/WinQuake/gl_model.c#L1001-L1031
+    //
+    // This essentially duplicates the render nodes into a tree of collision nodes.
+    let mut render_as_collision_nodes = Vec::with_capacity(render_nodes.len());
+    for i in 0..render_nodes.len() {
+        render_as_collision_nodes.push(BspCollisionNode {
+            plane_id: render_nodes[i].plane_id,
+            front: match render_nodes[i].front {
+                BspRenderNodeChild::Node(n) => BspCollisionNodeChild::Node(n),
+                BspRenderNodeChild::Leaf(l) => BspCollisionNodeChild::Contents(leaves[l].contents),
+            },
+            back: match render_nodes[i].back {
+                BspRenderNodeChild::Node(n) => BspCollisionNodeChild::Node(n),
+                BspRenderNodeChild::Leaf(l) => BspCollisionNodeChild::Contents(leaves[l].contents),
+            },
+        })
+    }
+    let render_as_collision_nodes_rc = Rc::new(render_as_collision_nodes.into_boxed_slice());
+
+    let hull_0 = BspCollisionHull {
+        planes: planes_rc.clone(),
+        collision_nodes: render_as_collision_nodes_rc.clone(),
+        collision_node_id: 0,
+        collision_node_count: render_as_collision_nodes_rc.len(),
+        mins: Vector3::new(0.0, 0.0, 0.0),
+        maxs: Vector3::new(0.0, 0.0, 0.0),
+    };
+
     let bsp_data = Rc::new(BspData {
-        planes: planes.into_boxed_slice(),
+        planes: planes_rc.clone(),
         textures: textures.into_boxed_slice(),
         vertices: vertices.into_boxed_slice(),
         visibility: vis_data.into_boxed_slice(),
@@ -906,7 +950,7 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
         texinfo: texinfo.into_boxed_slice(),
         faces: faces.into_boxed_slice(),
         lightmaps: lightmaps.into_boxed_slice(),
-        collision_nodes: collision_nodes.into_boxed_slice(),
+        hulls: [hull_0, hull_1, hull_2],
         leaves: leaves.into_boxed_slice(),
         facelist: facelist.into_boxed_slice(),
         edges: edges.into_boxed_slice(),
@@ -934,18 +978,21 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
 
     let mut models = Vec::with_capacity(model_count);
     for i in 0..model_count {
+        // we spread the bounds out by 1 unit in all directions. not sure why, but the original
+        // engine does this. see
+        // https://github.com/id-Software/Quake/blob/master/WinQuake/gl_model.c#L592
         let min = Vector3::new(
-            reader.read_f32::<LittleEndian>()?,
-            reader.read_f32::<LittleEndian>()?,
-            reader.read_f32::<LittleEndian>()?,
+            reader.read_f32::<LittleEndian>()? - 1.0,
+            reader.read_f32::<LittleEndian>()? - 1.0,
+            reader.read_f32::<LittleEndian>()? - 1.0,
         );
 
         debug!("model[{}].min = {:?}", i, min);
 
         let max = Vector3::new(
-            reader.read_f32::<LittleEndian>()?,
-            reader.read_f32::<LittleEndian>()?,
-            reader.read_f32::<LittleEndian>()?,
+            reader.read_f32::<LittleEndian>()? + 1.0,
+            reader.read_f32::<LittleEndian>()? + 1.0,
+            reader.read_f32::<LittleEndian>()? + 1.0,
         );
 
         debug!("model[{}].max = {:?}", i, max);
@@ -958,15 +1005,19 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
 
         debug!("model[{}].origin = {:?}", i, max);
 
-        let mut collision_roots = [0; MAX_HULLS];
-        for i in 0..collision_roots.len() {
-            collision_roots[i] = match reader.read_i32::<LittleEndian>()? {
+        let mut collision_node_ids = [0; MAX_HULLS];
+        for i in 0..collision_node_ids.len() {
+            collision_node_ids[i] = match reader.read_i32::<LittleEndian>()? {
                 r if r < 0 => return Err(BspError::with_msg("Invalid collision tree root node")),
                 r => r as usize,
             };
         }
 
-        debug!("model[{}].headnodes = {:?}", i, collision_roots);
+        // throw away the last collision node ID -- BSP files make room for 4 collision hulls but
+        // only 3 are ever used.
+        reader.read_i32::<LittleEndian>()?;
+
+        debug!("model[{}].headnodes = {:?}", i, collision_node_ids);
 
         let leaf_count = match reader.read_i32::<LittleEndian>()? {
             x if x < 0 => return Err(BspError::with_msg("Invalid leaf count")),
@@ -985,15 +1036,21 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
             x => x as usize,
         };
 
+        let mut collision_node_counts = [0; MAX_HULLS];
+        for i in 0..collision_node_counts.len() {
+            collision_node_counts[i] = collision_node_count - collision_node_ids[i];
+        }
+
         models.push(BspModel {
             bsp_data: bsp_data.clone(),
-            min: min,
-            max: max,
-            origin: origin,
-            collision_roots: collision_roots,
-            leaf_count: leaf_count,
-            face_id: face_id,
-            face_count: face_count,
+            min,
+            max,
+            origin,
+            collision_node_ids,
+            collision_node_counts,
+            leaf_count,
+            face_id,
+            face_count,
         });
     }
 

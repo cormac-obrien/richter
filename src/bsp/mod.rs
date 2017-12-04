@@ -129,7 +129,9 @@ use cgmath::Vector3;
 
 pub use self::load::load;
 
-const MAX_HULLS: usize = 4;
+// this is 4 in the original source, but the 4th hull is never used.
+const MAX_HULLS: usize = 3;
+
 pub const MAX_LIGHTSTYLES: usize = 4;
 pub const MAX_SOUNDS: usize = 4;
 const MIPLEVELS: usize = 4;
@@ -174,13 +176,10 @@ impl From<::std::io::Error> for BspError {
 }
 
 #[derive(Debug, FromPrimitive)]
-enum BspPlaneKind {
+enum BspPlaneAxis {
     X = 0,
     Y = 1,
     Z = 2,
-    AnyX = 3,
-    AnyY = 4,
-    AnyZ = 5,
 }
 
 #[derive(Debug)]
@@ -191,7 +190,7 @@ struct BspPlane {
     /// distance from the map origin
     dist: f32,
 
-    kind: BspPlaneKind,
+    axis: Option<BspPlaneAxis>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -281,7 +280,7 @@ pub struct BspFace {
 }
 
 /// The contents of a leaf in the BSP tree, specifying how it should look and behave.
-#[derive(Debug, FromPrimitive)]
+#[derive(Copy, Clone, Debug, FromPrimitive)]
 pub enum BspLeafContents {
     /// The leaf has nothing in it. Vision is unobstructed and movement is unimpeded.
     Empty = 1,
@@ -349,15 +348,117 @@ pub struct BspCollisionNode {
 
 #[derive(Debug)]
 pub struct BspCollisionHull {
+    planes: Rc<Box<[BspPlane]>>,
+    collision_nodes: Rc<Box<[BspCollisionNode]>>,
     collision_node_id: usize,
     collision_node_count: usize,
     mins: Vector3<f32>,
     maxs: Vector3<f32>,
 }
 
+impl BspCollisionHull {
+    // TODO: see if we can't make this a little less baffling
+    /// Constructs a collision hull with the given minimum and maximum bounds.
+    ///
+    /// This generates six planes which intersect to form a rectangular prism. The interior of the
+    /// prism is `BspLeafContents::Solid`; the exterior is `BspLeafContents::Empty`.
+    pub fn for_bounds(
+        mins: Vector3<f32>,
+        maxs: Vector3<f32>,
+    ) -> Result<BspCollisionHull, BspError> {
+        if mins.x >= maxs.x || mins.y >= maxs.y || mins.z >= maxs.z {
+            return Err(BspError::with_msg("min bound exceeds max bound"));
+        }
+
+        let mut collision_nodes = Vec::new();
+        let mut planes = Vec::new();
+
+        // front plane (positive x)
+        planes.push(BspPlane {
+            normal: Vector3::unit_x(),
+            dist: maxs.x,
+            axis: Some(BspPlaneAxis::X),
+        });
+        collision_nodes.push(BspCollisionNode {
+            plane_id: 0,
+            front: BspCollisionNodeChild::Contents(BspLeafContents::Empty),
+            back: BspCollisionNodeChild::Node(1),
+        });
+
+        // back plane (negative x)
+        planes.push(BspPlane {
+            normal: Vector3::unit_x(),
+            dist: mins.x,
+            axis: Some(BspPlaneAxis::X),
+        });
+        collision_nodes.push(BspCollisionNode {
+            plane_id: 1,
+            front: BspCollisionNodeChild::Node(2),
+            back: BspCollisionNodeChild::Contents(BspLeafContents::Empty),
+        });
+
+        // left plane (positive y)
+        planes.push(BspPlane {
+            normal: Vector3::unit_y(),
+            dist: maxs.y,
+            axis: Some(BspPlaneAxis::Y),
+        });
+        collision_nodes.push(BspCollisionNode {
+            plane_id: 2,
+            front: BspCollisionNodeChild::Contents(BspLeafContents::Empty),
+            back: BspCollisionNodeChild::Node(3),
+        });
+
+        // right plane (negative y)
+        planes.push(BspPlane {
+            normal: Vector3::unit_y(),
+            dist: mins.x,
+            axis: Some(BspPlaneAxis::X),
+        });
+        collision_nodes.push(BspCollisionNode {
+            plane_id: 3,
+            front: BspCollisionNodeChild::Node(4),
+            back: BspCollisionNodeChild::Contents(BspLeafContents::Empty),
+        });
+
+        // top plane (positive z)
+        planes.push(BspPlane {
+            normal: Vector3::unit_z(),
+            dist: maxs.z,
+            axis: Some(BspPlaneAxis::Z),
+        });
+        collision_nodes.push(BspCollisionNode {
+            plane_id: 4,
+            front: BspCollisionNodeChild::Contents(BspLeafContents::Empty),
+            back: BspCollisionNodeChild::Node(5),
+        });
+
+        // bottom plane (negative z)
+        planes.push(BspPlane {
+            normal: Vector3::unit_z(),
+            dist: mins.z,
+            axis: Some(BspPlaneAxis::Z),
+        });
+        collision_nodes.push(BspCollisionNode {
+            plane_id: 5,
+            front: BspCollisionNodeChild::Contents(BspLeafContents::Solid),
+            back: BspCollisionNodeChild::Contents(BspLeafContents::Empty),
+        });
+
+        Ok(BspCollisionHull {
+            planes: Rc::new(planes.into_boxed_slice()),
+            collision_nodes: Rc::new(collision_nodes.into_boxed_slice()),
+            collision_node_id: 0,
+            collision_node_count: 6,
+            mins,
+            maxs,
+        })
+    }
+}
+
 #[derive(Debug)]
 struct BspLeaf {
-    contents: i32,
+    contents: BspLeafContents,
     vis_offset: Option<usize>,
     min: [i16; 3],
     max: [i16; 3],
@@ -385,7 +486,7 @@ struct BspEdgeIndex {
 
 #[derive(Debug)]
 pub struct BspData {
-    planes: Box<[BspPlane]>,
+    planes: Rc<Box<[BspPlane]>>,
     textures: Box<[BspTexture]>,
     vertices: Box<[Vector3<f32>]>,
     visibility: Box<[u8]>,
@@ -393,11 +494,11 @@ pub struct BspData {
     texinfo: Box<[BspTexInfo]>,
     faces: Box<[BspFace]>,
     lightmaps: Box<[u8]>,
-    collision_nodes: Box<[BspCollisionNode]>,
     leaves: Box<[BspLeaf]>,
     facelist: Box<[usize]>,
     edges: Box<[BspEdge]>,
     edgelist: Box<[BspEdgeIndex]>,
+    hulls: [BspCollisionHull; MAX_HULLS],
 }
 
 impl BspData {
@@ -456,7 +557,8 @@ pub struct BspModel {
     min: Vector3<f32>,
     max: Vector3<f32>,
     origin: Vector3<f32>,
-    collision_roots: [usize; MAX_HULLS],
+    collision_node_ids: [usize; MAX_HULLS],
+    collision_node_counts: [usize; MAX_HULLS],
     leaf_count: usize,
     face_id: usize,
     face_count: usize,
