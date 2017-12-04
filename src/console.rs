@@ -170,7 +170,13 @@ impl CvarRegistry {
         Ok(())
     }
 
-    pub fn register_archive_updateinfo<S>(&mut self, name: S, default: S) -> Result<(), ()> where S: AsRef<str> {
+    /// Register a new info + archived `Cvar` with the given name.
+    ///
+    /// The value of this `Cvar` should be written to `vars.rc` whenever the game is closed or
+    /// `host_writeconfig` is issued. Additionally, when this `Cvar` is set, the serverinfo or
+    /// userinfo string should be updated to reflect its new value.
+    pub fn register_archive_updateinfo<S>(&mut self, name: S, default: S) -> Result<(), ()>
+        where S: AsRef<str> {
         let name = name.as_ref();
         let default = default.as_ref();
 
@@ -187,6 +193,27 @@ impl CvarRegistry {
         }
 
         Ok(())
+    }
+
+    pub fn get<S>(&mut self, name: S) -> Result<&str, ()> where S: AsRef<str> {
+        debug!("cvar lookup: {}", name.as_ref());
+        match self.cvars.get(name.as_ref()) {
+            Some(s) => Ok(&s.val),
+            None => Err(()),
+        }
+    }
+
+    pub fn get_value<S>(&mut self, name: S) -> Result<f32, ()> where S: AsRef<str> {
+        debug!("cvar value lookup: {}", name.as_ref());
+        match self.cvars.get(name.as_ref()) {
+            Some(s) => {
+                match s.val.parse() {
+                    Ok(f) => Ok(f),
+                    Err(_) => Err(()),
+                }
+            }
+            None => Err(())
+        }
     }
 }
 

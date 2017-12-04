@@ -110,6 +110,7 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::rc::Rc;
 
+use console::CvarRegistry;
 use entity::EntityList;
 use entity::FieldAddrFloat;
 
@@ -125,8 +126,10 @@ use self::functions::FunctionKind;
 use self::functions::Functions;
 use self::functions::MAX_ARGS;
 use self::functions::Statement;
-use self::globals::GlobalEntityAddress;
-use self::globals::GlobalFloatAddress;
+pub use self::globals::GlobalAddrEntity;
+pub use self::globals::GlobalAddrFloat;
+pub use self::globals::GlobalAddrFunction;
+pub use self::globals::GlobalAddrVector;
 pub use self::globals::Globals;
 pub use self::globals::GlobalsError;
 use self::globals::GLOBAL_ADDR_ARG_0;
@@ -377,7 +380,7 @@ impl StringTable {
 /// Loads all data from a `progs.dat` file.
 ///
 /// This returns objects representing the necessary context to execute QuakeC bytecode.
-pub fn load(data: &[u8]) -> Result<(Functions, Globals, EntityList), ProgsError> {
+pub fn load(data: &[u8]) -> Result<(ExecutionContext, Globals, EntityList), ProgsError> {
     let mut src = BufReader::new(Cursor::new(data));
     assert!(src.read_i32::<LittleEndian>()? == VERSION);
     assert!(src.read_i32::<LittleEndian>()? == CRC);
@@ -577,6 +580,10 @@ pub fn load(data: &[u8]) -> Result<(Functions, Globals, EntityList), ProgsError>
         ))?
     );
 
+    let functions_rc = Rc::new(functions);
+
+    let execution_context = ExecutionContext::create(string_table.clone(), functions_rc.clone());
+
     let globals = Globals::new(
         string_table.clone(),
         globaldefs.into_boxed_slice(),
@@ -589,7 +596,7 @@ pub fn load(data: &[u8]) -> Result<(Functions, Globals, EntityList), ProgsError>
         field_defs.into_boxed_slice(),
     );
 
-    Ok((functions, globals, entity_list))
+    Ok((execution_context, globals, entity_list))
 }
 
 #[derive(Debug)]
@@ -599,6 +606,8 @@ struct StackFrame {
 }
 
 pub struct ExecutionContext {
+    string_table: Rc<StringTable>,
+    functions: Rc<Functions>,
     pc: usize,
     current_function: FunctionId,
     call_stack: Vec<StackFrame>,
@@ -606,13 +615,19 @@ pub struct ExecutionContext {
 }
 
 impl ExecutionContext {
-    fn enter_function(
-        &mut self,
-        functions: &Functions,
-        globals: &mut Globals,
-        f: FunctionId,
-    ) -> Result<(), ProgsError> {
-        let def = functions.get_def(f)?;
+    pub fn create(string_table: Rc<StringTable>, functions: Rc<Functions>) -> ExecutionContext {
+        ExecutionContext {
+            string_table,
+            functions,
+            pc: 0,
+            current_function: FunctionId(0),
+            call_stack: Vec::with_capacity(MAX_CALL_STACK_DEPTH),
+            local_stack: Vec::with_capacity(MAX_LOCAL_STACK_DEPTH),
+        }
+    }
+
+    fn enter_function(&mut self, globals: &mut Globals, f: FunctionId) -> Result<(), ProgsError> {
+        let def = self.functions.get_def(f)?;
 
         // save stack frame
         self.call_stack.push(StackFrame {
@@ -658,13 +673,8 @@ impl ExecutionContext {
         Ok(())
     }
 
-    fn leave_function(
-        &mut self,
-        functions: &Functions,
-        globals: &mut Globals,
-        f: FunctionId,
-    ) -> Result<(), ProgsError> {
-        let def = functions.get_def(f)?;
+    fn leave_function(&mut self, globals: &mut Globals) -> Result<(), ProgsError> {
+        let def = self.functions.get_def(self.current_function)?;
 
         for i in (0..def.locals).rev() {
             globals.put_bytes(
@@ -686,9 +696,9 @@ impl ExecutionContext {
 
     pub fn execute_program(
         &mut self,
-        functions: &Functions,
         globals: &mut Globals,
         entities: &mut EntityList,
+        cvars: &mut CvarRegistry,
         f: FunctionId,
     ) -> Result<(), ProgsError> {
         let mut runaway = 100000;
@@ -696,7 +706,7 @@ impl ExecutionContext {
         // this allows us to call execute_program() recursively with the same local and call stacks
         let exit_depth = self.call_stack.len();
 
-        self.enter_function(functions, globals, f)?;
+        self.enter_function(globals, f)?;
 
         while self.call_stack.len() != exit_depth {
             runaway -= 1;
@@ -705,104 +715,98 @@ impl ExecutionContext {
                 panic!("runaway program");
             }
 
-            let op = functions.statements[self.pc].opcode;
-            let arg1 = functions.statements[self.pc].arg1;
-            let arg2 = functions.statements[self.pc].arg2;
-            let arg3 = functions.statements[self.pc].arg3;
+            let op = self.functions.statements[self.pc].opcode;
+            let a = self.functions.statements[self.pc].arg1;
+            let b = self.functions.statements[self.pc].arg2;
+            let c = self.functions.statements[self.pc].arg3;
 
-            println!(
-                "    {:<9} {:>5} {:>5} {:>5}",
-                format!("{:?}", op),
-                arg1,
-                arg2,
-                arg3
-            );
+            println!("    {:<9} {:>5} {:>5} {:>5}", format!("{:?}", op), a, b, c);
 
             match op {
-                Opcode::MulF => mul_f(globals, arg1, arg2, arg3)?,
-                Opcode::MulV => mul_v(globals, arg1, arg2, arg3)?,
-                Opcode::MulFV => mul_fv(globals, arg1, arg2, arg3)?,
-                Opcode::MulVF => mul_vf(globals, arg1, arg2, arg3)?,
-                Opcode::Div => div(globals, arg1, arg2, arg3)?,
-                Opcode::AddF => add_f(globals, arg1, arg2, arg3)?,
-                Opcode::AddV => add_v(globals, arg1, arg2, arg3)?,
-                Opcode::SubF => sub_f(globals, arg1, arg2, arg3)?,
-                Opcode::SubV => sub_v(globals, arg1, arg2, arg3)?,
-                Opcode::EqF => eq_f(globals, arg1, arg2, arg3)?,
-                Opcode::EqV => eq_v(globals, arg1, arg2, arg3)?,
-                Opcode::EqS => eq_s(globals, arg1, arg2, arg3)?,
-                Opcode::EqEnt => eq_ent(globals, arg1, arg2, arg3)?,
-                Opcode::EqFnc => eq_fnc(globals, arg1, arg2, arg3)?,
-                Opcode::NeF => ne_f(globals, arg1, arg2, arg3)?,
-                Opcode::NeV => ne_v(globals, arg1, arg2, arg3)?,
-                Opcode::NeS => ne_s(globals, arg1, arg2, arg3)?,
-                Opcode::NeEnt => ne_ent(globals, arg1, arg2, arg3)?,
-                Opcode::NeFnc => ne_fnc(globals, arg1, arg2, arg3)?,
-                Opcode::Le => le(globals, arg1, arg2, arg3)?,
-                Opcode::Ge => ge(globals, arg1, arg2, arg3)?,
-                Opcode::Lt => lt(globals, arg1, arg2, arg3)?,
-                Opcode::Gt => gt(globals, arg1, arg2, arg3)?,
-                Opcode::LoadF => load_f(globals, entities, arg1, arg2, arg3)?,
-                Opcode::LoadV => load_v(globals, entities, arg1, arg2, arg3)?,
-                Opcode::LoadS => load_s(globals, entities, arg1, arg2, arg3)?,
-                Opcode::LoadEnt => load_ent(globals, entities, arg1, arg2, arg3)?,
+                Opcode::MulF => mul_f(globals, a, b, c)?,
+                Opcode::MulV => mul_v(globals, a, b, c)?,
+                Opcode::MulFV => mul_fv(globals, a, b, c)?,
+                Opcode::MulVF => mul_vf(globals, a, b, c)?,
+                Opcode::Div => div(globals, a, b, c)?,
+                Opcode::AddF => add_f(globals, a, b, c)?,
+                Opcode::AddV => add_v(globals, a, b, c)?,
+                Opcode::SubF => sub_f(globals, a, b, c)?,
+                Opcode::SubV => sub_v(globals, a, b, c)?,
+                Opcode::EqF => eq_f(globals, a, b, c)?,
+                Opcode::EqV => eq_v(globals, a, b, c)?,
+                Opcode::EqS => eq_s(globals, a, b, c)?,
+                Opcode::EqEnt => eq_ent(globals, a, b, c)?,
+                Opcode::EqFnc => eq_fnc(globals, a, b, c)?,
+                Opcode::NeF => ne_f(globals, a, b, c)?,
+                Opcode::NeV => ne_v(globals, a, b, c)?,
+                Opcode::NeS => ne_s(globals, a, b, c)?,
+                Opcode::NeEnt => ne_ent(globals, a, b, c)?,
+                Opcode::NeFnc => ne_fnc(globals, a, b, c)?,
+                Opcode::Le => le(globals, a, b, c)?,
+                Opcode::Ge => ge(globals, a, b, c)?,
+                Opcode::Lt => lt(globals, a, b, c)?,
+                Opcode::Gt => gt(globals, a, b, c)?,
+                Opcode::LoadF => load_f(globals, entities, a, b, c)?,
+                Opcode::LoadV => load_v(globals, entities, a, b, c)?,
+                Opcode::LoadS => load_s(globals, entities, a, b, c)?,
+                Opcode::LoadEnt => load_ent(globals, entities, a, b, c)?,
                 Opcode::LoadFld => panic!("load_fld not implemented"),
-                Opcode::LoadFnc => load_fnc(globals, entities, arg1, arg2, arg3)?,
-                Opcode::Address => address(globals, entities, arg1, arg2, arg3)?,
-                Opcode::StoreF => store_f(globals, arg1, arg2, arg3)?,
-                Opcode::StoreV => store_v(globals, arg1, arg2, arg3)?,
-                Opcode::StoreS => store_s(globals, arg1, arg2, arg3)?,
-                Opcode::StoreEnt => store_ent(globals, arg1, arg2, arg3)?,
-                Opcode::StoreFld => store_fld(globals, arg1, arg2, arg3)?,
-                Opcode::StoreFnc => store_fnc(globals, arg1, arg2, arg3)?,
-                Opcode::StorePF => storep_f(globals, entities, arg1, arg2, arg3)?,
-                Opcode::StorePV => storep_v(globals, entities, arg1, arg2, arg3)?,
-                Opcode::StorePS => storep_s(globals, entities, arg1, arg2, arg3)?,
-                Opcode::StorePEnt => storep_ent(globals, entities, arg1, arg2, arg3)?,
+                Opcode::LoadFnc => load_fnc(globals, entities, a, b, c)?,
+                Opcode::Address => address(globals, entities, a, b, c)?,
+                Opcode::StoreF => store_f(globals, a, b, c)?,
+                Opcode::StoreV => store_v(globals, a, b, c)?,
+                Opcode::StoreS => store_s(globals, a, b, c)?,
+                Opcode::StoreEnt => store_ent(globals, a, b, c)?,
+                Opcode::StoreFld => store_fld(globals, a, b, c)?,
+                Opcode::StoreFnc => store_fnc(globals, a, b, c)?,
+                Opcode::StorePF => storep_f(globals, entities, a, b, c)?,
+                Opcode::StorePV => storep_v(globals, entities, a, b, c)?,
+                Opcode::StorePS => storep_s(globals, entities, a, b, c)?,
+                Opcode::StorePEnt => storep_ent(globals, entities, a, b, c)?,
                 Opcode::StorePFld => panic!("storep_fld not implemented"),
-                Opcode::StorePFnc => storep_fnc(globals, entities, arg1, arg2, arg3)?,
-                Opcode::NotF => not_f(globals, arg1, arg2, arg3)?,
-                Opcode::NotV => not_v(globals, arg1, arg2, arg3)?,
-                Opcode::NotS => not_s(globals, arg1, arg2, arg3)?,
-                Opcode::NotEnt => not_ent(globals, arg1, arg2, arg3)?,
-                Opcode::NotFnc => not_fnc(globals, arg1, arg2, arg3)?,
-                Opcode::And => and(globals, arg1, arg2, arg3)?,
-                Opcode::Or => or(globals, arg1, arg2, arg3)?,
-                Opcode::BitAnd => bit_and(globals, arg1, arg2, arg3)?,
-                Opcode::BitOr => bit_or(globals, arg1, arg2, arg3)?,
+                Opcode::StorePFnc => storep_fnc(globals, entities, a, b, c)?,
+                Opcode::NotF => not_f(globals, a, b, c)?,
+                Opcode::NotV => not_v(globals, a, b, c)?,
+                Opcode::NotS => not_s(globals, a, b, c)?,
+                Opcode::NotEnt => not_ent(globals, a, b, c)?,
+                Opcode::NotFnc => not_fnc(globals, a, b, c)?,
+                Opcode::And => and(globals, a, b, c)?,
+                Opcode::Or => or(globals, a, b, c)?,
+                Opcode::BitAnd => bit_and(globals, a, b, c)?,
+                Opcode::BitOr => bit_or(globals, a, b, c)?,
 
                 Opcode::If => {
-                    if globals.get_int(arg1)? != 0 {
-                        self.pc = (self.pc as isize + globals.get_int(arg2)? as isize) as usize;
+                    if globals.get_int(a)? != 0 {
+                        self.pc = (self.pc as isize + globals.get_int(b)? as isize) as usize;
                     }
 
                     continue;
                 }
 
                 Opcode::IfNot => {
-                    if globals.get_int(arg1)? == 0 {
-                        self.pc = (self.pc as isize + globals.get_int(arg2)? as isize) as usize;
+                    if globals.get_int(a)? == 0 {
+                        self.pc = (self.pc as isize + globals.get_int(b)? as isize) as usize;
                     }
 
                     continue;
                 }
 
                 Opcode::State => {
-                    let self_id = globals.get_entity_id(GlobalEntityAddress::Self_ as i16)?;
+                    let self_id = globals.get_entity_id(GlobalAddrEntity::Self_ as i16)?;
                     let self_ent = entities.try_get_entity_mut(self_id.0 as usize)?;
-                    let next_think_time = globals.get_float(GlobalFloatAddress::Time as i16)? + 0.1;
+                    let next_think_time = globals.get_float(GlobalAddrFloat::Time as i16)? + 0.1;
 
                     self_ent.put_float(
                         next_think_time,
                         FieldAddrFloat::NextThink as i16,
                     )?;
 
-                    let frame_id = globals.get_float(arg1)?;
+                    let frame_id = globals.get_float(a)?;
                     self_ent.put_float(frame_id, FieldAddrFloat::FrameId as i16)?;
                 }
 
                 Opcode::Goto => {
-                    self.pc = (self.pc as isize + globals.get_int(arg1)? as isize) as usize;
+                    self.pc = (self.pc as isize + globals.get_int(a)? as isize) as usize;
 
                     continue;
                 }
@@ -812,35 +816,99 @@ impl ExecutionContext {
                     // TODO: pass to equivalent of PF_VarString
                     let _arg_count = op as usize - Opcode::Call0 as usize;
 
-                    let f_to_call = globals.get_function_id(arg1)?;
+                    let f_to_call = globals.get_function_id(a)?;
                     if f_to_call.0 == 0 {
                         panic!("NULL function");
                     }
 
-                    let def = functions.get_def(f_to_call)?;
-                    match def.kind {
-                        FunctionKind::BuiltIn(i) => {
-                            println!("built-in function {:?}", i);
-                            unimplemented!();
+                    if let FunctionKind::BuiltIn(b) = self.functions.get_def(f_to_call)?.kind {
+                        debug!("Calling built-in function {:?}", b);
+                        match b {
+                            BuiltinFunctionId::MakeVectors => globals.make_vectors()?,
+                            BuiltinFunctionId::SetOrigin => unimplemented!(),
+                            BuiltinFunctionId::SetModel => unimplemented!(),
+                            BuiltinFunctionId::SetSize => unimplemented!(),
+                            BuiltinFunctionId::Break => unimplemented!(),
+                            BuiltinFunctionId::Random => unimplemented!(),
+                            BuiltinFunctionId::Sound => unimplemented!(),
+                            BuiltinFunctionId::Normalize => unimplemented!(),
+                            BuiltinFunctionId::Error => unimplemented!(),
+                            BuiltinFunctionId::ObjError => unimplemented!(),
+                            BuiltinFunctionId::VLen => unimplemented!(),
+                            BuiltinFunctionId::VecToYaw => unimplemented!(),
+                            BuiltinFunctionId::Spawn => unimplemented!(),
+                            BuiltinFunctionId::Remove => unimplemented!(),
+                            BuiltinFunctionId::TraceLine => unimplemented!(),
+                            BuiltinFunctionId::CheckClient => unimplemented!(),
+                            BuiltinFunctionId::Find => unimplemented!(),
+                            BuiltinFunctionId::PrecacheSound => unimplemented!(),
+                            BuiltinFunctionId::PrecacheModel => unimplemented!(),
+                            BuiltinFunctionId::StuffCmd => unimplemented!(),
+                            BuiltinFunctionId::FindRadius => unimplemented!(),
+                            BuiltinFunctionId::BPrint => unimplemented!(),
+                            BuiltinFunctionId::SPrint => unimplemented!(),
+                            BuiltinFunctionId::DPrint => unimplemented!(),
+                            BuiltinFunctionId::FToS => unimplemented!(),
+                            BuiltinFunctionId::VToS => unimplemented!(),
+                            BuiltinFunctionId::CoreDump => unimplemented!(),
+                            BuiltinFunctionId::TraceOn => unimplemented!(),
+                            BuiltinFunctionId::TraceOff => unimplemented!(),
+                            BuiltinFunctionId::EPrint => unimplemented!(),
+                            BuiltinFunctionId::WalkMove => unimplemented!(),
+                            BuiltinFunctionId::DropToFloor => unimplemented!(),
+                            BuiltinFunctionId::LightStyle => unimplemented!(),
+                            BuiltinFunctionId::RInt => unimplemented!(),
+                            BuiltinFunctionId::Floor => unimplemented!(),
+                            BuiltinFunctionId::Ceil => unimplemented!(),
+                            BuiltinFunctionId::CheckBottom => unimplemented!(),
+                            BuiltinFunctionId::PointContents => unimplemented!(),
+                            BuiltinFunctionId::FAbs => unimplemented!(),
+                            BuiltinFunctionId::Aim => unimplemented!(),
+                            BuiltinFunctionId::Cvar => {
+                                let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
+                                let s = self.string_table.get(s_id).unwrap();
+                                let f = cvars.get_value(s).unwrap();
+                                globals.put_float(f, GLOBAL_ADDR_RETURN as i16)?;
+                            }
+                            BuiltinFunctionId::LocalCmd => unimplemented!(),
+                            BuiltinFunctionId::NextEnt => unimplemented!(),
+                            BuiltinFunctionId::Particle => unimplemented!(),
+                            BuiltinFunctionId::ChangeYaw => unimplemented!(),
+                            BuiltinFunctionId::VecToAngles => unimplemented!(),
+                            BuiltinFunctionId::WriteByte => unimplemented!(),
+                            BuiltinFunctionId::WriteChar => unimplemented!(),
+                            BuiltinFunctionId::WriteShort => unimplemented!(),
+                            BuiltinFunctionId::WriteLong => unimplemented!(),
+                            BuiltinFunctionId::WriteCoord => unimplemented!(),
+                            BuiltinFunctionId::WriteAngle => unimplemented!(),
+                            BuiltinFunctionId::WriteString => unimplemented!(),
+                            BuiltinFunctionId::WriteEntity => unimplemented!(),
+                            BuiltinFunctionId::MoveToGoal => unimplemented!(),
+                            BuiltinFunctionId::PrecacheFile => unimplemented!(),
+                            BuiltinFunctionId::MakeStatic => unimplemented!(),
+                            BuiltinFunctionId::ChangeLevel => unimplemented!(),
+                            BuiltinFunctionId::CvarSet => unimplemented!(),
+                            BuiltinFunctionId::CenterPrint => unimplemented!(),
+                            BuiltinFunctionId::AmbientSound => unimplemented!(),
+                            BuiltinFunctionId::PrecacheModel2 => unimplemented!(),
+                            BuiltinFunctionId::PrecacheSound2 => unimplemented!(),
+                            BuiltinFunctionId::PrecacheFile2 => unimplemented!(),
+                            BuiltinFunctionId::SetSpawnArgs => unimplemented!(),
                         }
-
-                        FunctionKind::QuakeC(i) => {
-                            self.enter_function(functions, globals, FunctionId(i))?;
-                            continue;
-                        }
+                    } else {
+                        self.enter_function(globals, f_to_call)?;
                     }
                 }
 
                 Opcode::Done | Opcode::Return => {
-                    let val1 = globals.get_bytes(arg1)?;
-                    let val2 = globals.get_bytes(arg2)?;
-                    let val3 = globals.get_bytes(arg3)?;
+                    let val1 = globals.get_bytes(a)?;
+                    let val2 = globals.get_bytes(b)?;
+                    let val3 = globals.get_bytes(c)?;
                     globals.put_bytes(val1, GLOBAL_ADDR_RETURN as i16)?;
                     globals.put_bytes(val2, (GLOBAL_ADDR_RETURN + 1) as i16)?;
                     globals.put_bytes(val3, (GLOBAL_ADDR_RETURN + 2) as i16)?;
 
-                    let f = self.current_function;
-                    self.leave_function(functions, globals, f)?;
+                    self.leave_function(globals)?;
 
                     // skip incrementing self.pc
                     continue;

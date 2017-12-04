@@ -102,7 +102,7 @@ impl From<::std::io::Error> for GlobalsError {
 }
 
 #[derive(FromPrimitive)]
-pub enum GlobalFloatAddress {
+pub enum GlobalAddrFloat {
     Time = 31,
     FrameTime = 32,
     ForceRetouch = 33,
@@ -154,7 +154,7 @@ pub enum GlobalFloatAddress {
 }
 
 #[derive(FromPrimitive)]
-pub enum GlobalVectorAddress {
+pub enum GlobalAddrVector {
     VForward = 59,
     VUp = 62,
     VRight = 65,
@@ -163,12 +163,12 @@ pub enum GlobalVectorAddress {
 }
 
 #[derive(FromPrimitive)]
-pub enum GlobalStringAddress {
+pub enum GlobalAddrString {
     MapName = 34,
 }
 
 #[derive(FromPrimitive)]
-pub enum GlobalEntityAddress {
+pub enum GlobalAddrEntity {
     Self_ = 28,
     Other = 29,
     World = 30,
@@ -177,10 +177,10 @@ pub enum GlobalEntityAddress {
 }
 
 #[derive(FromPrimitive)]
-pub enum GlobalFieldAddress {}
+pub enum GlobalAddrField {}
 
 #[derive(FromPrimitive)]
-pub enum GlobalFunctionAddress {
+pub enum GlobalAddrFunction {
     Main = 82,
     StartFrame = 83,
     PlayerPreThink = 84,
@@ -542,15 +542,15 @@ impl Globals {
 
         self.put_vector(
             rotation_matrix.x.into(),
-            GlobalVectorAddress::VForward as i16,
+            GlobalAddrVector::VForward as i16,
         )?;
         self.put_vector(
             rotation_matrix.y.into(),
-            GlobalVectorAddress::VRight as i16,
+            GlobalAddrVector::VRight as i16,
         )?;
         self.put_vector(
             rotation_matrix.z.into(),
-            GlobalVectorAddress::VUp as i16,
+            GlobalAddrVector::VUp as i16,
         )?;
 
         Ok(())

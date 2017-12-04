@@ -515,13 +515,15 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
             return Err(BspError::with_msg("Invalid plane id"));
         }
 
+        // for child leaves, we subtract 1 from the index to offset the sign bit
+
         let front = match reader.read_i16::<LittleEndian>()? {
-            f if (f >> 15) & 1 == 1 => BspRenderNodeChild::Leaf(f as usize),
+            f if f < 0 => BspRenderNodeChild::Leaf(-f as usize - 1),
             f => BspRenderNodeChild::Node(f as usize),
         };
 
         let back = match reader.read_i16::<LittleEndian>()? {
-            b if (b >> 15) & 1 == 1 => BspRenderNodeChild::Leaf(b as usize),
+            b if b < 0 => BspRenderNodeChild::Leaf(-b as usize - 1),
             b => BspRenderNodeChild::Node(b as usize),
         };
 
