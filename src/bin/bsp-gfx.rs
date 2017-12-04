@@ -202,7 +202,7 @@ void main() {
         cgmath::Rad::from(Deg(75.0)),
         fb_width as f32 / fb_height as f32,
         1.0,
-        1024.0,
+        65536.0,
     );
 
     let mut data = pipe::Data {
@@ -212,6 +212,10 @@ void main() {
         out_color: color,
         out_depth: depth,
     };
+
+    println!("WASD to move");
+    println!("Arrow keys to look");
+    println!("Space to ascend, Left Control to descend");
 
     let mut move_forward = false;
     let mut move_back = false;
