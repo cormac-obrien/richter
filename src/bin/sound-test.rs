@@ -1,4 +1,4 @@
-// Copyright © 2017 Cormac O'Brien
+// Copyright © 2017 Cormac O'Brien.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this software
 // and associated documentation files (the "Software"), to deal in the Software without
@@ -15,53 +15,28 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#![feature(custom_derive)]
-#![feature(try_from)]
-
-extern crate arrayvec;
-#[macro_use]
-extern crate bitflags;
-extern crate byteorder;
-extern crate cgmath;
-extern crate chrono;
-extern crate env_logger;
-#[macro_use]
-extern crate glium;
-extern crate glutin;
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate nom;
-extern crate num;
-#[macro_use]
-extern crate num_derive;
-extern crate rand;
-extern crate regex;
+extern crate richter;
 extern crate rodio;
-extern crate time;
-extern crate vulkano;
-extern crate vulkano_win;
-extern crate winit;
 
-pub mod bsp;
-// pub mod client;
-pub mod console;
-pub mod engine;
-pub mod entity;
-pub mod event;
-pub mod gfx;
-pub mod input;
-pub mod lump;
-pub mod math;
-pub mod mdl;
-// pub mod net;
-pub mod pak;
-pub mod parse;
-pub mod progs;
-// pub mod qw;
-// pub mod sprite;
-pub mod server;
-pub mod util;
-pub mod world;
+use std::io::BufReader;
+use std::io::Cursor;
+
+use richter::pak;
+use rodio::Source;
+
+fn main() {
+    let mut pak = richter::pak::Pak::new();
+    pak.add("pak0.pak").unwrap();
+    let comp1 = pak.open("sound/knight/sword1.wav").unwrap().to_owned();
+
+    let endpoint = rodio::get_endpoints_list().next().unwrap();
+    println!("Using endpoint {}", endpoint.get_name());
+
+    let source = rodio::Decoder::new(BufReader::new(Cursor::new(comp1))).unwrap();
+    println!("Source duration: {:?}", source.total_duration().unwrap());
+    println!("Source sample rate: {:?}Hz", source.samples_rate());
+
+    rodio::play_raw(&endpoint, source.convert_samples().amplify(64.0));
+
+    std::thread::sleep_ms(10000);
+}
