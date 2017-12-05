@@ -26,6 +26,7 @@ use richter::entity::Entity;
 use richter::pak::Pak;
 use richter::parse;
 use richter::progs;
+use richter::server;
 
 use nom::IResult;
 
@@ -34,8 +35,10 @@ fn main() {
     let mut pak = Pak::new();
     pak.add("pak0.pak").unwrap();
 
-    let (mut execution_context, mut globals, mut entity_list) =
+    let (mut execution_context, mut globals, mut entity_list, string_table) =
         progs::load(pak.open("progs.dat").unwrap()).unwrap();
+
+    let mut server = server::Server::new(string_table.clone());
 
     let (world_model, sub_models, ent_string) = bsp::load(pak.open("maps/e1m1.bsp").unwrap())
         .unwrap();
@@ -56,7 +59,13 @@ fn main() {
 
     for m in maps {
         entity_list
-            .alloc_from_map(&mut execution_context, &mut globals, &mut cvars, m)
+            .alloc_from_map(
+                &mut execution_context,
+                &mut globals,
+                &mut cvars,
+                &mut server,
+                m,
+            )
             .unwrap();
     }
 
@@ -65,6 +74,12 @@ fn main() {
         .unwrap();
 
     execution_context
-        .execute_program(&mut globals, &mut entity_list, &mut cvars, start_frame)
+        .execute_program(
+            &mut globals,
+            &mut entity_list,
+            &mut cvars,
+            &mut server,
+            start_frame,
+        )
         .unwrap();
 }

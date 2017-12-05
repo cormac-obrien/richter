@@ -39,6 +39,7 @@ use progs::ProgsError;
 use progs::StringId;
 use progs::StringTable;
 use progs::Type;
+use server::Server;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
@@ -570,6 +571,7 @@ impl EntityList {
         execution_context: &mut ExecutionContext,
         globals: &mut Globals,
         cvars: &mut CvarRegistry,
+        server: &mut Server,
         map: HashMap<&str, &str>,
     ) -> Result<EntityId, ProgsError> {
         let mut ent = Entity {
@@ -654,11 +656,14 @@ impl EntityList {
                     globals,
                     self,
                     cvars,
+                    server,
                     c,
                 )?
             }
             None => return Err(ProgsError::with_msg("No entity for classname, can't spawn")),
         }
+
+        // TODO: link entity into world
 
         let entry_id = self.find_free_entry()?;
         self.entries[entry_id] = EntityListEntry::NotFree(ent);
@@ -666,18 +671,20 @@ impl EntityList {
         Ok(EntityId(entry_id as i32))
     }
 
-    pub fn free(&mut self, entity_id: usize) -> Result<(), ProgsError> {
-        if entity_id > self.entries.len() {
+    pub fn free(&mut self, entity_id: EntityId) -> Result<(), ProgsError> {
+        // TODO: unlink entity from world
+
+        if entity_id.0 as usize > self.entries.len() {
             return Err(ProgsError::with_msg(
-                format!("Invalid entity ID ({})", entity_id),
+                format!("Invalid entity ID ({:?})", entity_id),
             ));
         }
 
-        if let EntityListEntry::Free(_) = self.entries[entity_id] {
+        if let EntityListEntry::Free(_) = self.entries[entity_id.0 as usize] {
             return Ok(());
         }
 
-        self.entries[entity_id] = EntityListEntry::Free(Duration::zero());
+        self.entries[entity_id.0 as usize] = EntityListEntry::Free(Duration::zero());
         Ok(())
     }
 

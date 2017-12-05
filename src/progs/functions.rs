@@ -192,4 +192,20 @@ impl Functions {
             Ok(&self.defs[id.0])
         }
     }
+
+    pub fn find_function_by_name<S>(&self, name: S) -> Result<FunctionId, ProgsError>
+    where
+        S: AsRef<str>,
+    {
+        for (i, def) in self.defs.iter().enumerate() {
+            let f_name = self.string_table.get(def.name_id).unwrap();
+            if f_name == name.as_ref() {
+                return Ok(FunctionId(i));
+            }
+        }
+
+        Err(ProgsError::with_msg(
+            format!("No function named {}", name.as_ref()),
+        ))
+    }
 }

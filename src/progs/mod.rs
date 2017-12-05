@@ -113,6 +113,7 @@ use std::rc::Rc;
 use console::CvarRegistry;
 use entity::EntityList;
 use entity::FieldAddrFloat;
+use server::Server;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
@@ -134,6 +135,8 @@ pub use self::globals::Globals;
 pub use self::globals::GlobalsError;
 use self::globals::GLOBAL_ADDR_ARG_0;
 use self::globals::GLOBAL_ADDR_ARG_1;
+use self::globals::GLOBAL_ADDR_ARG_2;
+use self::globals::GLOBAL_ADDR_ARG_3;
 use self::globals::GLOBAL_ADDR_RETURN;
 use self::globals::GLOBAL_STATIC_COUNT;
 use self::globals::GLOBAL_STATIC_START;
@@ -210,7 +213,7 @@ impl From<GlobalsError> for ProgsError {
 
 #[derive(Copy, Clone, Debug, Default, Eq, Hash, PartialEq)]
 #[repr(C)]
-pub struct StringId(usize);
+pub struct StringId(pub usize);
 
 impl TryInto<i32> for StringId {
     type Error = ProgsError;
@@ -381,7 +384,9 @@ impl StringTable {
 /// Loads all data from a `progs.dat` file.
 ///
 /// This returns objects representing the necessary context to execute QuakeC bytecode.
-pub fn load(data: &[u8]) -> Result<(ExecutionContext, Globals, EntityList), ProgsError> {
+pub fn load(
+    data: &[u8],
+) -> Result<(ExecutionContext, Globals, EntityList, Rc<StringTable>), ProgsError> {
     let mut src = BufReader::new(Cursor::new(data));
     assert!(src.read_i32::<LittleEndian>()? == VERSION);
     assert!(src.read_i32::<LittleEndian>()? == CRC);
@@ -598,7 +603,7 @@ pub fn load(data: &[u8]) -> Result<(ExecutionContext, Globals, EntityList), Prog
         field_defs.into_boxed_slice(),
     );
 
-    Ok((execution_context, globals, entity_list))
+    Ok((execution_context, globals, entity_list, string_table))
 }
 
 #[derive(Debug)]
@@ -630,6 +635,10 @@ impl ExecutionContext {
 
     fn enter_function(&mut self, globals: &mut Globals, f: FunctionId) -> Result<(), ProgsError> {
         let def = self.functions.get_def(f)?;
+        debug!(
+            "Calling QuakeC function {}",
+            self.string_table.get(def.name_id).unwrap()
+        );
 
         // save stack frame
         self.call_stack.push(StackFrame {
@@ -677,6 +686,10 @@ impl ExecutionContext {
 
     fn leave_function(&mut self, globals: &mut Globals) -> Result<(), ProgsError> {
         let def = self.functions.get_def(self.current_function)?;
+        debug!(
+            "Returning from QuakeC function {}",
+            self.string_table.get(def.name_id).unwrap()
+        );
 
         for i in (0..def.locals).rev() {
             globals.put_bytes(
@@ -701,6 +714,7 @@ impl ExecutionContext {
         globals: &mut Globals,
         entities: &mut EntityList,
         cvars: &mut CvarRegistry,
+        server: &mut Server,
         f: FunctionId,
     ) -> Result<(), ProgsError> {
         let mut runaway = 100000;
@@ -808,7 +822,7 @@ impl ExecutionContext {
                 }
 
                 Opcode::Goto => {
-                    self.pc = (self.pc as isize + globals.get_int(a)? as isize) as usize;
+                    self.pc = (self.pc as isize + a as isize) as usize;
 
                     continue;
                 }
@@ -845,12 +859,23 @@ impl ExecutionContext {
                                 let new_ent = entities.alloc_uninitialized()?;
                                 globals.put_entity_id(new_ent, GLOBAL_ADDR_RETURN as i16)?;
                             }
-                            BuiltinFunctionId::Remove => unimplemented!(),
+                            BuiltinFunctionId::Remove => {
+                                let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
+                                entities.free(e_id);
+                            }
                             BuiltinFunctionId::TraceLine => unimplemented!(),
                             BuiltinFunctionId::CheckClient => unimplemented!(),
                             BuiltinFunctionId::Find => unimplemented!(),
-                            BuiltinFunctionId::PrecacheSound => unimplemented!(),
-                            BuiltinFunctionId::PrecacheModel => unimplemented!(),
+                            BuiltinFunctionId::PrecacheSound => {
+                                // TODO: disable precaching after server is active
+                                let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
+                                server.precache_sound(s_id);
+                            }
+                            BuiltinFunctionId::PrecacheModel => {
+                                // TODO: disable precaching after server is active
+                                let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
+                                server.precache_model(s_id);
+                            }
                             BuiltinFunctionId::StuffCmd => unimplemented!(),
                             BuiltinFunctionId::FindRadius => unimplemented!(),
                             BuiltinFunctionId::BPrint => unimplemented!(),
@@ -864,7 +889,17 @@ impl ExecutionContext {
                             BuiltinFunctionId::EPrint => unimplemented!(),
                             BuiltinFunctionId::WalkMove => unimplemented!(),
                             BuiltinFunctionId::DropToFloor => unimplemented!(),
-                            BuiltinFunctionId::LightStyle => unimplemented!(),
+                            BuiltinFunctionId::LightStyle => {
+                                let index = match globals.get_float(GLOBAL_ADDR_ARG_0 as i16)? as
+                                    i32 {
+                                    i if i < 0 => {
+                                        return Err(ProgsError::with_msg("negative lightstyle ID"))
+                                    }
+                                    i => i as usize,
+                                };
+                                let val = globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
+                                server.set_lightstyle(index, val);
+                            }
                             BuiltinFunctionId::RInt => unimplemented!(),
                             BuiltinFunctionId::Floor => unimplemented!(),
                             BuiltinFunctionId::Ceil => unimplemented!(),
@@ -903,7 +938,21 @@ impl ExecutionContext {
                                 cvars.set(var, val).unwrap();
                             }
                             BuiltinFunctionId::CenterPrint => unimplemented!(),
-                            BuiltinFunctionId::AmbientSound => unimplemented!(),
+                            BuiltinFunctionId::AmbientSound => {
+                                let pos = globals.get_vector(GLOBAL_ADDR_ARG_0 as i16)?;
+                                let name = globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
+                                let volume = globals.get_float(GLOBAL_ADDR_ARG_2 as i16)?;
+                                let attenuation = globals.get_float(GLOBAL_ADDR_ARG_3 as i16)?;
+
+                                if server.sound_precached(name) {
+                                    // TODO: write to the server signon packet
+                                } else {
+                                    warn!(
+                                        "no precache for {}",
+                                        self.string_table.get(name).unwrap()
+                                    );
+                                }
+                            }
                             BuiltinFunctionId::PrecacheModel2 => unimplemented!(),
                             BuiltinFunctionId::PrecacheSound2 => unimplemented!(),
                             BuiltinFunctionId::PrecacheFile2 => unimplemented!(),
@@ -911,7 +960,6 @@ impl ExecutionContext {
                         }
                         debug!("Returning from built-in function {}", name);
                     } else {
-                        debug!("Calling QuakeC function {}", name);
                         self.enter_function(globals, f_to_call)?;
                     }
                 }
@@ -924,7 +972,6 @@ impl ExecutionContext {
                     globals.put_bytes(val2, (GLOBAL_ADDR_RETURN + 1) as i16)?;
                     globals.put_bytes(val3, (GLOBAL_ADDR_RETURN + 2) as i16)?;
 
-                    debug!("Returning from QuakeC function");
                     self.leave_function(globals)?;
                 }
             }
@@ -940,23 +987,20 @@ impl ExecutionContext {
         globals: &mut Globals,
         entities: &mut EntityList,
         cvars: &mut CvarRegistry,
+        server: &mut Server,
         name: S,
     ) -> Result<(), ProgsError>
     where
         S: AsRef<str>,
     {
-        let name_id = self.string_table.find(name).unwrap();
-        // TODO: implement find_function_by_name
-        let func_id = FunctionId(
-            self.functions
-                .defs
-                .iter()
-                .enumerate()
-                .find(|&(_, ref def)| def.name_id == name_id)
-                .unwrap()
-                .0,
-        );
-        self.execute_program(globals, entities, cvars, func_id)?;
+        let func_id = self.functions.find_function_by_name(name)?;
+        self.execute_program(
+            globals,
+            entities,
+            cvars,
+            server,
+            func_id,
+        )?;
         Ok(())
     }
 }
