@@ -110,18 +110,19 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::rc::Rc;
 
-use cgmath::Vector3;
 use console::CvarRegistry;
-use entity::EntityList;
-use entity::FieldAddrFloat;
-use entity::FieldAddrStringId;
-use entity::FieldAddrVector;
-use rand;
 use server::Server;
+use world::FieldAddrFloat;
+use world::FieldAddrStringId;
+use world::FieldAddrVector;
+use world::EntityTypeDef;
+use world::World;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
+use cgmath::Vector3;
 use num::FromPrimitive;
+use rand;
 
 use self::ops::Opcode;
 use self::functions::BuiltinFunctionId;
@@ -390,7 +391,7 @@ impl StringTable {
 /// This returns objects representing the necessary context to execute QuakeC bytecode.
 pub fn load(
     data: &[u8],
-) -> Result<(ExecutionContext, Globals, EntityList, Rc<StringTable>), ProgsError> {
+) -> Result<(ExecutionContext, Globals, EntityTypeDef, Rc<StringTable>), ProgsError> {
     let mut src = BufReader::new(Cursor::new(data));
     assert!(src.read_i32::<LittleEndian>()? == VERSION);
     assert!(src.read_i32::<LittleEndian>()? == CRC);
@@ -600,14 +601,9 @@ pub fn load(
         addrs.into_boxed_slice(),
     );
 
-    let entity_list = EntityList::new(
-        ent_addr_count,
-        string_table.clone(),
-        functions_rc.clone(),
-        field_defs.into_boxed_slice(),
-    );
+    let entity_type_def = EntityTypeDef::new(ent_addr_count, field_defs.into_boxed_slice());
 
-    Ok((execution_context, globals, entity_list, string_table))
+    Ok((execution_context, globals, entity_type_def, string_table))
 }
 
 #[derive(Debug)]
@@ -716,7 +712,7 @@ impl ExecutionContext {
     pub fn execute_program(
         &mut self,
         globals: &mut Globals,
-        entities: &mut EntityList,
+        world: &mut World,
         cvars: &mut CvarRegistry,
         server: &mut Server,
         f: FunctionId,
@@ -773,25 +769,25 @@ impl ExecutionContext {
                 Opcode::Ge => ge(globals, a, b, c)?,
                 Opcode::Lt => lt(globals, a, b, c)?,
                 Opcode::Gt => gt(globals, a, b, c)?,
-                Opcode::LoadF => load_f(globals, entities, a, b, c)?,
-                Opcode::LoadV => load_v(globals, entities, a, b, c)?,
-                Opcode::LoadS => load_s(globals, entities, a, b, c)?,
-                Opcode::LoadEnt => load_ent(globals, entities, a, b, c)?,
+                Opcode::LoadF => load_f(globals, world, a, b, c)?,
+                Opcode::LoadV => load_v(globals, world, a, b, c)?,
+                Opcode::LoadS => load_s(globals, world, a, b, c)?,
+                Opcode::LoadEnt => load_ent(globals, world, a, b, c)?,
                 Opcode::LoadFld => panic!("load_fld not implemented"),
-                Opcode::LoadFnc => load_fnc(globals, entities, a, b, c)?,
-                Opcode::Address => address(globals, entities, a, b, c)?,
+                Opcode::LoadFnc => load_fnc(globals, world, a, b, c)?,
+                Opcode::Address => address(globals, world, a, b, c)?,
                 Opcode::StoreF => store_f(globals, a, b, c)?,
                 Opcode::StoreV => store_v(globals, a, b, c)?,
                 Opcode::StoreS => store_s(globals, a, b, c)?,
                 Opcode::StoreEnt => store_ent(globals, a, b, c)?,
                 Opcode::StoreFld => store_fld(globals, a, b, c)?,
                 Opcode::StoreFnc => store_fnc(globals, a, b, c)?,
-                Opcode::StorePF => storep_f(globals, entities, a, b, c)?,
-                Opcode::StorePV => storep_v(globals, entities, a, b, c)?,
-                Opcode::StorePS => storep_s(globals, entities, a, b, c)?,
-                Opcode::StorePEnt => storep_ent(globals, entities, a, b, c)?,
+                Opcode::StorePF => storep_f(globals, world, a, b, c)?,
+                Opcode::StorePV => storep_v(globals, world, a, b, c)?,
+                Opcode::StorePS => storep_s(globals, world, a, b, c)?,
+                Opcode::StorePEnt => storep_ent(globals, world, a, b, c)?,
                 Opcode::StorePFld => panic!("storep_fld not implemented"),
-                Opcode::StorePFnc => storep_fnc(globals, entities, a, b, c)?,
+                Opcode::StorePFnc => storep_fnc(globals, world, a, b, c)?,
                 Opcode::NotF => not_f(globals, a, b, c)?,
                 Opcode::NotV => not_v(globals, a, b, c)?,
                 Opcode::NotS => not_s(globals, a, b, c)?,
@@ -824,7 +820,7 @@ impl ExecutionContext {
 
                 Opcode::State => {
                     let self_id = globals.get_entity_id(GlobalAddrEntity::Self_ as i16)?;
-                    let self_ent = entities.try_get_entity_mut(self_id.0 as usize)?;
+                    let self_ent = world.try_get_entity_mut(self_id.0 as usize)?;
                     let next_think_time = globals.get_float(GlobalAddrFloat::Time as i16)? + 0.1;
 
                     self_ent.put_float(
@@ -864,7 +860,7 @@ impl ExecutionContext {
                             BuiltinFunctionId::SetOrigin => {
                                 let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 let origin = globals.get_vector(GLOBAL_ADDR_ARG_1 as i16)?;
-                                entities.try_get_entity_mut(e_id.0 as usize)?.put_vector(
+                                world.try_get_entity_mut(e_id.0 as usize)?.put_vector(
                                     origin,
                                     FieldAddrVector::Origin as
                                         i16,
@@ -887,7 +883,7 @@ impl ExecutionContext {
                                         }
                                     };
 
-                                let mut ent = entities.try_get_entity_mut(e_id.0 as usize)?;
+                                let mut ent = world.try_get_entity_mut(e_id.0 as usize)?;
                                 ent.put_string_id(
                                     model_name_id,
                                     FieldAddrStringId::ModelName as i16,
@@ -911,7 +907,7 @@ impl ExecutionContext {
                                 let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 let mins = globals.get_vector(GLOBAL_ADDR_ARG_1 as i16)?;
                                 let maxs = globals.get_vector(GLOBAL_ADDR_ARG_2 as i16)?;
-                                entities
+                                world
                                     .try_get_entity_mut(e_id.0 as usize)?
                                     .set_min_max_size(mins, maxs)?;
                             }
@@ -928,15 +924,17 @@ impl ExecutionContext {
 
                             // goal: `world.spawn_entity()`
                             BuiltinFunctionId::Spawn => {
-                                let new_ent = entities.alloc_uninitialized()?;
-                                globals.put_entity_id(new_ent, GLOBAL_ADDR_RETURN as i16)?;
+                                globals.put_entity_id(
+                                    world.spawn_entity()?,
+                                    GLOBAL_ADDR_RETURN as i16,
+                                )?;
                             }
 
                             // goal: `world.remove_entity(e_id)`
                             BuiltinFunctionId::Remove => {
-                                let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
-                                entities.free(e_id)?;
-                                // TODO: unlink entity
+                                world.remove_entity(
+                                    globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?,
+                                )?;
                             }
                             BuiltinFunctionId::TraceLine => unimplemented!(),
                             BuiltinFunctionId::CheckClient => unimplemented!(),
@@ -965,6 +963,8 @@ impl ExecutionContext {
                             BuiltinFunctionId::TraceOff => unimplemented!(),
                             BuiltinFunctionId::EPrint => unimplemented!(),
                             BuiltinFunctionId::WalkMove => unimplemented!(),
+
+                            // goal: `world.drop_entity_to_floor(e_id)`
                             BuiltinFunctionId::DropToFloor => unimplemented!(),
                             BuiltinFunctionId::LightStyle => {
                                 let index = match globals.get_float(GLOBAL_ADDR_ARG_0 as i16)? as
@@ -995,14 +995,31 @@ impl ExecutionContext {
                             BuiltinFunctionId::Particle => unimplemented!(),
                             BuiltinFunctionId::ChangeYaw => unimplemented!(),
                             BuiltinFunctionId::VecToAngles => unimplemented!(),
+
+                            // goal: `server.write_byte(b)`
                             BuiltinFunctionId::WriteByte => unimplemented!(),
+
+                            // goal: `server.write_char(c)`
                             BuiltinFunctionId::WriteChar => unimplemented!(),
+
+                            // goal: `server.write_short(s)`
                             BuiltinFunctionId::WriteShort => unimplemented!(),
+
+                            // goal: `server.write_long(l)`
                             BuiltinFunctionId::WriteLong => unimplemented!(),
+
+                            // goal: `server.write_coord(v)`
                             BuiltinFunctionId::WriteCoord => unimplemented!(),
+
+                            // goal: `server.write_angle(a)`
                             BuiltinFunctionId::WriteAngle => unimplemented!(),
+
+                            // goal: `server.write_string(s_id)`
                             BuiltinFunctionId::WriteString => unimplemented!(),
+
+                            // goal: `server.write_entity(e_id)`
                             BuiltinFunctionId::WriteEntity => unimplemented!(),
+
                             BuiltinFunctionId::MoveToGoal => unimplemented!(),
                             BuiltinFunctionId::PrecacheFile => unimplemented!(),
                             BuiltinFunctionId::MakeStatic => unimplemented!(),
@@ -1064,7 +1081,7 @@ impl ExecutionContext {
     pub fn execute_program_by_name<S>(
         &mut self,
         globals: &mut Globals,
-        entities: &mut EntityList,
+        world: &mut World,
         cvars: &mut CvarRegistry,
         server: &mut Server,
         name: S,
@@ -1073,13 +1090,7 @@ impl ExecutionContext {
         S: AsRef<str>,
     {
         let func_id = self.functions.find_function_by_name(name)?;
-        self.execute_program(
-            globals,
-            entities,
-            cvars,
-            server,
-            func_id,
-        )?;
+        self.execute_program(globals, world, cvars, server, func_id)?;
         Ok(())
     }
 }
@@ -1410,7 +1421,7 @@ fn gt(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, gt_ofs: i16) -> Result<()
 // LOAD_F: load float field from entity
 fn load_f(
     globals: &mut Globals,
-    entity_list: &EntityList,
+    world: &World,
     e_ofs: i16,
     e_f: i16,
     dest_ofs: i16,
@@ -1419,9 +1430,8 @@ fn load_f(
 
     let fld_ofs = globals.get_field_addr(e_f)?;
 
-    let f = entity_list.try_get_entity(ent_id.0 as usize)?.get_float(
-        fld_ofs.0 as
-            i16,
+    let f = world.try_get_entity(ent_id.0 as usize)?.get_float(
+        fld_ofs.0 as i16,
     )?;
     globals.put_float(f, dest_ofs)?;
 
@@ -1431,16 +1441,15 @@ fn load_f(
 // LOAD_V: load vector field from entity
 fn load_v(
     globals: &mut Globals,
-    entity_list: &EntityList,
+    world: &World,
     ent_id_addr: i16,
     ent_vector_addr: i16,
     dest_addr: i16,
 ) -> Result<(), ProgsError> {
     let ent_id = globals.get_entity_id(ent_id_addr)?;
     let ent_vector = globals.get_field_addr(ent_vector_addr)?;
-    let v = entity_list.try_get_entity(ent_id.0 as usize)?.get_vector(
-        ent_vector.0 as
-            i16,
+    let v = world.try_get_entity(ent_id.0 as usize)?.get_vector(
+        ent_vector.0 as i16,
     )?;
     globals.put_vector(v, dest_addr)?;
 
@@ -1449,16 +1458,17 @@ fn load_v(
 
 fn load_s(
     globals: &mut Globals,
-    entity_list: &EntityList,
+    world: &World,
     ent_id_addr: i16,
     ent_string_id_addr: i16,
     dest_addr: i16,
 ) -> Result<(), ProgsError> {
     let ent_id = globals.get_entity_id(ent_id_addr)?;
     let ent_string_id = globals.get_field_addr(ent_string_id_addr)?;
-    let s = entity_list
-        .try_get_entity(ent_id.0 as usize)?
-        .get_string_id(ent_string_id.0 as i16)?;
+    let s = world.try_get_entity(ent_id.0 as usize)?.get_string_id(
+        ent_string_id.0 as
+            i16,
+    )?;
     globals.put_string_id(s, dest_addr)?;
 
     Ok(())
@@ -1466,16 +1476,17 @@ fn load_s(
 
 fn load_ent(
     globals: &mut Globals,
-    entity_list: &EntityList,
+    world: &World,
     ent_id_addr: i16,
     ent_entity_id_addr: i16,
     dest_addr: i16,
 ) -> Result<(), ProgsError> {
     let ent_id = globals.get_entity_id(ent_id_addr)?;
     let ent_entity_id = globals.get_field_addr(ent_entity_id_addr)?;
-    let e = entity_list
-        .try_get_entity(ent_id.0 as usize)?
-        .get_entity_id(ent_entity_id.0 as i16)?;
+    let e = world.try_get_entity(ent_id.0 as usize)?.get_entity_id(
+        ent_entity_id.0 as
+            i16,
+    )?;
     globals.put_entity_id(e, dest_addr)?;
 
     Ok(())
@@ -1483,16 +1494,17 @@ fn load_ent(
 
 fn load_fnc(
     globals: &mut Globals,
-    entity_list: &EntityList,
+    world: &World,
     ent_id_addr: i16,
     ent_function_id_addr: i16,
     dest_addr: i16,
 ) -> Result<(), ProgsError> {
     let ent_id = globals.get_entity_id(ent_id_addr)?;
     let fnc_function_id = globals.get_field_addr(ent_function_id_addr)?;
-    let f = entity_list
-        .try_get_entity(ent_id.0 as usize)?
-        .get_function_id(fnc_function_id.0 as i16)?;
+    let f = world.try_get_entity(ent_id.0 as usize)?.get_function_id(
+        fnc_function_id.0 as
+            i16,
+    )?;
     globals.put_function_id(f, dest_addr)?;
 
     Ok(())
@@ -1500,7 +1512,7 @@ fn load_fnc(
 
 fn address(
     globals: &mut Globals,
-    entity_list: &EntityList,
+    world: &World,
     ent_id_addr: i16,
     fld_addr_addr: i16,
     dest_addr: i16,
@@ -1508,7 +1520,7 @@ fn address(
     let ent_id = globals.get_entity_id(ent_id_addr)?;
     let fld_addr = globals.get_field_addr(fld_addr_addr)?;
     globals.put_entity_field(
-        entity_list.ent_fld_addr_to_i32(EntityFieldAddr {
+        world.ent_fld_addr_to_i32(EntityFieldAddr {
             entity_id: ent_id.0 as usize,
             field_addr: fld_addr.0 as usize,
         }),
@@ -1632,7 +1644,7 @@ fn store_fnc(
 
 fn storep_f(
     globals: &Globals,
-    entities: &mut EntityList,
+    world: &mut World,
     src_float_addr: i16,
     dst_ent_fld_addr: i16,
     unused: i16,
@@ -1642,8 +1654,8 @@ fn storep_f(
     }
 
     let f = globals.get_float(src_float_addr)?;
-    let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
-    entities
+    let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
+    world
         .try_get_entity_mut(ent_fld_addr.entity_id)?
         .put_float(f, ent_fld_addr.field_addr as i16)?;
 
@@ -1652,7 +1664,7 @@ fn storep_f(
 
 fn storep_v(
     globals: &mut Globals,
-    entities: &mut EntityList,
+    world: &mut World,
     src_vector_addr: i16,
     dst_ent_fld_addr: i16,
     unused: i16,
@@ -1662,8 +1674,8 @@ fn storep_v(
     }
 
     let v = globals.get_vector(src_vector_addr)?;
-    let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
-    entities
+    let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
+    world
         .try_get_entity_mut(ent_fld_addr.entity_id)?
         .put_vector(v, ent_fld_addr.field_addr as i16)?;
 
@@ -1672,7 +1684,7 @@ fn storep_v(
 
 fn storep_s(
     globals: &Globals,
-    entities: &mut EntityList,
+    world: &mut World,
     src_string_id_addr: i16,
     dst_ent_fld_addr: i16,
     unused: i16,
@@ -1682,8 +1694,8 @@ fn storep_s(
     }
 
     let s = globals.get_string_id(src_string_id_addr)?;
-    let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
-    entities
+    let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
+    world
         .try_get_entity_mut(ent_fld_addr.entity_id)?
         .put_string_id(s, ent_fld_addr.field_addr as i16)?;
 
@@ -1692,7 +1704,7 @@ fn storep_s(
 
 fn storep_ent(
     globals: &Globals,
-    entities: &mut EntityList,
+    world: &mut World,
     src_entity_id_addr: i16,
     dst_ent_fld_addr: i16,
     unused: i16,
@@ -1702,8 +1714,8 @@ fn storep_ent(
     }
 
     let e = globals.get_entity_id(src_entity_id_addr)?;
-    let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
-    entities
+    let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
+    world
         .try_get_entity_mut(ent_fld_addr.entity_id)?
         .put_entity_id(e, ent_fld_addr.field_addr as i16)?;
 
@@ -1712,7 +1724,7 @@ fn storep_ent(
 
 fn storep_fnc(
     globals: &Globals,
-    entities: &mut EntityList,
+    world: &mut World,
     src_function_id_addr: i16,
     dst_ent_fld_addr: i16,
     unused: i16,
@@ -1722,8 +1734,8 @@ fn storep_fnc(
     }
 
     let f = globals.get_function_id(src_function_id_addr)?;
-    let ent_fld_addr = entities.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
-    entities
+    let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
+    world
         .try_get_entity_mut(ent_fld_addr.entity_id)?
         .put_function_id(f, ent_fld_addr.field_addr as i16)?;
 

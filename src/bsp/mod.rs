@@ -569,8 +569,24 @@ impl BspModel {
         self.bsp_data.clone()
     }
 
+    /// Returns the minimum extent of this BSP model.
+    pub fn min(&self) -> Vector3<f32> {
+        self.min
+    }
+
+    /// Returns the maximum extent of this BSP model.
+    pub fn max(&self) -> Vector3<f32> {
+        self.max
+    }
+
+    /// Returns the size of this BSP model.
     pub fn size(&self) -> Vector3<f32> {
         self.max - self.min
+    }
+
+    /// Returns the origin of this BSP model.
+    pub fn origin(&self) -> Vector3<f32> {
+        self.origin
     }
 }
 

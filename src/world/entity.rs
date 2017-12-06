@@ -15,17 +15,31 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use std::convert::TryInto;
+use std::rc::Rc;
+
 use engine;
 use progs::EntityId;
+use progs::FieldDef;
 use progs::FunctionId;
 use progs::StringId;
+use progs::StringTable;
 use progs::ProgsError;
 
+use byteorder::LittleEndian;
+use byteorder::ReadBytesExt;
+use byteorder::WriteBytesExt;
 use cgmath::Deg;
 use cgmath::Vector3;
 use cgmath::Zero;
 use chrono::Duration;
 use num::FromPrimitive;
+
+const MAX_ENTITIES: usize = 600;
+pub const MAX_ENT_LEAVES: usize = 16;
+
+const ADDR_DYNAMIC_START: usize = 105;
+pub const STATIC_ADDRESS_COUNT: usize = 105;
 
 #[derive(Debug, FromPrimitive)]
 pub enum FieldAddrFloat {
@@ -227,6 +241,37 @@ fn vector_addr(addr: usize) -> Result<FieldAddrVector, ProgsError> {
                 format!("vector_addr: invalid address ({})", addr),
             ))
         }
+    }
+}
+
+pub struct EntityTypeDef {
+    addr_count: usize,
+    field_defs: Box<[FieldDef]>,
+}
+
+impl EntityTypeDef {
+    pub fn new(addr_count: usize, field_defs: Box<[FieldDef]>) -> EntityTypeDef {
+        if addr_count < STATIC_ADDRESS_COUNT {
+            // TODO: error here
+            panic!(
+                "addr_count ({}) < STATIC_ADDRESS_COUNT ({})",
+                addr_count,
+                STATIC_ADDRESS_COUNT
+            );
+        }
+
+        EntityTypeDef {
+            addr_count,
+            field_defs,
+        }
+    }
+
+    pub fn addr_count(&self) -> usize {
+        self.addr_count
+    }
+
+    pub fn field_defs(&self) -> &[FieldDef] {
+        self.field_defs.as_ref()
     }
 }
 
@@ -977,5 +1022,408 @@ impl Default for GenericEntityStatics {
             noise_2: StringId::new(),
             noise_3: StringId::new(),
         }
+    }
+}
+
+pub struct EntityState {
+    origin: Vector3<f32>,
+    angles: Vector3<Deg<f32>>,
+    model_id: usize,
+    frame_id: usize,
+
+    // TODO: more specific types for these
+    colormap: i32,
+    skin: i32,
+    effects: i32,
+}
+
+impl EntityState {
+    pub fn uninitialized() -> EntityState {
+        EntityState {
+            origin: Vector3::new(0.0, 0.0, 0.0),
+            angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            model_id: 0,
+            frame_id: 0,
+            colormap: 0,
+            skin: 0,
+            effects: 0,
+        }
+    }
+}
+
+pub struct Entity {
+    // TODO: link
+    string_table: Rc<StringTable>,
+    leaf_count: usize,
+    leaf_ids: [usize; MAX_ENT_LEAVES],
+    baseline: EntityState,
+    statics: EntityStatics,
+    dynamics: Vec<[u8; 4]>,
+}
+
+impl Entity {
+    pub fn new(string_table: Rc<StringTable>, dynamics: Vec<[u8; 4]>) -> Entity {
+        Entity {
+            string_table,
+            leaf_count: 0,
+            leaf_ids: [0; MAX_ENT_LEAVES],
+            baseline: EntityState::uninitialized(),
+            statics: EntityStatics::Generic(GenericEntityStatics::default()),
+            dynamics,
+        }
+    }
+
+    pub fn get_float(&self, addr: i16) -> Result<f32, ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.get_float_static(addr)
+        } else {
+            self.get_float_dynamic(addr)
+        }
+    }
+
+    fn get_float_static(&self, addr: usize) -> Result<f32, ProgsError> {
+        match self.statics {
+            EntityStatics::Generic(ref g) => g.get_float(addr),
+        }
+    }
+
+    fn get_float_dynamic(&self, addr: usize) -> Result<f32, ProgsError> {
+        Ok(self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_ref()
+            .read_f32::<LittleEndian>()?)
+    }
+
+    pub fn put_float(&mut self, val: f32, addr: i16) -> Result<(), ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.put_float_static(val, addr)
+        } else {
+            self.put_float_dynamic(val, addr)
+        }
+    }
+
+    fn put_float_static(&mut self, val: f32, addr: usize) -> Result<(), ProgsError> {
+        match self.statics {
+            EntityStatics::Generic(ref mut g) => g.put_float(val, addr),
+        }
+    }
+
+    fn put_float_dynamic(&mut self, val: f32, addr: usize) -> Result<(), ProgsError> {
+        self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_mut()
+            .write_f32::<LittleEndian>(val)?;
+
+        Ok(())
+    }
+
+    pub fn get_vector(&self, addr: i16) -> Result<[f32; 3], ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        // subtract 2 to account for size of vector
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() - 2 {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.get_vector_static(addr)
+        } else {
+            self.get_vector_dynamic(addr)
+        }
+    }
+
+    fn get_vector_static(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
+        match self.statics {
+            EntityStatics::Generic(ref g) => g.get_vector(addr),
+        }
+    }
+
+    fn get_vector_dynamic(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
+        let mut v = [0.0; 3];
+
+        for c in 0..v.len() {
+            v[c] = self.get_float_dynamic(addr + c)?;
+        }
+
+        Ok(v)
+    }
+
+    pub fn put_vector(&mut self, val: [f32; 3], addr: i16) -> Result<(), ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        // subtract 2 to account for size of vector
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() - 2 {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.put_vector_static(val, addr)
+        } else {
+            self.put_vector_dynamic(val, addr)
+        }
+    }
+
+    fn put_vector_static(&mut self, val: [f32; 3], addr: usize) -> Result<(), ProgsError> {
+        match self.statics {
+            EntityStatics::Generic(ref mut g) => g.put_vector(val, addr),
+        }
+    }
+
+    fn put_vector_dynamic(&mut self, val: [f32; 3], addr: usize) -> Result<(), ProgsError> {
+        for c in 0..val.len() {
+            self.put_float_dynamic(val[c], addr + c)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_string_id(&self, addr: i16) -> Result<StringId, ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.get_string_id_static(addr)
+        } else {
+            self.get_string_id_dynamic(addr)
+        }
+    }
+
+    fn get_string_id_static(&self, addr: usize) -> Result<StringId, ProgsError> {
+        match self.statics {
+            EntityStatics::Generic(ref g) => g.get_string_id(addr),
+        }
+    }
+
+    fn get_string_id_dynamic(&self, addr: usize) -> Result<StringId, ProgsError> {
+        Ok(self.string_table.id_from_i32(
+            self.dynamics[addr - ADDR_DYNAMIC_START]
+                .as_ref()
+                .read_i32::<LittleEndian>()?,
+        )?)
+    }
+
+    pub fn put_string_id(&mut self, val: StringId, addr: i16) -> Result<(), ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.put_string_id_static(val, addr)
+        } else {
+            self.put_string_id_dynamic(val, addr)
+        }
+    }
+
+    fn put_string_id_static(&mut self, val: StringId, addr: usize) -> Result<(), ProgsError> {
+        match self.statics {
+            EntityStatics::Generic(ref mut g) => g.put_string_id(val, addr),
+        }
+    }
+
+    fn put_string_id_dynamic(&mut self, val: StringId, addr: usize) -> Result<(), ProgsError> {
+        self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_mut()
+            .write_i32::<LittleEndian>(val.try_into()?)?;
+
+        Ok(())
+    }
+
+    pub fn get_entity_id(&self, addr: i16) -> Result<EntityId, ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.get_entity_id_static(addr)
+        } else {
+            self.get_entity_id_dynamic(addr)
+        }
+    }
+
+    fn get_entity_id_static(&self, addr: usize) -> Result<EntityId, ProgsError> {
+        match self.statics {
+            EntityStatics::Generic(ref g) => g.get_entity_id(addr),
+        }
+    }
+
+    fn get_entity_id_dynamic(&self, addr: usize) -> Result<EntityId, ProgsError> {
+        Ok(EntityId(self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_ref()
+            .read_i32::<LittleEndian>()?))
+    }
+
+    pub fn put_entity_id(&mut self, val: EntityId, addr: i16) -> Result<(), ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.put_entity_id_static(val, addr)
+        } else {
+            self.put_entity_id_dynamic(val, addr)
+        }
+    }
+
+    fn put_entity_id_static(&mut self, val: EntityId, addr: usize) -> Result<(), ProgsError> {
+        match self.statics {
+            EntityStatics::Generic(ref mut g) => g.put_entity_id(val, addr),
+        }
+    }
+
+    fn put_entity_id_dynamic(&mut self, val: EntityId, addr: usize) -> Result<(), ProgsError> {
+        self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_mut()
+            .write_i32::<LittleEndian>(val.0)?;
+
+        Ok(())
+    }
+
+    pub fn get_function_id(&self, addr: i16) -> Result<FunctionId, ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.get_function_id_static(addr)
+        } else {
+            self.get_function_id_dynamic(addr)
+        }
+    }
+
+    fn get_function_id_static(&self, addr: usize) -> Result<FunctionId, ProgsError> {
+        match self.statics {
+            EntityStatics::Generic(ref g) => g.get_function_id(addr),
+        }
+    }
+
+    fn get_function_id_dynamic(&self, addr: usize) -> Result<FunctionId, ProgsError> {
+        Ok(FunctionId(self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_ref()
+            .read_i32::<LittleEndian>()? as usize))
+    }
+
+    pub fn put_function_id(&mut self, val: FunctionId, addr: i16) -> Result<(), ProgsError> {
+        if addr < 0 {
+            panic!("negative offset");
+        }
+
+        let addr = addr as usize;
+
+        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
+            return Err(ProgsError::with_msg(
+                format!("out-of-bounds offset ({})", addr),
+            ));
+        }
+
+        if addr < ADDR_DYNAMIC_START {
+            self.put_function_id_static(val, addr)
+        } else {
+            self.put_function_id_dynamic(val, addr)
+        }
+    }
+
+    fn put_function_id_static(&mut self, val: FunctionId, addr: usize) -> Result<(), ProgsError> {
+        match self.statics {
+            EntityStatics::Generic(ref mut g) => g.put_function_id(val, addr),
+        }
+    }
+
+    fn put_function_id_dynamic(&mut self, val: FunctionId, addr: usize) -> Result<(), ProgsError> {
+        self.dynamics[addr - ADDR_DYNAMIC_START]
+            .as_mut()
+            .write_i32::<LittleEndian>(val.try_into()?)?;
+
+        Ok(())
+    }
+
+    /// Set this entity's minimum and maximum bounds and calculate its size.
+    pub fn set_min_max_size<V>(&mut self, min: V, max: V) -> Result<(), ProgsError>
+    where
+        V: Into<Vector3<f32>>,
+    {
+        let min = min.into();
+        let max = max.into();
+        self.put_vector(min.into(), FieldAddrVector::Mins as i16)?;
+        self.put_vector(max.into(), FieldAddrVector::Maxs as i16)?;
+        self.put_vector(
+            (max - min).into(),
+            FieldAddrVector::Size as i16,
+        )?;
+        Ok(())
     }
 }

@@ -47,6 +47,7 @@ use bsp::MAX_HULLS;
 use bsp::MAX_LIGHTSTYLES;
 use bsp::MIPLEVELS;
 use bsp::WorldModel;
+use model::Model;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
@@ -144,7 +145,7 @@ impl BspLump {
 }
 
 
-pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspError> {
+pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     let mut reader = BufReader::new(Cursor::new(data));
 
     let version = reader.read_i32::<LittleEndian>()?;
@@ -515,7 +516,9 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
             return Err(BspError::with_msg("Invalid plane id"));
         }
 
-        // for child leaves, we subtract 1 from the index to offset the sign bit
+        // If the child ID is positive, it points to another internal node. If it is negative, it
+        // points to a leaf node, but we have to negate it *and subtract 1* because ID -1
+        // corresponds to leaf 0.
 
         let front = match reader.read_i16::<LittleEndian>()? {
             f if f < 0 => BspRenderNodeChild::Leaf(-f as usize - 1),
@@ -978,7 +981,7 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
         return Err(BspError::with_msg("Model count exceeds MAX_MODELS"));
     }
 
-    let mut models = Vec::with_capacity(model_count);
+    let mut brush_models = Vec::with_capacity(model_count);
     for i in 0..model_count {
         // we spread the bounds out by 1 unit in all directions. not sure why, but the original
         // engine does this. see
@@ -1043,7 +1046,7 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
             collision_node_counts[i] = collision_node_count - collision_node_ids[i];
         }
 
-        models.push(BspModel {
+        brush_models.push(BspModel {
             bsp_data: bsp_data.clone(),
             min,
             max,
@@ -1056,10 +1059,6 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
         });
     }
 
-    let mut models_iter = models.into_iter();
-    let world_model = WorldModel(models_iter.next().unwrap());
-    let sub_models = models_iter.collect::<Vec<_>>().into_boxed_slice();
-
     if reader.seek(SeekFrom::Current(0))? !=
         reader.seek(SeekFrom::Start(
             model_lump.offset + model_lump.size as u64,
@@ -1068,5 +1067,10 @@ pub fn load(data: &[u8]) -> Result<(WorldModel, Box<[BspModel]>, String), BspErr
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
 
-    Ok((world_model, sub_models, ent_string))
+    let models = brush_models.into_iter()
+        .enumerate()
+        .map(|(i, bmodel)| Model::from_brush_model(format!("*{}", i), bmodel))
+        .collect();
+
+    Ok((models, ent_string))
 }

@@ -22,29 +22,36 @@ extern crate richter;
 
 use richter::bsp;
 use richter::console::CvarRegistry;
-use richter::entity::Entity;
 use richter::pak::Pak;
 use richter::parse;
 use richter::progs;
 use richter::server;
+use richter::world;
 
 use nom::IResult;
 
 fn main() {
     env_logger::init().unwrap();
     let mut pak = Pak::new();
-    pak.add("pak0.pak").unwrap();
+    match pak.add("pak0.pak") {
+        Ok(_) => (),
+        Err(why) => {
+            println!(
+                "Couldn't load pak0.pak: {} (make sure it's in the execution directory)",
+                why
+            );
+            std::process::exit(1);
+        }
+    };
 
-    let (mut execution_context, mut globals, mut entity_list, string_table) =
+    let (mut execution_context, mut globals, entity_type_def, string_table) =
         progs::load(pak.open("progs.dat").unwrap()).unwrap();
 
     let mut server = server::Server::new(string_table.clone());
 
-    let (world_model, sub_models, ent_string) = bsp::load(pak.open("maps/e1m1.bsp").unwrap())
-        .unwrap();
+    let (brush_models, ent_string) = bsp::load(pak.open("maps/e1m1.bsp").unwrap()).unwrap();
 
-
-    for i in 0..sub_models.len() {
+    for i in 0..brush_models.len() {
         // TODO: shouldn't have to insert this in string table
         server.precache_model(string_table.insert(format!("*{}", i)));
     }
@@ -60,12 +67,15 @@ fn main() {
     cvars.register("deathmatch", "0").unwrap();
     cvars.register_updateinfo("sv_gravity", "800").unwrap();
 
-    // allocate slot for client
-    entity_list.alloc_uninitialized().unwrap();
+    let mut world = world::World::create(brush_models, entity_type_def, string_table.clone())
+        .unwrap();
+
+    // spawn dummy entity for client
+    world.spawn_entity().unwrap();
 
     for m in maps {
-        entity_list
-            .alloc_from_map(
+        world
+            .spawn_entity_from_map(
                 &mut execution_context,
                 &mut globals,
                 &mut cvars,
@@ -82,7 +92,7 @@ fn main() {
     execution_context
         .execute_program(
             &mut globals,
-            &mut entity_list,
+            &mut world,
             &mut cvars,
             &mut server,
             start_frame,
