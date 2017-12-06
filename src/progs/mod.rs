@@ -740,7 +740,14 @@ impl ExecutionContext {
             let b = self.functions.statements[self.pc].arg2;
             let c = self.functions.statements[self.pc].arg3;
 
-            debug!("    {:<9} {:>5} {:>5} {:>5}", format!("{:?}", op), a, b, c);
+            debug!(
+                "    pc={:>08} {:<9} {:>5} {:>5} {:>5}",
+                self.pc,
+                format!("{:?}", op),
+                a,
+                b,
+                c
+            );
 
             match op {
                 Opcode::MulF => mul_f(globals, a, b, c)?,
@@ -1032,6 +1039,7 @@ impl ExecutionContext {
                         debug!("Returning from built-in function {}", name);
                     } else {
                         self.enter_function(globals, f_to_call)?;
+                        continue;
                     }
                 }
 
