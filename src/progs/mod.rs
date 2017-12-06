@@ -110,9 +110,13 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::rc::Rc;
 
+use cgmath::Vector3;
 use console::CvarRegistry;
 use entity::EntityList;
 use entity::FieldAddrFloat;
+use entity::FieldAddrStringId;
+use entity::FieldAddrVector;
+use rand;
 use server::Server;
 
 use byteorder::LittleEndian;
@@ -792,16 +796,20 @@ impl ExecutionContext {
                 Opcode::BitOr => bit_or(globals, a, b, c)?,
 
                 Opcode::If => {
-                    debug!("If: cond == {}", globals.get_int(a)?);
-                    if globals.get_int(a)? != 0 {
+                    let cond = globals.get_float(a)? != 0.0;
+                    debug!("If: cond == {}", cond);
+
+                    if cond {
                         self.pc = (self.pc as isize + b as isize) as usize;
                         continue;
                     }
                 }
 
                 Opcode::IfNot => {
-                    debug!("IfNot: cond == {}", globals.get_int(a)?);
-                    if globals.get_int(a)? == 0 {
+                    let cond = globals.get_float(a)? != 0.0;
+                    debug!("IfNot: cond == {}", cond);
+
+                    if !cond {
                         self.pc = (self.pc as isize + b as isize) as usize;
                         continue;
                     }
@@ -844,27 +852,89 @@ impl ExecutionContext {
                         debug!("Calling built-in function {}", name);
                         match b {
                             BuiltinFunctionId::MakeVectors => globals.make_vectors()?,
-                            BuiltinFunctionId::SetOrigin => unimplemented!(),
-                            BuiltinFunctionId::SetModel => unimplemented!(),
-                            BuiltinFunctionId::SetSize => unimplemented!(),
+
+                            // goal: `world.set_entity_origin(e_id, origin)`
+                            BuiltinFunctionId::SetOrigin => {
+                                let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
+                                let origin = globals.get_vector(GLOBAL_ADDR_ARG_1 as i16)?;
+                                entities.try_get_entity_mut(e_id.0 as usize)?.put_vector(
+                                    origin,
+                                    FieldAddrVector::Origin as
+                                        i16,
+                                )?;
+                                // TODO: link entity into world
+                            }
+
+                            // goal: `world.set_entity_model(e_id, model)`
+                            BuiltinFunctionId::SetModel => {
+                                let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
+                                let model_name_id =
+                                    globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
+
+                                // TODO: change this to `?` syntax once `server` has a proper error type
+                                let model_index =
+                                    match server.model_precache_lookup(model_name_id) {
+                                        Ok(i) => i,
+                                        Err(_) => {
+                                            return Err(ProgsError::with_msg("model not precached"))
+                                        }
+                                    };
+
+                                let mut ent = entities.try_get_entity_mut(e_id.0 as usize)?;
+                                ent.put_string_id(
+                                    model_name_id,
+                                    FieldAddrStringId::ModelName as i16,
+                                )?;
+                                ent.put_float(
+                                    model_index as f32,
+                                    FieldAddrFloat::ModelIndex as i16,
+                                )?;
+
+                                if model_index == 0 {
+                                    ent.set_min_max_size(
+                                        Vector3::new(0.0, 0.0, 0.0),
+                                        Vector3::new(0.0, 0.0, 0.0),
+                                    )?;
+                                } else {
+                                    // TODO: look up model and set size accordingly
+                                }
+                            }
+
+                            BuiltinFunctionId::SetSize => {
+                                let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
+                                let mins = globals.get_vector(GLOBAL_ADDR_ARG_1 as i16)?;
+                                let maxs = globals.get_vector(GLOBAL_ADDR_ARG_2 as i16)?;
+                                entities
+                                    .try_get_entity_mut(e_id.0 as usize)?
+                                    .set_min_max_size(mins, maxs)?;
+                            }
                             BuiltinFunctionId::Break => unimplemented!(),
-                            BuiltinFunctionId::Random => unimplemented!(),
+                            BuiltinFunctionId::Random => {
+                                globals.put_float(rand::random(), GLOBAL_ADDR_RETURN as i16)?;
+                            }
                             BuiltinFunctionId::Sound => unimplemented!(),
                             BuiltinFunctionId::Normalize => unimplemented!(),
                             BuiltinFunctionId::Error => unimplemented!(),
                             BuiltinFunctionId::ObjError => unimplemented!(),
-                            BuiltinFunctionId::VLen => unimplemented!(),
-                            BuiltinFunctionId::VecToYaw => unimplemented!(),
+                            BuiltinFunctionId::VLen => globals.v_len()?,
+                            BuiltinFunctionId::VecToYaw => globals.vec_to_yaw()?,
+
+                            // goal: `world.spawn_entity()`
                             BuiltinFunctionId::Spawn => {
                                 let new_ent = entities.alloc_uninitialized()?;
                                 globals.put_entity_id(new_ent, GLOBAL_ADDR_RETURN as i16)?;
                             }
+
+                            // goal: `world.remove_entity(e_id)`
                             BuiltinFunctionId::Remove => {
                                 let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
-                                entities.free(e_id);
+                                entities.free(e_id)?;
+                                // TODO: unlink entity
                             }
                             BuiltinFunctionId::TraceLine => unimplemented!(),
                             BuiltinFunctionId::CheckClient => unimplemented!(),
+
+                            // goal: `world.find_entity(e_id)`
                             BuiltinFunctionId::Find => unimplemented!(),
                             BuiltinFunctionId::PrecacheSound => {
                                 // TODO: disable precaching after server is active
@@ -900,12 +970,12 @@ impl ExecutionContext {
                                 let val = globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
                                 server.set_lightstyle(index, val);
                             }
-                            BuiltinFunctionId::RInt => unimplemented!(),
-                            BuiltinFunctionId::Floor => unimplemented!(),
-                            BuiltinFunctionId::Ceil => unimplemented!(),
+                            BuiltinFunctionId::RInt => globals.r_int()?,
+                            BuiltinFunctionId::Floor => globals.floor()?,
+                            BuiltinFunctionId::Ceil => globals.ceil()?,
                             BuiltinFunctionId::CheckBottom => unimplemented!(),
                             BuiltinFunctionId::PointContents => unimplemented!(),
-                            BuiltinFunctionId::FAbs => unimplemented!(),
+                            BuiltinFunctionId::FAbs => globals.f_abs()?,
                             BuiltinFunctionId::Aim => unimplemented!(),
                             BuiltinFunctionId::Cvar => {
                                 let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
@@ -944,14 +1014,15 @@ impl ExecutionContext {
                                 let volume = globals.get_float(GLOBAL_ADDR_ARG_2 as i16)?;
                                 let attenuation = globals.get_float(GLOBAL_ADDR_ARG_3 as i16)?;
 
-                                if server.sound_precached(name) {
-                                    // TODO: write to the server signon packet
-                                } else {
-                                    warn!(
-                                        "no precache for {}",
-                                        self.string_table.get(name).unwrap()
-                                    );
-                                }
+                                // TODO: replace with `?` syntax once `server` has a proper error type
+                                let sound_index = match server.sound_precache_lookup(name) {
+                                    Ok(i) => i,
+                                    Err(_) => {
+                                        return Err(ProgsError::with_msg("sound not precached"))
+                                    }
+                                };
+
+                                // TODO: write to server signon packet
                             }
                             BuiltinFunctionId::PrecacheModel2 => unimplemented!(),
                             BuiltinFunctionId::PrecacheSound2 => unimplemented!(),
@@ -1004,109 +1075,6 @@ impl ExecutionContext {
         Ok(())
     }
 }
-
-// run through all statements and see if we crash. elegant!
-pub fn validate(functions: &Functions, globals: &mut Globals, entities: &mut EntityList) {
-    'functions: for f in 0..functions.defs.len() {
-        let name = functions
-            .string_table
-            .get(functions.defs[f].name_id)
-            .unwrap()
-            .to_owned();
-
-        let first = match functions.defs[f].kind {
-            FunctionKind::BuiltIn(_) => continue,
-            FunctionKind::QuakeC(s) => s,
-        };
-
-        println!("FUNCTION {}: {}", f, name);
-
-        for i in first..functions.statements.len() {
-            let op = functions.statements[i].opcode;
-            let arg1 = functions.statements[i].arg1;
-            let arg2 = functions.statements[i].arg2;
-            let arg3 = functions.statements[i].arg3;
-            debug!(
-                "    {:<9} {:>5} {:>5} {:>5}",
-                format!("{:?}", op),
-                arg1,
-                arg2,
-                arg3
-            );
-            match op {
-                Opcode::MulF => mul_f(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::MulV => mul_v(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::MulFV => mul_fv(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::MulVF => mul_vf(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::Div => div(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::AddF => add_f(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::AddV => add_v(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::SubF => sub_f(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::SubV => sub_v(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::EqF => eq_f(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::EqV => eq_v(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::EqS => eq_s(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::EqEnt => eq_ent(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::EqFnc => eq_fnc(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::NeF => ne_f(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::NeV => ne_v(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::NeS => ne_s(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::NeEnt => ne_ent(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::NeFnc => ne_fnc(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::Le => le(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::Ge => ge(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::Lt => lt(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::Gt => gt(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::LoadF => load_f(globals, entities, arg1, arg2, arg3).unwrap(),
-                Opcode::LoadV => load_v(globals, entities, arg1, arg2, arg3).unwrap(),
-                Opcode::LoadS => load_s(globals, entities, arg1, arg2, arg3).unwrap(),
-                Opcode::LoadEnt => load_ent(globals, entities, arg1, arg2, arg3).unwrap(),
-                Opcode::LoadFld => panic!("load_fld not implemented"),
-                Opcode::LoadFnc => load_fnc(globals, entities, arg1, arg2, arg3).unwrap(),
-                Opcode::Address => address(globals, entities, arg1, arg2, arg3).unwrap(),
-                Opcode::StoreF => store_f(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::StoreV => store_v(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::StoreS => store_s(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::StoreEnt => store_ent(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::StoreFld => store_fld(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::StoreFnc => store_fnc(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::StorePF => storep_f(globals, entities, arg1, arg2, arg3).unwrap(),
-                Opcode::StorePV => storep_v(globals, entities, arg1, arg2, arg3).unwrap(),
-                Opcode::StorePS => storep_s(globals, entities, arg1, arg2, arg3).unwrap(),
-                Opcode::StorePEnt => storep_ent(globals, entities, arg1, arg2, arg3).unwrap(),
-                Opcode::StorePFld => panic!("storep_fld not implemented"),
-                Opcode::StorePFnc => storep_fnc(globals, entities, arg1, arg2, arg3).unwrap(),
-                // Opcode::Return
-                Opcode::NotF => not_f(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::NotV => not_v(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::NotS => not_s(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::NotEnt => not_ent(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::NotFnc => not_fnc(globals, arg1, arg2, arg3).unwrap(),
-                // Opcode::If
-                // Opcode::IfNot
-                // Opcode::Call0
-                // Opcode::Call1
-                // Opcode::Call2
-                // Opcode::Call3
-                // Opcode::Call4
-                // Opcode::Call5
-                // Opcode::Call6
-                // Opcode::Call7
-                // Opcode::Call8
-                // Opcode::State
-                // Opcode::Goto
-                Opcode::And => and(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::Or => or(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::BitAnd => bit_and(globals, arg1, arg2, arg3).unwrap(),
-                Opcode::BitOr => bit_or(globals, arg1, arg2, arg3).unwrap(),
-
-                Opcode::Done | Opcode::Return => continue 'functions,
-                _ => (),
-            }
-        }
-    }
-}
-
 
 // MUL_F: Float multiplication
 fn mul_f(globals: &mut Globals, f1_id: i16, f2_id: i16, prod_id: i16) -> Result<(), ProgsError> {

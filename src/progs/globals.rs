@@ -33,6 +33,7 @@ use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 use cgmath::Deg;
 use cgmath::Euler;
+use cgmath::InnerSpace;
 use cgmath::Matrix3;
 use cgmath::Vector3;
 use chrono::Duration;
@@ -555,9 +556,80 @@ impl Globals {
 
         Ok(())
     }
+
+    /// Calculate the magnitude of a vector.
+    ///
+    /// Loads the vector from `GLOBAL_ADDR_ARG_0` and stores its magnitude at
+    /// `GLOBAL_ADDR_RETURN`.
+    pub fn v_len(&mut self) -> Result<(), GlobalsError> {
+        let v = Vector3::from(self.get_vector(GLOBAL_ADDR_ARG_0 as i16)?);
+        self.put_float(v.magnitude(), GLOBAL_ADDR_RETURN as i16)?;
+        Ok(())
+    }
+
+    /// Calculate a yaw angle from a direction vector.
+    ///
+    /// Loads the direction vector from `GLOBAL_ADDR_ARG_0` and stores the yaw value at
+    /// `GLOBAL_ADDR_RETURN`.
+    pub fn vec_to_yaw(&mut self) -> Result<(), GlobalsError> {
+        let v = self.get_vector(GLOBAL_ADDR_ARG_0 as i16)?;
+
+        let mut yaw;
+        if v[0] == 0.0 || v[1] == 0.0 {
+            yaw = 0.0;
+        } else {
+            yaw = v[1].atan2(v[0]).to_degrees();
+            if yaw < 0.0 {
+                yaw += 360.0;
+            }
+        }
+
+        self.put_float(yaw, GLOBAL_ADDR_RETURN as i16)?;
+        Ok(())
+    }
+
+    /// Round a float to the nearest integer.
+    ///
+    /// Loads the float from `GLOBAL_ADDR_ARG_0` and stores the rounded value at
+    /// `GLOBAL_ADDR_RETURN`.
+    pub fn r_int(&mut self) -> Result<(), GlobalsError> {
+        let f = self.get_float(GLOBAL_ADDR_ARG_0 as i16)?;
+        self.put_float(f.round(), GLOBAL_ADDR_RETURN as i16)?;
+        Ok(())
+    }
+
+    /// Round a float to the nearest integer less than or equal to it.
+    ///
+    /// Loads the float from `GLOBAL_ADDR_ARG_0` and stores the rounded value at
+    /// `GLOBAL_ADDR_RETURN`.
+    pub fn floor(&mut self) -> Result<(), GlobalsError> {
+        let f = self.get_float(GLOBAL_ADDR_ARG_0 as i16)?;
+        self.put_float(f.floor(), GLOBAL_ADDR_RETURN as i16)?;
+        Ok(())
+    }
+
+    /// Round a float to the nearest integer greater than or equal to it.
+    ///
+    /// Loads the float from `GLOBAL_ADDR_ARG_0` and stores the rounded value at
+    /// `GLOBAL_ADDR_RETURN`.
+    pub fn ceil(&mut self) -> Result<(), GlobalsError> {
+        let f = self.get_float(GLOBAL_ADDR_ARG_0 as i16)?;
+        self.put_float(f.ceil(), GLOBAL_ADDR_RETURN as i16)?;
+        Ok(())
+    }
+
+    /// Calculate the absolute value of a float.
+    ///
+    /// Loads the float from `GLOBAL_ADDR_ARG_0` and stores its absolute value at
+    /// `GLOBAL_ADDR_RETURN`.
+    pub fn f_abs(&mut self) -> Result<(), GlobalsError> {
+        let f = self.get_float(GLOBAL_ADDR_ARG_0 as i16)?;
+        self.put_float(f.abs(), GLOBAL_ADDR_RETURN as i16)?;
+        Ok(())
+    }
 }
 
-fn make_vectors(angles: [f32; 3]) -> Matrix3<f32> {
+pub fn make_vectors(angles: [f32; 3]) -> Matrix3<f32> {
     let pitch = Deg(-angles[0]);
     let yaw = Deg(angles[1]);
     let roll = Deg(angles[2]);

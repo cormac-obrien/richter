@@ -20,6 +20,8 @@ mod statics;
 use self::statics::EntityStatics;
 use self::statics::GenericEntityStatics;
 pub use self::statics::FieldAddrFloat;
+pub use self::statics::FieldAddrStringId;
+pub use self::statics::FieldAddrVector;
 
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -34,6 +36,7 @@ use progs::ExecutionContext;
 use progs::FieldDef;
 use progs::FunctionId;
 use progs::Functions;
+use progs::GlobalAddrEntity;
 use progs::Globals;
 use progs::ProgsError;
 use progs::StringId;
@@ -430,6 +433,22 @@ impl Entity {
 
         Ok(())
     }
+
+    /// Set this entity's minimum and maximum bounds and calculate its size.
+    pub fn set_min_max_size<V>(&mut self, min: V, max: V) -> Result<(), ProgsError>
+    where
+        V: Into<Vector3<f32>>,
+    {
+        let min = min.into();
+        let max = max.into();
+        self.put_vector(min.into(), FieldAddrVector::Mins as i16)?;
+        self.put_vector(max.into(), FieldAddrVector::Maxs as i16)?;
+        self.put_vector(
+            (max - min).into(),
+            FieldAddrVector::Size as i16,
+        )?;
+        Ok(())
+    }
 }
 
 pub enum EntityListEntry {
@@ -584,6 +603,7 @@ impl EntityList {
         };
 
         for (key, val) in map.iter() {
+            debug!(".{} = {}", key, val);
             match *key {
                 // ignore keys starting with an underscore
                 k if k.starts_with("_") => (),
@@ -612,11 +632,12 @@ impl EntityList {
                         // void has no value, skip it
                         Type::QVoid => (),
 
+                        // TODO: figure out if this ever happens
+                        Type::QPointer => unimplemented!(),
+
                         Type::QString => {
-                            ent.put_string_id(
-                                self.string_table.insert(val),
-                                def.offset as i16,
-                            )?;
+                            let s_id = self.string_table.insert(val);
+                            ent.put_string_id(s_id, def.offset as i16)?;
                         }
 
                         Type::QFloat => ent.put_float(val.parse().unwrap(), def.offset as i16)?,
@@ -644,11 +665,19 @@ impl EntityList {
                         Type::QFunction => {
                             // TODO: need to validate this against function table
                         }
-                        _ => (),
                     }
                 }
             }
         }
+
+        let entry_id = self.find_free_entry()?;
+        self.entries[entry_id] = EntityListEntry::NotFree(ent);
+
+        // set `self` before calling spawn function
+        globals.put_entity_id(
+            EntityId(entry_id as i32),
+            GlobalAddrEntity::Self_ as i16,
+        )?;
 
         match map.get("classname") {
             Some(c) => {
@@ -664,9 +693,6 @@ impl EntityList {
         }
 
         // TODO: link entity into world
-
-        let entry_id = self.find_free_entry()?;
-        self.entries[entry_id] = EntityListEntry::NotFree(ent);
 
         Ok(EntityId(entry_id as i32))
     }

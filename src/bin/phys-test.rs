@@ -43,6 +43,12 @@ fn main() {
     let (world_model, sub_models, ent_string) = bsp::load(pak.open("maps/e1m1.bsp").unwrap())
         .unwrap();
 
+
+    for i in 0..sub_models.len() {
+        // TODO: shouldn't have to insert this in string table
+        server.precache_model(string_table.insert(format!("*{}", i)));
+    }
+
     let maps = match parse::entity_maps(ent_string.as_bytes()) {
         IResult::Done(_, m) => m,
         _ => panic!("parse failed"),
