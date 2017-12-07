@@ -18,9 +18,12 @@
 mod entity;
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use self::entity::Entity;
+use self::entity::EntityFlags;
+use self::entity::EntitySolid;
 pub use self::entity::EntityTypeDef;
 pub use self::entity::FieldAddrEntityId;
 pub use self::entity::FieldAddrFloat;
@@ -39,62 +42,95 @@ use progs::FieldDef;
 use progs::GlobalAddrEntity;
 use progs::Globals;
 use progs::ProgsError;
+use progs::StringId;
 use progs::StringTable;
 use progs::Type;
 use server::Server;
 
 use cgmath::Vector3;
+use cgmath::Zero;
 
 const AREA_DEPTH: usize = 4;
 
+// 2 ^ (AREA_DEPTH + 1) - 1
+// TODO: change this definition once constfn is a thing
+const MAX_AREA_NODES: usize = 31;
+
 const MAX_ENTITIES: usize = 600;
 
-enum WorldLinkKind {
-    None,
-    Entity,
-    Area,
-}
-
-struct WorldLink {
-    prev: WorldLinkKind,
-    next: WorldLinkKind,
-}
-
-impl WorldLink {
-    pub fn none() -> WorldLink {
-        WorldLink {
-            prev: WorldLinkKind::None,
-            next: WorldLinkKind::None,
-        }
-    }
-}
-
-struct AreaTree(AreaNode);
-
-impl AreaTree {
-    pub fn generate(mins: Vector3<f32>, maxs: Vector3<f32>) -> AreaTree {
-        if mins.x >= maxs.x || mins.y >= maxs.y || mins.z >= maxs.z {
-            panic!("Invalid bounding box (min: {:?} max: {:?})", mins, maxs);
-        }
-
-        AreaTree(AreaNode::generate(AREA_DEPTH, mins, maxs))
-    }
-}
-
-enum AreaNode {
+enum AreaNodeKind {
     Branch(AreaBranch),
-    Leaf(AreaLeaf),
+    Leaf,
+}
+
+struct AreaNode {
+    kind: AreaNodeKind,
+    triggers: HashSet<EntityId>,
+    solids: HashSet<EntityId>,
 }
 
 impl AreaNode {
-    pub fn generate(depth: usize, mins: Vector3<f32>, maxs: Vector3<f32>) -> AreaNode {
-        if depth == 0 {
-            return AreaNode::Leaf(AreaLeaf::new());
+    /// Generate a breadth-first 2-D binary space partitioning tree with the given extents.
+    pub fn generate(mins: Vector3<f32>, maxs: Vector3<f32>) -> Vec<AreaNode> {
+        let mut nodes = Vec::with_capacity(2usize.pow(AREA_DEPTH as u32 + 1) - 1);
+
+        // place internal nodes
+        for i in 0..AREA_DEPTH {
+            for _ in 0..2usize.pow(i as u32) {
+                let len = nodes.len();
+                nodes.push(AreaNode {
+                    kind: AreaNodeKind::Branch(AreaBranch {
+                        axis: AreaBranchAxis::X,
+                        dist: 0.0,
+                        front: 2 * len + 1,
+                        back: 2 * len + 2,
+                    }),
+                    triggers: HashSet::new(),
+                    solids: HashSet::new(),
+                });
+            }
         }
 
-        let axis;
+        // place leaves
+        for _ in 0..2usize.pow(AREA_DEPTH as u32) {
+            nodes.push(AreaNode {
+                kind: AreaNodeKind::Leaf,
+                triggers: HashSet::new(),
+                solids: HashSet::new(),
+            });
+        }
+
+        AreaNode::setup(&mut nodes, 0, mins, maxs);
+
+        for (i, node) in nodes.iter().enumerate() {
+            match node.kind {
+                AreaNodeKind::Branch(ref b) => {
+                    debug!(
+                        "area node {}: axis = {:?} dist = {} front = {} back = {}",
+                        i,
+                        b.axis,
+                        b.dist,
+                        b.front,
+                        b.back
+                    );
+                }
+                AreaNodeKind::Leaf => debug!("area node {}: leaf", i),
+            }
+        }
+        nodes
+    }
+
+    fn setup(nodes: &mut Vec<AreaNode>, index: usize, mins: Vector3<f32>, maxs: Vector3<f32>) {
+        debug!(
+            "node {: >2}: size = {:?} mins = {:?} maxs = {:?}",
+            index,
+            maxs - mins,
+            mins,
+            maxs
+        );
         let size = maxs - mins;
 
+        let axis;
         if size.x > size.y {
             axis = AreaBranchAxis::X;
         } else {
@@ -109,21 +145,24 @@ impl AreaNode {
         let mut back_maxs = maxs;
         back_maxs[axis as usize] = dist;
 
-        let front = AreaNode::generate(depth - 1, front_mins, maxs);
-        let back = AreaNode::generate(depth - 1, mins, back_maxs);
+        let front;
+        let back;
+        match nodes[index].kind {
+            AreaNodeKind::Branch(ref mut b) => {
+                b.axis = axis;
+                b.dist = dist;
+                front = b.front;
+                back = b.back;
+            }
+            AreaNodeKind::Leaf => return,
+        }
 
-        AreaNode::Branch(AreaBranch {
-            axis,
-            dist,
-            front: Box::new(front),
-            back: Box::new(back),
-            triggers: WorldLink::none(),
-            solids: WorldLink::none(),
-        })
+        AreaNode::setup(nodes, front, front_mins, maxs);
+        AreaNode::setup(nodes, back, mins, back_maxs);
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum AreaBranchAxis {
     X = 0,
     Y = 1,
@@ -132,29 +171,18 @@ enum AreaBranchAxis {
 struct AreaBranch {
     axis: AreaBranchAxis,
     dist: f32,
-    front: Box<AreaNode>,
-    back: Box<AreaNode>,
-    triggers: WorldLink,
-    solids: WorldLink,
+    front: usize,
+    back: usize,
 }
 
-struct AreaLeaf {
-    triggers: WorldLink,
-    solids: WorldLink,
-}
-
-impl AreaLeaf {
-    pub fn new() -> AreaLeaf {
-        AreaLeaf {
-            triggers: WorldLink::none(),
-            solids: WorldLink::none(),
-        }
-    }
+struct WorldEntity {
+    entity: Entity,
+    area_id: Option<usize>,
 }
 
 enum WorldEntitySlot {
     Vacant,
-    Occupied(Entity),
+    Occupied(WorldEntity),
 }
 
 struct WorldEntities {
@@ -175,6 +203,46 @@ impl WorldEntities {
             type_def,
             slots: slots.into_boxed_slice(),
         }
+    }
+}
+
+pub struct World {
+    string_table: Rc<StringTable>,
+
+    area_nodes: Box<[AreaNode]>,
+
+    type_def: EntityTypeDef,
+    slots: Box<[WorldEntitySlot]>,
+
+    models: Vec<Model>,
+}
+
+impl World {
+    pub fn create(
+        mut brush_models: Vec<Model>,
+        type_def: EntityTypeDef,
+        string_table: Rc<StringTable>,
+    ) -> Result<World, ()> {
+        // generate area tree for world model
+        let area_nodes = AreaNode::generate(brush_models[0].min(), brush_models[0].max());
+
+        // take ownership of all brush models
+        let mut models = Vec::with_capacity(brush_models.len() + 1);
+        models.push(Model::none());
+        models.append(&mut brush_models);
+
+        let mut slots = Vec::with_capacity(MAX_ENTITIES);
+        for _ in 0..MAX_ENTITIES {
+            slots.push(WorldEntitySlot::Vacant);
+        }
+
+        Ok(World {
+            string_table,
+            area_nodes: area_nodes.into_boxed_slice(),
+            type_def,
+            slots: slots.into_boxed_slice(),
+            models,
+        })
     }
 
     fn find_def<S>(&self, name: S) -> Result<&FieldDef, ProgsError>
@@ -244,8 +312,10 @@ impl WorldEntities {
     pub fn alloc_uninitialized(&mut self) -> Result<EntityId, ProgsError> {
         let slot_id = self.find_vacant_slot().unwrap();
 
-        self.slots[slot_id] =
-            WorldEntitySlot::Occupied(Entity::new(self.string_table.clone(), self.gen_dynamics()));
+        self.slots[slot_id] = WorldEntitySlot::Occupied(WorldEntity {
+            entity: Entity::new(self.string_table.clone(), self.gen_dynamics()),
+            area_id: None,
+        });
 
         Ok(EntityId(slot_id as i32))
     }
@@ -335,7 +405,11 @@ impl WorldEntities {
         }
 
         let entry_id = self.find_vacant_slot().unwrap();
-        self.slots[entry_id] = WorldEntitySlot::Occupied(ent);
+
+        self.slots[entry_id] = WorldEntitySlot::Occupied(WorldEntity {
+            entity: ent,
+            area_id: None,
+        });
 
         Ok(EntityId(entry_id as i32))
     }
@@ -357,7 +431,55 @@ impl WorldEntities {
         Ok(())
     }
 
+    pub fn try_get_entity(&self, entity_id: usize) -> Result<&Entity, ProgsError> {
+        if entity_id > self.slots.len() {
+            return Err(ProgsError::with_msg(
+                format!("Invalid entity ID ({})", entity_id),
+            ));
+        }
+
+        match self.slots[entity_id] {
+            WorldEntitySlot::Vacant => Err(ProgsError::with_msg(
+                format!("No entity at list entry {}", entity_id),
+            )),
+            WorldEntitySlot::Occupied(ref e) => Ok(&e.entity),
+        }
+    }
+
     pub fn try_get_entity_mut(&mut self, entity_id: usize) -> Result<&mut Entity, ProgsError> {
+        if entity_id > self.slots.len() {
+            return Err(ProgsError::with_msg(
+                format!("Invalid entity ID ({})", entity_id),
+            ));
+        }
+
+        match self.slots[entity_id] {
+            WorldEntitySlot::Vacant => Err(ProgsError::with_msg(
+                format!("No entity at list entry {}", entity_id),
+            )),
+            WorldEntitySlot::Occupied(ref mut e) => Ok(&mut e.entity),
+        }
+    }
+
+    fn try_get_world_entity(&self, entity_id: usize) -> Result<&WorldEntity, ProgsError> {
+        if entity_id > self.slots.len() {
+            return Err(ProgsError::with_msg(
+                format!("Invalid entity ID ({})", entity_id),
+            ));
+        }
+
+        match self.slots[entity_id] {
+            WorldEntitySlot::Vacant => Err(ProgsError::with_msg(
+                format!("No entity at list entry {}", entity_id),
+            )),
+            WorldEntitySlot::Occupied(ref e) => Ok(e),
+        }
+    }
+
+    fn try_get_world_entity_mut(
+        &mut self,
+        entity_id: usize,
+    ) -> Result<&mut WorldEntity, ProgsError> {
         if entity_id > self.slots.len() {
             return Err(ProgsError::with_msg(
                 format!("Invalid entity ID ({})", entity_id),
@@ -372,69 +494,9 @@ impl WorldEntities {
         }
     }
 
-    pub fn try_get_entity(&self, entity_id: usize) -> Result<&Entity, ProgsError> {
-        if entity_id > self.slots.len() {
-            return Err(ProgsError::with_msg(
-                format!("Invalid entity ID ({})", entity_id),
-            ));
-        }
-
-        match self.slots[entity_id] {
-            WorldEntitySlot::Vacant => Err(ProgsError::with_msg(
-                format!("No entity at list entry {}", entity_id),
-            )),
-            WorldEntitySlot::Occupied(ref e) => Ok(e),
-        }
-    }
-}
-
-pub struct World {
-    area_tree: AreaTree,
-    entities: WorldEntities,
-    models: Vec<Model>,
-}
-
-impl World {
-    pub fn create(
-        mut brush_models: Vec<Model>,
-        type_def: EntityTypeDef,
-        string_table: Rc<StringTable>,
-    ) -> Result<World, ()> {
-        // generate area tree for world model
-        let area_tree = AreaTree::generate(brush_models[0].min(), brush_models[0].max());
-
-        let entities = WorldEntities::new(type_def, string_table);
-
-        // take ownership of all brush models
-        let mut models = Vec::with_capacity(brush_models.len() + 1);
-        models.push(Model::none());
-        models.append(&mut brush_models);
-
-        Ok(World {
-            area_tree,
-            entities,
-            models,
-        })
-    }
-
-    pub fn try_get_entity(&self, e_id: usize) -> Result<&Entity, ProgsError> {
-        self.entities.try_get_entity(e_id)
-    }
-
-    pub fn try_get_entity_mut(&mut self, e_id: usize) -> Result<&mut Entity, ProgsError> {
-        self.entities.try_get_entity_mut(e_id)
-    }
-
-    pub fn ent_fld_addr_to_i32(&self, ent_fld_addr: EntityFieldAddr) -> i32 {
-        self.entities.ent_fld_addr_to_i32(ent_fld_addr)
-    }
-
-    pub fn ent_fld_addr_from_i32(&self, val: i32) -> EntityFieldAddr {
-        self.entities.ent_fld_addr_from_i32(val)
-    }
-
     pub fn spawn_entity(&mut self) -> Result<EntityId, ProgsError> {
-        self.entities.alloc_uninitialized()
+        self.alloc_uninitialized()
+        // TODO: link
     }
 
     pub fn spawn_entity_from_map(
@@ -450,7 +512,9 @@ impl World {
             None => return Err(ProgsError::with_msg("No classname for entity")),
         };
 
-        let e_id = self.entities.alloc_from_map(map)?;
+        let e_id = self.alloc_from_map(map)?;
+
+        // TODO: set origin, mins and maxs here if needed
 
         // set `self` before calling spawn function
         globals.put_entity_id(e_id, GlobalAddrEntity::Self_ as i16)?;
@@ -463,14 +527,206 @@ impl World {
             classname,
         )?;
 
-        // TODO: link entity into world
+        // TODO: should touch triggers?
+        self.link_entity(e_id, false)?;
 
         Ok(e_id)
     }
 
+    fn unlink_entity(&mut self, e_id: EntityId) -> Result<(), ProgsError> {
+        // if this entity has been removed or freed, do nothing
+        if let WorldEntitySlot::Vacant = self.slots[e_id.0 as usize] {
+            return Ok(());
+        }
+
+        let area_id = match self.try_get_world_entity(e_id.0 as usize)?.area_id {
+            Some(i) => i,
+
+            // entity not linked
+            None => return Ok(()),
+        };
+
+        if self.area_nodes[area_id].triggers.remove(&e_id) {
+            debug!("Unlinking entity {} from area triggers", e_id.0);
+        } else if self.area_nodes[area_id].solids.remove(&e_id) {
+            debug!("Unlinking entity {} from area solids", e_id.0);
+        }
+
+        self.try_get_world_entity_mut(e_id.0 as usize)?.area_id = None;
+
+        Ok(())
+    }
+
+    // TODO: brush entities need to take their origin, mins and maxs fields from their models
+    fn link_entity(&mut self, e_id: EntityId, touch_triggers: bool) -> Result<(), ProgsError> {
+        // if this entity has been removed or freed, do nothing
+        if let WorldEntitySlot::Vacant = self.slots[e_id.0 as usize] {
+            return Ok(());
+        }
+
+        // TODO: make sure we don't link the world entity
+
+        self.unlink_entity(e_id)?;
+
+        let mut abs_min;
+        let mut abs_max;
+        let solid;
+        {
+            let ent = self.try_get_entity_mut(e_id.0 as usize)?;
+
+            let origin = Vector3::from(ent.get_vector(FieldAddrVector::Origin as i16)?);
+            let mins = Vector3::from(ent.get_vector(FieldAddrVector::Mins as i16)?);
+            let maxs = Vector3::from(ent.get_vector(FieldAddrVector::Maxs as i16)?);
+            debug!("origin = {:?} mins = {:?} maxs = {:?}", origin, mins, maxs);
+            abs_min = origin + mins;
+            abs_max = origin + maxs;
+
+            let flags_f = ent.get_float(FieldAddrFloat::Flags as i16)?;
+            let flags = EntityFlags::from_bits(flags_f as u16).unwrap();
+            if flags.contains(EntityFlags::ITEM) {
+                abs_min.x -= 15.0;
+                abs_min.y -= 15.0;
+                abs_max.x += 15.0;
+                abs_max.y += 15.0;
+            } else {
+                abs_min.x -= 1.0;
+                abs_min.y -= 1.0;
+                abs_min.z -= 1.0;
+                abs_max.x += 1.0;
+                abs_max.y += 1.0;
+                abs_max.z += 1.0;
+            }
+
+            ent.put_vector(
+                abs_min.into(),
+                FieldAddrVector::AbsMin as i16,
+            )?;
+            ent.put_vector(
+                abs_max.into(),
+                FieldAddrVector::AbsMax as i16,
+            )?;
+
+            ent.leaf_count = 0;
+            let model_index = ent.get_float(FieldAddrFloat::ModelIndex as i16)?;
+            if model_index != 0.0 {
+                // TODO: SV_FindTouchedLeafs
+            }
+
+            solid = ent.solid()?;
+
+            if solid == EntitySolid::Not {
+                // this entity has no touch interaction, we're done
+                return Ok(());
+            }
+        }
+
+        let mut node_id = 0;
+        loop {
+            match self.area_nodes[node_id].kind {
+                AreaNodeKind::Branch(ref b) => {
+                    debug!(
+                        "abs_min = {:?} | abs_max = {:?} | dist = {}",
+                        abs_min,
+                        abs_max,
+                        b.dist
+                    );
+                    if abs_min[b.axis as usize] > b.dist {
+                        node_id = b.front;
+                    } else if abs_max[b.axis as usize] < b.dist {
+                        node_id = b.back;
+                    } else {
+                        // entity spans both sides of the plane
+                        break;
+                    }
+                }
+
+                AreaNodeKind::Leaf => break,
+            }
+        }
+
+        if solid == EntitySolid::Trigger {
+            debug!("Linking entity {} into area {} triggers", e_id.0, node_id);
+            self.area_nodes[node_id].triggers.insert(e_id);
+            self.try_get_world_entity_mut(e_id.0 as usize)?.area_id = Some(node_id);
+        } else {
+            debug!("Linking entity {} into area {} solids", e_id.0, node_id);
+            self.area_nodes[node_id].solids.insert(e_id);
+            self.try_get_world_entity_mut(e_id.0 as usize)?.area_id = Some(node_id);
+        }
+
+        if touch_triggers {
+            unimplemented!();
+        }
+
+        Ok(())
+    }
+
+    /// Update this entity's position and relink it into the world.
+    pub fn set_entity_origin(
+        &mut self,
+        e_id: EntityId,
+        origin: Vector3<f32>,
+    ) -> Result<(), ProgsError> {
+        {
+            let ent = self.try_get_entity_mut(e_id.0 as usize)?;
+            ent.put_vector(
+                origin.into(),
+                FieldAddrVector::Origin as i16,
+            )?;
+        }
+
+        self.link_entity(e_id, false)?;
+        Ok(())
+    }
+
+    pub fn set_entity_model(
+        &mut self,
+        e_id: EntityId,
+        model_name_id: StringId,
+        server: &Server,
+    ) -> Result<(), ProgsError> {
+        let ent = self.try_get_entity_mut(e_id.0 as usize)?;
+
+        ent.put_string_id(
+            model_name_id,
+            FieldAddrStringId::ModelName as i16,
+        )?;
+
+        // TODO: change this to `?` syntax once `server` has a proper error type
+        let model_index = match server.model_precache_lookup(model_name_id) {
+            Ok(i) => i,
+            Err(_) => return Err(ProgsError::with_msg("model not precached")),
+        };
+
+        ent.put_float(
+            model_index as f32,
+            FieldAddrFloat::ModelIndex as i16,
+        )?;
+
+        if model_index == 0 {
+            ent.set_min_max_size(Vector3::zero(), Vector3::zero())?;
+        } else {
+            // TODO: look up model and set size accordingly
+        }
+
+        Ok(())
+    }
+
+    pub fn set_entity_size(
+        &mut self,
+        e_id: EntityId,
+        min: Vector3<f32>,
+        max: Vector3<f32>,
+    ) -> Result<(), ProgsError> {
+        let ent = self.try_get_entity_mut(e_id.0 as usize)?;
+        ent.set_min_max_size(min, max)?;
+        Ok(())
+    }
+
+    /// Unlink an entity from the world and remove it.
     pub fn remove_entity(&mut self, e_id: EntityId) -> Result<(), ProgsError> {
-        self.entities.free(e_id)?;
-        // TODO: UNLINK ENTITY FROM WORLD
+        self.unlink_entity(e_id)?;
+        self.free(e_id)?;
         Ok(())
     }
 }

@@ -275,53 +275,20 @@ impl EntityTypeDef {
     }
 }
 
+#[derive(Debug, FromPrimitive, PartialEq)]
+pub enum EntitySolid {
+    Not = 0,
+    Trigger = 1,
+    BBox = 2,
+    SlideBox = 3,
+    Bsp = 4,
+}
+
 /// Statically defined fields for an entity.
 ///
 /// The different variants represent different classes of entity.
 pub enum EntityStatics {
     Generic(GenericEntityStatics),
-}
-
-/// Static variables for an ambient noise entity.
-pub struct AmbientEntityStatics {
-    pub class_name: StringId,
-    pub origin: Vector3<f32>,
-}
-
-impl AmbientEntityStatics {
-    pub fn get_float(&self, addr: usize) -> Result<f32, ProgsError> {
-        Ok(match float_addr(addr)? {
-            FieldAddrFloat::OriginX => self.origin[0],
-            FieldAddrFloat::OriginY => self.origin[1],
-            FieldAddrFloat::OriginZ => self.origin[2],
-            f => panic!("attempted access of {:?} on AmbientEntityStatics", f),
-        })
-    }
-
-    pub fn put_float(&mut self, val: f32, addr: usize) -> Result<(), ProgsError> {
-        match float_addr(addr)? {
-            FieldAddrFloat::OriginX => self.origin[0] = val,
-            FieldAddrFloat::OriginY => self.origin[1] = val,
-            FieldAddrFloat::OriginZ => self.origin[2] = val,
-            f => panic!("attempted access of {:?} on AmbientEntityStatics", f),
-        }
-
-        Ok(())
-    }
-
-    pub fn get_vector(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
-        Ok(match vector_addr(addr)? {
-            FieldAddrVector::Origin => self.origin.into(),
-            v => panic!("attempted access of {:?} on AmbientEntityStatics", v),
-        })
-    }
-
-    pub fn put_vector(&mut self, val: [f32; 3], addr: usize) -> Result<(), ProgsError> {
-        Ok(match vector_addr(addr)? {
-            FieldAddrVector::Origin => self.origin = Vector3::from(val),
-            v => panic!("attempted access of {:?} on AmbientEntityStatics", v),
-        })
-    }
 }
 
 /// Statically defined fields which may apply to any entity.
@@ -1052,11 +1019,12 @@ impl EntityState {
 }
 
 pub struct Entity {
-    // TODO: link
     string_table: Rc<StringTable>,
-    leaf_count: usize,
-    leaf_ids: [usize; MAX_ENT_LEAVES],
-    baseline: EntityState,
+
+    pub leaf_count: usize,
+    pub leaf_ids: [usize; MAX_ENT_LEAVES],
+    pub baseline: EntityState,
+
     statics: EntityStatics,
     dynamics: Vec<[u8; 4]>,
 }
@@ -1425,5 +1393,17 @@ impl Entity {
             FieldAddrVector::Size as i16,
         )?;
         Ok(())
+    }
+
+    pub fn solid(&self) -> Result<EntitySolid, ProgsError> {
+        let solid_f = self.get_float(FieldAddrFloat::Solid as i16)?;
+        let solid_i = solid_f as i32;
+        match EntitySolid::from_i32(solid_i) {
+            Some(s) => Ok(s),
+            None => Err(ProgsError::with_msg(format!(
+                "Invalid value for entity.solid ({})",
+                solid_f,
+            ))),
+        }
     }
 }

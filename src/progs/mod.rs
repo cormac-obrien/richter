@@ -238,7 +238,7 @@ impl StringId {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, Hash, PartialEq)]
 #[repr(C)]
 pub struct EntityId(pub i32);
 
@@ -860,56 +860,23 @@ impl ExecutionContext {
                             BuiltinFunctionId::SetOrigin => {
                                 let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 let origin = globals.get_vector(GLOBAL_ADDR_ARG_1 as i16)?;
-                                world.try_get_entity_mut(e_id.0 as usize)?.put_vector(
-                                    origin,
-                                    FieldAddrVector::Origin as
-                                        i16,
-                                )?;
-                                // TODO: link entity into world
+                                world.set_entity_origin(e_id, Vector3::from(origin))?;
                             }
 
-                            // goal: `world.set_entity_model(e_id, model)`
+                            // goal: `world.set_entity_model(e_id, model, server)`
                             BuiltinFunctionId::SetModel => {
                                 let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 let model_name_id =
                                     globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
 
-                                // TODO: change this to `?` syntax once `server` has a proper error type
-                                let model_index =
-                                    match server.model_precache_lookup(model_name_id) {
-                                        Ok(i) => i,
-                                        Err(_) => {
-                                            return Err(ProgsError::with_msg("model not precached"))
-                                        }
-                                    };
-
-                                let mut ent = world.try_get_entity_mut(e_id.0 as usize)?;
-                                ent.put_string_id(
-                                    model_name_id,
-                                    FieldAddrStringId::ModelName as i16,
-                                )?;
-                                ent.put_float(
-                                    model_index as f32,
-                                    FieldAddrFloat::ModelIndex as i16,
-                                )?;
-
-                                if model_index == 0 {
-                                    ent.set_min_max_size(
-                                        Vector3::new(0.0, 0.0, 0.0),
-                                        Vector3::new(0.0, 0.0, 0.0),
-                                    )?;
-                                } else {
-                                    // TODO: look up model and set size accordingly
-                                }
+                                world.set_entity_model(e_id, model_name_id, server)?;
                             }
 
                             BuiltinFunctionId::SetSize => {
                                 let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 let mins = globals.get_vector(GLOBAL_ADDR_ARG_1 as i16)?;
                                 let maxs = globals.get_vector(GLOBAL_ADDR_ARG_2 as i16)?;
-                                world
-                                    .try_get_entity_mut(e_id.0 as usize)?
-                                    .set_min_max_size(mins, maxs)?;
+                                world.set_entity_size(e_id, mins.into(), maxs.into())?;
                             }
                             BuiltinFunctionId::Break => unimplemented!(),
                             BuiltinFunctionId::Random => {
@@ -922,7 +889,6 @@ impl ExecutionContext {
                             BuiltinFunctionId::VLen => globals.v_len()?,
                             BuiltinFunctionId::VecToYaw => globals.vec_to_yaw()?,
 
-                            // goal: `world.spawn_entity()`
                             BuiltinFunctionId::Spawn => {
                                 globals.put_entity_id(
                                     world.spawn_entity()?,
@@ -930,7 +896,6 @@ impl ExecutionContext {
                                 )?;
                             }
 
-                            // goal: `world.remove_entity(e_id)`
                             BuiltinFunctionId::Remove => {
                                 world.remove_entity(
                                     globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?,
@@ -943,11 +908,13 @@ impl ExecutionContext {
                             BuiltinFunctionId::Find => unimplemented!(),
                             BuiltinFunctionId::PrecacheSound => {
                                 // TODO: disable precaching after server is active
+                                // TODO: precaching doesn't actually load yet
                                 let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 server.precache_sound(s_id);
                             }
                             BuiltinFunctionId::PrecacheModel => {
                                 // TODO: disable precaching after server is active
+                                // TODO: precaching doesn't actually load yet
                                 let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 server.precache_model(s_id);
                             }
