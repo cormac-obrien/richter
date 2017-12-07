@@ -61,7 +61,7 @@ pub mod pak;
 pub mod parse;
 pub mod progs;
 // pub mod qw;
-// pub mod sprite;
+pub mod sprite;
 pub mod server;
 pub mod util;
 pub mod world;
