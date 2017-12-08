@@ -81,6 +81,7 @@ fn main() {
                 &mut cvars,
                 &mut server,
                 m,
+                &pak,
             )
             .unwrap();
     }
@@ -95,6 +96,7 @@ fn main() {
             &mut world,
             &mut cvars,
             &mut server,
+            &pak,
             start_frame,
         )
         .unwrap();

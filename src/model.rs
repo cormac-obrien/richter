@@ -16,9 +16,19 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use bsp::BspModel;
+use mdl;
+use mdl::AliasModel;
+use pak::Pak;
+use sprite;
 use sprite::SpriteModel;
 
 use cgmath::Vector3;
+
+#[derive(FromPrimitive)]
+pub enum SyncType {
+    Sync = 0,
+    Rand = 1,
+}
 
 pub struct Model {
     name: String,
@@ -29,7 +39,7 @@ pub enum ModelKind {
     // TODO: find a more elegant way to express the null model
     None,
     Brush(BspModel),
-    Alias,
+    Alias(AliasModel),
     Sprite(SpriteModel),
 }
 
@@ -41,17 +51,58 @@ impl Model {
         }
     }
 
+    pub fn load<S>(pak: &Pak, name: S) -> Model
+    where
+        S: AsRef<str>,
+    {
+        let name = name.as_ref();
+        // TODO: original engine uses the magic numbers of each format instead of the extension.
+        if name.ends_with(".bsp") {
+            panic!("BSP files may contain multiple models, use bsp::load for this");
+        } else if name.ends_with(".mdl") {
+            match pak.open(name) {
+                Some(m) => Model::from_alias_model(name.to_owned(), mdl::load(m).unwrap()),
+                None => panic!("No such file: {}", name),
+            }
+        } else if name.ends_with(".spr") {
+            match pak.open(name) {
+                Some(m) => Model::from_sprite_model(name.to_owned(), sprite::load(m)),
+                None => panic!("No such file: {}", name),
+            }
+        } else {
+            panic!("Unrecognized model type: {}", name);
+        }
+    }
+
     /// Construct a new generic model from a brush model.
-    pub fn from_brush_model(name: String, brush_model: BspModel) -> Model {
+    pub fn from_brush_model<S>(name: S, brush_model: BspModel) -> Model
+    where
+        S: AsRef<str>,
+    {
         Model {
-            name,
+            name: name.as_ref().to_owned(),
             kind: ModelKind::Brush(brush_model),
         }
     }
 
-    pub fn from_sprite_model(name: String, sprite_model: SpriteModel) -> Model {
+    /// Construct a new generic model from an alias model.
+    pub fn from_alias_model<S>(name: S, alias_model: AliasModel) -> Model
+    where
+        S: AsRef<str>,
+    {
         Model {
-            name,
+            name: name.as_ref().to_owned(),
+            kind: ModelKind::Alias(alias_model),
+        }
+    }
+
+    /// Construct a new generic model from a sprite model.
+    pub fn from_sprite_model<S>(name: S, sprite_model: SpriteModel) -> Model
+    where
+        S: AsRef<str>,
+    {
+        Model {
+            name: name.as_ref().to_owned(),
             kind: ModelKind::Sprite(sprite_model),
         }
     }
@@ -67,7 +118,7 @@ impl Model {
             ModelKind::None => panic!("attempted to take min() of NULL model"),
             ModelKind::Brush(ref bmodel) => bmodel.min(),
             ModelKind::Sprite(ref smodel) => smodel.min(),
-            _ => unimplemented!(),
+            ModelKind::Alias(_) => Vector3::new(-16.0, -16.0, -16.0),
         }
     }
 
@@ -77,7 +128,7 @@ impl Model {
             ModelKind::None => panic!("attempted to take max() of NULL model"),
             ModelKind::Brush(ref bmodel) => bmodel.max(),
             ModelKind::Sprite(ref smodel) => smodel.max(),
-            _ => unimplemented!(),
+            ModelKind::Alias(_) => Vector3::new(16.0, 16.0, 16.0),
         }
     }
 }

@@ -32,8 +32,11 @@ pub use self::entity::FieldAddrStringId;
 pub use self::entity::FieldAddrVector;
 use self::entity::STATIC_ADDRESS_COUNT;
 
+use bsp;
 use console::CvarRegistry;
+use mdl;
 use model::Model;
+use pak::Pak;
 use parse;
 use progs::EntityFieldAddr;
 use progs::EntityId;
@@ -46,6 +49,7 @@ use progs::StringId;
 use progs::StringTable;
 use progs::Type;
 use server::Server;
+use sprite;
 
 use cgmath::Vector3;
 use cgmath::Zero;
@@ -68,6 +72,28 @@ struct AreaNode {
     triggers: HashSet<EntityId>,
     solids: HashSet<EntityId>,
 }
+
+// Apologies in advance.
+//                               00                                X
+//               01                              02                Y
+//       03              04              05              06        X
+//   07      08      09      10      11      12      13      14    Y
+// 15  16  17  18  19  20  21  22  23  24  25  26  27  28  29  30  Leaves
+//
+//   21    19    17    15
+//   ||    ||    ||    ||
+//   12=05=11    08=03=07
+//   || || ||    || || ||
+//   22 || 20    18 || 16
+//      02====00====01
+//   29 || 27    25 || 23
+//   || || ||    || || ||
+//   14=06=13    10=04=09
+//   ||    ||    ||    ||
+//   30    28    26    24
+//
+// The tree won't necessarily look like this, this just assumes a rectangular area with width
+// between 1-2x its length.
 
 impl AreaNode {
     /// Generate a breadth-first 2-D binary space partitioning tree with the given extents.
@@ -243,6 +269,40 @@ impl World {
             slots: slots.into_boxed_slice(),
             models,
         })
+    }
+
+    pub fn add_model(&mut self, pak: &Pak, name_id: StringId) -> Result<(), ProgsError> {
+        let name = self.string_table.get(name_id).unwrap();
+
+        if name.ends_with(".bsp") {
+            let data = pak.open(name).unwrap();
+            let (mut brush_models, _) = bsp::load(data).unwrap();
+            if brush_models.len() > 1 {
+                return Err(ProgsError::with_msg(
+                    "Complex brush models must be loaded before world creation",
+                ));
+            }
+            self.models.append(&mut brush_models);
+            Ok(())
+        } else if name.ends_with(".mdl") {
+            let data = pak.open(&name).unwrap();
+            let alias_model = mdl::load(data).unwrap();
+            self.models.push(
+                Model::from_alias_model(&name, alias_model),
+            );
+            Ok(())
+        } else if name.ends_with(".spr") {
+            let data = pak.open(&name).unwrap();
+            let sprite_model = sprite::load(data);
+            self.models.push(
+                Model::from_sprite_model(&name, sprite_model),
+            );
+            Ok(())
+        } else {
+            return Err(ProgsError::with_msg(
+                format!("Unrecognized model type: {}", name),
+            ));
+        }
     }
 
     fn find_def<S>(&self, name: S) -> Result<&FieldDef, ProgsError>
@@ -506,6 +566,7 @@ impl World {
         cvars: &mut CvarRegistry,
         server: &mut Server,
         map: HashMap<&str, &str>,
+        pak: &Pak,
     ) -> Result<EntityId, ProgsError> {
         let classname = match map.get("classname") {
             Some(c) => c.to_owned(),
@@ -524,6 +585,7 @@ impl World {
             self,
             cvars,
             server,
+            pak,
             classname,
         )?;
 
@@ -685,28 +747,33 @@ impl World {
         model_name_id: StringId,
         server: &Server,
     ) -> Result<(), ProgsError> {
-        let ent = self.try_get_entity_mut(e_id.0 as usize)?;
+        let model_index;
+        {
+            let ent = self.try_get_entity_mut(e_id.0 as usize)?;
 
-        ent.put_string_id(
-            model_name_id,
-            FieldAddrStringId::ModelName as i16,
-        )?;
+            ent.put_string_id(
+                model_name_id,
+                FieldAddrStringId::ModelName as i16,
+            )?;
 
-        // TODO: change this to `?` syntax once `server` has a proper error type
-        let model_index = match server.model_precache_lookup(model_name_id) {
-            Ok(i) => i,
-            Err(_) => return Err(ProgsError::with_msg("model not precached")),
-        };
+            // TODO: change this to `?` syntax once `server` has a proper error type
+            model_index = match server.model_precache_lookup(model_name_id) {
+                Ok(i) => i,
+                Err(_) => return Err(ProgsError::with_msg("model not precached")),
+            };
 
-        ent.put_float(
-            model_index as f32,
-            FieldAddrFloat::ModelIndex as i16,
-        )?;
+            ent.put_float(
+                model_index as f32,
+                FieldAddrFloat::ModelIndex as i16,
+            )?;
+        }
 
         if model_index == 0 {
-            ent.set_min_max_size(Vector3::zero(), Vector3::zero())?;
+            self.set_entity_size(e_id, Vector3::zero(), Vector3::zero())?;
         } else {
-            // TODO: look up model and set size accordingly
+            let min = self.models[model_index].min();
+            let max = self.models[model_index].max();
+            self.set_entity_size(e_id, min, max)?;
         }
 
         Ok(())

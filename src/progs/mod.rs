@@ -111,10 +111,9 @@ use std::io::SeekFrom;
 use std::rc::Rc;
 
 use console::CvarRegistry;
+use pak::Pak;
 use server::Server;
 use world::FieldAddrFloat;
-use world::FieldAddrStringId;
-use world::FieldAddrVector;
 use world::EntityTypeDef;
 use world::World;
 
@@ -715,6 +714,7 @@ impl ExecutionContext {
         world: &mut World,
         cvars: &mut CvarRegistry,
         server: &mut Server,
+        pak: &Pak,
         f: FunctionId,
     ) -> Result<(), ProgsError> {
         let mut runaway = 100000;
@@ -916,7 +916,10 @@ impl ExecutionContext {
                                 // TODO: disable precaching after server is active
                                 // TODO: precaching doesn't actually load yet
                                 let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
-                                server.precache_model(s_id);
+                                if !server.model_precache_lookup(s_id).is_ok() {
+                                    server.precache_model(s_id);
+                                    world.add_model(pak, s_id);
+                                }
                             }
                             BuiltinFunctionId::StuffCmd => unimplemented!(),
                             BuiltinFunctionId::FindRadius => unimplemented!(),
@@ -1051,13 +1054,21 @@ impl ExecutionContext {
         world: &mut World,
         cvars: &mut CvarRegistry,
         server: &mut Server,
+        pak: &Pak,
         name: S,
     ) -> Result<(), ProgsError>
     where
         S: AsRef<str>,
     {
         let func_id = self.functions.find_function_by_name(name)?;
-        self.execute_program(globals, world, cvars, server, func_id)?;
+        self.execute_program(
+            globals,
+            world,
+            cvars,
+            server,
+            pak,
+            func_id,
+        )?;
         Ok(())
     }
 }

@@ -19,6 +19,7 @@ use std::io::BufReader;
 use std::io::Cursor;
 
 use engine;
+use model::SyncType;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
@@ -28,12 +29,6 @@ use num::FromPrimitive;
 
 const MAGIC: u32 = ('I' as u32) << 0 | ('D' as u32) << 8 | ('S' as u32) << 16 | ('P' as u32) << 24;
 const VERSION: u32 = 1;
-
-#[derive(FromPrimitive)]
-pub enum SyncType {
-    Sync = 0,
-    Rand = 1,
-}
 
 pub struct SpriteModel {
     kind: i32,
