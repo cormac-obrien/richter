@@ -25,6 +25,7 @@ use progs::FunctionId;
 use progs::StringId;
 use progs::StringTable;
 use progs::ProgsError;
+use world::phys::MoveKind;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
@@ -51,7 +52,7 @@ pub enum FieldAddrFloat {
     AbsMaxY = 5,
     AbsMaxZ = 6,
     LocalTime = 7,
-    MoveType = 8,
+    MoveKind = 8,
     Solid = 9,
     OriginX = 10,
     OriginY = 11,
@@ -180,21 +181,6 @@ pub enum FieldAddrFunctionId {
     Blocked = 45,
 }
 
-#[derive(Copy, Clone, FromPrimitive)]
-pub enum MoveType {
-    None = 0,
-    AngleNoClip = 1,
-    AngleClip = 2,
-    Walk = 3,
-    Step = 4,
-    Fly = 5,
-    Toss = 6,
-    Push = 7,
-    NoClip = 8,
-    FlyMissile = 9,
-    Bounce = 10,
-}
-
 bitflags! {
     pub struct EntityFlags: u16 {
         const FLY            = 0b0000000000001;
@@ -306,7 +292,7 @@ pub struct GenericEntityStatics {
     pub local_time: Duration,
 
     // TODO find definitions for movement types
-    pub move_type: MoveType,
+    pub move_kind: MoveKind,
 
     // is this entity solid (i.e. does it have collision)
     pub solid: f32,
@@ -530,7 +516,7 @@ impl GenericEntityStatics {
             FieldAddrFloat::AbsMaxY => self.abs_max[1],
             FieldAddrFloat::AbsMaxZ => self.abs_max[2],
             FieldAddrFloat::LocalTime => engine::duration_to_f32(self.local_time),
-            FieldAddrFloat::MoveType => self.move_type as u32 as f32,
+            FieldAddrFloat::MoveKind => self.move_kind as u32 as f32,
             FieldAddrFloat::Solid => self.solid,
             FieldAddrFloat::OriginX => self.origin[0],
             FieldAddrFloat::OriginY => self.origin[1],
@@ -618,7 +604,7 @@ impl GenericEntityStatics {
             FieldAddrFloat::AbsMaxY => self.abs_max[1] = val,
             FieldAddrFloat::AbsMaxZ => self.abs_max[2] = val,
             FieldAddrFloat::LocalTime => self.local_time = engine::duration_from_f32(val),
-            FieldAddrFloat::MoveType => self.move_type = MoveType::from_u32(val as u32).unwrap(),
+            FieldAddrFloat::MoveKind => self.move_kind = MoveKind::from_u32(val as u32).unwrap(),
             FieldAddrFloat::Solid => self.solid = val,
             FieldAddrFloat::OriginX => self.origin[0] = val,
             FieldAddrFloat::OriginY => self.origin[1] = val,
@@ -915,7 +901,7 @@ impl Default for GenericEntityStatics {
             abs_min: Vector3::zero(),
             abs_max: Vector3::zero(),
             local_time: Duration::seconds(0),
-            move_type: MoveType::None,
+            move_kind: MoveKind::None,
             solid: 0.0,
             origin: Vector3::zero(),
             old_origin: Vector3::zero(),
@@ -1274,9 +1260,12 @@ impl Entity {
     }
 
     fn get_entity_id_dynamic(&self, addr: usize) -> Result<EntityId, ProgsError> {
-        Ok(EntityId(self.dynamics[addr - ADDR_DYNAMIC_START]
+        match self.dynamics[addr - ADDR_DYNAMIC_START]
             .as_ref()
-            .read_i32::<LittleEndian>()?))
+            .read_i32::<LittleEndian>()? {
+            e if e < 0 => Err(ProgsError::with_msg(format!("Negative entity ID ({})", e))),
+            e => Ok(EntityId(e as usize)),
+        }
     }
 
     pub fn put_entity_id(&mut self, val: EntityId, addr: i16) -> Result<(), ProgsError> {
@@ -1308,7 +1297,7 @@ impl Entity {
     fn put_entity_id_dynamic(&mut self, val: EntityId, addr: usize) -> Result<(), ProgsError> {
         self.dynamics[addr - ADDR_DYNAMIC_START]
             .as_mut()
-            .write_i32::<LittleEndian>(val.0)?;
+            .write_i32::<LittleEndian>(val.0 as i32)?;
 
         Ok(())
     }
@@ -1395,14 +1384,49 @@ impl Entity {
         Ok(())
     }
 
+    pub fn model_index(&self) -> Result<usize, ProgsError> {
+        let model_index = self.get_float(FieldAddrFloat::ModelIndex as i16)?;
+        if model_index < 0.0 || model_index > ::std::usize::MAX as f32 {
+            Err(ProgsError::with_msg(format!(
+                "Invalid value for entity.model_index ({})",
+                model_index,
+            )))
+        } else {
+            Ok(model_index as usize)
+        }
+    }
+
     pub fn solid(&self) -> Result<EntitySolid, ProgsError> {
-        let solid_f = self.get_float(FieldAddrFloat::Solid as i16)?;
-        let solid_i = solid_f as i32;
+        let solid_i = self.get_float(FieldAddrFloat::Solid as i16)? as i32;
         match EntitySolid::from_i32(solid_i) {
             Some(s) => Ok(s),
             None => Err(ProgsError::with_msg(format!(
                 "Invalid value for entity.solid ({})",
-                solid_f,
+                solid_i,
+            ))),
+        }
+    }
+
+    pub fn origin(&self) -> Result<Vector3<f32>, ProgsError> {
+        Ok(self.get_vector(FieldAddrVector::Origin as i16)?.into())
+    }
+
+    pub fn min(&self) -> Result<Vector3<f32>, ProgsError> {
+        Ok(self.get_vector(FieldAddrVector::Mins as i16)?.into())
+    }
+
+    pub fn max(&self) -> Result<Vector3<f32>, ProgsError> {
+        Ok(self.get_vector(FieldAddrVector::Maxs as i16)?.into())
+    }
+
+    pub fn move_kind(&self) -> Result<MoveKind, ProgsError> {
+        let move_kind_f = self.get_float(FieldAddrFloat::MoveKind as i16)?;
+        let move_kind_i = move_kind_f as i32;
+        match MoveKind::from_i32(move_kind_i) {
+            Some(m) => Ok(m),
+            None => Err(ProgsError::with_msg(format!(
+                "Invalid value for entity.move_kind ({})",
+                move_kind_f,
             ))),
         }
     }

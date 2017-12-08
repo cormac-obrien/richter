@@ -16,6 +16,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 mod entity;
+mod phys;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -24,6 +25,7 @@ use std::rc::Rc;
 use self::entity::Entity;
 use self::entity::EntityFlags;
 use self::entity::EntitySolid;
+use self::phys::MoveKind;
 pub use self::entity::EntityTypeDef;
 pub use self::entity::FieldAddrEntityId;
 pub use self::entity::FieldAddrFloat;
@@ -33,14 +35,18 @@ pub use self::entity::FieldAddrVector;
 use self::entity::STATIC_ADDRESS_COUNT;
 
 use bsp;
+use bsp::BspCollisionHull;
+use bsp::BspModel;
 use console::CvarRegistry;
 use mdl;
 use model::Model;
+use model::ModelKind;
 use pak::Pak;
 use parse;
 use progs::EntityFieldAddr;
 use progs::EntityId;
 use progs::ExecutionContext;
+use progs::FieldAddr;
 use progs::FieldDef;
 use progs::GlobalAddrEntity;
 use progs::Globals;
@@ -55,11 +61,6 @@ use cgmath::Vector3;
 use cgmath::Zero;
 
 const AREA_DEPTH: usize = 4;
-
-// 2 ^ (AREA_DEPTH + 1) - 1
-// TODO: change this definition once constfn is a thing
-const MAX_AREA_NODES: usize = 31;
-
 const MAX_ENTITIES: usize = 600;
 
 enum AreaNodeKind {
@@ -80,17 +81,23 @@ struct AreaNode {
 //   07      08      09      10      11      12      13      14    Y
 // 15  16  17  18  19  20  21  22  23  24  25  26  27  28  29  30  Leaves
 //
-//   21    19    17    15
-//   ||    ||    ||    ||
-//   12=05=11    08=03=07
-//   || || ||    || || ||
-//   22 || 20    18 || 16
-//      02====00====01
-//   29 || 27    25 || 23
-//   || || ||    || || ||
-//   14=06=13    10=04=09
-//   ||    ||    ||    ||
-//   30    28    26    24
+//  [21]      [19]      [17]      [15]
+//   ||        ||        ||        ||
+//   ||        ||        ||        ||
+//   12===05===11        08===03===07
+//   ||   ||   ||        ||   ||   ||
+//   ||   ||   ||        ||   ||   ||
+//  [22]  ||  [20]      [18]  ||  [16]
+//        ||                  ||
+//        02========00========01
+//        ||                  ||
+//  [29]  ||  [27]      [25]  ||  [23]
+//   ||   ||   ||        ||   ||   ||
+//   ||   ||   ||        ||   ||   ||
+//   14===06===13        10===04===09
+//   ||        ||        ||        ||
+//   ||        ||        ||        ||
+//  [30]      [28]      [26]      [24]
 //
 // The tree won't necessarily look like this, this just assumes a rectangular area with width
 // between 1-2x its length.
@@ -211,27 +218,6 @@ enum WorldEntitySlot {
     Occupied(WorldEntity),
 }
 
-struct WorldEntities {
-    string_table: Rc<StringTable>,
-    type_def: EntityTypeDef,
-    slots: Box<[WorldEntitySlot]>,
-}
-
-impl WorldEntities {
-    pub fn new(type_def: EntityTypeDef, string_table: Rc<StringTable>) -> WorldEntities {
-        let mut slots = Vec::with_capacity(MAX_ENTITIES);
-        for _ in 0..MAX_ENTITIES {
-            slots.push(WorldEntitySlot::Vacant);
-        }
-
-        WorldEntities {
-            string_table,
-            type_def,
-            slots: slots.into_boxed_slice(),
-        }
-    }
-}
-
 pub struct World {
     string_table: Rc<StringTable>,
 
@@ -310,7 +296,6 @@ impl World {
         S: AsRef<str>,
     {
         let name = name.as_ref();
-        let name_id = self.string_table.find(name).unwrap();
 
         match self.type_def.field_defs().iter().find(|def| {
             self.string_table.get(def.name_id).unwrap() == name
@@ -324,8 +309,8 @@ impl World {
     ///
     /// This representation should be compatible with the one used by the original Quake.
     pub fn ent_fld_addr_to_i32(&self, ent_fld_addr: EntityFieldAddr) -> i32 {
-        let total_addr = (ent_fld_addr.entity_id * self.type_def.addr_count() +
-                              ent_fld_addr.field_addr) * 4;
+        let total_addr = (ent_fld_addr.entity_id.0 * self.type_def.addr_count() +
+                              ent_fld_addr.field_addr.0) * 4;
 
         if total_addr > ::std::i32::MAX as usize {
             panic!("ent_fld_addr_to_i32: total_addr overflow");
@@ -346,8 +331,8 @@ impl World {
 
         let total_addr = val as usize / 4;
         EntityFieldAddr {
-            entity_id: total_addr / self.type_def.addr_count(),
-            field_addr: total_addr % self.type_def.addr_count(),
+            entity_id: EntityId(total_addr / self.type_def.addr_count()),
+            field_addr: FieldAddr(total_addr % self.type_def.addr_count()),
         }
     }
 
@@ -377,7 +362,7 @@ impl World {
             area_id: None,
         });
 
-        Ok(EntityId(slot_id as i32))
+        Ok(EntityId(slot_id))
     }
 
     /// Allocate a new entity and initialize it with the data in the given map.
@@ -453,7 +438,7 @@ impl World {
                                 WorldEntitySlot::Occupied(_) => (),
                             }
 
-                            ent.put_entity_id(EntityId(id as i32), def.offset as i16)?
+                            ent.put_entity_id(EntityId(id), def.offset as i16)?
                         }
                         Type::QField => panic!("attempted to store field of type Field in entity"),
                         Type::QFunction => {
@@ -471,7 +456,7 @@ impl World {
             area_id: None,
         });
 
-        Ok(EntityId(entry_id as i32))
+        Ok(EntityId(entry_id))
     }
 
     pub fn free(&mut self, entity_id: EntityId) -> Result<(), ProgsError> {
@@ -491,46 +476,46 @@ impl World {
         Ok(())
     }
 
-    pub fn try_get_entity(&self, entity_id: usize) -> Result<&Entity, ProgsError> {
-        if entity_id > self.slots.len() {
+    pub fn try_get_entity(&self, entity_id: EntityId) -> Result<&Entity, ProgsError> {
+        if entity_id.0 as usize > self.slots.len() {
             return Err(ProgsError::with_msg(
-                format!("Invalid entity ID ({})", entity_id),
+                format!("Invalid entity ID ({})", entity_id.0 as usize),
             ));
         }
 
-        match self.slots[entity_id] {
+        match self.slots[entity_id.0 as usize] {
             WorldEntitySlot::Vacant => Err(ProgsError::with_msg(
-                format!("No entity at list entry {}", entity_id),
+                format!("No entity at list entry {}", entity_id.0 as usize),
             )),
             WorldEntitySlot::Occupied(ref e) => Ok(&e.entity),
         }
     }
 
-    pub fn try_get_entity_mut(&mut self, entity_id: usize) -> Result<&mut Entity, ProgsError> {
-        if entity_id > self.slots.len() {
+    pub fn try_get_entity_mut(&mut self, entity_id: EntityId) -> Result<&mut Entity, ProgsError> {
+        if entity_id.0 as usize > self.slots.len() {
             return Err(ProgsError::with_msg(
-                format!("Invalid entity ID ({})", entity_id),
+                format!("Invalid entity ID ({})", entity_id.0 as usize),
             ));
         }
 
-        match self.slots[entity_id] {
+        match self.slots[entity_id.0 as usize] {
             WorldEntitySlot::Vacant => Err(ProgsError::with_msg(
-                format!("No entity at list entry {}", entity_id),
+                format!("No entity at list entry {}", entity_id.0 as usize),
             )),
             WorldEntitySlot::Occupied(ref mut e) => Ok(&mut e.entity),
         }
     }
 
-    fn try_get_world_entity(&self, entity_id: usize) -> Result<&WorldEntity, ProgsError> {
-        if entity_id > self.slots.len() {
+    fn try_get_world_entity(&self, entity_id: EntityId) -> Result<&WorldEntity, ProgsError> {
+        if entity_id.0 as usize > self.slots.len() {
             return Err(ProgsError::with_msg(
-                format!("Invalid entity ID ({})", entity_id),
+                format!("Invalid entity ID ({})", entity_id.0 as usize),
             ));
         }
 
-        match self.slots[entity_id] {
+        match self.slots[entity_id.0 as usize] {
             WorldEntitySlot::Vacant => Err(ProgsError::with_msg(
-                format!("No entity at list entry {}", entity_id),
+                format!("No entity at list entry {}", entity_id.0 as usize),
             )),
             WorldEntitySlot::Occupied(ref e) => Ok(e),
         }
@@ -538,17 +523,17 @@ impl World {
 
     fn try_get_world_entity_mut(
         &mut self,
-        entity_id: usize,
+        entity_id: EntityId,
     ) -> Result<&mut WorldEntity, ProgsError> {
-        if entity_id > self.slots.len() {
+        if entity_id.0 as usize > self.slots.len() {
             return Err(ProgsError::with_msg(
-                format!("Invalid entity ID ({})", entity_id),
+                format!("Invalid entity ID ({})", entity_id.0 as usize),
             ));
         }
 
-        match self.slots[entity_id] {
+        match self.slots[entity_id.0 as usize] {
             WorldEntitySlot::Vacant => Err(ProgsError::with_msg(
-                format!("No entity at list entry {}", entity_id),
+                format!("No entity at list entry {}", entity_id.0 as usize),
             )),
             WorldEntitySlot::Occupied(ref mut e) => Ok(e),
         }
@@ -601,7 +586,7 @@ impl World {
             return Ok(());
         }
 
-        let area_id = match self.try_get_world_entity(e_id.0 as usize)?.area_id {
+        let area_id = match self.try_get_world_entity(e_id)?.area_id {
             Some(i) => i,
 
             // entity not linked
@@ -614,19 +599,21 @@ impl World {
             debug!("Unlinking entity {} from area solids", e_id.0);
         }
 
-        self.try_get_world_entity_mut(e_id.0 as usize)?.area_id = None;
+        self.try_get_world_entity_mut(e_id)?.area_id = None;
 
         Ok(())
     }
 
-    // TODO: brush entities need to take their origin, mins and maxs fields from their models
     fn link_entity(&mut self, e_id: EntityId, touch_triggers: bool) -> Result<(), ProgsError> {
         // if this entity has been removed or freed, do nothing
         if let WorldEntitySlot::Vacant = self.slots[e_id.0 as usize] {
             return Ok(());
         }
 
-        // TODO: make sure we don't link the world entity
+        // don't link the world entity
+        if e_id.0 == 0 {
+            return Ok(());
+        }
 
         self.unlink_entity(e_id)?;
 
@@ -634,7 +621,7 @@ impl World {
         let mut abs_max;
         let solid;
         {
-            let ent = self.try_get_entity_mut(e_id.0 as usize)?;
+            let ent = self.try_get_entity_mut(e_id)?;
 
             let origin = Vector3::from(ent.get_vector(FieldAddrVector::Origin as i16)?);
             let mins = Vector3::from(ent.get_vector(FieldAddrVector::Mins as i16)?);
@@ -709,11 +696,11 @@ impl World {
         if solid == EntitySolid::Trigger {
             debug!("Linking entity {} into area {} triggers", e_id.0, node_id);
             self.area_nodes[node_id].triggers.insert(e_id);
-            self.try_get_world_entity_mut(e_id.0 as usize)?.area_id = Some(node_id);
+            self.try_get_world_entity_mut(e_id)?.area_id = Some(node_id);
         } else {
             debug!("Linking entity {} into area {} solids", e_id.0, node_id);
             self.area_nodes[node_id].solids.insert(e_id);
-            self.try_get_world_entity_mut(e_id.0 as usize)?.area_id = Some(node_id);
+            self.try_get_world_entity_mut(e_id)?.area_id = Some(node_id);
         }
 
         if touch_triggers {
@@ -730,7 +717,7 @@ impl World {
         origin: Vector3<f32>,
     ) -> Result<(), ProgsError> {
         {
-            let ent = self.try_get_entity_mut(e_id.0 as usize)?;
+            let ent = self.try_get_entity_mut(e_id)?;
             ent.put_vector(
                 origin.into(),
                 FieldAddrVector::Origin as i16,
@@ -749,7 +736,7 @@ impl World {
     ) -> Result<(), ProgsError> {
         let model_index;
         {
-            let ent = self.try_get_entity_mut(e_id.0 as usize)?;
+            let ent = self.try_get_entity_mut(e_id)?;
 
             ent.put_string_id(
                 model_name_id,
@@ -785,7 +772,7 @@ impl World {
         min: Vector3<f32>,
         max: Vector3<f32>,
     ) -> Result<(), ProgsError> {
-        let ent = self.try_get_entity_mut(e_id.0 as usize)?;
+        let ent = self.try_get_entity_mut(e_id)?;
         ent.set_min_max_size(min, max)?;
         Ok(())
     }
@@ -796,4 +783,63 @@ impl World {
         self.free(e_id)?;
         Ok(())
     }
+
+    pub fn hull_for_entity(
+        &self,
+        e_id: EntityId,
+        min: Vector3<f32>,
+        max: Vector3<f32>,
+    ) -> Result<(BspCollisionHull, Vector3<f32>), ProgsError> {
+        let solid = self.try_get_entity(e_id)?.solid()?;
+
+        match solid {
+            EntitySolid::Bsp => {
+                if self.try_get_entity(e_id)?.move_kind()? != MoveKind::Push {
+                    return Err(ProgsError::with_msg(format!(
+                        "Brush entities must have MoveKind::Push (has {:?})",
+                        self.try_get_entity(e_id)?.move_kind()?
+                    )));
+                }
+
+                let size = max - min;
+                match self.models[self.try_get_entity(e_id)?.model_index()?].kind() {
+                    &ModelKind::Brush(ref bmodel) => {
+                        let hull_index;
+
+                        // TODO: replace these magic constants
+                        if size[0] < 3.0 {
+                            hull_index = 0;
+                        } else if size[0] <= 32.0 {
+                            hull_index = 1;
+                        } else {
+                            hull_index = 2;
+                        }
+
+                        let hull = bmodel.hull(hull_index).unwrap();
+
+                        let offset = hull.min() - min + self.try_get_entity(e_id)?.origin()?;
+
+                        Ok((hull, offset))
+                    }
+                    _ => {
+                        Err(ProgsError::with_msg(
+                            format!("Non-brush entities may not have MoveKind::Push"),
+                        ))
+                    }
+                }
+            }
+
+            _ => {
+                let hull = BspCollisionHull::for_bounds(
+                    self.try_get_entity(e_id)?.min()?,
+                    self.try_get_entity(e_id)?.min()?,
+                ).unwrap();
+                let offset = self.try_get_entity(e_id)?.origin()?;
+
+                Ok((hull, offset))
+            }
+        }
+    }
+
+    pub fn move_entity(&mut self, start: Vector3<f32>, mins: Vector3<f32>, maxs: Vector3<f32>) {}
 }

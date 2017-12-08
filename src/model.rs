@@ -51,6 +51,10 @@ impl Model {
         }
     }
 
+    pub fn kind(&self) -> &ModelKind {
+        &self.kind
+    }
+
     pub fn load<S>(pak: &Pak, name: S) -> Model
     where
         S: AsRef<str>,
@@ -118,6 +122,9 @@ impl Model {
             ModelKind::None => panic!("attempted to take min() of NULL model"),
             ModelKind::Brush(ref bmodel) => bmodel.min(),
             ModelKind::Sprite(ref smodel) => smodel.min(),
+
+            // TODO: maybe change this?
+            // https://github.com/id-Software/Quake/blob/master/WinQuake/gl_model.c#L1625
             ModelKind::Alias(_) => Vector3::new(-16.0, -16.0, -16.0),
         }
     }
@@ -128,6 +135,9 @@ impl Model {
             ModelKind::None => panic!("attempted to take max() of NULL model"),
             ModelKind::Brush(ref bmodel) => bmodel.max(),
             ModelKind::Sprite(ref smodel) => smodel.max(),
+
+            // TODO: maybe change this?
+            // https://github.com/id-Software/Quake/blob/master/WinQuake/gl_model.c#L1625
             ModelKind::Alias(_) => Vector3::new(16.0, 16.0, 16.0),
         }
     }

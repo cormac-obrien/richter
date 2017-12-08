@@ -175,15 +175,15 @@ impl From<::std::io::Error> for BspError {
     }
 }
 
-#[derive(Debug, FromPrimitive)]
-enum BspPlaneAxis {
+#[derive(Copy, Clone, Debug, FromPrimitive)]
+pub enum BspPlaneAxis {
     X = 0,
     Y = 1,
     Z = 2,
 }
 
 #[derive(Debug)]
-struct BspPlane {
+pub struct BspPlane {
     /// surface normal
     normal: Vector3<f32>,
 
@@ -454,6 +454,63 @@ impl BspCollisionHull {
             maxs,
         })
     }
+
+    pub fn min(&self) -> Vector3<f32> {
+        self.mins
+    }
+
+    pub fn max(&self) -> Vector3<f32> {
+        self.maxs
+    }
+
+    /// Returns the leaf contents at the point in the given hull.
+    pub fn contents_at_point(
+        &self,
+        node_id: usize,
+        point: Vector3<f32>,
+    ) -> Result<BspLeafContents, BspError> {
+
+        let mut current_node = node_id;
+        loop {
+            if current_node < self.collision_node_id ||
+                current_node >= self.collision_node_id + self.collision_node_count
+            {
+                return Err(BspError::with_msg(format!(
+                    "Collision node ID out of range: was {}, must be [{}, {})",
+                    current_node,
+                    self.collision_node_id,
+                    self.collision_node_id + self.collision_node_count
+                )));
+            }
+
+
+            let d;
+            let plane = &self.planes[self.collision_nodes[current_node].plane_id];
+            match plane.axis {
+                // plane is aligned along one of the major axes
+                Some(a) => {
+                    d = point[a as usize] - plane.dist;
+                }
+
+                // plane is not aligned, need to calculate dot product
+                None => {
+                    d = plane.normal.dot(point) - plane.dist;
+                }
+            }
+
+            if d < 0.0 {
+                current_node = match self.collision_nodes[current_node].back {
+                    BspCollisionNodeChild::Node(n) => n,
+                    BspCollisionNodeChild::Contents(c) => return Ok(c),
+                };
+            } else {
+                current_node = match self.collision_nodes[current_node].front {
+                    BspCollisionNodeChild::Node(n) => n,
+                    BspCollisionNodeChild::Contents(c) => return Ok(c),
+                };
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -587,6 +644,24 @@ impl BspModel {
     /// Returns the origin of this BSP model.
     pub fn origin(&self) -> Vector3<f32> {
         self.origin
+    }
+
+    pub fn hull(&self, index: usize) -> Result<BspCollisionHull, BspError> {
+        if index > MAX_HULLS {
+            return Err(BspError::with_msg(
+                format!("Invalid hull index ({})", index),
+            ));
+        }
+
+        let main_hull = &self.bsp_data.hulls[index];
+        Ok(BspCollisionHull {
+            planes: main_hull.planes.clone(),
+            collision_nodes: main_hull.collision_nodes.clone(),
+            collision_node_id: self.collision_node_ids[index],
+            collision_node_count: self.collision_node_counts[index],
+            mins: self.min,
+            maxs: self.max,
+        })
     }
 }
 

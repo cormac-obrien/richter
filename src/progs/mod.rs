@@ -239,17 +239,17 @@ impl StringId {
 
 #[derive(Copy, Clone, Debug, Default, Eq, Hash, PartialEq)]
 #[repr(C)]
-pub struct EntityId(pub i32);
+pub struct EntityId(pub usize);
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
-pub struct FieldAddr(pub i32);
+pub struct FieldAddr(pub usize);
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
 pub struct EntityFieldAddr {
-    pub entity_id: usize,
-    pub field_addr: usize,
+    pub entity_id: EntityId,
+    pub field_addr: FieldAddr,
 }
 
 enum LumpId {
@@ -820,7 +820,7 @@ impl ExecutionContext {
 
                 Opcode::State => {
                     let self_id = globals.get_entity_id(GlobalAddrEntity::Self_ as i16)?;
-                    let self_ent = world.try_get_entity_mut(self_id.0 as usize)?;
+                    let self_ent = world.try_get_entity_mut(self_id)?;
                     let next_think_time = globals.get_float(GlobalAddrFloat::Time as i16)? + 0.1;
 
                     self_ent.put_float(
@@ -1408,9 +1408,7 @@ fn load_f(
 
     let fld_ofs = globals.get_field_addr(e_f)?;
 
-    let f = world.try_get_entity(ent_id.0 as usize)?.get_float(
-        fld_ofs.0 as i16,
-    )?;
+    let f = world.try_get_entity(ent_id)?.get_float(fld_ofs.0 as i16)?;
     globals.put_float(f, dest_ofs)?;
 
     Ok(())
@@ -1426,7 +1424,7 @@ fn load_v(
 ) -> Result<(), ProgsError> {
     let ent_id = globals.get_entity_id(ent_id_addr)?;
     let ent_vector = globals.get_field_addr(ent_vector_addr)?;
-    let v = world.try_get_entity(ent_id.0 as usize)?.get_vector(
+    let v = world.try_get_entity(ent_id)?.get_vector(
         ent_vector.0 as i16,
     )?;
     globals.put_vector(v, dest_addr)?;
@@ -1443,9 +1441,8 @@ fn load_s(
 ) -> Result<(), ProgsError> {
     let ent_id = globals.get_entity_id(ent_id_addr)?;
     let ent_string_id = globals.get_field_addr(ent_string_id_addr)?;
-    let s = world.try_get_entity(ent_id.0 as usize)?.get_string_id(
-        ent_string_id.0 as
-            i16,
+    let s = world.try_get_entity(ent_id)?.get_string_id(
+        ent_string_id.0 as i16,
     )?;
     globals.put_string_id(s, dest_addr)?;
 
@@ -1461,9 +1458,8 @@ fn load_ent(
 ) -> Result<(), ProgsError> {
     let ent_id = globals.get_entity_id(ent_id_addr)?;
     let ent_entity_id = globals.get_field_addr(ent_entity_id_addr)?;
-    let e = world.try_get_entity(ent_id.0 as usize)?.get_entity_id(
-        ent_entity_id.0 as
-            i16,
+    let e = world.try_get_entity(ent_id)?.get_entity_id(
+        ent_entity_id.0 as i16,
     )?;
     globals.put_entity_id(e, dest_addr)?;
 
@@ -1479,9 +1475,8 @@ fn load_fnc(
 ) -> Result<(), ProgsError> {
     let ent_id = globals.get_entity_id(ent_id_addr)?;
     let fnc_function_id = globals.get_field_addr(ent_function_id_addr)?;
-    let f = world.try_get_entity(ent_id.0 as usize)?.get_function_id(
-        fnc_function_id.0 as
-            i16,
+    let f = world.try_get_entity(ent_id)?.get_function_id(
+        fnc_function_id.0 as i16,
     )?;
     globals.put_function_id(f, dest_addr)?;
 
@@ -1499,8 +1494,8 @@ fn address(
     let fld_addr = globals.get_field_addr(fld_addr_addr)?;
     globals.put_entity_field(
         world.ent_fld_addr_to_i32(EntityFieldAddr {
-            entity_id: ent_id.0 as usize,
-            field_addr: fld_addr.0 as usize,
+            entity_id: ent_id,
+            field_addr: fld_addr,
         }),
         dest_addr,
     )?;
@@ -1635,7 +1630,7 @@ fn storep_f(
     let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
     world
         .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_float(f, ent_fld_addr.field_addr as i16)?;
+        .put_float(f, ent_fld_addr.field_addr.0 as i16)?;
 
     Ok(())
 }
@@ -1655,7 +1650,7 @@ fn storep_v(
     let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
     world
         .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_vector(v, ent_fld_addr.field_addr as i16)?;
+        .put_vector(v, ent_fld_addr.field_addr.0 as i16)?;
 
     Ok(())
 }
@@ -1675,7 +1670,7 @@ fn storep_s(
     let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
     world
         .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_string_id(s, ent_fld_addr.field_addr as i16)?;
+        .put_string_id(s, ent_fld_addr.field_addr.0 as i16)?;
 
     Ok(())
 }
@@ -1695,7 +1690,7 @@ fn storep_ent(
     let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
     world
         .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_entity_id(e, ent_fld_addr.field_addr as i16)?;
+        .put_entity_id(e, ent_fld_addr.field_addr.0 as i16)?;
 
     Ok(())
 }
@@ -1715,7 +1710,7 @@ fn storep_fnc(
     let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
     world
         .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_function_id(f, ent_fld_addr.field_addr as i16)?;
+        .put_function_id(f, ent_fld_addr.field_addr.0 as i16)?;
 
     Ok(())
 }

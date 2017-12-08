@@ -463,14 +463,21 @@ impl Globals {
     pub fn get_entity_id(&self, addr: i16) -> Result<EntityId, GlobalsError> {
         self.type_check(addr as usize, Type::QEntity)?;
 
-        Ok(EntityId(self.get_addr(addr)?.read_i32::<LittleEndian>()?))
+        match self.get_addr(addr)?.read_i32::<LittleEndian>()? {
+            e if e < 0 => Err(GlobalsError::with_msg(
+                format!("Negative entity ID ({})", e),
+            )),
+            e => Ok(EntityId(e as usize)),
+        }
     }
 
     /// Stores an `EntityId` at the given virtual address.
     pub fn put_entity_id(&mut self, val: EntityId, addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QEntity)?;
 
-        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(val.0)?;
+        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
+            val.0 as i32,
+        )?;
         Ok(())
     }
 
@@ -478,13 +485,20 @@ impl Globals {
     pub fn get_field_addr(&self, addr: i16) -> Result<FieldAddr, GlobalsError> {
         self.type_check(addr as usize, Type::QField)?;
 
-        Ok(FieldAddr(self.get_addr(addr)?.read_i32::<LittleEndian>()?))
+        match self.get_addr(addr)?.read_i32::<LittleEndian>()? {
+            f if f < 0 => Err(GlobalsError::with_msg(
+                format!("Negative entity ID ({})", f),
+            )),
+            f => Ok(FieldAddr(f as usize)),
+        }
     }
 
     /// Stores a `FieldAddr` at the given virtual address.
     pub fn put_field_addr(&mut self, val: FieldAddr, addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QField)?;
-        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(val.0)?;
+        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
+            val.0 as i32,
+        )?;
         Ok(())
     }
 

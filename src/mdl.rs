@@ -34,6 +34,8 @@ pub const MAGIC: i32 = ('I' as i32) << 0 | ('D' as i32) << 8 | ('P' as i32) << 1
     ('O' as i32) << 24;
 pub const VERSION: i32 = 6;
 
+const HEADER_SIZE: u64 = 84;
+
 pub struct SkinSingle {
     rgba: Box<[u8]>,
 }
@@ -145,6 +147,12 @@ pub fn load(data: &[u8]) -> Result<AliasModel, ()> {
         s => s,
     };
 
+    if reader.seek(SeekFrom::Current(0)).unwrap() !=
+        reader.seek(SeekFrom::Start(HEADER_SIZE)).unwrap()
+    {
+        panic!("Misaligned read on MDL header");
+    }
+
     let mut skins: Vec<Skin> = Vec::with_capacity(skin_count as usize);
 
     for _ in 0..skin_count {
@@ -205,11 +213,6 @@ pub fn load(data: &[u8]) -> Result<AliasModel, ()> {
                 skin_h as f32,
         ));
     }
-
-    debug!(
-        "Loaded texcoords. Current position in file is 0x{:X}",
-        reader.seek(SeekFrom::Current(0)).unwrap()
-    );
 
     // let mut poly_facings: Vec<bool> = Vec::with_capacity(poly_count as usize);
     let mut indices: Vec<u32> = Vec::with_capacity(3 * poly_count as usize);
@@ -285,11 +288,13 @@ pub fn load(data: &[u8]) -> Result<AliasModel, ()> {
             }
 
             1 => unimplemented!(),
-            _ => panic!("Bad frame kind value"),
+            x => panic!("Bad frame kind value: {}", x),
         });
     }
 
-    assert!(reader.seek(SeekFrom::Current(0)).unwrap() == reader.seek(SeekFrom::End(0)).unwrap());
+    if reader.seek(SeekFrom::Current(0)).unwrap() != reader.seek(SeekFrom::End(0)).unwrap() {
+        panic!("Misaligned read on MDL file");
+    }
 
     Ok(AliasModel {
         origin: origin,

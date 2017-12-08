@@ -93,7 +93,6 @@ impl Server {
 
         match self.model_precache.iter().enumerate().find(|&(_,
            &ref item_name)| {
-            debug!("Model precache lookup: {} {}", target_name, item_name);
             *item_name == target_name
         }) {
             Some((i, _)) => Ok(i),
