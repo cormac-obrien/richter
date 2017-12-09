@@ -188,12 +188,12 @@ pub enum BspPlaneAxis {
 #[derive(Debug)]
 pub struct BspPlane {
     /// surface normal
-    normal: Vector3<f32>,
+    pub normal: Vector3<f32>,
 
     /// distance from the map origin
-    dist: f32,
+    pub dist: f32,
 
-    axis: Option<BspPlaneAxis>,
+    pub axis: Option<BspPlaneAxis>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -467,7 +467,10 @@ impl BspCollisionHull {
     }
 
     /// Returns the leaf contents at the point in the given hull.
-    pub fn contents_at_point(
+    pub fn contents_at_point(&self, point: Vector3<f32>) -> Result<BspLeafContents, BspError> {
+        self.contents_at_point_node(&BspCollisionNodeChild::Node(self.node_id), point)
+    }
+    fn contents_at_point_node(
         &self,
         node: &BspCollisionNodeChild,
         point: Vector3<f32>,
@@ -653,7 +656,8 @@ impl BspCollisionHull {
                 }
 
                 if positive &&
-                    self.contents_at_point(&self.nodes[n].back, mid)? == BspLeafContents::Solid
+                    self.contents_at_point_node(&self.nodes[n].back, mid)? ==
+                        BspLeafContents::Solid
                 {
                     return self.recursive_hull_check(
                         &self.nodes[n].back,
@@ -663,7 +667,7 @@ impl BspCollisionHull {
                         end,
                         trace,
                     );
-                } else if self.contents_at_point(&self.nodes[n].front, mid)? ==
+                } else if self.contents_at_point_node(&self.nodes[n].front, mid)? ==
                            BspLeafContents::Solid
                 {
                     return self.recursive_hull_check(
@@ -695,8 +699,10 @@ impl BspCollisionHull {
                 }
 
                 // this seems to be a hack to get unstuck from walls
-                while self.contents_at_point(&BspCollisionNodeChild::Node(0), mid)? ==
-                    BspLeafContents::Solid
+                while self.contents_at_point_node(
+                    &BspCollisionNodeChild::Node(self.node_id),
+                    mid,
+                )? == BspLeafContents::Solid
                 {
                     ratio -= 0.1;
 

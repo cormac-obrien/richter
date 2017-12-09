@@ -1396,6 +1396,14 @@ impl Entity {
         }
     }
 
+    pub fn abs_min(&self) -> Result<Vector3<f32>, ProgsError> {
+        Ok(self.get_vector(FieldAddrVector::AbsMin as i16)?.into())
+    }
+
+    pub fn abs_max(&self) -> Result<Vector3<f32>, ProgsError> {
+        Ok(self.get_vector(FieldAddrVector::AbsMax as i16)?.into())
+    }
+
     pub fn solid(&self) -> Result<EntitySolid, ProgsError> {
         let solid_i = self.get_float(FieldAddrFloat::Solid as i16)? as i32;
         match EntitySolid::from_i32(solid_i) {
@@ -1419,6 +1427,10 @@ impl Entity {
         Ok(self.get_vector(FieldAddrVector::Maxs as i16)?.into())
     }
 
+    pub fn size(&self) -> Result<Vector3<f32>, ProgsError> {
+        Ok(self.get_vector(FieldAddrVector::Size as i16)?.into())
+    }
+
     pub fn move_kind(&self) -> Result<MoveKind, ProgsError> {
         let move_kind_f = self.get_float(FieldAddrFloat::MoveKind as i16)?;
         let move_kind_i = move_kind_f as i32;
@@ -1429,5 +1441,28 @@ impl Entity {
                 move_kind_f,
             ))),
         }
+    }
+
+    pub fn flags(&self) -> Result<EntityFlags, ProgsError> {
+        let flags_i = self.get_float(FieldAddrFloat::Flags as i16)? as u16;
+        match EntityFlags::from_bits(flags_i) {
+            Some(f) => Ok(f),
+            None => Err(ProgsError::with_msg(
+                format!("Invalid internal flags value ({})", flags_i),
+            )),
+        }
+    }
+
+    pub fn add_flags(&mut self, flags: EntityFlags) -> Result<(), ProgsError> {
+        let result = self.flags()? | flags;
+        self.put_float(
+            result.bits() as f32,
+            FieldAddrFloat::Flags as i16,
+        )?;
+        Ok(())
+    }
+
+    pub fn owner(&self) -> Result<EntityId, ProgsError> {
+        Ok(self.get_entity_id(FieldAddrEntityId::Owner as i16)?)
     }
 }

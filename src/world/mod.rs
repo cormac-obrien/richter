@@ -25,6 +25,8 @@ use std::rc::Rc;
 use self::entity::Entity;
 use self::entity::EntityFlags;
 use self::entity::EntitySolid;
+use self::phys::Collide;
+use self::phys::CollideKind;
 use self::phys::MoveKind;
 pub use self::phys::Trace;
 pub use self::entity::EntityTypeDef;
@@ -547,8 +549,9 @@ impl World {
     }
 
     pub fn spawn_entity(&mut self) -> Result<EntityId, ProgsError> {
-        self.alloc_uninitialized()
-        // TODO: link
+        let e_id = self.alloc_uninitialized()?;
+        self.link_entity(e_id, false)?;
+        Ok(e_id)
     }
 
     pub fn spawn_entity_from_map(
@@ -793,10 +796,12 @@ impl World {
 
     /// Moves an entity straight down until it collides with a solid surface.
     ///
+    /// Returns `true` if the entity hit the floor, `false` otherwise.
+    ///
     /// ## Notes
     /// - The drop distance is limited to 256, so entities which are more than 256 units above a
     ///   solid surface will not actually hit the ground.
-    pub fn drop_entity_to_floor(&mut self, e_id: EntityId) -> Result<(), ProgsError> {
+    pub fn drop_entity_to_floor(&mut self, e_id: EntityId) -> Result<bool, ProgsError> {
         let origin = self.try_get_entity(e_id)?.origin()?;
 
         // TODO: replace magic constant
@@ -804,11 +809,39 @@ impl World {
         let min = self.try_get_entity(e_id)?.min()?;
         let max = self.try_get_entity(e_id)?.max()?;
 
-        let trace = self.move_entity(origin, min, max, end)?;
+        let trace = self.move_entity(
+            e_id,
+            origin,
+            min,
+            max,
+            end,
+            CollideKind::Normal,
+        )?;
 
-        unimplemented!();
+        if trace.ratio == 1.0 || trace.all_solid {
+            // entity didn't hit the floor or is stuck
+            Ok((false))
+        } else {
+            // entity hit the floor. update origin, relink and set ON_GROUND flag.
+            self.try_get_entity_mut(e_id)?.put_vector(
+                trace.end_pos.into(),
+                FieldAddrVector::Origin as i16,
+            )?;
+            self.link_entity(e_id, false)?;
+            self.try_get_entity_mut(e_id)?.add_flags(
+                EntityFlags::ON_GROUND,
+            )?;
+            self.try_get_entity_mut(e_id)?.put_entity_id(
+                trace.entity_id.unwrap(),
+                FieldAddrEntityId::Ground as
+                    i16,
+            )?;
+
+            Ok((true))
+        }
     }
 
+    // TODO: handle the offset return value internally
     pub fn hull_for_entity(
         &self,
         e_id: EntityId,
@@ -868,12 +901,171 @@ impl World {
 
     pub fn move_entity(
         &mut self,
+        e_id: EntityId,
         start: Vector3<f32>,
-        mins: Vector3<f32>,
-        maxs: Vector3<f32>,
+        min: Vector3<f32>,
+        max: Vector3<f32>,
         end: Vector3<f32>,
+        kind: CollideKind,
     ) -> Result<Trace, ProgsError> {
+        let trace = self.collide_move_with_entity(
+            EntityId(0),
+            start,
+            min,
+            max,
+            end,
+        )?;
+
+        // if this is a rocket or a grenade, expand the monster collision box
+        let (monster_min, monster_max) = match kind {
+            CollideKind::Missile => (
+                min - Vector3::new(15.0, 15.0, 15.0),
+                max + Vector3::new(15.0, 15.0, 15.0),
+            ),
+            _ => (min, max),
+        };
+
+        let (move_min, move_max) =
+            self::phys::bounds_for_move(start, monster_min, monster_max, end);
+
+        let collide = Collide {
+            e_id: Some(e_id),
+            move_min,
+            move_max,
+            min,
+            max,
+            monster_min,
+            monster_max,
+            start,
+            end,
+            kind,
+        };
+
         unimplemented!();
+    }
+
+    pub fn collide(&self, collide: &Collide) -> Result<Trace, ProgsError> {
+        let mut trace = Trace::new();
+        self.collide_area(0, collide, &mut trace)?;
+        Ok(trace)
+    }
+
+    fn collide_area(
+        &self,
+        area_id: usize,
+        collide: &Collide,
+        trace: &mut Trace,
+    ) -> Result<(), ProgsError> {
+        let area = &self.area_nodes[area_id];
+
+        for touch in area.solids.iter() {
+            // don't collide an entity with itself
+            if let Some(e) = collide.e_id {
+                if e == *touch {
+                    continue;
+                }
+            }
+
+            match self.try_get_entity(*touch)?.solid()? {
+                // if the other entity has no collision, skip it
+                EntitySolid::Not => continue,
+
+                // triggers should not appear in the solids list
+                EntitySolid::Trigger => {
+                    return Err(ProgsError::with_msg(
+                        format!("Trigger in solids list with ID ({})", touch.0),
+                    ))
+                }
+
+                // don't collide with monsters if the collide specifies not to do so
+                s => {
+                    if s != EntitySolid::Bsp && collide.kind == CollideKind::NoMonsters {
+                        continue;
+                    }
+                }
+            }
+
+            // if bounding boxes never intersect, skip this entity
+            for i in 0..3 {
+                if collide.move_min[i] > self.try_get_entity(*touch)?.abs_max()?[i] ||
+                    collide.move_max[i] < self.try_get_entity(*touch)?.abs_min()?[i]
+                {
+                    continue;
+                }
+            }
+
+            if let Some(e) = collide.e_id {
+                if self.try_get_entity(e)?.size()?[0] != 0.0 &&
+                    self.try_get_entity(*touch)?.size()?[0] == 0.0
+                {
+                    continue;
+                }
+            }
+
+            if trace.all_solid {
+                return Ok(());
+            }
+
+            if let Some(e) = collide.e_id {
+                // don't collide against owner or owned entities
+                if self.try_get_entity(*touch)?.owner()? == e ||
+                    self.try_get_entity(e)?.owner()? == *touch
+                {
+                    continue;
+                }
+            }
+
+            // select bounding boxes based on whether or not candidate is a monster
+            let mut tmp_trace;
+            if self.try_get_entity(*touch)?.flags()?.contains(
+                EntityFlags::MONSTER,
+            )
+            {
+                tmp_trace = self.collide_move_with_entity(
+                    *touch,
+                    collide.start,
+                    collide.monster_min,
+                    collide.monster_max,
+                    collide.end,
+                )?;
+            } else {
+                tmp_trace = self.collide_move_with_entity(
+                    *touch,
+                    collide.start,
+                    collide.min,
+                    collide.max,
+                    collide.end,
+                )?;
+            }
+
+            // check to see if this candidate is the closest yet and update trace if so
+            if tmp_trace.all_solid || tmp_trace.start_solid || tmp_trace.ratio < trace.ratio {
+                tmp_trace.entity_id = Some(*touch);
+
+                if trace.start_solid {
+                    *trace = tmp_trace;
+                    trace.start_solid = true;
+                } else {
+                    *trace = tmp_trace;
+                }
+            }
+        }
+
+        match area.kind {
+            AreaNodeKind::Leaf => (),
+
+            AreaNodeKind::Branch(ref b) => {
+                if collide.move_max[b.axis as usize] > b.dist {
+                    self.collide_area(b.front, collide, trace)?;
+                }
+
+                if collide.move_min[b.axis as usize] < b.dist {
+                    self.collide_area(b.back, collide, trace)?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn collide_move_with_entity(
@@ -884,7 +1076,19 @@ impl World {
         max: Vector3<f32>,
         end: Vector3<f32>,
     ) -> Result<Trace, ProgsError> {
-        let hull = self.hull_for_entity(e_id, min, max)?;
-        unimplemented!();
+        let (hull, offset) = self.hull_for_entity(e_id, min, max)?;
+        let mut trace = hull.hull_check(start - offset, end - offset).unwrap();
+
+        // if the trace collided with something, fix its end position
+        if trace.ratio != 1.0 {
+            trace.end_pos += offset;
+        }
+
+        // if the trace collided with or started inside e_id, make note of it
+        if trace.ratio < 1.0 || trace.start_solid {
+            trace.entity_id = Some(e_id);
+        }
+
+        Ok(trace)
     }
 }

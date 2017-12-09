@@ -918,7 +918,7 @@ impl ExecutionContext {
                                 let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 if !server.model_precache_lookup(s_id).is_ok() {
                                     server.precache_model(s_id);
-                                    world.add_model(pak, s_id);
+                                    world.add_model(pak, s_id)?;
                                 }
                             }
                             BuiltinFunctionId::StuffCmd => unimplemented!(),
@@ -934,8 +934,14 @@ impl ExecutionContext {
                             BuiltinFunctionId::EPrint => unimplemented!(),
                             BuiltinFunctionId::WalkMove => unimplemented!(),
 
-                            // goal: `world.drop_entity_to_floor(e_id)`
-                            BuiltinFunctionId::DropToFloor => unimplemented!(),
+                            BuiltinFunctionId::DropToFloor => {
+                                let e_id = globals.get_entity_id(GlobalAddrEntity::Self_ as i16)?;
+                                if world.drop_entity_to_floor(e_id)? {
+                                    globals.put_float(1.0, GLOBAL_ADDR_RETURN as i16)?;
+                                } else {
+                                    globals.put_float(0.0, GLOBAL_ADDR_RETURN as i16)?;
+                                }
+                            }
                             BuiltinFunctionId::LightStyle => {
                                 let index = match globals.get_float(GLOBAL_ADDR_ARG_0 as i16)? as
                                     i32 {
