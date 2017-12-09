@@ -123,6 +123,8 @@ use std::fmt;
 use std::ops::Deref;
 use std::rc::Rc;
 
+use world::Trace;
+
 use chrono::Duration;
 use cgmath::InnerSpace;
 use cgmath::Vector3;
@@ -135,6 +137,7 @@ const MAX_HULLS: usize = 3;
 pub const MAX_LIGHTSTYLES: usize = 4;
 pub const MAX_SOUNDS: usize = 4;
 const MIPLEVELS: usize = 4;
+const DIST_EPSILON: f32 = 0.03125;
 
 #[derive(Debug)]
 pub enum BspError {
@@ -280,7 +283,7 @@ pub struct BspFace {
 }
 
 /// The contents of a leaf in the BSP tree, specifying how it should look and behave.
-#[derive(Copy, Clone, Debug, FromPrimitive)]
+#[derive(Copy, Clone, Debug, Eq, FromPrimitive, PartialEq)]
 pub enum BspLeafContents {
     /// The leaf has nothing in it. Vision is unobstructed and movement is unimpeded.
     Empty = 1,
@@ -349,9 +352,9 @@ pub struct BspCollisionNode {
 #[derive(Debug)]
 pub struct BspCollisionHull {
     planes: Rc<Box<[BspPlane]>>,
-    collision_nodes: Rc<Box<[BspCollisionNode]>>,
-    collision_node_id: usize,
-    collision_node_count: usize,
+    nodes: Rc<Box<[BspCollisionNode]>>,
+    node_id: usize,
+    node_count: usize,
     mins: Vector3<f32>,
     maxs: Vector3<f32>,
 }
@@ -370,7 +373,7 @@ impl BspCollisionHull {
             return Err(BspError::with_msg("min bound exceeds max bound"));
         }
 
-        let mut collision_nodes = Vec::new();
+        let mut nodes = Vec::new();
         let mut planes = Vec::new();
 
         // front plane (positive x)
@@ -379,7 +382,7 @@ impl BspCollisionHull {
             dist: maxs.x,
             axis: Some(BspPlaneAxis::X),
         });
-        collision_nodes.push(BspCollisionNode {
+        nodes.push(BspCollisionNode {
             plane_id: 0,
             front: BspCollisionNodeChild::Contents(BspLeafContents::Empty),
             back: BspCollisionNodeChild::Node(1),
@@ -391,7 +394,7 @@ impl BspCollisionHull {
             dist: mins.x,
             axis: Some(BspPlaneAxis::X),
         });
-        collision_nodes.push(BspCollisionNode {
+        nodes.push(BspCollisionNode {
             plane_id: 1,
             front: BspCollisionNodeChild::Node(2),
             back: BspCollisionNodeChild::Contents(BspLeafContents::Empty),
@@ -403,7 +406,7 @@ impl BspCollisionHull {
             dist: maxs.y,
             axis: Some(BspPlaneAxis::Y),
         });
-        collision_nodes.push(BspCollisionNode {
+        nodes.push(BspCollisionNode {
             plane_id: 2,
             front: BspCollisionNodeChild::Contents(BspLeafContents::Empty),
             back: BspCollisionNodeChild::Node(3),
@@ -415,7 +418,7 @@ impl BspCollisionHull {
             dist: mins.x,
             axis: Some(BspPlaneAxis::X),
         });
-        collision_nodes.push(BspCollisionNode {
+        nodes.push(BspCollisionNode {
             plane_id: 3,
             front: BspCollisionNodeChild::Node(4),
             back: BspCollisionNodeChild::Contents(BspLeafContents::Empty),
@@ -427,7 +430,7 @@ impl BspCollisionHull {
             dist: maxs.z,
             axis: Some(BspPlaneAxis::Z),
         });
-        collision_nodes.push(BspCollisionNode {
+        nodes.push(BspCollisionNode {
             plane_id: 4,
             front: BspCollisionNodeChild::Contents(BspLeafContents::Empty),
             back: BspCollisionNodeChild::Node(5),
@@ -439,7 +442,7 @@ impl BspCollisionHull {
             dist: mins.z,
             axis: Some(BspPlaneAxis::Z),
         });
-        collision_nodes.push(BspCollisionNode {
+        nodes.push(BspCollisionNode {
             plane_id: 5,
             front: BspCollisionNodeChild::Contents(BspLeafContents::Solid),
             back: BspCollisionNodeChild::Contents(BspLeafContents::Empty),
@@ -447,9 +450,9 @@ impl BspCollisionHull {
 
         Ok(BspCollisionHull {
             planes: Rc::new(planes.into_boxed_slice()),
-            collision_nodes: Rc::new(collision_nodes.into_boxed_slice()),
-            collision_node_id: 0,
-            collision_node_count: 6,
+            nodes: Rc::new(nodes.into_boxed_slice()),
+            node_id: 0,
+            node_count: 6,
             mins,
             maxs,
         })
@@ -466,48 +469,254 @@ impl BspCollisionHull {
     /// Returns the leaf contents at the point in the given hull.
     pub fn contents_at_point(
         &self,
-        node_id: usize,
+        node: &BspCollisionNodeChild,
         point: Vector3<f32>,
     ) -> Result<BspLeafContents, BspError> {
 
-        let mut current_node = node_id;
+        let mut current_node = node;
         loop {
-            if current_node < self.collision_node_id ||
-                current_node >= self.collision_node_id + self.collision_node_count
-            {
-                return Err(BspError::with_msg(format!(
-                    "Collision node ID out of range: was {}, must be [{}, {})",
-                    current_node,
-                    self.collision_node_id,
-                    self.collision_node_id + self.collision_node_count
-                )));
+            match current_node {
+                &BspCollisionNodeChild::Contents(c) => return Ok(c),
+                &BspCollisionNodeChild::Node(n) => {
+                    if n < self.node_id || n >= self.node_id + self.node_count {
+                        return Err(BspError::with_msg(format!(
+                            "Collision node ID out of range: was {}, must be [{}, {})",
+                            n,
+                            self.node_id,
+                            self.node_id + self.node_count
+                        )));
+                    }
+
+                    let d;
+                    let plane = &self.planes[self.nodes[n].plane_id];
+                    match plane.axis {
+                        // plane is aligned along one of the major axes
+                        Some(a) => d = point[a as usize] - plane.dist,
+
+                        // plane is not aligned, need to calculate dot product
+                        None => d = plane.normal.dot(point) - plane.dist,
+                    }
+
+                    if d < 0.0 {
+                        current_node = &self.nodes[n].back;
+                    } else {
+                        current_node = &self.nodes[n].front;
+                    }
+                }
             }
+        }
+    }
 
+    // TODO: pick a better name (this is SV_RecursiveHullCheck)
+    pub fn hull_check(&self, start: Vector3<f32>, end: Vector3<f32>) -> Result<Trace, BspError> {
+        let mut trace = Trace::allsolid();
 
-            let d;
-            let plane = &self.planes[self.collision_nodes[current_node].plane_id];
-            match plane.axis {
-                // plane is aligned along one of the major axes
-                Some(a) => {
-                    d = point[a as usize] - plane.dist;
+        self.recursive_hull_check(
+            &BspCollisionNodeChild::Node(self.node_id),
+            0.0,
+            1.0,
+            start,
+            end,
+            &mut trace,
+        )?;
+
+        Ok(trace)
+    }
+
+    // returns true on hitting a leaf node
+    fn recursive_hull_check(
+        &self,
+        node: &BspCollisionNodeChild,
+        start_ratio: f32,
+        end_ratio: f32,
+        start: Vector3<f32>,
+        end: Vector3<f32>,
+        trace: &mut Trace,
+    ) -> Result<bool, BspError> {
+        match node {
+            &BspCollisionNodeChild::Contents(c) => {
+                match c {
+                    BspLeafContents::Solid => trace.start_solid = true,
+                    BspLeafContents::Empty => {
+                        trace.all_solid = false;
+                        trace.in_open = true;
+                    }
+                    _ => {
+                        trace.all_solid = false;
+                        trace.in_water = true;
+                    }
                 }
 
-                // plane is not aligned, need to calculate dot product
-                None => {
-                    d = plane.normal.dot(point) - plane.dist;
-                }
+                return Ok(true);
             }
 
-            if d < 0.0 {
-                current_node = match self.collision_nodes[current_node].back {
-                    BspCollisionNodeChild::Node(n) => n,
-                    BspCollisionNodeChild::Contents(c) => return Ok(c),
-                };
-            } else {
-                current_node = match self.collision_nodes[current_node].front {
-                    BspCollisionNodeChild::Node(n) => n,
-                    BspCollisionNodeChild::Contents(c) => return Ok(c),
-                };
+            &BspCollisionNodeChild::Node(n) => {
+                if n < self.node_id || n > self.node_id + self.node_count {
+                    return Err(BspError::with_msg(format!(
+                        "Collision node ID out of range: was {}, must be [{}, {})",
+                        n,
+                        self.node_id,
+                        self.node_id + self.node_count
+                    )));
+                }
+
+                // distance from start point to partitioning plane
+                let start_dist;
+
+                // distance from end point to partitioning plane
+                let end_dist;
+
+                let plane = &self.planes[self.nodes[n].plane_id];
+                match plane.axis {
+                    Some(a) => {
+                        start_dist = start[a as usize] - plane.dist;
+                        end_dist = end[a as usize] - plane.dist;
+                    }
+                    None => {
+                        start_dist = start.dot(plane.normal) - plane.dist;
+                        end_dist = end.dot(plane.normal) - plane.dist;
+                    }
+                }
+
+                if start_dist >= 0.0 && end_dist >= 0.0 {
+                    // both start and end points are in front of the plane
+                    return self.recursive_hull_check(
+                        &self.nodes[n].front,
+                        start_ratio,
+                        end_ratio,
+                        start,
+                        end,
+                        trace,
+                    );
+                }
+
+                if start_dist < 0.0 && end_dist < 0.0 {
+                    // both start and end points are in back of the plane
+                    return self.recursive_hull_check(
+                        &self.nodes[n].back,
+                        start_ratio,
+                        end_ratio,
+                        start,
+                        end,
+                        trace,
+                    );
+                }
+
+                // percentage of move vector that falls on the near side of the plane
+                let mut ratio;
+
+                if start_dist < 0.0 {
+                    // move is from back to front of plane.
+                    ratio = (start_dist + DIST_EPSILON) / (start_dist - end_dist);
+                } else {
+                    // move is from front to back of plane
+                    ratio = (start_dist - DIST_EPSILON) / (start_dist - end_dist);
+                }
+
+                if ratio < 0.0 {
+                    ratio = 0.0;
+                } else if ratio > 1.0 {
+                    ratio = 1.0;
+                }
+
+                let mut mid_ratio = start_ratio + ratio * (end_ratio - start_ratio);
+                let mut mid = Vector3::new(
+                    start[0] + ratio * (end[0] - start[0]),
+                    start[1] + ratio * (end[1] - start[1]),
+                    start[2] + ratio * (end[2] - start[2]),
+                );
+
+                let positive = start_dist > 0.0;
+                if positive &&
+                    !self.recursive_hull_check(
+                        &self.nodes[n].front,
+                        start_ratio,
+                        mid_ratio,
+                        start,
+                        mid,
+                        trace,
+                    )?
+                {
+                    // didn't find any leaves on positive side
+                    return Ok(false);
+                } else if !self.recursive_hull_check(
+                    &self.nodes[n].back,
+                    start_ratio,
+                    mid_ratio,
+                    start,
+                    mid,
+                    trace,
+                )?
+                {
+                    // didn't find any leaves on negative side
+                    return Ok(false);
+                }
+
+                if positive &&
+                    self.contents_at_point(&self.nodes[n].back, mid)? == BspLeafContents::Solid
+                {
+                    return self.recursive_hull_check(
+                        &self.nodes[n].back,
+                        mid_ratio,
+                        end_ratio,
+                        mid,
+                        end,
+                        trace,
+                    );
+                } else if self.contents_at_point(&self.nodes[n].front, mid)? ==
+                           BspLeafContents::Solid
+                {
+                    return self.recursive_hull_check(
+                        &self.nodes[n].front,
+                        mid_ratio,
+                        end_ratio,
+                        mid,
+                        end,
+                        trace,
+                    );
+                }
+
+                if trace.all_solid {
+                    return Ok(false);
+                }
+
+                if positive {
+                    trace.plane = BspPlane {
+                        normal: plane.normal,
+                        dist: plane.dist,
+                        axis: None,
+                    };
+                } else {
+                    trace.plane = BspPlane {
+                        normal: -plane.normal,
+                        dist: -plane.dist,
+                        axis: None,
+                    };
+                }
+
+                // this seems to be a hack to get unstuck from walls
+                while self.contents_at_point(&BspCollisionNodeChild::Node(0), mid)? ==
+                    BspLeafContents::Solid
+                {
+                    ratio -= 0.1;
+
+                    if ratio < 0.0 {
+                        trace.ratio = mid_ratio;
+                        trace.end_pos = mid;
+                        return Ok(false);
+                    }
+
+                    mid_ratio = start_ratio + ratio * (end_ratio - start_ratio);
+                    mid = Vector3::new(
+                        start[0] + ratio * (end[0] - start[0]),
+                        start[1] + ratio * (end[1] - start[1]),
+                        start[2] + ratio * (end[2] - start[2]),
+                    );
+                }
+
+                trace.ratio = mid_ratio;
+                trace.end_pos = mid;
+                return Ok(false);
             }
         }
     }
@@ -656,9 +865,9 @@ impl BspModel {
         let main_hull = &self.bsp_data.hulls[index];
         Ok(BspCollisionHull {
             planes: main_hull.planes.clone(),
-            collision_nodes: main_hull.collision_nodes.clone(),
-            collision_node_id: self.collision_node_ids[index],
-            collision_node_count: self.collision_node_counts[index],
+            nodes: main_hull.nodes.clone(),
+            node_id: self.collision_node_ids[index],
+            node_count: self.collision_node_counts[index],
             mins: self.min,
             maxs: self.max,
         })

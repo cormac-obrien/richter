@@ -745,18 +745,18 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
 
     let hull_1 = BspCollisionHull {
         planes: planes_rc.clone(),
-        collision_nodes: collision_nodes_rc.clone(),
-        collision_node_id: 0,
-        collision_node_count,
+        nodes: collision_nodes_rc.clone(),
+        node_id: 0,
+        node_count: collision_node_count,
         mins: Vector3::new(-16.0, -16.0, -24.0),
         maxs: Vector3::new(16.0, 16.0, 32.0),
     };
 
     let hull_2 = BspCollisionHull {
         planes: planes_rc.clone(),
-        collision_nodes: collision_nodes_rc.clone(),
-        collision_node_id: 0,
-        collision_node_count,
+        nodes: collision_nodes_rc.clone(),
+        node_id: 0,
+        node_count: collision_node_count,
         mins: Vector3::new(-32.0, -32.0, -24.0),
         maxs: Vector3::new(32.0, 32.0, 64.0),
     };
@@ -939,9 +939,9 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
 
     let hull_0 = BspCollisionHull {
         planes: planes_rc.clone(),
-        collision_nodes: render_as_collision_nodes_rc.clone(),
-        collision_node_id: 0,
-        collision_node_count: render_as_collision_nodes_rc.len(),
+        nodes: render_as_collision_nodes_rc.clone(),
+        node_id: 0,
+        node_count: render_as_collision_nodes_rc.len(),
         mins: Vector3::new(0.0, 0.0, 0.0),
         maxs: Vector3::new(0.0, 0.0, 0.0),
     };

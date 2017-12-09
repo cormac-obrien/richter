@@ -359,7 +359,7 @@ impl StringTable {
         let id = StringId(self.byte_count.get());
         let len = s.len();
 
-        println!("StringTable: inserting {}", s);
+        debug!("StringTable: inserting {}", s);
         match self.table.borrow_mut().insert(id, s) {
             Some(_) => panic!("duplicate ID in string table"),
             None => (),

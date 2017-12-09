@@ -26,6 +26,7 @@ use self::entity::Entity;
 use self::entity::EntityFlags;
 use self::entity::EntitySolid;
 use self::phys::MoveKind;
+pub use self::phys::Trace;
 pub use self::entity::EntityTypeDef;
 pub use self::entity::FieldAddrEntityId;
 pub use self::entity::FieldAddrFloat;
@@ -36,7 +37,6 @@ use self::entity::STATIC_ADDRESS_COUNT;
 
 use bsp;
 use bsp::BspCollisionHull;
-use bsp::BspModel;
 use console::CvarRegistry;
 use mdl;
 use model::Model;
@@ -107,6 +107,9 @@ impl AreaNode {
     pub fn generate(mins: Vector3<f32>, maxs: Vector3<f32>) -> Vec<AreaNode> {
         let mut nodes = Vec::with_capacity(2usize.pow(AREA_DEPTH as u32 + 1) - 1);
 
+        // we generate the skeleton of the tree iteratively -- the nodes are linked but have no
+        // geometric data.
+
         // place internal nodes
         for i in 0..AREA_DEPTH {
             for _ in 0..2usize.pow(i as u32) {
@@ -133,8 +136,10 @@ impl AreaNode {
             });
         }
 
+        // recursively assign geometric data to the nodes
         AreaNode::setup(&mut nodes, 0, mins, maxs);
 
+        // TODO: remove this in release versions
         for (i, node) in nodes.iter().enumerate() {
             match node.kind {
                 AreaNodeKind::Branch(ref b) => {
@@ -154,6 +159,7 @@ impl AreaNode {
     }
 
     fn setup(nodes: &mut Vec<AreaNode>, index: usize, mins: Vector3<f32>, maxs: Vector3<f32>) {
+        // TODO: remove this in release versions
         debug!(
             "node {: >2}: size = {:?} mins = {:?} maxs = {:?}",
             index,
@@ -218,6 +224,7 @@ enum WorldEntitySlot {
     Occupied(WorldEntity),
 }
 
+/// A representation of the current state of the game world.
 pub struct World {
     string_table: Rc<StringTable>,
 
@@ -784,6 +791,24 @@ impl World {
         Ok(())
     }
 
+    /// Moves an entity straight down until it collides with a solid surface.
+    ///
+    /// ## Notes
+    /// - The drop distance is limited to 256, so entities which are more than 256 units above a
+    ///   solid surface will not actually hit the ground.
+    pub fn drop_entity_to_floor(&mut self, e_id: EntityId) -> Result<(), ProgsError> {
+        let origin = self.try_get_entity(e_id)?.origin()?;
+
+        // TODO: replace magic constant
+        let end = Vector3::new(origin.x, origin.y, origin.z - 256.0);
+        let min = self.try_get_entity(e_id)?.min()?;
+        let max = self.try_get_entity(e_id)?.max()?;
+
+        let trace = self.move_entity(origin, min, max, end)?;
+
+        unimplemented!();
+    }
+
     pub fn hull_for_entity(
         &self,
         e_id: EntityId,
@@ -841,5 +866,25 @@ impl World {
         }
     }
 
-    pub fn move_entity(&mut self, start: Vector3<f32>, mins: Vector3<f32>, maxs: Vector3<f32>) {}
+    pub fn move_entity(
+        &mut self,
+        start: Vector3<f32>,
+        mins: Vector3<f32>,
+        maxs: Vector3<f32>,
+        end: Vector3<f32>,
+    ) -> Result<Trace, ProgsError> {
+        unimplemented!();
+    }
+
+    pub fn collide_move_with_entity(
+        &self,
+        e_id: EntityId,
+        start: Vector3<f32>,
+        min: Vector3<f32>,
+        max: Vector3<f32>,
+        end: Vector3<f32>,
+    ) -> Result<Trace, ProgsError> {
+        let hull = self.hull_for_entity(e_id, min, max)?;
+        unimplemented!();
+    }
 }

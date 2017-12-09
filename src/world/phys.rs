@@ -19,6 +19,7 @@ use bsp::BspPlane;
 use progs::EntityId;
 
 use cgmath::Vector3;
+use cgmath::Zero;
 
 #[derive(Copy, Clone, Debug, Eq, FromPrimitive, PartialEq)]
 pub enum MoveKind {
@@ -56,20 +57,37 @@ pub struct Collide {
 /// Represents a single frame of movement by an entity.
 pub struct Trace {
     // entity never left a solid area
-    all_solid: bool,
+    pub all_solid: bool,
 
     // entity started in a solid area
-    start_solid: bool,
-    in_open: bool,
-    in_water: bool,
+    pub start_solid: bool,
+    pub in_open: bool,
+    pub in_water: bool,
 
     // how much of the intended move was completed before collision
     // a value of 1.0 indicates no collision
-    ratio: f32,
+    pub ratio: f32,
+
+    pub end_pos: Vector3<f32>,
 
     // surface normal at the impact point
-    plane: BspPlane,
+    pub plane: BspPlane,
 
     // entity the impact surface belongs to
-    entity_id: EntityId,
+    pub entity_id: EntityId,
+}
+
+impl Trace {
+    pub fn allsolid() -> Trace {
+        Trace {
+            all_solid: true,
+            start_solid: false,
+            in_open: false,
+            in_water: false,
+            ratio: 0.0,
+            end_pos: Vector3::zero(),
+            plane: 0,
+            entity_id: EntityId(0),
+        }
+    }
 }
