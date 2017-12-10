@@ -25,8 +25,6 @@ extern crate byteorder;
 extern crate cgmath;
 extern crate chrono;
 extern crate env_logger;
-#[macro_use]
-extern crate glium;
 extern crate glutin;
 #[macro_use]
 extern crate lazy_static;
@@ -41,8 +39,6 @@ extern crate rand;
 extern crate regex;
 extern crate rodio;
 extern crate time;
-extern crate vulkano;
-extern crate vulkano_win;
 extern crate winit;
 
 pub mod bsp;
@@ -50,7 +46,6 @@ pub mod bsp;
 pub mod console;
 pub mod engine;
 pub mod event;
-pub mod gfx;
 pub mod input;
 pub mod lump;
 pub mod math;
