@@ -369,6 +369,12 @@ impl BspCollisionHull {
         mins: Vector3<f32>,
         maxs: Vector3<f32>,
     ) -> Result<BspCollisionHull, BspError> {
+        debug!(
+            "Generating collision hull for min = {:?} max = {:?}",
+            mins,
+            maxs
+        );
+
         if mins.x >= maxs.x || mins.y >= maxs.y || mins.z >= maxs.z {
             return Err(BspError::with_msg("min bound exceeds max bound"));
         }

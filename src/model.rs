@@ -118,6 +118,7 @@ impl Model {
 
     /// Return the minimum extent of this model.
     pub fn min(&self) -> Vector3<f32> {
+        debug!("Retrieving min of model {}", self.name);
         match self.kind {
             ModelKind::None => panic!("attempted to take min() of NULL model"),
             ModelKind::Brush(ref bmodel) => bmodel.min(),
@@ -131,6 +132,7 @@ impl Model {
 
     /// Return the maximum extent of this model.
     pub fn max(&self) -> Vector3<f32> {
+        debug!("Retrieving max of model {}", self.name);
         match self.kind {
             ModelKind::None => panic!("attempted to take max() of NULL model"),
             ModelKind::Brush(ref bmodel) => bmodel.max(),

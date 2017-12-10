@@ -95,7 +95,10 @@ impl Server {
            &ref item_name)| {
             *item_name == target_name
         }) {
-            Some((i, _)) => Ok(i),
+            Some((i, _)) => {
+                debug!("Found {} at precache index {}", target_name, i);
+                Ok(i)
+            }
             None => Err(()),
         }
     }
