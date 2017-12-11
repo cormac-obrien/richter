@@ -829,6 +829,7 @@ impl World {
     /// - The drop distance is limited to 256, so entities which are more than 256 units above a
     ///   solid surface will not actually hit the ground.
     pub fn drop_entity_to_floor(&mut self, e_id: EntityId) -> Result<bool, ProgsError> {
+        debug!("Finding floor for entity with ID {}", e_id.0);
         let origin = self.try_get_entity(e_id)?.origin()?;
 
         // TODO: replace magic constant
@@ -844,6 +845,7 @@ impl World {
             end,
             CollideKind::Normal,
         )?;
+        debug!("End position after drop: {:?}", trace.end_pos);
 
         if trace.ratio == 1.0 || trace.all_solid {
             // entity didn't hit the floor or is stuck
@@ -894,10 +896,13 @@ impl World {
 
                         // TODO: replace these magic constants
                         if size[0] < 3.0 {
+                            debug!("Using hull 0");
                             hull_index = 0;
                         } else if size[0] <= 32.0 {
+                            debug!("Using hull 1");
                             hull_index = 1;
                         } else {
+                            debug!("Using hull 2");
                             hull_index = 2;
                         }
 
@@ -945,13 +950,18 @@ impl World {
         );
 
         debug!("Collision test: Entity {} with world entity", e_id.0);
-        let trace = self.collide_move_with_entity(
+        let mut trace = self.collide_move_with_entity(
             EntityId(0),
             start,
             min,
             max,
             end,
         )?;
+
+        debug!(
+            "End position after collision test with world hull: {:?}",
+            trace.end_pos
+        );
 
         // if this is a rocket or a grenade, expand the monster collision box
         let (monster_min, monster_max) = match kind {
@@ -978,13 +988,14 @@ impl World {
             kind,
         };
 
-        unimplemented!();
+        self.collide(&collide, &mut trace)?;
+
+        Ok(trace)
     }
 
-    pub fn collide(&self, collide: &Collide) -> Result<Trace, ProgsError> {
-        let mut trace = Trace::new();
-        self.collide_area(0, collide, &mut trace)?;
-        Ok(trace)
+    pub fn collide(&self, collide: &Collide, trace: &mut Trace) -> Result<(), ProgsError> {
+        self.collide_area(0, collide, trace)?;
+        Ok(())
     }
 
     fn collide_area(
@@ -993,6 +1004,7 @@ impl World {
         collide: &Collide,
         trace: &mut Trace,
     ) -> Result<(), ProgsError> {
+        debug!("Current trace: {:?}", trace);
         let area = &self.area_nodes[area_id];
 
         for touch in area.solids.iter() {
@@ -1114,6 +1126,11 @@ impl World {
         end: Vector3<f32>,
     ) -> Result<Trace, ProgsError> {
         let (hull, offset) = self.hull_for_entity(e_id, min, max)?;
+        debug!("hull offset: {:?}", offset);
+        debug!(
+            "hull contents at start: {:?}",
+            hull.contents_at_point(start).unwrap()
+        );
         let mut trace = hull.hull_check(start - offset, end - offset).unwrap();
 
         // if the trace collided with something, fix its end position

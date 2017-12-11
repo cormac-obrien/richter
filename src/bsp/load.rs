@@ -46,7 +46,6 @@ use bsp::BspTextureAnimation;
 use bsp::MAX_HULLS;
 use bsp::MAX_LIGHTSTYLES;
 use bsp::MIPLEVELS;
-use bsp::WorldModel;
 use model::Model;
 
 use byteorder::LittleEndian;
@@ -509,6 +508,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     if render_node_count > MAX_RENDER_NODES {
         return Err(BspError::with_msg("Render node count exceeds MAX_RENDER_NODES"));
     }
+    debug!("Render node count = {}", render_node_count);
     let mut render_nodes = Vec::with_capacity(render_node_count);
     for _ in 0..render_node_count {
         let plane_id = reader.read_i32::<LittleEndian>()?;
@@ -554,8 +554,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
 
         render_nodes.push(BspRenderNode {
             plane_id: plane_id as usize,
-            front: front,
-            back: back,
+            children: [front, back],
             min: min,
             max: max,
             face_id: face_id as usize,
@@ -736,8 +735,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
 
         collision_nodes.push(BspCollisionNode {
             plane_id,
-            front,
-            back,
+            children: [front, back]
         });
     }
 
@@ -925,14 +923,14 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     for i in 0..render_nodes.len() {
         render_as_collision_nodes.push(BspCollisionNode {
             plane_id: render_nodes[i].plane_id,
-            front: match render_nodes[i].front {
+            children: [match render_nodes[i].children[0] {
                 BspRenderNodeChild::Node(n) => BspCollisionNodeChild::Node(n),
                 BspRenderNodeChild::Leaf(l) => BspCollisionNodeChild::Contents(leaves[l].contents),
             },
-            back: match render_nodes[i].back {
+            match render_nodes[i].children[1] {
                 BspRenderNodeChild::Node(n) => BspCollisionNodeChild::Node(n),
                 BspRenderNodeChild::Leaf(l) => BspCollisionNodeChild::Contents(leaves[l].contents),
-            },
+            }]
         })
     }
     let render_as_collision_nodes_rc = Rc::new(render_as_collision_nodes.into_boxed_slice());

@@ -15,7 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use bsp::BspPlane;
+use math::Hyperplane;
 use progs::EntityId;
 
 use cgmath::Vector3;
@@ -75,6 +75,7 @@ pub struct Collide {
     pub kind: CollideKind,
 }
 
+#[derive(Debug)]
 /// Represents an attempted move by an entity.
 pub struct Trace {
     // entity never left a solid area
@@ -92,7 +93,7 @@ pub struct Trace {
     pub end_pos: Vector3<f32>,
 
     /// If the entity collided with a solid surface, this is the surface normal at the impact point.
-    pub plane: BspPlane,
+    pub plane: Hyperplane,
 
     /// If the entity collided with another solid entity, this is the ID of the other entity.
     pub entity_id: Option<EntityId>,
@@ -107,11 +108,7 @@ impl Trace {
             in_water: false,
             ratio: 0.0,
             end_pos: Vector3::zero(),
-            plane: BspPlane {
-                normal: Vector3::zero(),
-                dist: 0.0,
-                axis: None,
-            },
+            plane: Hyperplane::axis_x(0.0),
             entity_id: None,
         }
     }
@@ -124,11 +121,7 @@ impl Trace {
             in_water: false,
             ratio: 0.0,
             end_pos: Vector3::zero(),
-            plane: BspPlane {
-                normal: Vector3::zero(),
-                dist: 0.0,
-                axis: None,
-            },
+            plane: Hyperplane::axis_x(0.0),
             entity_id: None,
         }
     }
