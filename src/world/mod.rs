@@ -31,6 +31,7 @@ use self::phys::MoveKind;
 pub use self::phys::Trace;
 pub use self::phys::TraceEnd;
 pub use self::phys::TraceStart;
+pub use self::entity::EntityError;
 pub use self::entity::EntityTypeDef;
 pub use self::entity::FieldAddrEntityId;
 pub use self::entity::FieldAddrFloat;
@@ -233,8 +234,9 @@ enum AreaEntitySlot {
 /// A representation of the current state of the game world.
 pub struct World {
     string_table: Rc<StringTable>,
+    type_def: Rc<EntityTypeDef>,
+
     area_nodes: Box<[AreaNode]>,
-    type_def: EntityTypeDef,
     slots: Box<[AreaEntitySlot]>,
     models: Vec<Model>,
 }
@@ -242,7 +244,7 @@ pub struct World {
 impl World {
     pub fn create(
         mut brush_models: Vec<Model>,
-        type_def: EntityTypeDef,
+        type_def: Rc<EntityTypeDef>,
         string_table: Rc<StringTable>,
     ) -> Result<World, ProgsError> {
         // generate area tree for world model
@@ -257,11 +259,7 @@ impl World {
         models.append(&mut brush_models);
 
         // generate world entity
-        let mut world_entity_addrs = Vec::with_capacity(type_def.addr_count());
-        for _ in 0..type_def.addr_count() {
-            world_entity_addrs.push([0; 4]);
-        }
-        let mut world_entity = Entity::new(string_table.clone(), world_entity_addrs);
+        let mut world_entity = Entity::new(string_table.clone(), type_def.clone());
         world_entity.put_string_id(
             string_table.find(models[1].name()).unwrap(),
             FieldAddrStringId::ModelName as i16,
@@ -376,14 +374,6 @@ impl World {
         }
     }
 
-    fn gen_dynamics(&self) -> Vec<[u8; 4]> {
-        let mut v = Vec::with_capacity(self.type_def.addr_count() - STATIC_ADDRESS_COUNT);
-        for _ in 0..self.type_def.addr_count() {
-            v.push([0; 4]);
-        }
-        v
-    }
-
     fn find_vacant_slot(&self) -> Result<usize, ()> {
         for (i, slot) in self.slots.iter().enumerate() {
             if let &AreaEntitySlot::Vacant = slot {
@@ -398,7 +388,7 @@ impl World {
         let slot_id = self.find_vacant_slot().unwrap();
 
         self.slots[slot_id] = AreaEntitySlot::Occupied(AreaEntity {
-            entity: Entity::new(self.string_table.clone(), self.gen_dynamics()),
+            entity: Entity::new(self.string_table.clone(), self.type_def.clone()),
             area_id: None,
         });
 
@@ -419,7 +409,7 @@ impl World {
     ///   The value should be interpreted as the second component of the `angles` field.
     /// - `light`: This is simply an alias for `light_lev`.
     pub fn alloc_from_map(&mut self, map: HashMap<&str, &str>) -> Result<EntityId, ProgsError> {
-        let mut ent = Entity::new(self.string_table.clone(), self.gen_dynamics());
+        let mut ent = Entity::new(self.string_table.clone(), self.type_def.clone());
 
         for (key, val) in map.iter() {
             debug!(".{} = {}", key, val);

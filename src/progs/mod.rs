@@ -114,6 +114,7 @@ use console::CvarRegistry;
 use pak::Pak;
 use server::Server;
 use world::FieldAddrFloat;
+use world::EntityError;
 use world::EntityTypeDef;
 use world::World;
 
@@ -165,6 +166,9 @@ const DEF_SIZE: usize = 8;
 pub enum ProgsError {
     Io(::std::io::Error),
     Globals(GlobalsError),
+    Entity(EntityError),
+    CallStackOverflow,
+    LocalStackOverflow,
     Other(String),
 }
 
@@ -179,26 +183,37 @@ impl ProgsError {
 
 impl fmt::Display for ProgsError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use self::ProgsError::*;
         match *self {
-            ProgsError::Io(ref err) => {
+            Io(ref err) => {
                 write!(f, "I/O error: ")?;
                 err.fmt(f)
             }
-            ProgsError::Globals(ref err) => {
+            Globals(ref err) => {
                 write!(f, "Globals error: ")?;
                 err.fmt(f)
             }
-            ProgsError::Other(ref msg) => write!(f, "{}", msg),
+            Entity(ref err) => {
+                write!(f, "Entity error: ")?;
+                err.fmt(f)
+            }
+            CallStackOverflow => write!(f, "Call stack overflow"),
+            LocalStackOverflow => write!(f, "Local stack overflow"),
+            Other(ref msg) => write!(f, "{}", msg),
         }
     }
 }
 
 impl Error for ProgsError {
     fn description(&self) -> &str {
+        use self::ProgsError::*;
         match *self {
-            ProgsError::Io(ref err) => err.description(),
-            ProgsError::Globals(ref err) => err.description(),
-            ProgsError::Other(ref msg) => &msg,
+            Io(ref err) => err.description(),
+            Globals(ref err) => err.description(),
+            Entity(ref err) => err.description(),
+            CallStackOverflow => "Call stack overflow",
+            LocalStackOverflow => "Local stack overflow",
+            Other(ref msg) => &msg,
         }
     }
 }
@@ -212,6 +227,12 @@ impl From<::std::io::Error> for ProgsError {
 impl From<GlobalsError> for ProgsError {
     fn from(error: GlobalsError) -> Self {
         ProgsError::Globals(error)
+    }
+}
+
+impl From<EntityError> for ProgsError {
+    fn from(error: EntityError) -> Self {
+        ProgsError::Entity(error)
     }
 }
 
@@ -390,7 +411,7 @@ impl StringTable {
 /// This returns objects representing the necessary context to execute QuakeC bytecode.
 pub fn load(
     data: &[u8],
-) -> Result<(ExecutionContext, Globals, EntityTypeDef, Rc<StringTable>), ProgsError> {
+) -> Result<(ExecutionContext, Globals, Rc<EntityTypeDef>, Rc<StringTable>), ProgsError> {
     let mut src = BufReader::new(Cursor::new(data));
     assert!(src.read_i32::<LittleEndian>()? == VERSION);
     assert!(src.read_i32::<LittleEndian>()? == CRC);
@@ -600,7 +621,10 @@ pub fn load(
         addrs.into_boxed_slice(),
     );
 
-    let entity_type_def = EntityTypeDef::new(ent_addr_count, field_defs.into_boxed_slice());
+    let entity_type_def = Rc::new(EntityTypeDef::new(
+        ent_addr_count,
+        field_defs.into_boxed_slice(),
+    )?);
 
     Ok((execution_context, globals, entity_type_def, string_table))
 }
@@ -647,12 +671,12 @@ impl ExecutionContext {
 
         // check call stack overflow
         if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
-            return Err(ProgsError::with_msg("call stack overflow"));
+            return Err(ProgsError::CallStackOverflow);
         }
 
         // preemptively check local stack overflow
         if self.local_stack.len() + def.locals > MAX_LOCAL_STACK_DEPTH {
-            return Err(ProgsError::with_msg("local stack overflow"));
+            return Err(ProgsError::LocalStackOverflow);
         }
 
         // save locals to stack
@@ -745,60 +769,61 @@ impl ExecutionContext {
                 c
             );
 
+            use self::Opcode::*;
             match op {
-                Opcode::MulF => mul_f(globals, a, b, c)?,
-                Opcode::MulV => mul_v(globals, a, b, c)?,
-                Opcode::MulFV => mul_fv(globals, a, b, c)?,
-                Opcode::MulVF => mul_vf(globals, a, b, c)?,
-                Opcode::Div => div(globals, a, b, c)?,
-                Opcode::AddF => add_f(globals, a, b, c)?,
-                Opcode::AddV => add_v(globals, a, b, c)?,
-                Opcode::SubF => sub_f(globals, a, b, c)?,
-                Opcode::SubV => sub_v(globals, a, b, c)?,
-                Opcode::EqF => eq_f(globals, a, b, c)?,
-                Opcode::EqV => eq_v(globals, a, b, c)?,
-                Opcode::EqS => eq_s(globals, a, b, c)?,
-                Opcode::EqEnt => eq_ent(globals, a, b, c)?,
-                Opcode::EqFnc => eq_fnc(globals, a, b, c)?,
-                Opcode::NeF => ne_f(globals, a, b, c)?,
-                Opcode::NeV => ne_v(globals, a, b, c)?,
-                Opcode::NeS => ne_s(globals, a, b, c)?,
-                Opcode::NeEnt => ne_ent(globals, a, b, c)?,
-                Opcode::NeFnc => ne_fnc(globals, a, b, c)?,
-                Opcode::Le => le(globals, a, b, c)?,
-                Opcode::Ge => ge(globals, a, b, c)?,
-                Opcode::Lt => lt(globals, a, b, c)?,
-                Opcode::Gt => gt(globals, a, b, c)?,
-                Opcode::LoadF => load_f(globals, world, a, b, c)?,
-                Opcode::LoadV => load_v(globals, world, a, b, c)?,
-                Opcode::LoadS => load_s(globals, world, a, b, c)?,
-                Opcode::LoadEnt => load_ent(globals, world, a, b, c)?,
-                Opcode::LoadFld => panic!("load_fld not implemented"),
-                Opcode::LoadFnc => load_fnc(globals, world, a, b, c)?,
-                Opcode::Address => address(globals, world, a, b, c)?,
-                Opcode::StoreF => store_f(globals, a, b, c)?,
-                Opcode::StoreV => store_v(globals, a, b, c)?,
-                Opcode::StoreS => store_s(globals, a, b, c)?,
-                Opcode::StoreEnt => store_ent(globals, a, b, c)?,
-                Opcode::StoreFld => store_fld(globals, a, b, c)?,
-                Opcode::StoreFnc => store_fnc(globals, a, b, c)?,
-                Opcode::StorePF => storep_f(globals, world, a, b, c)?,
-                Opcode::StorePV => storep_v(globals, world, a, b, c)?,
-                Opcode::StorePS => storep_s(globals, world, a, b, c)?,
-                Opcode::StorePEnt => storep_ent(globals, world, a, b, c)?,
-                Opcode::StorePFld => panic!("storep_fld not implemented"),
-                Opcode::StorePFnc => storep_fnc(globals, world, a, b, c)?,
-                Opcode::NotF => not_f(globals, a, b, c)?,
-                Opcode::NotV => not_v(globals, a, b, c)?,
-                Opcode::NotS => not_s(globals, a, b, c)?,
-                Opcode::NotEnt => not_ent(globals, a, b, c)?,
-                Opcode::NotFnc => not_fnc(globals, a, b, c)?,
-                Opcode::And => and(globals, a, b, c)?,
-                Opcode::Or => or(globals, a, b, c)?,
-                Opcode::BitAnd => bit_and(globals, a, b, c)?,
-                Opcode::BitOr => bit_or(globals, a, b, c)?,
+                MulF => mul_f(globals, a, b, c)?,
+                MulV => mul_v(globals, a, b, c)?,
+                MulFV => mul_fv(globals, a, b, c)?,
+                MulVF => mul_vf(globals, a, b, c)?,
+                Div => div(globals, a, b, c)?,
+                AddF => add_f(globals, a, b, c)?,
+                AddV => add_v(globals, a, b, c)?,
+                SubF => sub_f(globals, a, b, c)?,
+                SubV => sub_v(globals, a, b, c)?,
+                EqF => eq_f(globals, a, b, c)?,
+                EqV => eq_v(globals, a, b, c)?,
+                EqS => eq_s(globals, a, b, c)?,
+                EqEnt => eq_ent(globals, a, b, c)?,
+                EqFnc => eq_fnc(globals, a, b, c)?,
+                NeF => ne_f(globals, a, b, c)?,
+                NeV => ne_v(globals, a, b, c)?,
+                NeS => ne_s(globals, a, b, c)?,
+                NeEnt => ne_ent(globals, a, b, c)?,
+                NeFnc => ne_fnc(globals, a, b, c)?,
+                Le => le(globals, a, b, c)?,
+                Ge => ge(globals, a, b, c)?,
+                Lt => lt(globals, a, b, c)?,
+                Gt => gt(globals, a, b, c)?,
+                LoadF => load_f(globals, world, a, b, c)?,
+                LoadV => load_v(globals, world, a, b, c)?,
+                LoadS => load_s(globals, world, a, b, c)?,
+                LoadEnt => load_ent(globals, world, a, b, c)?,
+                LoadFld => panic!("load_fld not implemented"),
+                LoadFnc => load_fnc(globals, world, a, b, c)?,
+                Address => address(globals, world, a, b, c)?,
+                StoreF => store_f(globals, a, b, c)?,
+                StoreV => store_v(globals, a, b, c)?,
+                StoreS => store_s(globals, a, b, c)?,
+                StoreEnt => store_ent(globals, a, b, c)?,
+                StoreFld => store_fld(globals, a, b, c)?,
+                StoreFnc => store_fnc(globals, a, b, c)?,
+                StorePF => storep_f(globals, world, a, b, c)?,
+                StorePV => storep_v(globals, world, a, b, c)?,
+                StorePS => storep_s(globals, world, a, b, c)?,
+                StorePEnt => storep_ent(globals, world, a, b, c)?,
+                StorePFld => panic!("storep_fld not implemented"),
+                StorePFnc => storep_fnc(globals, world, a, b, c)?,
+                NotF => not_f(globals, a, b, c)?,
+                NotV => not_v(globals, a, b, c)?,
+                NotS => not_s(globals, a, b, c)?,
+                NotEnt => not_ent(globals, a, b, c)?,
+                NotFnc => not_fnc(globals, a, b, c)?,
+                And => and(globals, a, b, c)?,
+                Or => or(globals, a, b, c)?,
+                BitAnd => bit_and(globals, a, b, c)?,
+                BitOr => bit_or(globals, a, b, c)?,
 
-                Opcode::If => {
+                If => {
                     let cond = globals.get_float(a)? != 0.0;
                     debug!("If: cond == {}", cond);
 
@@ -808,7 +833,7 @@ impl ExecutionContext {
                     }
                 }
 
-                Opcode::IfNot => {
+                IfNot => {
                     let cond = globals.get_float(a)? != 0.0;
                     debug!("IfNot: cond == {}", cond);
 
@@ -818,7 +843,7 @@ impl ExecutionContext {
                     }
                 }
 
-                Opcode::State => {
+                State => {
                     let self_id = globals.get_entity_id(GlobalAddrEntity::Self_ as i16)?;
                     let self_ent = world.try_get_entity_mut(self_id)?;
                     let next_think_time = globals.get_float(GlobalAddrFloat::Time as i16)? + 0.1;
@@ -832,14 +857,13 @@ impl ExecutionContext {
                     self_ent.put_float(frame_id, FieldAddrFloat::FrameId as i16)?;
                 }
 
-                Opcode::Goto => {
+                Goto => {
                     self.pc = (self.pc as isize + a as isize) as usize;
 
                     continue;
                 }
 
-                Opcode::Call0 | Opcode::Call1 | Opcode::Call2 | Opcode::Call3 | Opcode::Call4 |
-                Opcode::Call5 | Opcode::Call6 | Opcode::Call7 | Opcode::Call8 => {
+                Call0 | Call1 | Call2 | Call3 | Call4 | Call5 | Call6 | Call7 | Call8 => {
                     // TODO: pass to equivalent of PF_VarString
                     let _arg_count = op as usize - Opcode::Call0 as usize;
 
@@ -853,18 +877,19 @@ impl ExecutionContext {
 
                     if let FunctionKind::BuiltIn(b) = self.functions.get_def(f_to_call)?.kind {
                         debug!("Calling built-in function {}", name);
+                        use self::functions::BuiltinFunctionId::*;
                         match b {
-                            BuiltinFunctionId::MakeVectors => globals.make_vectors()?,
+                            MakeVectors => globals.make_vectors()?,
 
                             // goal: `world.set_entity_origin(e_id, origin)`
-                            BuiltinFunctionId::SetOrigin => {
+                            SetOrigin => {
                                 let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 let origin = globals.get_vector(GLOBAL_ADDR_ARG_1 as i16)?;
                                 world.set_entity_origin(e_id, Vector3::from(origin))?;
                             }
 
                             // goal: `world.set_entity_model(e_id, model, server)`
-                            BuiltinFunctionId::SetModel => {
+                            SetModel => {
                                 let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 let model_name_id =
                                     globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
@@ -872,47 +897,47 @@ impl ExecutionContext {
                                 world.set_entity_model(e_id, model_name_id, server)?;
                             }
 
-                            BuiltinFunctionId::SetSize => {
+                            SetSize => {
                                 let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 let mins = globals.get_vector(GLOBAL_ADDR_ARG_1 as i16)?;
                                 let maxs = globals.get_vector(GLOBAL_ADDR_ARG_2 as i16)?;
                                 world.set_entity_size(e_id, mins.into(), maxs.into())?;
                             }
-                            BuiltinFunctionId::Break => unimplemented!(),
-                            BuiltinFunctionId::Random => {
+                            Break => unimplemented!(),
+                            Random => {
                                 globals.put_float(rand::random(), GLOBAL_ADDR_RETURN as i16)?;
                             }
-                            BuiltinFunctionId::Sound => unimplemented!(),
-                            BuiltinFunctionId::Normalize => unimplemented!(),
-                            BuiltinFunctionId::Error => unimplemented!(),
-                            BuiltinFunctionId::ObjError => unimplemented!(),
-                            BuiltinFunctionId::VLen => globals.v_len()?,
-                            BuiltinFunctionId::VecToYaw => globals.vec_to_yaw()?,
+                            Sound => unimplemented!(),
+                            Normalize => unimplemented!(),
+                            Error => unimplemented!(),
+                            ObjError => unimplemented!(),
+                            VLen => globals.v_len()?,
+                            VecToYaw => globals.vec_to_yaw()?,
 
-                            BuiltinFunctionId::Spawn => {
+                            Spawn => {
                                 globals.put_entity_id(
                                     world.spawn_entity()?,
                                     GLOBAL_ADDR_RETURN as i16,
                                 )?;
                             }
 
-                            BuiltinFunctionId::Remove => {
+                            Remove => {
                                 world.remove_entity(
                                     globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?,
                                 )?;
                             }
-                            BuiltinFunctionId::TraceLine => unimplemented!(),
-                            BuiltinFunctionId::CheckClient => unimplemented!(),
+                            TraceLine => unimplemented!(),
+                            CheckClient => unimplemented!(),
 
                             // goal: `world.find_entity(e_id)`
-                            BuiltinFunctionId::Find => unimplemented!(),
-                            BuiltinFunctionId::PrecacheSound => {
+                            Find => unimplemented!(),
+                            PrecacheSound => {
                                 // TODO: disable precaching after server is active
                                 // TODO: precaching doesn't actually load yet
                                 let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 server.precache_sound(s_id);
                             }
-                            BuiltinFunctionId::PrecacheModel => {
+                            PrecacheModel => {
                                 // TODO: disable precaching after server is active
                                 // TODO: precaching doesn't actually load yet
                                 let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
@@ -921,24 +946,24 @@ impl ExecutionContext {
                                     world.add_model(pak, s_id)?;
                                 }
                             }
-                            BuiltinFunctionId::StuffCmd => unimplemented!(),
-                            BuiltinFunctionId::FindRadius => unimplemented!(),
-                            BuiltinFunctionId::BPrint => unimplemented!(),
-                            BuiltinFunctionId::SPrint => unimplemented!(),
-                            BuiltinFunctionId::DPrint => {
+                            StuffCmd => unimplemented!(),
+                            FindRadius => unimplemented!(),
+                            BPrint => unimplemented!(),
+                            SPrint => unimplemented!(),
+                            DPrint => {
                                 let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 let string = self.string_table.get(s_id).unwrap();
                                 debug!("DPRINT: {}", string);
                             }
-                            BuiltinFunctionId::FToS => unimplemented!(),
-                            BuiltinFunctionId::VToS => unimplemented!(),
-                            BuiltinFunctionId::CoreDump => unimplemented!(),
-                            BuiltinFunctionId::TraceOn => unimplemented!(),
-                            BuiltinFunctionId::TraceOff => unimplemented!(),
-                            BuiltinFunctionId::EPrint => unimplemented!(),
-                            BuiltinFunctionId::WalkMove => unimplemented!(),
+                            FToS => unimplemented!(),
+                            VToS => unimplemented!(),
+                            CoreDump => unimplemented!(),
+                            TraceOn => unimplemented!(),
+                            TraceOff => unimplemented!(),
+                            EPrint => unimplemented!(),
+                            WalkMove => unimplemented!(),
 
-                            BuiltinFunctionId::DropToFloor => {
+                            DropToFloor => {
                                 let e_id = globals.get_entity_id(GlobalAddrEntity::Self_ as i16)?;
                                 if world.drop_entity_to_floor(e_id)? {
                                     globals.put_float(1.0, GLOBAL_ADDR_RETURN as i16)?;
@@ -946,7 +971,7 @@ impl ExecutionContext {
                                     globals.put_float(0.0, GLOBAL_ADDR_RETURN as i16)?;
                                 }
                             }
-                            BuiltinFunctionId::LightStyle => {
+                            LightStyle => {
                                 let index = match globals.get_float(GLOBAL_ADDR_ARG_0 as i16)? as
                                     i32 {
                                     i if i < 0 => {
@@ -957,62 +982,62 @@ impl ExecutionContext {
                                 let val = globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
                                 server.set_lightstyle(index, val);
                             }
-                            BuiltinFunctionId::RInt => globals.r_int()?,
-                            BuiltinFunctionId::Floor => globals.floor()?,
-                            BuiltinFunctionId::Ceil => globals.ceil()?,
-                            BuiltinFunctionId::CheckBottom => unimplemented!(),
-                            BuiltinFunctionId::PointContents => unimplemented!(),
-                            BuiltinFunctionId::FAbs => globals.f_abs()?,
-                            BuiltinFunctionId::Aim => unimplemented!(),
-                            BuiltinFunctionId::Cvar => {
+                            RInt => globals.r_int()?,
+                            Floor => globals.floor()?,
+                            Ceil => globals.ceil()?,
+                            CheckBottom => unimplemented!(),
+                            PointContents => unimplemented!(),
+                            FAbs => globals.f_abs()?,
+                            Aim => unimplemented!(),
+                            Cvar => {
                                 let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 let s = self.string_table.get(s_id).unwrap();
                                 let f = cvars.get_value(s).unwrap();
                                 globals.put_float(f, GLOBAL_ADDR_RETURN as i16)?;
                             }
-                            BuiltinFunctionId::LocalCmd => unimplemented!(),
-                            BuiltinFunctionId::NextEnt => unimplemented!(),
-                            BuiltinFunctionId::Particle => unimplemented!(),
-                            BuiltinFunctionId::ChangeYaw => unimplemented!(),
-                            BuiltinFunctionId::VecToAngles => unimplemented!(),
+                            LocalCmd => unimplemented!(),
+                            NextEnt => unimplemented!(),
+                            Particle => unimplemented!(),
+                            ChangeYaw => unimplemented!(),
+                            VecToAngles => unimplemented!(),
 
                             // goal: `server.write_byte(b)`
-                            BuiltinFunctionId::WriteByte => unimplemented!(),
+                            WriteByte => unimplemented!(),
 
                             // goal: `server.write_char(c)`
-                            BuiltinFunctionId::WriteChar => unimplemented!(),
+                            WriteChar => unimplemented!(),
 
                             // goal: `server.write_short(s)`
-                            BuiltinFunctionId::WriteShort => unimplemented!(),
+                            WriteShort => unimplemented!(),
 
                             // goal: `server.write_long(l)`
-                            BuiltinFunctionId::WriteLong => unimplemented!(),
+                            WriteLong => unimplemented!(),
 
                             // goal: `server.write_coord(v)`
-                            BuiltinFunctionId::WriteCoord => unimplemented!(),
+                            WriteCoord => unimplemented!(),
 
                             // goal: `server.write_angle(a)`
-                            BuiltinFunctionId::WriteAngle => unimplemented!(),
+                            WriteAngle => unimplemented!(),
 
                             // goal: `server.write_string(s_id)`
-                            BuiltinFunctionId::WriteString => unimplemented!(),
+                            WriteString => unimplemented!(),
 
                             // goal: `server.write_entity(e_id)`
-                            BuiltinFunctionId::WriteEntity => unimplemented!(),
+                            WriteEntity => unimplemented!(),
 
-                            BuiltinFunctionId::MoveToGoal => unimplemented!(),
-                            BuiltinFunctionId::PrecacheFile => unimplemented!(),
-                            BuiltinFunctionId::MakeStatic => unimplemented!(),
-                            BuiltinFunctionId::ChangeLevel => unimplemented!(),
-                            BuiltinFunctionId::CvarSet => {
+                            MoveToGoal => unimplemented!(),
+                            PrecacheFile => unimplemented!(),
+                            MakeStatic => unimplemented!(),
+                            ChangeLevel => unimplemented!(),
+                            CvarSet => {
                                 let var_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 let var = self.string_table.get(var_id).unwrap();
                                 let val_id = globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
                                 let val = self.string_table.get(val_id).unwrap();
                                 cvars.set(var, val).unwrap();
                             }
-                            BuiltinFunctionId::CenterPrint => unimplemented!(),
-                            BuiltinFunctionId::AmbientSound => {
+                            CenterPrint => unimplemented!(),
+                            AmbientSound => {
                                 let pos = globals.get_vector(GLOBAL_ADDR_ARG_0 as i16)?;
                                 let name = globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
                                 let volume = globals.get_float(GLOBAL_ADDR_ARG_2 as i16)?;
@@ -1028,10 +1053,10 @@ impl ExecutionContext {
 
                                 // TODO: write to server signon packet
                             }
-                            BuiltinFunctionId::PrecacheModel2 => unimplemented!(),
-                            BuiltinFunctionId::PrecacheSound2 => unimplemented!(),
-                            BuiltinFunctionId::PrecacheFile2 => unimplemented!(),
-                            BuiltinFunctionId::SetSpawnArgs => unimplemented!(),
+                            PrecacheModel2 => unimplemented!(),
+                            PrecacheSound2 => unimplemented!(),
+                            PrecacheFile2 => unimplemented!(),
+                            SetSpawnArgs => unimplemented!(),
                         }
                         debug!("Returning from built-in function {}", name);
                     } else {
@@ -1040,7 +1065,7 @@ impl ExecutionContext {
                     }
                 }
 
-                Opcode::Done | Opcode::Return => {
+                Done | Return => {
                     let val1 = globals.get_bytes(a)?;
                     let val2 = globals.get_bytes(b)?;
                     let val3 = globals.get_bytes(c)?;

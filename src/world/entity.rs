@@ -16,15 +16,18 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use std::convert::TryInto;
+use std::error::Error;
+use std::fmt;
 use std::rc::Rc;
 
 use engine;
 use progs::EntityId;
 use progs::FieldDef;
 use progs::FunctionId;
+use progs::ProgsError;
 use progs::StringId;
 use progs::StringTable;
-use progs::ProgsError;
+use progs::Type;
 use world::phys::MoveKind;
 
 use byteorder::LittleEndian;
@@ -41,6 +44,51 @@ pub const MAX_ENT_LEAVES: usize = 16;
 
 const ADDR_DYNAMIC_START: usize = 105;
 pub const STATIC_ADDRESS_COUNT: usize = 105;
+
+#[derive(Debug)]
+pub enum EntityError {
+    Io(::std::io::Error),
+    Address(isize),
+    Other(String),
+}
+
+impl EntityError {
+    pub fn with_msg<S>(msg: S) -> Self
+    where
+        S: AsRef<str>,
+    {
+        EntityError::Other(msg.as_ref().to_owned())
+    }
+}
+
+impl fmt::Display for EntityError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            EntityError::Io(ref err) => {
+                write!(f, "I/O error: ")?;
+                err.fmt(f)
+            }
+            EntityError::Address(val) => write!(f, "Invalid address ({})", val),
+            EntityError::Other(ref msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl Error for EntityError {
+    fn description(&self) -> &str {
+        match *self {
+            EntityError::Io(ref err) => err.description(),
+            EntityError::Address(_) => "Invalid address",
+            EntityError::Other(ref msg) => &msg,
+        }
+    }
+}
+
+impl From<::std::io::Error> for EntityError {
+    fn from(error: ::std::io::Error) -> Self {
+        EntityError::Io(error)
+    }
+}
 
 #[derive(Debug, FromPrimitive)]
 pub enum FieldAddrFloat {
@@ -236,20 +284,22 @@ pub struct EntityTypeDef {
 }
 
 impl EntityTypeDef {
-    pub fn new(addr_count: usize, field_defs: Box<[FieldDef]>) -> EntityTypeDef {
+    pub fn new(
+        addr_count: usize,
+        field_defs: Box<[FieldDef]>,
+    ) -> Result<EntityTypeDef, EntityError> {
         if addr_count < STATIC_ADDRESS_COUNT {
-            // TODO: error here
-            panic!(
+            return Err(EntityError::with_msg(format!(
                 "addr_count ({}) < STATIC_ADDRESS_COUNT ({})",
                 addr_count,
                 STATIC_ADDRESS_COUNT
-            );
+            )));
         }
 
-        EntityTypeDef {
+        Ok(EntityTypeDef {
             addr_count,
             field_defs,
-        }
+        })
     }
 
     pub fn addr_count(&self) -> usize {
@@ -268,714 +318,6 @@ pub enum EntitySolid {
     BBox = 2,
     SlideBox = 3,
     Bsp = 4,
-}
-
-/// Statically defined fields for an entity.
-///
-/// The different variants represent different classes of entity.
-pub enum EntityStatics {
-    Generic(GenericEntityStatics),
-}
-
-/// Statically defined fields which may apply to any entity.
-pub struct GenericEntityStatics {
-    // index in the model list
-    pub model_index: f32,
-
-    // absolute minimum extent of entity
-    pub abs_min: Vector3<f32>,
-
-    // absolute maximum extent of entity
-    pub abs_max: Vector3<f32>,
-
-    // how far in time this entity has been processed
-    pub local_time: Duration,
-
-    // TODO find definitions for movement types
-    pub move_kind: MoveKind,
-
-    // is this entity solid (i.e. does it have collision)
-    pub solid: f32,
-
-    // this entity's current position
-    pub origin: Vector3<f32>,
-
-    // this entity's position prior to last movement
-    pub old_origin: Vector3<f32>,
-
-    // this entity's velocity vector
-    pub velocity: Vector3<f32>,
-
-    // this entity's pitch, yaw, and roll
-    pub angles: Vector3<Deg<f32>>,
-
-    // the rate at which this entity is rotating (only in pitch and yaw)
-    pub angular_velocity: Vector3<Deg<f32>>,
-
-    // the temporary angle modifier applied by damage and recoil
-    pub punch_angle: Vector3<Deg<f32>>,
-
-    // entity class name
-    pub class_name: StringId,
-
-    // name of alias model (MDL) associated with this entity
-    pub model_name: StringId,
-
-    // animation frame in the alias model
-    pub frame_id: f32,
-
-    // skin index in the alias model
-    pub skin_id: f32,
-
-    // model effects
-    pub effects: EntityEffects,
-
-    // minimum extent of entity relative to origin
-    pub mins: Vector3<f32>,
-
-    // maximum extent of entity relative to origin
-    pub maxs: Vector3<f32>,
-
-    // dimensions of this entity (maxs - mins)
-    pub size: Vector3<f32>,
-
-    // function to call when another entity collides with this one
-    pub touch_fnc: FunctionId,
-
-    // function to call when +use is issued on this entity
-    pub use_fnc: FunctionId,
-
-    // function to call when next_think elapses
-    pub think_fnc: FunctionId,
-
-    // function to call when this entity is blocked from movement
-    pub blocked_fnc: FunctionId,
-
-    // time remaining until next think
-    pub next_think: Duration,
-
-    // TODO: ???
-    pub ground_entity: EntityId,
-
-    // current health
-    pub health: f32,
-
-    // current kill count (multiplayer)
-    pub frags: f32,
-
-    // equipped weapon (bitflags)
-    pub weapon: f32,
-
-    // alias model for the equipped weapon
-    pub weapon_model_name: StringId,
-
-    // animation frame for the weapon model
-    pub weapon_frame: f32,
-
-    // ammo for current weapon
-    pub current_ammo: f32,
-
-    // shotgun ammo remaining
-    pub ammo_shells: f32,
-
-    // nailgun ammo remaining
-    pub ammo_nails: f32,
-
-    // rockets remaining
-    pub ammo_rockets: f32,
-
-    // energy cells remaining (for lightning gun)
-    pub ammo_cells: f32,
-
-    // bitflags representing what items player has
-    pub items: f32,
-
-    // can this entity be damaged?
-    pub take_damage: f32,
-
-    // next entity in a chained list
-    pub chain: EntityId,
-
-    // is this entity dead?
-    pub dead_flag: f32,
-
-    // position of camera relative to origin
-    pub view_offset: Vector3<f32>,
-
-    // +fire
-    pub button_0: f32,
-
-    // +use
-    pub button_1: f32,
-
-    // +jump
-    pub button_2: f32,
-
-    // TODO: document impulse
-    pub impulse: f32,
-
-    // TODO: something to do with updating player angle
-    pub fix_angle: f32,
-
-    // player view angle
-    pub view_angle: Vector3<Deg<f32>>,
-
-    // calculated default view angle
-    pub ideal_pitch: Deg<f32>,
-
-    // screen name
-    pub net_name: StringId,
-
-    // this entity's enemy (for monsters)
-    pub enemy: EntityId,
-
-    // various state flags
-    pub flags: EntityFlags,
-
-    // player colors in multiplayer
-    pub colormap: f32,
-
-    // team number in multiplayer
-    pub team: f32,
-
-    // maximum player health
-    pub max_health: f32,
-
-    // time player last teleported
-    pub teleport_time: Duration,
-
-    // percentage of incoming damage blocked (between 0 and 1)
-    pub armor_strength: f32,
-
-    // armor points remaining
-    pub armor_value: f32,
-
-    // how submerged this entity is, 0 (none) -> 3 (full)
-    pub water_level: f32,
-
-    // one of the CONTENTS_* constants (bspfile.h)
-    pub contents: f32,
-
-    // ideal pathfinding direction (for monsters)
-    pub ideal_yaw: Deg<f32>,
-
-    // turn rate
-    pub yaw_speed: Deg<f32>,
-
-    // TODO: maybe entity being aimed at?
-    pub aim_entity: EntityId,
-
-    // monster's goal entity
-    pub goal_entity: EntityId,
-
-    // meaning differs based on classname
-    pub spawn_flags: f32,
-
-    // target_name of the entity to activate
-    pub target: StringId,
-
-    // this entity's activation name
-    pub target_name: StringId,
-
-    // damage accumulator
-    pub dmg_take: f32,
-
-    // damage block accumulator?
-    pub dmg_save: f32,
-
-    // which entity inflicted damage
-    pub dmg_inflictor: EntityId,
-
-    // entity that owns this entity
-    pub owner: EntityId,
-
-    // which direction this entity should move
-    pub move_direction: Vector3<f32>,
-
-    // message to display on entity trigger
-    pub message: StringId,
-
-    // sound ID
-    pub sounds: f32,
-
-    // sounds played on noise channels
-    pub noise_0: StringId,
-    pub noise_1: StringId,
-    pub noise_2: StringId,
-    pub noise_3: StringId,
-}
-
-impl GenericEntityStatics {
-    pub fn get_float(&self, addr: usize) -> Result<f32, ProgsError> {
-        Ok(match float_addr(addr)? {
-            FieldAddrFloat::ModelIndex => self.model_index,
-            FieldAddrFloat::AbsMinX => self.abs_min[0],
-            FieldAddrFloat::AbsMinY => self.abs_min[1],
-            FieldAddrFloat::AbsMinZ => self.abs_min[2],
-            FieldAddrFloat::AbsMaxX => self.abs_max[0],
-            FieldAddrFloat::AbsMaxY => self.abs_max[1],
-            FieldAddrFloat::AbsMaxZ => self.abs_max[2],
-            FieldAddrFloat::LocalTime => engine::duration_to_f32(self.local_time),
-            FieldAddrFloat::MoveKind => self.move_kind as u32 as f32,
-            FieldAddrFloat::Solid => self.solid,
-            FieldAddrFloat::OriginX => self.origin[0],
-            FieldAddrFloat::OriginY => self.origin[1],
-            FieldAddrFloat::OriginZ => self.origin[2],
-            FieldAddrFloat::OldOriginX => self.old_origin[0],
-            FieldAddrFloat::OldOriginY => self.old_origin[1],
-            FieldAddrFloat::OldOriginZ => self.old_origin[2],
-            FieldAddrFloat::VelocityX => self.velocity[0],
-            FieldAddrFloat::VelocityY => self.velocity[1],
-            FieldAddrFloat::VelocityZ => self.velocity[2],
-            FieldAddrFloat::AnglesX => self.angles[0].0,
-            FieldAddrFloat::AnglesY => self.angles[1].0,
-            FieldAddrFloat::AnglesZ => self.angles[2].0,
-            FieldAddrFloat::AngularVelocityX => self.angular_velocity[0].0,
-            FieldAddrFloat::AngularVelocityY => self.angular_velocity[1].0,
-            FieldAddrFloat::AngularVelocityZ => self.angular_velocity[2].0,
-            FieldAddrFloat::PunchAngleX => self.punch_angle[0].0,
-            FieldAddrFloat::PunchAngleY => self.punch_angle[1].0,
-            FieldAddrFloat::PunchAngleZ => self.punch_angle[2].0,
-            FieldAddrFloat::FrameId => self.frame_id,
-            FieldAddrFloat::SkinId => self.skin_id,
-            FieldAddrFloat::Effects => self.effects.bits() as i32 as f32,
-            FieldAddrFloat::MinsX => self.mins[0],
-            FieldAddrFloat::MinsY => self.mins[1],
-            FieldAddrFloat::MinsZ => self.mins[2],
-            FieldAddrFloat::MaxsX => self.maxs[0],
-            FieldAddrFloat::MaxsY => self.maxs[1],
-            FieldAddrFloat::MaxsZ => self.maxs[2],
-            FieldAddrFloat::SizeX => self.size[0],
-            FieldAddrFloat::SizeY => self.size[1],
-            FieldAddrFloat::SizeZ => self.size[2],
-            FieldAddrFloat::NextThink => engine::duration_to_f32(self.next_think),
-            FieldAddrFloat::Health => self.health,
-            FieldAddrFloat::Frags => self.frags,
-            FieldAddrFloat::Weapon => self.weapon,
-            FieldAddrFloat::WeaponFrame => self.weapon_frame,
-            FieldAddrFloat::CurrentAmmo => self.current_ammo,
-            FieldAddrFloat::AmmoShells => self.ammo_shells,
-            FieldAddrFloat::AmmoNails => self.ammo_nails,
-            FieldAddrFloat::AmmoRockets => self.ammo_rockets,
-            FieldAddrFloat::AmmoCells => self.ammo_cells,
-            FieldAddrFloat::Items => self.items,
-            FieldAddrFloat::TakeDamage => self.take_damage,
-            FieldAddrFloat::DeadFlag => self.dead_flag,
-            FieldAddrFloat::ViewOffsetX => self.view_offset[0],
-            FieldAddrFloat::ViewOffsetY => self.view_offset[1],
-            FieldAddrFloat::ViewOffsetZ => self.view_offset[2],
-            FieldAddrFloat::Button0 => self.button_0,
-            FieldAddrFloat::Button1 => self.button_1,
-            FieldAddrFloat::Button2 => self.button_2,
-            FieldAddrFloat::Impulse => self.impulse,
-            FieldAddrFloat::FixAngle => self.fix_angle,
-            FieldAddrFloat::ViewAngleX => self.view_angle[0].0,
-            FieldAddrFloat::ViewAngleY => self.view_angle[1].0,
-            FieldAddrFloat::ViewAngleZ => self.view_angle[2].0,
-            FieldAddrFloat::IdealPitch => self.ideal_pitch.0,
-            FieldAddrFloat::Flags => self.flags.bits() as i32 as f32,
-            FieldAddrFloat::Colormap => self.colormap,
-            FieldAddrFloat::Team => self.team,
-            FieldAddrFloat::MaxHealth => self.max_health,
-            FieldAddrFloat::TeleportTime => engine::duration_to_f32(self.teleport_time),
-            FieldAddrFloat::ArmorStrength => self.armor_strength,
-            FieldAddrFloat::ArmorValue => self.armor_value,
-            FieldAddrFloat::WaterLevel => self.water_level,
-            FieldAddrFloat::Contents => self.contents,
-            FieldAddrFloat::IdealYaw => self.ideal_yaw.0,
-            FieldAddrFloat::YawSpeed => self.yaw_speed.0,
-            FieldAddrFloat::SpawnFlags => self.spawn_flags,
-            FieldAddrFloat::DmgTake => self.dmg_take,
-            FieldAddrFloat::DmgSave => self.dmg_save,
-            FieldAddrFloat::MoveDirectionX => self.move_direction[0],
-            FieldAddrFloat::MoveDirectionY => self.move_direction[1],
-            FieldAddrFloat::MoveDirectionZ => self.move_direction[2],
-            FieldAddrFloat::Sounds => self.sounds,
-        })
-    }
-
-    pub fn put_float(&mut self, val: f32, addr: usize) -> Result<(), ProgsError> {
-        match float_addr(addr)? {
-            FieldAddrFloat::ModelIndex => self.model_index = val,
-            FieldAddrFloat::AbsMinX => self.abs_min[0] = val,
-            FieldAddrFloat::AbsMinY => self.abs_min[1] = val,
-            FieldAddrFloat::AbsMinZ => self.abs_min[2] = val,
-            FieldAddrFloat::AbsMaxX => self.abs_max[0] = val,
-            FieldAddrFloat::AbsMaxY => self.abs_max[1] = val,
-            FieldAddrFloat::AbsMaxZ => self.abs_max[2] = val,
-            FieldAddrFloat::LocalTime => self.local_time = engine::duration_from_f32(val),
-            FieldAddrFloat::MoveKind => self.move_kind = MoveKind::from_u32(val as u32).unwrap(),
-            FieldAddrFloat::Solid => self.solid = val,
-            FieldAddrFloat::OriginX => self.origin[0] = val,
-            FieldAddrFloat::OriginY => self.origin[1] = val,
-            FieldAddrFloat::OriginZ => self.origin[2] = val,
-            FieldAddrFloat::OldOriginX => self.old_origin[0] = val,
-            FieldAddrFloat::OldOriginY => self.old_origin[1] = val,
-            FieldAddrFloat::OldOriginZ => self.old_origin[2] = val,
-            FieldAddrFloat::VelocityX => self.velocity[0] = val,
-            FieldAddrFloat::VelocityY => self.velocity[1] = val,
-            FieldAddrFloat::VelocityZ => self.velocity[2] = val,
-            FieldAddrFloat::AnglesX => self.angles[0] = Deg(val),
-            FieldAddrFloat::AnglesY => self.angles[1] = Deg(val),
-            FieldAddrFloat::AnglesZ => self.angles[2] = Deg(val),
-            FieldAddrFloat::AngularVelocityX => self.angular_velocity[0] = Deg(val),
-            FieldAddrFloat::AngularVelocityY => self.angular_velocity[1] = Deg(val),
-            FieldAddrFloat::AngularVelocityZ => self.angular_velocity[2] = Deg(val),
-            FieldAddrFloat::PunchAngleX => self.punch_angle[0] = Deg(val),
-            FieldAddrFloat::PunchAngleY => self.punch_angle[1] = Deg(val),
-            FieldAddrFloat::PunchAngleZ => self.punch_angle[2] = Deg(val),
-            FieldAddrFloat::FrameId => self.frame_id = val,
-            FieldAddrFloat::SkinId => self.skin_id = val,
-            FieldAddrFloat::Effects => self.effects = EntityEffects::from_bits(val as u16).unwrap(),
-            FieldAddrFloat::MinsX => self.mins[0] = val,
-            FieldAddrFloat::MinsY => self.mins[1] = val,
-            FieldAddrFloat::MinsZ => self.mins[2] = val,
-            FieldAddrFloat::MaxsX => self.maxs[0] = val,
-            FieldAddrFloat::MaxsY => self.maxs[1] = val,
-            FieldAddrFloat::MaxsZ => self.maxs[2] = val,
-            FieldAddrFloat::SizeX => self.size[0] = val,
-            FieldAddrFloat::SizeY => self.size[1] = val,
-            FieldAddrFloat::SizeZ => self.size[2] = val,
-            FieldAddrFloat::NextThink => self.next_think = engine::duration_from_f32(val),
-            FieldAddrFloat::Health => self.health = val,
-            FieldAddrFloat::Frags => self.frags = val,
-            FieldAddrFloat::Weapon => self.weapon = val,
-            FieldAddrFloat::WeaponFrame => self.weapon_frame = val,
-            FieldAddrFloat::CurrentAmmo => self.current_ammo = val,
-            FieldAddrFloat::AmmoShells => self.ammo_shells = val,
-            FieldAddrFloat::AmmoNails => self.ammo_nails = val,
-            FieldAddrFloat::AmmoRockets => self.ammo_rockets = val,
-            FieldAddrFloat::AmmoCells => self.ammo_cells = val,
-            FieldAddrFloat::Items => self.items = val,
-            FieldAddrFloat::TakeDamage => self.take_damage = val,
-            FieldAddrFloat::DeadFlag => self.dead_flag = val,
-            FieldAddrFloat::ViewOffsetX => self.view_offset[0] = val,
-            FieldAddrFloat::ViewOffsetY => self.view_offset[1] = val,
-            FieldAddrFloat::ViewOffsetZ => self.view_offset[2] = val,
-            FieldAddrFloat::Button0 => self.button_0 = val,
-            FieldAddrFloat::Button1 => self.button_1 = val,
-            FieldAddrFloat::Button2 => self.button_2 = val,
-            FieldAddrFloat::Impulse => self.impulse = val,
-            FieldAddrFloat::FixAngle => self.fix_angle = val,
-            FieldAddrFloat::ViewAngleX => self.view_angle[0] = Deg(val),
-            FieldAddrFloat::ViewAngleY => self.view_angle[1] = Deg(val),
-            FieldAddrFloat::ViewAngleZ => self.view_angle[2] = Deg(val),
-            FieldAddrFloat::IdealPitch => self.ideal_pitch = Deg(val),
-            FieldAddrFloat::Flags => {
-                self.flags = match EntityFlags::from_bits(val as u16) {
-                    Some(f) => f,
-                    None => {
-                        warn!(
-                            "invalid entity flags ({:b}), converting to none",
-                            val as u16
-                        );
-                        EntityFlags::empty()
-                    }
-                }
-            }
-            FieldAddrFloat::Colormap => self.colormap = val,
-            FieldAddrFloat::Team => self.team = val,
-            FieldAddrFloat::MaxHealth => self.max_health = val,
-            FieldAddrFloat::TeleportTime => self.teleport_time = engine::duration_from_f32(val),
-            FieldAddrFloat::ArmorStrength => self.armor_strength = val,
-            FieldAddrFloat::ArmorValue => self.armor_value = val,
-            FieldAddrFloat::WaterLevel => self.water_level = val,
-            FieldAddrFloat::Contents => self.contents = val,
-            FieldAddrFloat::IdealYaw => self.ideal_yaw = Deg(val),
-            FieldAddrFloat::YawSpeed => self.yaw_speed = Deg(val),
-            FieldAddrFloat::SpawnFlags => self.spawn_flags = val,
-            FieldAddrFloat::DmgTake => self.dmg_take = val,
-            FieldAddrFloat::DmgSave => self.dmg_save = val,
-            FieldAddrFloat::MoveDirectionX => self.move_direction[0] = val,
-            FieldAddrFloat::MoveDirectionY => self.move_direction[1] = val,
-            FieldAddrFloat::MoveDirectionZ => self.move_direction[2] = val,
-            FieldAddrFloat::Sounds => self.sounds = val,
-        }
-
-        Ok(())
-    }
-
-    pub fn get_vector(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
-        let v_addr = match FieldAddrVector::from_usize(addr) {
-            Some(v) => v,
-            None => {
-                return Err(ProgsError::with_msg(
-                    format!("get_vector_static: invalid address ({})", addr),
-                ));
-            }
-        };
-
-        Ok(match v_addr {
-            FieldAddrVector::AbsMin => self.abs_min.into(),
-            FieldAddrVector::AbsMax => self.abs_max.into(),
-            FieldAddrVector::Origin => self.origin.into(),
-            FieldAddrVector::OldOrigin => self.old_origin.into(),
-            FieldAddrVector::Velocity => self.velocity.into(),
-            FieldAddrVector::Angles => engine::deg_vector_to_f32_vector(self.angles).into(),
-            FieldAddrVector::AngularVelocity => {
-                engine::deg_vector_to_f32_vector(self.angular_velocity).into()
-            }
-            FieldAddrVector::PunchAngle => {
-                engine::deg_vector_to_f32_vector(self.punch_angle).into()
-            }
-            FieldAddrVector::Mins => self.mins.into(),
-            FieldAddrVector::Maxs => self.maxs.into(),
-            FieldAddrVector::Size => self.size.into(),
-            FieldAddrVector::ViewOffset => self.view_offset.into(),
-            FieldAddrVector::ViewAngle => engine::deg_vector_to_f32_vector(self.view_angle).into(),
-            FieldAddrVector::MoveDirection => self.move_direction.into(),
-        })
-    }
-
-    pub fn put_vector(&mut self, val: [f32; 3], addr: usize) -> Result<(), ProgsError> {
-        let v_addr = match FieldAddrVector::from_usize(addr) {
-            Some(v) => v,
-            None => {
-                return Err(ProgsError::with_msg(
-                    format!("put_vector_static: invalid address ({})", addr),
-                ));
-            }
-        };
-
-        Ok(match v_addr {
-            FieldAddrVector::AbsMin => self.abs_min = Vector3::from(val),
-            FieldAddrVector::AbsMax => self.abs_max = Vector3::from(val),
-            FieldAddrVector::Origin => self.origin = Vector3::from(val),
-            FieldAddrVector::OldOrigin => self.old_origin = Vector3::from(val),
-            FieldAddrVector::Velocity => self.velocity = Vector3::from(val),
-            FieldAddrVector::Angles => {
-                self.angles = engine::deg_vector_from_f32_vector(Vector3::from(val))
-            }
-            FieldAddrVector::AngularVelocity => {
-                self.angular_velocity = engine::deg_vector_from_f32_vector(Vector3::from(val))
-            }
-            FieldAddrVector::PunchAngle => {
-                self.punch_angle = engine::deg_vector_from_f32_vector(Vector3::from(val))
-            }
-            FieldAddrVector::Mins => self.mins = Vector3::from(val),
-            FieldAddrVector::Maxs => self.maxs = Vector3::from(val),
-            FieldAddrVector::Size => self.size = Vector3::from(val),
-            FieldAddrVector::ViewOffset => self.view_offset = Vector3::from(val),
-            FieldAddrVector::ViewAngle => {
-                self.view_angle = engine::deg_vector_from_f32_vector(Vector3::from(val))
-            }
-            FieldAddrVector::MoveDirection => self.move_direction = Vector3::from(val),
-        })
-    }
-
-    pub fn get_string_id(&self, addr: usize) -> Result<StringId, ProgsError> {
-        let s_addr = match FieldAddrStringId::from_usize(addr) {
-            Some(s) => s,
-            None => {
-                return Err(ProgsError::with_msg(
-                    format!("get_string_id_static: invalid address ({})", addr),
-                ));
-            }
-        };
-
-        Ok(match s_addr {
-            FieldAddrStringId::ClassName => self.class_name,
-            FieldAddrStringId::ModelName => self.model_name,
-            FieldAddrStringId::WeaponModelName => self.weapon_model_name,
-            FieldAddrStringId::NetName => self.net_name,
-            FieldAddrStringId::Target => self.target,
-            FieldAddrStringId::TargetName => self.target_name,
-            FieldAddrStringId::Message => self.message,
-            FieldAddrStringId::Noise0Name => self.noise_0,
-            FieldAddrStringId::Noise1Name => self.noise_1,
-            FieldAddrStringId::Noise2Name => self.noise_2,
-            FieldAddrStringId::Noise3Name => self.noise_3,
-        })
-    }
-
-    pub fn put_string_id(&mut self, val: StringId, addr: usize) -> Result<(), ProgsError> {
-        let s_addr = match FieldAddrStringId::from_usize(addr) {
-            Some(s) => s,
-            None => {
-                return Err(ProgsError::with_msg(
-                    format!("put_string_id_static: invalid address ({})", addr),
-                ));
-            }
-        };
-
-        Ok(match s_addr {
-            FieldAddrStringId::ClassName => self.class_name = val,
-            FieldAddrStringId::ModelName => self.model_name = val,
-            FieldAddrStringId::WeaponModelName => self.weapon_model_name = val,
-            FieldAddrStringId::NetName => self.net_name = val,
-            FieldAddrStringId::Target => self.target = val,
-            FieldAddrStringId::TargetName => self.target_name = val,
-            FieldAddrStringId::Message => self.message = val,
-            FieldAddrStringId::Noise0Name => self.noise_0 = val,
-            FieldAddrStringId::Noise1Name => self.noise_1 = val,
-            FieldAddrStringId::Noise2Name => self.noise_2 = val,
-            FieldAddrStringId::Noise3Name => self.noise_3 = val,
-        })
-    }
-
-    pub fn get_entity_id(&self, addr: usize) -> Result<EntityId, ProgsError> {
-        let e_addr = match FieldAddrEntityId::from_usize(addr) {
-            Some(e) => e,
-            None => {
-                return Err(ProgsError::with_msg(
-                    format!("get_entity_id_static: invalid address ({})", addr),
-                ));
-            }
-        };
-
-        Ok(match e_addr {
-            FieldAddrEntityId::Ground => self.ground_entity,
-            FieldAddrEntityId::Chain => self.chain,
-            FieldAddrEntityId::Enemy => self.enemy,
-            FieldAddrEntityId::Aim => self.aim_entity,
-            FieldAddrEntityId::Goal => self.goal_entity,
-            FieldAddrEntityId::DmgInflictor => self.dmg_inflictor,
-            FieldAddrEntityId::Owner => self.owner,
-        })
-    }
-
-    pub fn put_entity_id(&mut self, val: EntityId, addr: usize) -> Result<(), ProgsError> {
-        let e_addr = match FieldAddrEntityId::from_usize(addr) {
-            Some(e) => e,
-            None => {
-                return Err(ProgsError::with_msg(
-                    format!("put_entity_id_static: invalid address ({})", addr),
-                ));
-            }
-        };
-
-        Ok(match e_addr {
-            FieldAddrEntityId::Ground => self.ground_entity = val,
-            FieldAddrEntityId::Chain => self.chain = val,
-            FieldAddrEntityId::Enemy => self.enemy = val,
-            FieldAddrEntityId::Aim => self.aim_entity = val,
-            FieldAddrEntityId::Goal => self.goal_entity = val,
-            FieldAddrEntityId::DmgInflictor => self.dmg_inflictor = val,
-            FieldAddrEntityId::Owner => self.owner = val,
-        })
-    }
-
-    pub fn get_function_id(&self, addr: usize) -> Result<FunctionId, ProgsError> {
-        let s_addr = match FieldAddrFunctionId::from_usize(addr) {
-            Some(s) => s,
-            None => {
-                return Err(ProgsError::with_msg(format!(
-                    "get_function_id_static: invalid address ({})",
-                    addr
-                )));
-            }
-        };
-
-        Ok(match s_addr {
-            FieldAddrFunctionId::Touch => self.touch_fnc,
-            FieldAddrFunctionId::Use => self.use_fnc,
-            FieldAddrFunctionId::Think => self.think_fnc,
-            FieldAddrFunctionId::Blocked => self.blocked_fnc,
-        })
-    }
-
-    pub fn put_function_id(&mut self, val: FunctionId, addr: usize) -> Result<(), ProgsError> {
-        let s_addr = match FieldAddrFunctionId::from_usize(addr) {
-            Some(s) => s,
-            None => {
-                return Err(ProgsError::with_msg(format!(
-                    "put_function_id_static: invalid address ({})",
-                    addr
-                )));
-            }
-        };
-
-        Ok(match s_addr {
-            FieldAddrFunctionId::Touch => self.touch_fnc = val,
-            FieldAddrFunctionId::Use => self.use_fnc = val,
-            FieldAddrFunctionId::Think => self.think_fnc = val,
-            FieldAddrFunctionId::Blocked => self.blocked_fnc = val,
-        })
-    }
-}
-
-impl Default for GenericEntityStatics {
-    fn default() -> Self {
-        GenericEntityStatics {
-            model_index: 0.0,
-            abs_min: Vector3::zero(),
-            abs_max: Vector3::zero(),
-            local_time: Duration::seconds(0),
-            move_kind: MoveKind::None,
-            solid: 0.0,
-            origin: Vector3::zero(),
-            old_origin: Vector3::zero(),
-            velocity: Vector3::zero(),
-            angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            angular_velocity: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            punch_angle: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            class_name: StringId::new(),
-            model_name: StringId::new(),
-            frame_id: 0.0,
-            skin_id: 0.0,
-            effects: EntityEffects::empty(),
-            mins: Vector3::zero(),
-            maxs: Vector3::zero(),
-            size: Vector3::zero(),
-            touch_fnc: FunctionId(0),
-            use_fnc: FunctionId(0),
-            think_fnc: FunctionId(0),
-            blocked_fnc: FunctionId(0),
-            next_think: Duration::seconds(0),
-            ground_entity: EntityId(0),
-            health: 0.0,
-            frags: 0.0,
-            weapon: 0.0,
-            weapon_model_name: StringId::new(),
-            weapon_frame: 0.0,
-            current_ammo: 0.0,
-            ammo_shells: 0.0,
-            ammo_nails: 0.0,
-            ammo_rockets: 0.0,
-            ammo_cells: 0.0,
-            items: 0.0,
-            take_damage: 0.0,
-            chain: EntityId(0),
-            dead_flag: 0.0,
-            view_offset: Vector3::zero(),
-            button_0: 0.0,
-            button_1: 0.0,
-            button_2: 0.0,
-            impulse: 0.0,
-            fix_angle: 0.0,
-            view_angle: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            ideal_pitch: Deg(0.0),
-            net_name: StringId::new(),
-            enemy: EntityId(0),
-            flags: EntityFlags::empty(),
-            colormap: 0.0,
-            team: 0.0,
-            max_health: 0.0,
-            teleport_time: Duration::seconds(0),
-            armor_strength: 0.0,
-            armor_value: 0.0,
-            water_level: 0.0,
-            contents: 0.0,
-            ideal_yaw: Deg(0.0),
-            yaw_speed: Deg(0.0),
-            aim_entity: EntityId(0),
-            goal_entity: EntityId(0),
-            spawn_flags: 0.0,
-            target: StringId::new(),
-            target_name: StringId::new(),
-            dmg_take: 0.0,
-            dmg_save: 0.0,
-            dmg_inflictor: EntityId(0),
-            owner: EntityId(0),
-            move_direction: Vector3::zero(),
-            message: StringId::new(),
-            sounds: 0.0,
-            noise_0: StringId::new(),
-            noise_1: StringId::new(),
-            noise_2: StringId::new(),
-            noise_3: StringId::new(),
-        }
-    }
 }
 
 pub struct EntityState {
@@ -1006,370 +348,225 @@ impl EntityState {
 
 pub struct Entity {
     string_table: Rc<StringTable>,
+    type_def: Rc<EntityTypeDef>,
+    addrs: Box<[[u8; 4]]>,
 
     pub leaf_count: usize,
     pub leaf_ids: [usize; MAX_ENT_LEAVES],
     pub baseline: EntityState,
-
-    statics: EntityStatics,
-    dynamics: Vec<[u8; 4]>,
 }
 
 impl Entity {
-    pub fn new(string_table: Rc<StringTable>, dynamics: Vec<[u8; 4]>) -> Entity {
+    pub fn new(string_table: Rc<StringTable>, type_def: Rc<EntityTypeDef>) -> Entity {
+        let mut addrs = Vec::with_capacity(type_def.addr_count);
+        for _ in 0..type_def.addr_count {
+            addrs.push([0; 4]);
+        }
+
         Entity {
             string_table,
+            type_def,
+            addrs: addrs.into_boxed_slice(),
             leaf_count: 0,
             leaf_ids: [0; MAX_ENT_LEAVES],
             baseline: EntityState::uninitialized(),
-            statics: EntityStatics::Generic(GenericEntityStatics::default()),
-            dynamics,
         }
     }
 
-    pub fn get_float(&self, addr: i16) -> Result<f32, ProgsError> {
+    pub fn type_check(&self, addr: usize, type_: Type) -> Result<(), EntityError> {
+        match self.type_def.field_defs.iter().find(|def| {
+            def.type_ != Type::QVoid && def.offset as usize == addr
+        }) {
+            Some(d) => {
+                if type_ == d.type_ {
+                    return Ok(());
+                } else if type_ == Type::QFloat && d.type_ == Type::QVector {
+                    return Ok(());
+                } else if type_ == Type::QVector && d.type_ == Type::QFloat {
+                    return Ok(());
+                } else {
+                    return Err(EntityError::with_msg(format!(
+                        "type check failed: addr={} expected={:?} actual={:?}",
+                        addr,
+                        type_,
+                        d.type_
+                    )));
+                }
+            }
+            None => return Ok(()),
+        }
+    }
+
+    /// Returns a reference to the memory at the given address.
+    pub fn get_addr(&self, addr: i16) -> Result<&[u8], EntityError> {
         if addr < 0 {
-            panic!("negative offset");
+            return Err(EntityError::Address(addr as isize));
         }
 
         let addr = addr as usize;
 
-        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
-            return Err(ProgsError::with_msg(
-                format!("out-of-bounds offset ({})", addr),
-            ));
+        if addr > self.addrs.len() {
+            return Err(EntityError::Address(addr as isize));
         }
 
-        if addr < ADDR_DYNAMIC_START {
-            self.get_float_static(addr)
-        } else {
-            self.get_float_dynamic(addr)
-        }
+        Ok(&self.addrs[addr])
     }
 
-    fn get_float_static(&self, addr: usize) -> Result<f32, ProgsError> {
-        match self.statics {
-            EntityStatics::Generic(ref g) => g.get_float(addr),
-        }
-    }
-
-    fn get_float_dynamic(&self, addr: usize) -> Result<f32, ProgsError> {
-        Ok(self.dynamics[addr - ADDR_DYNAMIC_START]
-            .as_ref()
-            .read_f32::<LittleEndian>()?)
-    }
-
-    pub fn put_float(&mut self, val: f32, addr: i16) -> Result<(), ProgsError> {
+    /// Returns a mutable reference to the memory at the given address.
+    pub fn get_addr_mut(&mut self, addr: i16) -> Result<&mut [u8], EntityError> {
         if addr < 0 {
-            panic!("negative offset");
+            return Err(EntityError::Address(addr as isize));
         }
 
         let addr = addr as usize;
 
-        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
-            return Err(ProgsError::with_msg(
-                format!("out-of-bounds offset ({})", addr),
-            ));
+        if addr > self.addrs.len() {
+            return Err(EntityError::Address(addr as isize));
         }
 
-        if addr < ADDR_DYNAMIC_START {
-            self.put_float_static(val, addr)
-        } else {
-            self.put_float_dynamic(val, addr)
-        }
+        Ok(&mut self.addrs[addr])
     }
 
-    fn put_float_static(&mut self, val: f32, addr: usize) -> Result<(), ProgsError> {
-        match self.statics {
-            EntityStatics::Generic(ref mut g) => g.put_float(val, addr),
+    /// Returns a copy of the memory at the given address.
+    pub fn get_bytes(&self, addr: i16) -> Result<[u8; 4], EntityError> {
+        if addr < 0 {
+            return Err(EntityError::Address(addr as isize));
         }
+
+        let addr = addr as usize;
+
+        if addr > self.addrs.len() {
+            return Err(EntityError::Address(addr as isize));
+        }
+
+        Ok(self.addrs[addr])
     }
 
-    fn put_float_dynamic(&mut self, val: f32, addr: usize) -> Result<(), ProgsError> {
-        self.dynamics[addr - ADDR_DYNAMIC_START]
-            .as_mut()
-            .write_f32::<LittleEndian>(val)?;
+    /// Writes the provided data to the memory at the given address.
+    ///
+    /// This can be used to circumvent the type checker in cases where an operation is not dependent
+    /// of the type of the data.
+    pub fn put_bytes(&mut self, val: [u8; 4], addr: i16) -> Result<(), EntityError> {
+        if addr < 0 {
+            return Err(EntityError::Address(addr as isize));
+        }
 
+        let addr = addr as usize;
+
+        if addr > self.addrs.len() {
+            return Err(EntityError::Address(addr as isize));
+        }
+
+        self.addrs[addr] = val;
         Ok(())
     }
 
-    pub fn get_vector(&self, addr: i16) -> Result<[f32; 3], ProgsError> {
-        if addr < 0 {
-            panic!("negative offset");
-        }
-
-        let addr = addr as usize;
-
-        // subtract 2 to account for size of vector
-        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() - 2 {
-            return Err(ProgsError::with_msg(
-                format!("out-of-bounds offset ({})", addr),
-            ));
-        }
-
-        if addr < ADDR_DYNAMIC_START {
-            self.get_vector_static(addr)
-        } else {
-            self.get_vector_dynamic(addr)
-        }
+    /// Loads an `i32` from the given virtual address.
+    pub fn get_int(&self, addr: i16) -> Result<i32, EntityError> {
+        Ok(self.get_addr(addr)?.read_i32::<LittleEndian>()?)
     }
 
-    fn get_vector_static(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
-        match self.statics {
-            EntityStatics::Generic(ref g) => g.get_vector(addr),
-        }
+    /// Loads an `i32` from the given virtual address.
+    pub fn put_int(&mut self, val: i32, addr: i16) -> Result<(), EntityError> {
+        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(val)?;
+        Ok(())
     }
 
-    fn get_vector_dynamic(&self, addr: usize) -> Result<[f32; 3], ProgsError> {
+    /// Loads an `f32` from the given virtual address.
+    pub fn get_float(&self, addr: i16) -> Result<f32, EntityError> {
+        self.type_check(addr as usize, Type::QFloat)?;
+        Ok(self.get_addr(addr)?.read_f32::<LittleEndian>()?)
+    }
+
+    /// Stores an `f32` at the given virtual address.
+    pub fn put_float(&mut self, val: f32, addr: i16) -> Result<(), EntityError> {
+        self.type_check(addr as usize, Type::QFloat)?;
+        self.get_addr_mut(addr)?.write_f32::<LittleEndian>(val)?;
+        Ok(())
+    }
+
+    /// Loads an `[f32; 3]` from the given virtual address.
+    pub fn get_vector(&self, addr: i16) -> Result<[f32; 3], EntityError> {
+        self.type_check(addr as usize, Type::QVector)?;
+
         let mut v = [0.0; 3];
 
-        for c in 0..v.len() {
-            v[c] = self.get_float_dynamic(addr + c)?;
+        for i in 0..3 {
+            v[i] = self.get_float(addr + i as i16)?;
         }
 
         Ok(v)
     }
 
-    pub fn put_vector(&mut self, val: [f32; 3], addr: i16) -> Result<(), ProgsError> {
-        if addr < 0 {
-            panic!("negative offset");
-        }
+    /// Stores an `[f32; 3]` at the given virtual address.
+    pub fn put_vector(&mut self, val: [f32; 3], addr: i16) -> Result<(), EntityError> {
+        self.type_check(addr as usize, Type::QVector)?;
 
-        let addr = addr as usize;
-
-        // subtract 2 to account for size of vector
-        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() - 2 {
-            return Err(ProgsError::with_msg(
-                format!("out-of-bounds offset ({})", addr),
-            ));
-        }
-
-        if addr < ADDR_DYNAMIC_START {
-            self.put_vector_static(val, addr)
-        } else {
-            self.put_vector_dynamic(val, addr)
-        }
-    }
-
-    fn put_vector_static(&mut self, val: [f32; 3], addr: usize) -> Result<(), ProgsError> {
-        match self.statics {
-            EntityStatics::Generic(ref mut g) => g.put_vector(val, addr),
-        }
-    }
-
-    fn put_vector_dynamic(&mut self, val: [f32; 3], addr: usize) -> Result<(), ProgsError> {
-        for c in 0..val.len() {
-            self.put_float_dynamic(val[c], addr + c)?;
+        for i in 0..3 {
+            self.put_float(val[i], addr + i as i16)?;
         }
 
         Ok(())
     }
 
-    pub fn get_string_id(&self, addr: i16) -> Result<StringId, ProgsError> {
-        if addr < 0 {
-            panic!("negative offset");
-        }
+    /// Loads a `StringId` from the given virtual address.
+    pub fn get_string_id(&self, addr: i16) -> Result<StringId, EntityError> {
+        self.type_check(addr as usize, Type::QString)?;
 
-        let addr = addr as usize;
-
-        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
-            return Err(ProgsError::with_msg(
-                format!("out-of-bounds offset ({})", addr),
-            ));
-        }
-
-        if addr < ADDR_DYNAMIC_START {
-            self.get_string_id_static(addr)
-        } else {
-            self.get_string_id_dynamic(addr)
-        }
+        Ok(StringId(
+            self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize,
+        ))
     }
 
-    fn get_string_id_static(&self, addr: usize) -> Result<StringId, ProgsError> {
-        match self.statics {
-            EntityStatics::Generic(ref g) => g.get_string_id(addr),
-        }
-    }
+    /// Stores a `StringId` at the given virtual address.
+    pub fn put_string_id(&mut self, val: StringId, addr: i16) -> Result<(), EntityError> {
+        self.type_check(addr as usize, Type::QString)?;
 
-    fn get_string_id_dynamic(&self, addr: usize) -> Result<StringId, ProgsError> {
-        Ok(self.string_table.id_from_i32(
-            self.dynamics[addr - ADDR_DYNAMIC_START]
-                .as_ref()
-                .read_i32::<LittleEndian>()?,
-        )?)
-    }
-
-    pub fn put_string_id(&mut self, val: StringId, addr: i16) -> Result<(), ProgsError> {
-        if addr < 0 {
-            panic!("negative offset");
-        }
-
-        let addr = addr as usize;
-
-        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
-            return Err(ProgsError::with_msg(
-                format!("out-of-bounds offset ({})", addr),
-            ));
-        }
-
-        if addr < ADDR_DYNAMIC_START {
-            self.put_string_id_static(val, addr)
-        } else {
-            self.put_string_id_dynamic(val, addr)
-        }
-    }
-
-    fn put_string_id_static(&mut self, val: StringId, addr: usize) -> Result<(), ProgsError> {
-        match self.statics {
-            EntityStatics::Generic(ref mut g) => g.put_string_id(val, addr),
-        }
-    }
-
-    fn put_string_id_dynamic(&mut self, val: StringId, addr: usize) -> Result<(), ProgsError> {
-        self.dynamics[addr - ADDR_DYNAMIC_START]
-            .as_mut()
-            .write_i32::<LittleEndian>(val.try_into()?)?;
-
+        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
+            val.try_into().unwrap(),
+        )?;
         Ok(())
     }
 
-    pub fn get_entity_id(&self, addr: i16) -> Result<EntityId, ProgsError> {
-        if addr < 0 {
-            panic!("negative offset");
-        }
+    /// Loads an `EntityId` from the given virtual address.
+    pub fn get_entity_id(&self, addr: i16) -> Result<EntityId, EntityError> {
+        self.type_check(addr as usize, Type::QEntity)?;
 
-        let addr = addr as usize;
-
-        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
-            return Err(ProgsError::with_msg(
-                format!("out-of-bounds offset ({})", addr),
-            ));
-        }
-
-        if addr < ADDR_DYNAMIC_START {
-            self.get_entity_id_static(addr)
-        } else {
-            self.get_entity_id_dynamic(addr)
-        }
-    }
-
-    fn get_entity_id_static(&self, addr: usize) -> Result<EntityId, ProgsError> {
-        match self.statics {
-            EntityStatics::Generic(ref g) => g.get_entity_id(addr),
-        }
-    }
-
-    fn get_entity_id_dynamic(&self, addr: usize) -> Result<EntityId, ProgsError> {
-        match self.dynamics[addr - ADDR_DYNAMIC_START]
-            .as_ref()
-            .read_i32::<LittleEndian>()? {
-            e if e < 0 => Err(ProgsError::with_msg(format!("Negative entity ID ({})", e))),
+        match self.get_addr(addr)?.read_i32::<LittleEndian>()? {
+            e if e < 0 => Err(EntityError::with_msg(format!("Negative entity ID ({})", e))),
             e => Ok(EntityId(e as usize)),
         }
     }
 
-    pub fn put_entity_id(&mut self, val: EntityId, addr: i16) -> Result<(), ProgsError> {
-        if addr < 0 {
-            panic!("negative offset");
-        }
+    /// Stores an `EntityId` at the given virtual address.
+    pub fn put_entity_id(&mut self, val: EntityId, addr: i16) -> Result<(), EntityError> {
+        self.type_check(addr as usize, Type::QEntity)?;
 
-        let addr = addr as usize;
-
-        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
-            return Err(ProgsError::with_msg(
-                format!("out-of-bounds offset ({})", addr),
-            ));
-        }
-
-        if addr < ADDR_DYNAMIC_START {
-            self.put_entity_id_static(val, addr)
-        } else {
-            self.put_entity_id_dynamic(val, addr)
-        }
-    }
-
-    fn put_entity_id_static(&mut self, val: EntityId, addr: usize) -> Result<(), ProgsError> {
-        match self.statics {
-            EntityStatics::Generic(ref mut g) => g.put_entity_id(val, addr),
-        }
-    }
-
-    fn put_entity_id_dynamic(&mut self, val: EntityId, addr: usize) -> Result<(), ProgsError> {
-        self.dynamics[addr - ADDR_DYNAMIC_START]
-            .as_mut()
-            .write_i32::<LittleEndian>(val.0 as i32)?;
-
+        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
+            val.0 as i32,
+        )?;
         Ok(())
     }
 
-    pub fn get_function_id(&self, addr: i16) -> Result<FunctionId, ProgsError> {
-        if addr < 0 {
-            panic!("negative offset");
-        }
-
-        let addr = addr as usize;
-
-        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
-            return Err(ProgsError::with_msg(
-                format!("out-of-bounds offset ({})", addr),
-            ));
-        }
-
-        if addr < ADDR_DYNAMIC_START {
-            self.get_function_id_static(addr)
-        } else {
-            self.get_function_id_dynamic(addr)
-        }
+    /// Loads a `FunctionId` from the given virtual address.
+    pub fn get_function_id(&self, addr: i16) -> Result<FunctionId, EntityError> {
+        self.type_check(addr as usize, Type::QFunction)?;
+        Ok(FunctionId(
+            self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize,
+        ))
     }
 
-    fn get_function_id_static(&self, addr: usize) -> Result<FunctionId, ProgsError> {
-        match self.statics {
-            EntityStatics::Generic(ref g) => g.get_function_id(addr),
-        }
-    }
-
-    fn get_function_id_dynamic(&self, addr: usize) -> Result<FunctionId, ProgsError> {
-        Ok(FunctionId(self.dynamics[addr - ADDR_DYNAMIC_START]
-            .as_ref()
-            .read_i32::<LittleEndian>()? as usize))
-    }
-
-    pub fn put_function_id(&mut self, val: FunctionId, addr: i16) -> Result<(), ProgsError> {
-        if addr < 0 {
-            panic!("negative offset");
-        }
-
-        let addr = addr as usize;
-
-        if addr >= ADDR_DYNAMIC_START + self.dynamics.len() {
-            return Err(ProgsError::with_msg(
-                format!("out-of-bounds offset ({})", addr),
-            ));
-        }
-
-        if addr < ADDR_DYNAMIC_START {
-            self.put_function_id_static(val, addr)
-        } else {
-            self.put_function_id_dynamic(val, addr)
-        }
-    }
-
-    fn put_function_id_static(&mut self, val: FunctionId, addr: usize) -> Result<(), ProgsError> {
-        match self.statics {
-            EntityStatics::Generic(ref mut g) => g.put_function_id(val, addr),
-        }
-    }
-
-    fn put_function_id_dynamic(&mut self, val: FunctionId, addr: usize) -> Result<(), ProgsError> {
-        self.dynamics[addr - ADDR_DYNAMIC_START]
-            .as_mut()
-            .write_i32::<LittleEndian>(val.try_into()?)?;
-
+    /// Stores a `FunctionId` at the given virtual address.
+    pub fn put_function_id(&mut self, val: FunctionId, addr: i16) -> Result<(), EntityError> {
+        self.type_check(addr as usize, Type::QFunction)?;
+        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
+            val.try_into().unwrap(),
+        )?;
         Ok(())
     }
 
     /// Set this entity's minimum and maximum bounds and calculate its size.
-    pub fn set_min_max_size<V>(&mut self, min: V, max: V) -> Result<(), ProgsError>
+    pub fn set_min_max_size<V>(&mut self, min: V, max: V) -> Result<(), EntityError>
     where
         V: Into<Vector3<f32>>,
     {
@@ -1388,10 +585,10 @@ impl Entity {
         Ok(())
     }
 
-    pub fn model_index(&self) -> Result<usize, ProgsError> {
+    pub fn model_index(&self) -> Result<usize, EntityError> {
         let model_index = self.get_float(FieldAddrFloat::ModelIndex as i16)?;
         if model_index < 0.0 || model_index > ::std::usize::MAX as f32 {
-            Err(ProgsError::with_msg(format!(
+            Err(EntityError::with_msg(format!(
                 "Invalid value for entity.model_index ({})",
                 model_index,
             )))
@@ -1400,64 +597,64 @@ impl Entity {
         }
     }
 
-    pub fn abs_min(&self) -> Result<Vector3<f32>, ProgsError> {
+    pub fn abs_min(&self) -> Result<Vector3<f32>, EntityError> {
         Ok(self.get_vector(FieldAddrVector::AbsMin as i16)?.into())
     }
 
-    pub fn abs_max(&self) -> Result<Vector3<f32>, ProgsError> {
+    pub fn abs_max(&self) -> Result<Vector3<f32>, EntityError> {
         Ok(self.get_vector(FieldAddrVector::AbsMax as i16)?.into())
     }
 
-    pub fn solid(&self) -> Result<EntitySolid, ProgsError> {
+    pub fn solid(&self) -> Result<EntitySolid, EntityError> {
         let solid_i = self.get_float(FieldAddrFloat::Solid as i16)? as i32;
         match EntitySolid::from_i32(solid_i) {
             Some(s) => Ok(s),
-            None => Err(ProgsError::with_msg(format!(
+            None => Err(EntityError::with_msg(format!(
                 "Invalid value for entity.solid ({})",
                 solid_i,
             ))),
         }
     }
 
-    pub fn origin(&self) -> Result<Vector3<f32>, ProgsError> {
+    pub fn origin(&self) -> Result<Vector3<f32>, EntityError> {
         Ok(self.get_vector(FieldAddrVector::Origin as i16)?.into())
     }
 
-    pub fn min(&self) -> Result<Vector3<f32>, ProgsError> {
+    pub fn min(&self) -> Result<Vector3<f32>, EntityError> {
         Ok(self.get_vector(FieldAddrVector::Mins as i16)?.into())
     }
 
-    pub fn max(&self) -> Result<Vector3<f32>, ProgsError> {
+    pub fn max(&self) -> Result<Vector3<f32>, EntityError> {
         Ok(self.get_vector(FieldAddrVector::Maxs as i16)?.into())
     }
 
-    pub fn size(&self) -> Result<Vector3<f32>, ProgsError> {
+    pub fn size(&self) -> Result<Vector3<f32>, EntityError> {
         Ok(self.get_vector(FieldAddrVector::Size as i16)?.into())
     }
 
-    pub fn move_kind(&self) -> Result<MoveKind, ProgsError> {
+    pub fn move_kind(&self) -> Result<MoveKind, EntityError> {
         let move_kind_f = self.get_float(FieldAddrFloat::MoveKind as i16)?;
         let move_kind_i = move_kind_f as i32;
         match MoveKind::from_i32(move_kind_i) {
             Some(m) => Ok(m),
-            None => Err(ProgsError::with_msg(format!(
+            None => Err(EntityError::with_msg(format!(
                 "Invalid value for entity.move_kind ({})",
                 move_kind_f,
             ))),
         }
     }
 
-    pub fn flags(&self) -> Result<EntityFlags, ProgsError> {
+    pub fn flags(&self) -> Result<EntityFlags, EntityError> {
         let flags_i = self.get_float(FieldAddrFloat::Flags as i16)? as u16;
         match EntityFlags::from_bits(flags_i) {
             Some(f) => Ok(f),
-            None => Err(ProgsError::with_msg(
+            None => Err(EntityError::with_msg(
                 format!("Invalid internal flags value ({})", flags_i),
             )),
         }
     }
 
-    pub fn add_flags(&mut self, flags: EntityFlags) -> Result<(), ProgsError> {
+    pub fn add_flags(&mut self, flags: EntityFlags) -> Result<(), EntityError> {
         let result = self.flags()? | flags;
         self.put_float(
             result.bits() as f32,
@@ -1466,7 +663,7 @@ impl Entity {
         Ok(())
     }
 
-    pub fn owner(&self) -> Result<EntityId, ProgsError> {
+    pub fn owner(&self) -> Result<EntityId, EntityError> {
         Ok(self.get_entity_id(FieldAddrEntityId::Owner as i16)?)
     }
 }

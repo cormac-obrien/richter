@@ -37,7 +37,6 @@ use cgmath::InnerSpace;
 use cgmath::Matrix3;
 use cgmath::Vector3;
 use chrono::Duration;
-use num::FromPrimitive;
 
 pub const GLOBAL_RESERVED_START: usize = 0;
 pub const GLOBAL_STATIC_START: usize = 28;
