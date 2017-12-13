@@ -51,6 +51,7 @@ impl HyperplaneSide {
 }
 
 #[derive(Debug)]
+/// The intersection of a line or segment and a plane at a point.
 pub struct PointIntersection {
     // percentage of distance between start and end where crossover occurred
     ratio: f32,
@@ -122,7 +123,7 @@ impl Neg for Hyperplane {
             Alignment::Normal(n) => -n,
         };
 
-        Hyperplane::new(normal, self.dist)
+        Hyperplane::new(normal, -self.dist)
     }
 }
 
