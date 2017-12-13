@@ -131,14 +131,17 @@ pub struct Trace {
     start: TraceStart,
     end: TraceEnd,
     contents: BspLeafContents,
+    start_solid: bool,
 }
 
 impl Trace {
     pub fn new(start: TraceStart, end: TraceEnd, contents: BspLeafContents) -> Trace {
+        let start_solid = contents == BspLeafContents::Solid;
         Trace {
             start,
             end,
             contents,
+            start_solid,
         }
     }
 
@@ -179,6 +182,7 @@ impl Trace {
                 start: self.start,
                 end: other.end,
                 contents: self.contents,
+                start_solid: self.start_solid,
             };
         }
 
@@ -187,6 +191,7 @@ impl Trace {
                 start: self.start,
                 end: other.end,
                 contents: other.contents,
+                start_solid: true,
             };
         }
 
@@ -204,6 +209,7 @@ impl Trace {
                 kind: self.end.kind,
             },
             contents: self.contents,
+            start_solid: self.start_solid,
         }
     }
 
@@ -220,7 +226,7 @@ impl Trace {
     }
 
     pub fn start_solid(&self) -> bool {
-        unimplemented!();
+        self.start_solid
     }
 
     pub fn in_open(&self) -> bool {
