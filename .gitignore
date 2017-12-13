@@ -3,3 +3,4 @@ target
 *.bk
 *.pak
 *.pak.d
+.#*
