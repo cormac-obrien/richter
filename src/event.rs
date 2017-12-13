@@ -16,7 +16,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use std::collections::HashSet;
-use glium::glutin::{ElementState, VirtualKeyCode};
+use glutin::{ElementState, VirtualKeyCode};
 
 pub struct KeyState {
     key_states: HashSet<VirtualKeyCode>,
