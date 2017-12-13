@@ -118,6 +118,7 @@
 
 mod load;
 
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use std::ops::Deref;
@@ -127,6 +128,8 @@ use math::Hyperplane;
 use math::HyperplaneSide;
 use math::LinePlaneIntersect;
 use world::Trace;
+use world::TraceStart;
+use world::TraceEnd;
 
 use chrono::Duration;
 use cgmath::InnerSpace;
@@ -443,142 +446,190 @@ impl BspCollisionHull {
         self.maxs
     }
 
-    /// Returns the leaf contents at the point in the given hull.
+    /// Returns the leaf contents at the given point in this hull.
     pub fn contents_at_point(&self, point: Vector3<f32>) -> Result<BspLeafContents, BspError> {
-        let ref node = self.nodes[self.node_id];
-
-        loop {
-            let ref plane = self.planes[node.plane_id];
-
-            match node.children[plane.point_side(point) as usize] {
-                BspCollisionNodeChild::Contents(c) => return Ok(c),
-                BspCollisionNodeChild::Node(n) => node = &self.nodes[n],
-            }
-        }
+        self.contents_at_point_node(self.node_id, point)
     }
 
     fn contents_at_point_node(
         &self,
-        node: &BspCollisionNodeChild,
+        node: usize,
         point: Vector3<f32>,
     ) -> Result<BspLeafContents, BspError> {
+        let mut current_node = &self.nodes[node];
 
-        match node {
-            &BspCollisionNodeChild::Contents(c) => Ok(c),
-            &BspCollisionNodeChild::Node(n) => {
-                if n < self.node_id || n >= self.node_id + self.node_count {
-                    return Err(BspError::with_msg(format!(
-                        "Collision node ID out of range: was {}, must be [{}, {})",
-                        n,
-                        self.node_id,
-                        self.node_id + self.node_count
-                    )));
-                }
+        loop {
+            let ref plane = self.planes[current_node.plane_id];
 
-                self.contents_at_point_node(
-                    &self.nodes[n].children[self.planes[self.nodes[n].plane_id].point_side(
-                        point,
-                    ) as usize],
-                    point,
-                )
+            match current_node.children[plane.point_side(point) as usize] {
+                BspCollisionNodeChild::Contents(c) => return Ok(c),
+                BspCollisionNodeChild::Node(n) => current_node = &self.nodes[n],
             }
         }
     }
 
-    // TODO: pick a better name (this is SV_RecursiveHullCheck)
-    pub fn hull_check(&self, start: Vector3<f32>, end: Vector3<f32>) -> Result<Trace, BspError> {
-        let mut trace = Trace::new();
-
-        self.recursive_hull_check(self.node_id, start, end)?;
-
-        Ok(trace)
+    pub fn trace(&self, start: Vector3<f32>, end: Vector3<f32>) -> Result<Trace, BspError> {
+        self.recursive_trace(self.node_id, start, end)
     }
 
-    fn recursive_hull_check(
+    fn recursive_trace(
         &self,
         node: usize,
         start: Vector3<f32>,
         end: Vector3<f32>,
-    ) -> Result<(), BspError> {
+    ) -> Result<Trace, BspError> {
+        debug!("start={:?} end={:?}", start, end);
         let ref node = self.nodes[node];
         let ref plane = self.planes[node.plane_id];
 
         match plane.line_segment_intersection(start, end) {
+
+            // start -> end falls entirely on one side of the plane
             LinePlaneIntersect::NoIntersection(side) => {
+                debug!("No intersection");
                 match node.children[side as usize] {
-                    BspCollisionNodeChild::Node(n) => self.recursive_hull_check(n, start, end)?,
+
+                    // this is an internal node, keep searching for a leaf
+                    BspCollisionNodeChild::Node(n) => {
+                        debug!("Descending to {:?} node with ID {}", side, n);
+                        self.recursive_trace(n, start, end)
+                    }
+
+                    // start -> end falls entirely inside a leaf
                     BspCollisionNodeChild::Contents(c) => {
-                        match c {
-                            BspLeafContents::Empty => {
-                                // can freely move from start to end
-                                unimplemented!();
-                            }
-                            BspLeafContents::Solid => {
-                                // entire path from start to end is blocked
-                                unimplemented!();
-                            }
-                            _ => {
-                                // entire path is in liquid
-                                unimplemented!();
-                            }
-                        }
+                        debug!("Found leaf with contents {:?}", c);
+                        Ok(Trace::new(
+                            TraceStart::new(start, 0.0),
+                            TraceEnd::terminal(end),
+                            c,
+                        ))
                     }
                 }
             }
-            LinePlaneIntersect::PointIntersection(point) => {
-                unimplemented!();
-            }
-            LinePlaneIntersect::FullIntersection => {
-                unimplemented!();
+
+            // start -> end crosses the plane at one point
+            LinePlaneIntersect::PointIntersection(point_intersect) => {
+                let near_side = plane.point_side(start);
+                let far_side = plane.point_side(end);
+                let mid = point_intersect.point();
+                let ratio = point_intersect.ratio();
+                debug!("Intersection at {:?} (ratio={})", mid, ratio);
+
+                // calculate the near subtrace
+                let near = match node.children[near_side as usize] {
+                    BspCollisionNodeChild::Node(near_n) => {
+                        debug!(
+                            "Descending to near ({:?}) node with ID {}",
+                            near_side,
+                            near_n
+                        );
+                        self.recursive_trace(near_n, start, mid)?
+                    }
+                    BspCollisionNodeChild::Contents(near_c) => {
+                        debug!("Found near leaf with contents {:?}", near_c);
+                        Trace::new(
+                            TraceStart::new(start, 0.0),
+                            TraceEnd::boundary(
+                                mid,
+                                ratio,
+                                match near_side {
+                                    HyperplaneSide::Positive => plane.to_owned(),
+                                    HyperplaneSide::Negative => -plane.to_owned(),
+                                },
+                            ),
+                            near_c,
+                        )
+                    }
+                };
+
+                // check for an early collision
+                if near.is_terminal() || near.end_point() != point_intersect.point() {
+                    return Ok(near);
+                }
+
+                // if we haven't collided yet, calculate the far subtrace
+                let far = match node.children[far_side as usize] {
+                    BspCollisionNodeChild::Node(far_n) => {
+                        debug!("Descending to far ({:?}) node with ID {}", far_side, far_n);
+                        self.recursive_trace(far_n, mid, end)?
+                    }
+                    BspCollisionNodeChild::Contents(far_c) => {
+                        debug!("Found far leaf with contents {:?}", far_c);
+                        Trace::new(TraceStart::new(mid, ratio), TraceEnd::terminal(end), far_c)
+                    }
+                };
+
+                // check for collision and join traces accordingly
+                Ok(near.join(far))
             }
         }
-
-        unimplemented!();
     }
 
     pub fn gen_dot_graph(&self) -> String {
         let mut dot = String::new();
         dot += "digraph hull {\n";
-        let mut leaf_count: usize = 0;
-        debug!(
-            "Dot graph: first node = {}, node count = {}",
-            self.node_id,
-            self.node_count
-        );
-        for i in self.node_id..self.node_id + self.node_count {
-            debug!("Generating graph output for node {}", i);
-            match self.nodes[i].children[HyperplaneSide::Positive as usize] {
-                BspCollisionNodeChild::Node(pos_node) => {
-                    dot += &format!("    node_{} -> node_{}\n", i, pos_node);
-                }
-                BspCollisionNodeChild::Contents(leaf_contents) => {
-                    dot += &format!(
-                        "    node_{} -> leaf_{}_{:?}\n",
-                        i,
-                        leaf_count,
-                        leaf_contents
-                    );
-                    leaf_count += 1;
-                }
+        dot += "    rankdir=LR\n";
+
+        let mut rank_lists = Vec::new();
+        let mut leaf_names = Vec::new();
+
+        dot += &self.gen_dot_graph_recursive(0, &mut rank_lists, &mut leaf_names, self.node_id);
+
+        for rank in rank_lists {
+            dot += "    {rank=same;";
+            for node_id in rank {
+                dot += &format!("n{},", node_id);
             }
-            match self.nodes[i].children[HyperplaneSide::Negative as usize] {
-                BspCollisionNodeChild::Node(pos_node) => {
-                    dot += &format!("    node_{} -> node_{}\n", i, pos_node);
-                }
-                BspCollisionNodeChild::Contents(leaf_contents) => {
-                    dot += &format!(
-                        "    node_{} -> leaf_{}_{:?}\n",
-                        i,
-                        leaf_count,
-                        leaf_contents
-                    );
-                    leaf_count += 1;
-                }
-            }
+            // discard trailing comma
+            dot.pop().unwrap();
+            dot += "}\n"
         }
+
+        dot += "    {rank=same;";
+        for leaf in leaf_names {
+            dot += &format!("{},", leaf);
+        }
+        // discard trailing comma
+        dot.pop().unwrap();
+        dot.pop().unwrap();
+        dot += "}\n";
+
         dot += "}";
 
         dot
+    }
+
+    fn gen_dot_graph_recursive(
+        &self,
+        rank: usize,
+        rank_lists: &mut Vec<HashSet<usize>>,
+        leaf_names: &mut Vec<String>,
+        node_id: usize,
+    ) -> String {
+        let mut result = String::new();
+
+        if rank >= rank_lists.len() {
+            rank_lists.push(HashSet::new());
+        }
+
+        rank_lists[rank].insert(node_id);
+
+        for child in self.nodes[node_id].children.iter() {
+            match child {
+                &BspCollisionNodeChild::Node(n) => {
+                    result += &format!("    n{} -> n{}\n", node_id, n);
+                    result += &self.gen_dot_graph_recursive(rank + 1, rank_lists, leaf_names, n);
+                }
+                &BspCollisionNodeChild::Contents(c) => {
+                    let leaf_count = leaf_names.len();
+                    let leaf_name = format!("l{}", leaf_count);
+                    result += &format!("    n{} -> {}\n", node_id, leaf_name);
+                    leaf_names.push(leaf_name);
+                }
+            }
+        }
+
+        result
     }
 }
 
@@ -728,8 +779,8 @@ impl BspModel {
             nodes: main_hull.nodes.clone(),
             node_id: self.collision_node_ids[index],
             node_count: self.collision_node_counts[index],
-            mins: self.min,
-            maxs: self.max,
+            mins: main_hull.mins,
+            maxs: main_hull.maxs,
         })
     }
 }

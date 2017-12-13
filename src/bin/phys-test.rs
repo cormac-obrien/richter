@@ -15,10 +15,13 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+extern crate cgmath;
 extern crate env_logger;
 extern crate log;
 extern crate nom;
 extern crate richter;
+
+use std::io::Write;
 
 use richter::bsp;
 use richter::console::CvarRegistry;
@@ -28,6 +31,7 @@ use richter::progs;
 use richter::server;
 use richter::world;
 
+use cgmath::Vector3;
 use nom::IResult;
 
 fn main() {
@@ -68,6 +72,22 @@ fn main() {
     cvars.register_updateinfo("sv_gravity", "800").unwrap();
 
     let mut world = world::World::create(brush_models, entity_type_def, string_table.clone())
+        .unwrap();
+
+    let mut dot_file = std::fs::File::create("hull.dot").unwrap();
+    dot_file
+        .write(
+            world
+                .hull_for_entity(
+                    progs::EntityId(0),
+                    Vector3::new(0.0, 0.0, 0.0),
+                    Vector3::new(32.0, 1.0, 1.0),
+                )
+                .unwrap()
+                .0
+                .gen_dot_graph()
+                .as_bytes(),
+        )
         .unwrap();
 
     // spawn dummy entity for client

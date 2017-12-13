@@ -925,7 +925,11 @@ impl ExecutionContext {
                             BuiltinFunctionId::FindRadius => unimplemented!(),
                             BuiltinFunctionId::BPrint => unimplemented!(),
                             BuiltinFunctionId::SPrint => unimplemented!(),
-                            BuiltinFunctionId::DPrint => unimplemented!(),
+                            BuiltinFunctionId::DPrint => {
+                                let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
+                                let string = self.string_table.get(s_id).unwrap();
+                                debug!("DPRINT: {}", string);
+                            }
                             BuiltinFunctionId::FToS => unimplemented!(),
                             BuiltinFunctionId::VToS => unimplemented!(),
                             BuiltinFunctionId::CoreDump => unimplemented!(),

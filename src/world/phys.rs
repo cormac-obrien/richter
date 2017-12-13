@@ -15,6 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use bsp::BspLeafContents;
 use math::Hyperplane;
 use progs::EntityId;
 
@@ -43,6 +44,7 @@ pub enum CollideKind {
     Missile = 2,
 }
 
+#[derive(Debug)]
 pub struct Collide {
     // the ID of the entity being moved
     pub e_id: Option<EntityId>,
@@ -76,53 +78,164 @@ pub struct Collide {
 }
 
 #[derive(Debug)]
-/// Represents an attempted move by an entity.
-pub struct Trace {
-    // entity never left a solid area
-    pub all_solid: bool,
-
-    // entity started in a solid area
-    pub start_solid: bool,
-    pub in_open: bool,
-    pub in_water: bool,
-
-    /// How much of the intended move was completed before collision. A value of 1.0 indicates no
-    /// collision (i.e. the full move was completed).
-    pub ratio: f32,
-
-    pub end_pos: Vector3<f32>,
-
-    /// If the entity collided with a solid surface, this is the surface normal at the impact point.
-    pub plane: Hyperplane,
-
-    /// If the entity collided with another solid entity, this is the ID of the other entity.
-    pub entity_id: Option<EntityId>,
+pub struct TraceStart {
+    point: Vector3<f32>,
+    ratio: f32,
 }
 
-impl Trace {
-    pub fn new() -> Trace {
-        Trace {
-            all_solid: false,
-            start_solid: false,
-            in_open: false,
-            in_water: false,
-            ratio: 0.0,
-            end_pos: Vector3::zero(),
-            plane: Hyperplane::axis_x(0.0),
-            entity_id: None,
+impl TraceStart {
+    pub fn new(point: Vector3<f32>, ratio: f32) -> TraceStart {
+        TraceStart { point, ratio }
+    }
+}
+
+#[derive(Debug)]
+pub struct TraceEndBoundary {
+    ratio: f32,
+    plane: Hyperplane,
+}
+
+#[derive(Debug)]
+pub enum TraceEndKind {
+    /// This endpoint falls within a leaf.
+    Terminal,
+
+    /// This endpoint falls on a leaf boundary (a plane).
+    Boundary(TraceEndBoundary),
+}
+
+#[derive(Debug)]
+pub struct TraceEnd {
+    point: Vector3<f32>,
+    kind: TraceEndKind,
+}
+
+impl TraceEnd {
+    pub fn terminal(point: Vector3<f32>) -> TraceEnd {
+        TraceEnd {
+            point,
+            kind: TraceEndKind::Terminal,
         }
     }
 
-    pub fn allsolid() -> Trace {
+    pub fn boundary(point: Vector3<f32>, ratio: f32, plane: Hyperplane) -> TraceEnd {
+        TraceEnd {
+            point,
+            kind: TraceEndKind::Boundary(TraceEndBoundary { ratio, plane }),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Trace {
+    start: TraceStart,
+    end: TraceEnd,
+    contents: BspLeafContents,
+}
+
+impl Trace {
+    pub fn new(start: TraceStart, end: TraceEnd, contents: BspLeafContents) -> Trace {
         Trace {
-            all_solid: true,
-            start_solid: false,
-            in_open: false,
-            in_water: false,
-            ratio: 0.0,
-            end_pos: Vector3::zero(),
-            plane: Hyperplane::axis_x(0.0),
-            entity_id: None,
+            start,
+            end,
+            contents,
+        }
+    }
+
+    /// Join this trace end-to-end with another.
+    ///
+    /// - If `self.end_point()` does not equal `other.start_point()`, returns `self`.
+    /// - If `self.contents` equals `other.contents`, the traces are combined (e.g. the new trace
+    ///   starts with `self.start` and ends with `other.end`).
+    /// - If `self.contents` is `Solid` but `other.contents` is not, the trace is allowed to move
+    ///   out of the solid area. The `startsolid` flag should be set accordingly.
+    /// - Otherwise, `self` is returned, representing a collision or transition between leaf types.
+    ///
+    /// ## Panics
+    /// - If `self.end.kind` is `Terminal`.
+    /// - If `self.end.point` does not equal `other.start.point`.
+    pub fn join(self, other: Trace) -> Trace {
+        debug!(
+            "start1={:?} end1={:?} start2={:?} end2={:?}",
+            self.start.point,
+            self.end.point,
+            other.start.point,
+            other.end.point
+        );
+        // don't allow chaining after terminal
+        // TODO: impose this constraint with the type system
+        if let TraceEndKind::Terminal = self.end.kind {
+            panic!("Attempted to join after terminal trace");
+        }
+
+        // don't allow joining disjoint traces
+        if self.end.point != other.start.point {
+            panic!("Attempted to join disjoint traces");
+        }
+
+        // combine traces with the same contents
+        if self.contents == other.contents {
+            return Trace {
+                start: self.start,
+                end: other.end,
+                contents: self.contents,
+            };
+        }
+
+        if self.contents == BspLeafContents::Solid && other.contents != BspLeafContents::Solid {
+            return Trace {
+                start: self.start,
+                end: other.end,
+                contents: other.contents,
+            };
+        }
+
+        self
+    }
+
+    pub fn adjust(self, offset: Vector3<f32>) -> Trace {
+        Trace {
+            start: TraceStart {
+                point: self.start.point + offset,
+                ratio: self.start.ratio,
+            },
+            end: TraceEnd {
+                point: self.end.point + offset,
+                kind: self.end.kind,
+            },
+            contents: self.contents,
+        }
+    }
+
+    pub fn start_point(&self) -> Vector3<f32> {
+        self.start.point
+    }
+
+    pub fn end_point(&self) -> Vector3<f32> {
+        self.end.point
+    }
+
+    pub fn all_solid(&self) -> bool {
+        self.contents == BspLeafContents::Solid
+    }
+
+    pub fn start_solid(&self) -> bool {
+        unimplemented!();
+    }
+
+    pub fn in_open(&self) -> bool {
+        self.contents == BspLeafContents::Empty
+    }
+
+    pub fn in_water(&self) -> bool {
+        self.contents != BspLeafContents::Empty && self.contents != BspLeafContents::Solid
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        if let TraceEndKind::Terminal = self.end.kind {
+            true
+        } else {
+            false
         }
     }
 }

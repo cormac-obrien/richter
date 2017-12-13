@@ -36,8 +36,6 @@ use bsp::BspFaceSide;
 use bsp::BspLeaf;
 use bsp::BspLeafContents;
 use bsp::BspModel;
-use bsp::BspPlane;
-use bsp::BspPlaneAxis;
 use bsp::BspRenderNode;
 use bsp::BspRenderNodeChild;
 use bsp::BspTexInfo;
@@ -46,6 +44,8 @@ use bsp::BspTextureAnimation;
 use bsp::MAX_HULLS;
 use bsp::MAX_LIGHTSTYLES;
 use bsp::MIPLEVELS;
+use math::Axis;
+use math::Hyperplane;
 use model::Model;
 
 use byteorder::LittleEndian;
@@ -211,15 +211,21 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     }
     let mut planes = Vec::with_capacity(plane_count);
     for _ in 0..plane_count {
-        planes.push(BspPlane {
-            normal: Vector3::new(
-                reader.read_f32::<LittleEndian>()?,
-                reader.read_f32::<LittleEndian>()?,
-                reader.read_f32::<LittleEndian>()?,
-            ),
-            dist: reader.read_f32::<LittleEndian>()?,
-            axis: BspPlaneAxis::from_i32(reader.read_i32::<LittleEndian>()?),
-        });
+        let normal = Vector3::new(
+            reader.read_f32::<LittleEndian>()?,
+            reader.read_f32::<LittleEndian>()?,
+            reader.read_f32::<LittleEndian>()?,
+        );
+        let dist = reader.read_f32::<LittleEndian>()?;
+        let plane = match Axis::from_i32(reader.read_i32::<LittleEndian>()?) {
+            Some(a) => match a {
+                Axis::X => Hyperplane::axis_x(dist),
+                Axis::Y => Hyperplane::axis_y(dist),
+                Axis::Z => Hyperplane::axis_z(dist),
+            }
+            None => Hyperplane::new(normal, dist),
+        };
+        planes.push(plane);
     }
 
     let planes_rc = Rc::new(planes.into_boxed_slice());
