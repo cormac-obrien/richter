@@ -15,13 +15,18 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+/// Read a null-terminated sequence of bytes and convert it into a `String`.
+///
+/// The zero byte is consumed.
+///
+/// ## Panics
+/// - If the end of the input is reached before a zero byte is found.
 pub fn read_cstring<R>(src: &mut R) -> Result<String, ::std::string::FromUtf8Error>
 where
     R: ::std::io::BufRead,
 {
     let mut bytes: Vec<u8> = Vec::new();
     src.read_until(0, &mut bytes).unwrap();
-    let len = bytes.len();
-    bytes.remove(len - 1);
-    return String::from_utf8(bytes);
+    bytes.pop();
+    String::from_utf8(bytes)
 }

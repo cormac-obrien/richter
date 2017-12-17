@@ -51,7 +51,7 @@ pub mod lump;
 pub mod math;
 pub mod mdl;
 pub mod model;
-// pub mod net;
+pub mod net;
 pub mod pak;
 pub mod parse;
 pub mod progs;
