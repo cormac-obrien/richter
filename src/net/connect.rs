@@ -40,14 +40,18 @@ const CONNECT_CONTROL: i32 = 1 << 31;
 const CONNECT_LENGTH_MASK: i32 = 0x0000FFFF;
 
 pub trait ConnectPacket {
+    /// Returns the numeric value of this packet's code.
     fn code(&self) -> u8;
 
+    /// Returns the length in bytes of this packet's content.
     fn content_len(&self) -> usize;
 
+    /// Writes this packet's content to the given sink.
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt;
 
+    /// Returns the total length in bytes of this packet, including the header.
     fn packet_len(&self) -> i32 {
         let mut len = 0;
 
@@ -62,10 +66,12 @@ pub trait ConnectPacket {
         len as i32
     }
 
+    /// Generates the control header for this packet.
     fn control_header(&self) -> i32 {
         CONNECT_CONTROL | (self.packet_len() & CONNECT_LENGTH_MASK)
     }
 
+    /// Generates the byte representation of this packet for transmission.
     fn to_bytes(&self) -> Result<Vec<u8>, NetError> {
         let mut writer = Cursor::new(Vec::new());
         writer.write_i32::<NetworkEndian>(self.control_header())?;
