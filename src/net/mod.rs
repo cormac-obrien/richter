@@ -45,6 +45,9 @@ const HEADER_SIZE: usize = 8;
 const DATAGRAM_SIZE: usize = HEADER_SIZE + MAX_DATAGRAM;
 const PROTOCOL_VERSION: i32 = 15;
 
+const VELOCITY_READ_FACTOR: f32 = 16.0;
+const VELOCITY_WRITE_FACTOR: f32 = 1.0 / VELOCITY_READ_FACTOR;
+
 static GAME_NAME: &'static str = "QUAKE";
 
 #[derive(Debug)]
@@ -116,7 +119,7 @@ bitflags! {
 }
 
 bitflags! {
-    pub struct ExtendedUpdateFlags: u16 {
+    pub struct ClientUpdateFlags: u16 {
         const VIEW_HEIGHT = 1 << 0;
         const IDEAL_PITCH = 1 << 1;
         const PUNCH_PITCH = 1 << 2;
@@ -143,7 +146,7 @@ bitflags! {
     }
 }
 
-#[derive(Copy, Clone, FromPrimitive)]
+#[derive(Copy, Clone, Debug, Eq, FromPrimitive, PartialEq)]
 pub enum ClientStat {
     Health = 0,
     Frags = 1,
@@ -188,7 +191,7 @@ pub trait Cmd: Sized {
     }
 }
 
-#[derive(FromPrimitive)]
+#[derive(Debug, FromPrimitive)]
 pub enum ServerCmdCode {
     Bad = 0,
     NoOp = 1,
@@ -227,6 +230,7 @@ pub enum ServerCmdCode {
     Cutscene = 34,
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdUpdateStat {
     stat: ClientStat,
     value: i32,
@@ -266,6 +270,7 @@ impl Cmd for ServerCmdUpdateStat {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdVersion {
     version: i32,
 }
@@ -611,9 +616,49 @@ pub struct ServerCmdLightStyle {
     value: String,
 }
 
+impl Cmd for ServerCmdLightStyle {
+    fn code(&self) -> u8 {
+        ServerCmdCode::LightStyle as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdLightStyle, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
+
 pub struct ServerCmdUpdateName {
     player_id: u8,
     new_name: String,
+}
+
+impl Cmd for ServerCmdUpdateName {
+    fn code(&self) -> u8 {
+        ServerCmdCode::UpdateName as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdUpdateName, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
 }
 
 pub struct ServerCmdUpdateFrags {
@@ -621,8 +666,28 @@ pub struct ServerCmdUpdateFrags {
     new_frags: i16,
 }
 
+impl Cmd for ServerCmdUpdateFrags {
+    fn code(&self) -> u8 {
+        ServerCmdCode::UpdateFrags as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdUpdateFrags, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
+
 pub struct ServerCmdClientData {
-    view_height: Option<i8>,
+    view_height: Option<f32>,
     ideal_pitch: Option<Deg<f32>>,
     punch_pitch: Option<Deg<f32>>,
     velocity_x: Option<f32>,
@@ -645,14 +710,264 @@ pub struct ServerCmdClientData {
     active_weapon: u8,
 }
 
+impl Cmd for ServerCmdClientData {
+    fn code(&self) -> u8 {
+        ServerCmdCode::ClientData as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdClientData, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        let flags_bits = reader.read_u16::<LittleEndian>()?;
+        let flags = match ClientUpdateFlags::from_bits(flags_bits) {
+            Some(f) => f,
+            None => {
+                return Err(NetError::with_msg(format!(
+                    "Invalid value for client update flags: {:b}",
+                    flags_bits
+                )))
+            }
+        };
+
+        let view_height = match flags.contains(ClientUpdateFlags::VIEW_HEIGHT) {
+            true => Some(reader.read_i8()? as f32),
+            false => None,
+        };
+
+        let ideal_pitch = match flags.contains(ClientUpdateFlags::IDEAL_PITCH) {
+            true => Some(Deg(reader.read_i8()? as f32)),
+            false => None,
+        };
+
+        let punch_pitch = match flags.contains(ClientUpdateFlags::PUNCH_PITCH) {
+            true => Some(Deg(reader.read_i8()? as f32)),
+            false => None,
+        };
+
+        let velocity_x = match flags.contains(ClientUpdateFlags::VELOCITY_X) {
+            true => Some(reader.read_i8()? as f32 * VELOCITY_READ_FACTOR),
+            false => None,
+        };
+
+        let punch_yaw = match flags.contains(ClientUpdateFlags::PUNCH_YAW) {
+            true => Some(Deg(reader.read_i8()? as f32)),
+            false => None,
+        };
+
+        let velocity_y = match flags.contains(ClientUpdateFlags::VELOCITY_Y) {
+            true => Some(reader.read_i8()? as f32 * VELOCITY_READ_FACTOR),
+            false => None,
+        };
+
+        let punch_roll = match flags.contains(ClientUpdateFlags::PUNCH_ROLL) {
+            true => Some(Deg(reader.read_i8()? as f32)),
+            false => None,
+        };
+
+        let velocity_z = match flags.contains(ClientUpdateFlags::VELOCITY_Z) {
+            true => Some(reader.read_i8()? as f32 * VELOCITY_READ_FACTOR),
+            false => None,
+        };
+
+        let items = reader.read_i32::<LittleEndian>()?;
+        let on_ground = flags.contains(ClientUpdateFlags::ON_GROUND);
+        let in_water = flags.contains(ClientUpdateFlags::IN_WATER);
+
+        let weapon_frame = match flags.contains(ClientUpdateFlags::WEAPON_FRAME) {
+            true => Some(reader.read_u8()?),
+            false => None,
+        };
+
+        let armor = match flags.contains(ClientUpdateFlags::ARMOR) {
+            true => Some(reader.read_u8()?),
+            false => None,
+        };
+
+        let weapon = match flags.contains(ClientUpdateFlags::WEAPON) {
+            true => Some(reader.read_u8()?),
+            false => None,
+        };
+
+        let health = reader.read_i16::<LittleEndian>()?;
+        let ammo = reader.read_u8()?;
+        let ammo_shells = reader.read_u8()?;
+        let ammo_nails = reader.read_u8()?;
+        let ammo_rockets = reader.read_u8()?;
+        let ammo_cells = reader.read_u8()?;
+        let active_weapon = reader.read_u8()?;
+
+        Ok(ServerCmdClientData {
+            view_height,
+            ideal_pitch,
+            punch_pitch,
+            velocity_x,
+            punch_yaw,
+            velocity_y,
+            punch_roll,
+            velocity_z,
+            items,
+            on_ground,
+            in_water,
+            weapon_frame,
+            armor,
+            weapon,
+            health,
+            ammo,
+            ammo_shells,
+            ammo_nails,
+            ammo_rockets,
+            ammo_cells,
+            active_weapon,
+        })
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        let mut flags = ClientUpdateFlags::empty();
+        if self.view_height.is_some() {
+            flags |= ClientUpdateFlags::VIEW_HEIGHT;
+        }
+        if self.ideal_pitch.is_some() {
+            flags |= ClientUpdateFlags::IDEAL_PITCH;
+        }
+        if self.punch_pitch.is_some() {
+            flags |= ClientUpdateFlags::PUNCH_PITCH;
+        }
+        if self.velocity_x.is_some() {
+            flags |= ClientUpdateFlags::VELOCITY_X;
+        }
+        if self.punch_yaw.is_some() {
+            flags |= ClientUpdateFlags::PUNCH_YAW;
+        }
+        if self.velocity_y.is_some() {
+            flags |= ClientUpdateFlags::VELOCITY_Y;
+        }
+        if self.punch_roll.is_some() {
+            flags |= ClientUpdateFlags::PUNCH_ROLL;
+        }
+        if self.velocity_z.is_some() {
+            flags |= ClientUpdateFlags::VELOCITY_Z;
+        }
+
+        // items are always sent
+        flags |= ClientUpdateFlags::ITEMS;
+
+        if self.on_ground {
+            flags |= ClientUpdateFlags::ON_GROUND;
+        }
+        if self.in_water {
+            flags |= ClientUpdateFlags::IN_WATER;
+        }
+        if self.weapon_frame.is_some() {
+            flags |= ClientUpdateFlags::WEAPON_FRAME;
+        }
+        if self.armor.is_some() {
+            flags |= ClientUpdateFlags::ARMOR;
+        }
+        if self.weapon.is_some() {
+            flags |= ClientUpdateFlags::WEAPON;
+        }
+
+        // write flags
+        writer.write_u16::<LittleEndian>(flags.bits())?;
+
+        if let Some(vh) = self.view_height {
+            writer.write_u8(vh as i32 as u8)?;
+        }
+        if let Some(ip) = self.ideal_pitch {
+            writer.write_u8(ip.0 as i32 as u8)?;
+        }
+        if let Some(pp) = self.punch_pitch {
+            writer.write_u8(pp.0 as i32 as u8)?;
+        }
+        if let Some(vx) = self.velocity_x {
+            writer.write_u8((vx * VELOCITY_WRITE_FACTOR) as i32 as u8)?;
+        }
+        if let Some(py) = self.punch_yaw {
+            writer.write_u8(py.0 as i32 as u8)?;
+        }
+        if let Some(vy) = self.velocity_y {
+            writer.write_u8((vy * VELOCITY_WRITE_FACTOR) as i32 as u8)?;
+        }
+        if let Some(pr) = self.punch_roll {
+            writer.write_u8(pr.0 as i32 as u8)?;
+        }
+        if let Some(vz) = self.velocity_z {
+            writer.write_u8((vz * VELOCITY_WRITE_FACTOR) as i32 as u8)?;
+        }
+        writer.write_i32::<LittleEndian>(self.items)?;
+        if let Some(wf) = self.weapon_frame {
+            writer.write_u8(wf)?;
+        }
+        if let Some(a) = self.armor {
+            writer.write_u8(a)?;
+        }
+        if let Some(w) = self.weapon {
+            writer.write_u8(w)?;
+        }
+        writer.write_i16::<LittleEndian>(self.health)?;
+        writer.write_u8(self.ammo)?;
+        writer.write_u8(self.ammo_shells)?;
+        writer.write_u8(self.ammo_nails)?;
+        writer.write_u8(self.ammo_rockets)?;
+        writer.write_u8(self.ammo_cells)?;
+        writer.write_u8(self.active_weapon)?;
+
+        Ok(())
+    }
+}
+
 pub struct ServerCmdStopSound {
     entity_id: u16,
     channel: u8,
 }
 
+impl Cmd for ServerCmdStopSound {
+    fn code(&self) -> u8 {
+        ServerCmdCode::StopSound as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdStopSound, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
+
 pub struct ServerCmdUpdateColors {
     client_id: u8,
     colors: u8,
+}
+
+impl Cmd for ServerCmdUpdateColors {
+    fn code(&self) -> u8 {
+        ServerCmdCode::UpdateColors as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdUpdateColors, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
 }
 
 pub struct ServerCmdParticle {
@@ -662,35 +977,315 @@ pub struct ServerCmdParticle {
     color: u8,
 }
 
+impl Cmd for ServerCmdParticle {
+    fn code(&self) -> u8 {
+        ServerCmdCode::Particle as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdParticle, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
+
 pub struct ServerCmdDamage {
     armor: u8,
     blood: u8,
     source: Vector3<f32>,
 }
 
+impl Cmd for ServerCmdDamage {
+    fn code(&self) -> u8 {
+        ServerCmdCode::Damage as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdDamage, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
+
 pub struct ServerCmdSpawnStatic {}
+
+impl Cmd for ServerCmdSpawnStatic {
+    fn code(&self) -> u8 {
+        ServerCmdCode::SpawnStatic as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSpawnStatic, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
 
 pub struct ServerCmdSpawnBaseline {}
 
+impl Cmd for ServerCmdSpawnBaseline {
+    fn code(&self) -> u8 {
+        ServerCmdCode::SpawnBaseline as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSpawnBaseline, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
+
 pub struct ServerCmdTempEntity {}
+
+impl Cmd for ServerCmdTempEntity {
+    fn code(&self) -> u8 {
+        ServerCmdCode::TempEntity as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdTempEntity, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
 
 pub struct ServerCmdSetPause {}
 
+impl Cmd for ServerCmdSetPause {
+    fn code(&self) -> u8 {
+        ServerCmdCode::SetPause as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSetPause, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
+
 pub struct ServerCmdSignOnNum {}
+
+impl Cmd for ServerCmdSignOnNum {
+    fn code(&self) -> u8 {
+        ServerCmdCode::SignOnNum as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSignOnNum, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
 
 pub struct ServerCmdCenterPrint {}
 
+impl Cmd for ServerCmdCenterPrint {
+    fn code(&self) -> u8 {
+        ServerCmdCode::CenterPrint as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdCenterPrint, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
+
 pub struct ServerCmdSpawnStaticSound {}
+
+impl Cmd for ServerCmdSpawnStaticSound {
+    fn code(&self) -> u8 {
+        ServerCmdCode::SpawnStaticSound as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSpawnStaticSound, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
 
 pub struct ServerCmdIntermission {}
 
+impl Cmd for ServerCmdIntermission {
+    fn code(&self) -> u8 {
+        ServerCmdCode::Intermission as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdIntermission, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
+
 pub struct ServerCmdFinale {}
+
+impl Cmd for ServerCmdFinale {
+    fn code(&self) -> u8 {
+        ServerCmdCode::Finale as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdFinale, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
 
 pub struct ServerCmdCdTrack {}
 
+impl Cmd for ServerCmdCdTrack {
+    fn code(&self) -> u8 {
+        ServerCmdCode::CdTrack as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdCdTrack, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
+
 pub struct ServerCmdSellScreen {}
 
+impl Cmd for ServerCmdSellScreen {
+    fn code(&self) -> u8 {
+        ServerCmdCode::SellScreen as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSellScreen, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
+
 pub struct ServerCmdCutscene {}
+
+impl Cmd for ServerCmdCutscene {
+    fn code(&self) -> u8 {
+        ServerCmdCode::Cutscene as u8
+    }
+
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdCutscene, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        unimplemented!();
+    }
+
+    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        unimplemented!();
+    }
+}
 
 #[derive(FromPrimitive)]
 pub enum ClientCmd {
@@ -760,4 +1355,38 @@ where
 {
     writer.write_u8(((angle.0 as i32 * 256 / 360) & 0xFF) as u8)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use std::io::BufReader;
+
+    #[test]
+    fn test_server_cmd_update_stat_read_write_eq() {
+        let src = ServerCmdUpdateStat {
+            stat: ClientStat::Nails,
+            value: 64,
+        };
+
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdUpdateStat::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_version_read_write_eq() {
+        let src = ServerCmdVersion { version: 42 };
+
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdVersion::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
 }
