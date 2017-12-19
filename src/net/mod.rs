@@ -297,6 +297,7 @@ impl Cmd for ServerCmdVersion {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdSetView {
     view_ent: i16,
 }
@@ -419,6 +420,7 @@ impl Cmd for ServerCmdSound {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub struct ServerCmdTime {
     time: f32,
 }
@@ -445,6 +447,7 @@ impl Cmd for ServerCmdTime {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdPrint {
     text: String,
 }
@@ -476,6 +479,7 @@ impl Cmd for ServerCmdPrint {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdStuffText {
     text: String,
 }
@@ -539,6 +543,7 @@ impl Cmd for ServerCmdSetAngle {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdServerInfo {
     protocol_version: i32,
     max_clients: u8,
@@ -611,6 +616,7 @@ impl Cmd for ServerCmdServerInfo {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdLightStyle {
     id: u8,
     value: String,
@@ -636,6 +642,7 @@ impl Cmd for ServerCmdLightStyle {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdUpdateName {
     player_id: u8,
     new_name: String,
@@ -661,6 +668,7 @@ impl Cmd for ServerCmdUpdateName {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdUpdateFrags {
     player_id: u8,
     new_frags: i16,
@@ -1389,4 +1397,101 @@ mod test {
 
         assert_eq!(src, dst);
     }
+
+    #[test]
+    fn test_server_cmd_set_view_read_write_eq() {
+        let src = ServerCmdSetView { view_ent: 17 };
+
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdSetView::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_time_read_write_eq() {
+        let src = ServerCmdTime { time: 23.07 };
+
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdTime::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_print_read_write_eq() {
+        let src = ServerCmdPrint { text: String::from("print test") };
+
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdPrint::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_stuff_text_read_write_eq() {
+        let src = ServerCmdStuffText { text: String::from("stufftext test") };
+
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdStuffText::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_server_info_read_write_eq() {
+        let src = ServerCmdServerInfo {
+            protocol_version: 42,
+            max_clients: 16,
+            game_type: 3,
+            model_precache: vec![String::from("test1.bsp"), String::from("test2.bsp")],
+            sound_precache: vec![String::from("test1.wav"), String::from("test2.wav")],
+        };
+
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdServerInfo::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_light_style_read_write_eq() {
+        let src = ServerCmdLightStyle {
+            id: 11,
+            value: String::from("aaaaabcddeefgghjjjkaaaazzzzyxwaaaba"),
+        };
+
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdLightStyle::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_update_name_read_write_eq() {
+        let src = ServerCmdUpdateName {
+            player_id: 7,
+            new_name: String::from("newname"),
+        };
+
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdUpdateName::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
 }
