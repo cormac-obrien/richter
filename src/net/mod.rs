@@ -36,6 +36,7 @@ use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 use cgmath::Deg;
 use cgmath::Vector3;
+use cgmath::Zero;
 use num::FromPrimitive;
 
 const MAX_NET_MESSAGE: usize = 8192;
@@ -165,6 +166,290 @@ pub enum ClientStat {
     KilledMonsters = 14,
 }
 
+/// Numeric codes used to identify the type of a temporary entity.
+#[derive(Debug, FromPrimitive)]
+pub enum TempEntityCode {
+    Spike = 0,
+    SuperSpike = 1,
+    Gunshot = 2,
+    Explosion = 3,
+    TarExplosion = 4,
+    Lightning1 = 5,
+    Lightning2 = 6,
+    WizSpike = 7,
+    KnightSpike = 8,
+    Lightning3 = 9,
+    LavaSplash = 10,
+    Teleport = 11,
+    Explosion2 = 12,
+    Beam = 13,
+}
+
+/// Data describing a temporary entity that exists at a single point.
+#[derive(Debug)]
+pub struct TempEntityPoint {
+    origin: Vector3<f32>,
+}
+
+impl TempEntityPoint {
+    pub fn read_content<R>(reader: &mut R) -> Result<TempEntityPoint, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        let mut origin = Vector3::zero();
+        for i in 0..3 {
+            origin[i] = read_coord(reader)?;
+        }
+
+        Ok(TempEntityPoint { origin })
+    }
+
+    pub fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        for i in 0..3 {
+            write_coord(writer, self.origin[i])?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Data describing a temporary entity that spans two points.
+#[derive(Debug)]
+pub struct TempEntityBeam {
+    start: Vector3<f32>,
+    end: Vector3<f32>,
+}
+
+impl TempEntityBeam {
+    pub fn read_content<R>(reader: &mut R) -> Result<TempEntityBeam, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        let mut start = Vector3::zero();
+        for i in 0..3 {
+            start[i] = read_coord(reader)?;
+        }
+
+        let mut end = Vector3::zero();
+        for i in 0..3 {
+            end[i] = read_coord(reader)?;
+        }
+
+        Ok(TempEntityBeam { start, end })
+    }
+
+    pub fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        for i in 0..3 {
+            write_coord(writer, self.start[i])?;
+        }
+
+        for i in 0..3 {
+            write_coord(writer, self.end[i])?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Data describing a color-mapped explosion.
+#[derive(Debug)]
+pub struct TempEntityColorExplosion {
+    origin: Vector3<f32>,
+    color_start: u8,
+    color_len: u8,
+}
+
+impl TempEntityColorExplosion {
+    pub fn read_content<R>(reader: &mut R) -> Result<TempEntityColorExplosion, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        let mut origin = Vector3::zero();
+        for i in 0..3 {
+            origin[i] = read_coord(reader)?;
+        }
+
+        let color_start = reader.read_u8()?;
+        let color_len = reader.read_u8()?;
+
+        Ok(TempEntityColorExplosion {
+            origin,
+            color_start,
+            color_len,
+        })
+    }
+
+    pub fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        for i in 0..3 {
+            write_coord(writer, self.origin[i]);
+        }
+
+        writer.write_u8(self.color_start)?;
+        writer.write_u8(self.color_len)?;
+
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub enum TempEntity {
+    Spike(TempEntityPoint),
+    SuperSpike(TempEntityPoint),
+    Gunshot(TempEntityPoint),
+    Explosion(TempEntityPoint),
+    TarExplosion(TempEntityPoint),
+    Lightning1(TempEntityBeam),
+    Lightning2(TempEntityBeam),
+    WizSpike(TempEntityPoint),
+    KnightSpike(TempEntityPoint),
+    Lightning3(TempEntityBeam),
+    LavaSplash(TempEntityPoint),
+    Teleport(TempEntityPoint),
+    Explosion2(TempEntityColorExplosion),
+    Beam(TempEntityBeam),
+}
+
+impl TempEntity {
+    pub fn read_temp_entity<R>(reader: &mut R) -> Result<TempEntity, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        let code_byte = reader.read_u8()?;
+        let code = match TempEntityCode::from_u8(code_byte) {
+            Some(c) => c,
+            None => {
+                return Err(NetError::with_msg(format!(
+                    "Invalid value for temp entity code: {}",
+                    code_byte
+                )))
+            }
+        };
+
+        Ok(match code {
+            TempEntityCode::Spike => TempEntity::Spike(TempEntityPoint::read_content(reader)?),
+            TempEntityCode::SuperSpike => {
+                TempEntity::SuperSpike(TempEntityPoint::read_content(reader)?)
+            }
+            TempEntityCode::Gunshot => TempEntity::Gunshot(TempEntityPoint::read_content(reader)?),
+            TempEntityCode::Explosion => {
+                TempEntity::Explosion(TempEntityPoint::read_content(reader)?)
+            }
+            TempEntityCode::TarExplosion => {
+                TempEntity::TarExplosion(TempEntityPoint::read_content(reader)?)
+            }
+            TempEntityCode::Lightning1 => {
+                TempEntity::Lightning1(TempEntityBeam::read_content(reader)?)
+            }
+            TempEntityCode::Lightning2 => {
+                TempEntity::Lightning2(TempEntityBeam::read_content(reader)?)
+            }
+            TempEntityCode::WizSpike => {
+                TempEntity::WizSpike(TempEntityPoint::read_content(reader)?)
+            }
+            TempEntityCode::KnightSpike => {
+                TempEntity::KnightSpike(TempEntityPoint::read_content(reader)?)
+            }
+            TempEntityCode::Lightning3 => {
+                TempEntity::Lightning3(TempEntityBeam::read_content(reader)?)
+            }
+            TempEntityCode::LavaSplash => {
+                TempEntity::LavaSplash(TempEntityPoint::read_content(reader)?)
+            }
+            TempEntityCode::Teleport => {
+                TempEntity::Teleport(TempEntityPoint::read_content(reader)?)
+            }
+            TempEntityCode::Explosion2 => {
+                TempEntity::Explosion2(TempEntityColorExplosion::read_content(reader)?)
+            }
+            TempEntityCode::Beam => TempEntity::Beam(TempEntityBeam::read_content(reader)?),
+        })
+    }
+
+    pub fn write_temp_entity<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        match *self {
+            TempEntity::Spike(ref point) => {
+                writer.write_u8(TempEntityCode::Spike as u8)?;
+                point.write_content(writer)?;
+            }
+            TempEntity::SuperSpike(ref point) => {
+                writer.write_u8(TempEntityCode::SuperSpike as u8)?;
+                point.write_content(writer)?;
+            }
+            TempEntity::Gunshot(ref point) => {
+                writer.write_u8(TempEntityCode::Gunshot as u8)?;
+                point.write_content(writer)?;
+            }
+            TempEntity::Explosion(ref point) => {
+                writer.write_u8(TempEntityCode::Explosion as u8)?;
+                point.write_content(writer)?;
+            }
+            TempEntity::TarExplosion(ref point) => {
+                writer.write_u8(TempEntityCode::TarExplosion as u8)?;
+                point.write_content(writer)?;
+            }
+            TempEntity::Lightning1(ref beam) => {
+                writer.write_u8(TempEntityCode::Lightning1 as u8)?;
+                beam.write_content(writer)?;
+            }
+            TempEntity::Lightning2(ref beam) => {
+                writer.write_u8(TempEntityCode::Lightning2 as u8)?;
+                beam.write_content(writer)?;
+            }
+            TempEntity::WizSpike(ref point) => {
+                writer.write_u8(TempEntityCode::WizSpike as u8)?;
+                point.write_content(writer)?;
+            }
+            TempEntity::KnightSpike(ref point) => {
+                writer.write_u8(TempEntityCode::KnightSpike as u8)?;
+                point.write_content(writer)?;
+            }
+            TempEntity::Lightning3(ref beam) => {
+                writer.write_u8(TempEntityCode::Lightning3 as u8)?;
+                beam.write_content(writer)?;
+            }
+            TempEntity::LavaSplash(ref point) => {
+                writer.write_u8(TempEntityCode::LavaSplash as u8)?;
+                point.write_content(writer)?;
+            }
+            TempEntity::Teleport(ref point) => {
+                writer.write_u8(TempEntityCode::Teleport as u8)?;
+                point.write_content(writer)?;
+            }
+            TempEntity::Explosion2(ref expl) => {
+                writer.write_u8(TempEntityCode::Explosion2 as u8)?;
+                expl.write_content(writer)?;
+            }
+            TempEntity::Beam(ref beam) => {
+                writer.write_u8(TempEntityCode::Beam as u8)?;
+                beam.write_content(writer)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, FromPrimitive, PartialEq)]
+pub enum SignOnStage {
+    Not = 0,
+    Prespawn = 1,
+    ClientInfo = 2,
+    Begin = 3,
+    Done = 4,
+}
+
 /// A trait for in-game server and client network commands.
 pub trait Cmd: Sized {
     /// Returns the numeric value of this command's code.
@@ -218,7 +503,7 @@ pub enum ServerCmdCode {
     SpawnBaseline = 22,
     TempEntity = 23,
     SetPause = 24,
-    SignOnNum = 25,
+    SignOnStage = 25,
     CenterPrint = 26,
     KilledMonster = 27,
     FoundSecret = 28,
@@ -346,9 +631,10 @@ impl Cmd for ServerCmdSound {
         let flags = match SoundFlags::from_bits(flags_bits) {
             Some(f) => f,
             None => {
-                return Err(NetError::with_msg(
-                    format!("Invalid value for SoundFlags: {:b}", flags_bits),
-                ))
+                return Err(NetError::with_msg(format!(
+                    "Invalid value for SoundFlags: {:b}",
+                    flags_bits
+                )))
             }
         };
 
@@ -631,14 +917,19 @@ impl Cmd for ServerCmdLightStyle {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let id = reader.read_u8()?;
+        let value = util::read_cstring(reader).unwrap();
+        Ok(ServerCmdLightStyle { id, value })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        writer.write_u8(self.id)?;
+        writer.write(self.value.as_bytes())?;
+        writer.write_u8(0)?;
+        Ok(())
     }
 }
 
@@ -657,14 +948,22 @@ impl Cmd for ServerCmdUpdateName {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let player_id = reader.read_u8()?;
+        let new_name = util::read_cstring(reader).unwrap();
+        Ok(ServerCmdUpdateName {
+            player_id,
+            new_name,
+        })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        writer.write_u8(self.player_id)?;
+        writer.write(self.new_name.as_bytes())?;
+        writer.write_u8(0)?;
+        Ok(())
     }
 }
 
@@ -683,14 +982,23 @@ impl Cmd for ServerCmdUpdateFrags {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let player_id = reader.read_u8()?;
+        let new_frags = reader.read_i16::<LittleEndian>()?;
+
+        Ok(ServerCmdUpdateFrags {
+            player_id,
+            new_frags,
+        })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        writer.write_u8(self.player_id)?;
+        writer.write_i16::<LittleEndian>(self.new_frags)?;
+
+        Ok(())
     }
 }
 
@@ -928,6 +1236,7 @@ impl Cmd for ServerCmdClientData {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdStopSound {
     entity_id: u16,
     channel: u8,
@@ -942,17 +1251,24 @@ impl Cmd for ServerCmdStopSound {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let entity_channel = reader.read_u16::<LittleEndian>()?;
+        let entity_id = entity_channel >> 3;
+        let channel = (entity_channel & 0b111) as u8;
+
+        Ok(ServerCmdStopSound { entity_id, channel })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        let entity_channel = self.entity_id << 3 | self.channel as u16 & 0b111;
+        writer.write_u16::<LittleEndian>(entity_channel)?;
+        Ok(())
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdUpdateColors {
     client_id: u8,
     colors: u8,
@@ -967,14 +1283,18 @@ impl Cmd for ServerCmdUpdateColors {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let client_id = reader.read_u8()?;
+        let colors = reader.read_u8()?;
+        Ok(ServerCmdUpdateColors { client_id, colors })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        writer.write_u8(self.client_id)?;
+        writer.write_u8(self.colors)?;
+        Ok(())
     }
 }
 
@@ -1075,7 +1395,9 @@ impl Cmd for ServerCmdSpawnBaseline {
     }
 }
 
-pub struct ServerCmdTempEntity {}
+pub struct ServerCmdTempEntity {
+    temp_entity: TempEntity,
+}
 
 impl Cmd for ServerCmdTempEntity {
     fn code(&self) -> u8 {
@@ -1086,18 +1408,23 @@ impl Cmd for ServerCmdTempEntity {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let temp_entity = TempEntity::read_temp_entity(reader)?;
+        Ok(ServerCmdTempEntity { temp_entity })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        self.temp_entity.write_temp_entity(writer)?;
+        Ok(())
     }
 }
 
-pub struct ServerCmdSetPause {}
+#[derive(Debug, Eq, PartialEq)]
+pub struct ServerCmdSetPause {
+    paused: bool,
+}
 
 impl Cmd for ServerCmdSetPause {
     fn code(&self) -> u8 {
@@ -1108,40 +1435,72 @@ impl Cmd for ServerCmdSetPause {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let paused = match reader.read_u8()? {
+            0 => false,
+            1 => true,
+            x => {
+                return Err(NetError::with_msg(format!(
+                    "Invalid value for setpause: {}",
+                    x
+                )))
+            }
+        };
+
+        Ok(ServerCmdSetPause { paused })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        writer.write_u8(match self.paused {
+            false => 0,
+            true => 1,
+        })?;
+        Ok(())
     }
 }
 
-pub struct ServerCmdSignOnNum {}
+#[derive(Debug, Eq, PartialEq)]
+pub struct ServerCmdSignOnStage {
+    stage: SignOnStage,
+}
 
-impl Cmd for ServerCmdSignOnNum {
+impl Cmd for ServerCmdSignOnStage {
     fn code(&self) -> u8 {
-        ServerCmdCode::SignOnNum as u8
+        ServerCmdCode::SignOnStage as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSignOnNum, NetError>
+    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSignOnStage, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let stage_num = reader.read_u8()?;
+        let stage = match SignOnStage::from_u8(stage_num) {
+            Some(s) => s,
+            None => {
+                return Err(NetError::with_msg(format!(
+                    "Invalid value for sign-on stage: {}",
+                    stage_num
+                )))
+            }
+        };
+        Ok(ServerCmdSignOnStage { stage })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        writer.write_u8(self.stage as u8)?;
+        Ok(())
     }
 }
 
-pub struct ServerCmdCenterPrint {}
+#[derive(Debug, Eq, PartialEq)]
+pub struct ServerCmdCenterPrint {
+    text: String,
+}
 
 impl Cmd for ServerCmdCenterPrint {
     fn code(&self) -> u8 {
@@ -1152,18 +1511,30 @@ impl Cmd for ServerCmdCenterPrint {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let text = match util::read_cstring(reader) {
+            Ok(t) => t,
+            Err(e) => return Err(NetError::with_msg(format!("{}", e))),
+        };
+
+        Ok(ServerCmdCenterPrint { text })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        writer.write(self.text.as_bytes())?;
+        writer.write_u8(0)?;
+        Ok(())
     }
 }
 
-pub struct ServerCmdSpawnStaticSound {}
+pub struct ServerCmdSpawnStaticSound {
+    origin: Vector3<f32>,
+    sound_id: u8,
+    volume: u8,
+    attenuation: u8,
+}
 
 impl Cmd for ServerCmdSpawnStaticSound {
     fn code(&self) -> u8 {
@@ -1174,40 +1545,43 @@ impl Cmd for ServerCmdSpawnStaticSound {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let mut origin = Vector3::zero();
+        for i in 0..3 {
+            origin[i] = read_coord(reader)?;
+        }
+
+        let sound_id = reader.read_u8()?;
+        let volume = reader.read_u8()?;
+        let attenuation = reader.read_u8()?;
+
+        Ok(ServerCmdSpawnStaticSound {
+            origin,
+            sound_id,
+            volume,
+            attenuation,
+        })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        for i in 0..3 {
+            write_coord(writer, self.origin[i]);
+        }
+
+        writer.write_u8(self.sound_id)?;
+        writer.write_u8(self.volume)?;
+        writer.write_u8(self.attenuation)?;
+
+        Ok(())
     }
 }
 
-pub struct ServerCmdIntermission {}
-
-impl Cmd for ServerCmdIntermission {
-    fn code(&self) -> u8 {
-        ServerCmdCode::Intermission as u8
-    }
-
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdIntermission, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        unimplemented!();
-    }
-
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        unimplemented!();
-    }
+#[derive(Debug, Eq, PartialEq)]
+pub struct ServerCmdFinale {
+    text: String,
 }
-
-pub struct ServerCmdFinale {}
 
 impl Cmd for ServerCmdFinale {
     fn code(&self) -> u8 {
@@ -1218,18 +1592,29 @@ impl Cmd for ServerCmdFinale {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let text = match util::read_cstring(reader) {
+            Ok(t) => t,
+            Err(e) => return Err(NetError::with_msg(format!("{}", e))),
+        };
+
+        Ok(ServerCmdFinale { text })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        writer.write(self.text.as_bytes())?;
+        writer.write_u8(0)?;
+        Ok(())
     }
 }
 
-pub struct ServerCmdCdTrack {}
+#[derive(Debug, Eq, PartialEq)]
+pub struct ServerCmdCdTrack {
+    track: u8,
+    loop_: u8,
+}
 
 impl Cmd for ServerCmdCdTrack {
     fn code(&self) -> u8 {
@@ -1240,40 +1625,25 @@ impl Cmd for ServerCmdCdTrack {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let track = reader.read_u8()?;
+        let loop_ = reader.read_u8()?;
+        Ok(ServerCmdCdTrack { track, loop_ })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        writer.write_u8(self.track)?;
+        writer.write_u8(self.loop_)?;
+        Ok(())
     }
 }
 
-pub struct ServerCmdSellScreen {}
-
-impl Cmd for ServerCmdSellScreen {
-    fn code(&self) -> u8 {
-        ServerCmdCode::SellScreen as u8
-    }
-
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSellScreen, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        unimplemented!();
-    }
-
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        unimplemented!();
-    }
+#[derive(Debug, Eq, PartialEq)]
+pub struct ServerCmdCutscene {
+    text: String,
 }
-
-pub struct ServerCmdCutscene {}
 
 impl Cmd for ServerCmdCutscene {
     fn code(&self) -> u8 {
@@ -1284,14 +1654,21 @@ impl Cmd for ServerCmdCutscene {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let text = match util::read_cstring(reader) {
+            Ok(t) => t,
+            Err(e) => return Err(NetError::with_msg(format!("{}", e))),
+        };
+
+        Ok(ServerCmdCutscene { text })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        writer.write(self.text.as_bytes())?;
+        writer.write_u8(0)?;
+        Ok(())
     }
 }
 
@@ -1302,23 +1679,6 @@ pub enum ClientCmd {
     Disconnect = 2,
     Move = 3,
     StringCmd = 4,
-}
-
-pub enum TempEntity {
-    Spike = 0,
-    SuperSpike = 1,
-    Gunshot = 2,
-    Explosion = 3,
-    TarExplosion = 4,
-    Lightning1 = 5,
-    Lightning2 = 6,
-    WizSpike = 7,
-    KnightSpike = 8,
-    Lightning3 = 9,
-    LavaSplash = 10,
-    Teleport = 11,
-    Explosion2 = 12,
-    Beam = 13,
 }
 
 pub struct QSocket {
@@ -1424,7 +1784,9 @@ mod test {
 
     #[test]
     fn test_server_cmd_print_read_write_eq() {
-        let src = ServerCmdPrint { text: String::from("print test") };
+        let src = ServerCmdPrint {
+            text: String::from("print test"),
+        };
 
         let mut packet = Vec::new();
         src.write_content(&mut packet).unwrap();
@@ -1436,7 +1798,9 @@ mod test {
 
     #[test]
     fn test_server_cmd_stuff_text_read_write_eq() {
-        let src = ServerCmdStuffText { text: String::from("stufftext test") };
+        let src = ServerCmdStuffText {
+            text: String::from("stufftext test"),
+        };
 
         let mut packet = Vec::new();
         src.write_content(&mut packet).unwrap();
@@ -1494,4 +1858,122 @@ mod test {
         assert_eq!(src, dst);
     }
 
+    #[test]
+    fn test_server_cmd_update_frags_read_write_eq() {
+        let src = ServerCmdUpdateFrags {
+            player_id: 7,
+            new_frags: 11,
+        };
+
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdUpdateFrags::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_stop_sound_read_write_eq() {
+        let src = ServerCmdStopSound {
+            entity_id: 17,
+            channel: 3,
+        };
+
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdStopSound::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_update_colors_read_write_eq() {
+        let src = ServerCmdUpdateColors {
+            client_id: 11,
+            colors: 0x73,
+        };
+
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdUpdateColors::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_set_pause_read_write_eq() {
+        let src = ServerCmdSetPause { paused: true };
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdSetPause::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_sign_on_stage_read_write_eq() {
+        let src = ServerCmdSignOnStage {
+            stage: SignOnStage::Begin,
+        };
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdSignOnStage::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_center_print_read_write_eq() {
+        let src = ServerCmdCenterPrint {
+            text: String::from("Center print test"),
+        };
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdCenterPrint::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_finale_read_write_eq() {
+        let src = ServerCmdFinale {
+            text: String::from("Finale test"),
+        };
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdFinale::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_cd_track_read_write_eq() {
+        let src = ServerCmdCdTrack { track: 5, loop_: 1 };
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdCdTrack::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_server_cmd_cutscene_read_write_eq() {
+        let src = ServerCmdCutscene {
+            text: String::from("Cutscene test"),
+        };
+        let mut packet = Vec::new();
+        src.write_content(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ServerCmdCutscene::read_content(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
 }
