@@ -18,13 +18,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// TODO: need to figure out an equivalence relation for read_/write_coord and read_/write_angle
+
 pub mod connect;
 
 use std::error::Error;
 use std::fmt;
 use std::io::BufRead;
-use std::io::Cursor;
-use std::mem::size_of;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::net::UdpSocket;
@@ -48,6 +48,9 @@ const PROTOCOL_VERSION: i32 = 15;
 
 const VELOCITY_READ_FACTOR: f32 = 16.0;
 const VELOCITY_WRITE_FACTOR: f32 = 1.0 / VELOCITY_READ_FACTOR;
+
+const PARTICLE_DIRECTION_READ_FACTOR: f32 = 1.0 / 16.0;
+const PARTICLE_DIRECTION_WRITE_FACTOR: f32 = 1.0 / PARTICLE_DIRECTION_READ_FACTOR;
 
 static GAME_NAME: &'static str = "QUAKE";
 
@@ -185,7 +188,7 @@ pub enum TempEntityCode {
     Beam = 13,
 }
 
-/// Data describing a temporary entity that exists at a single point.
+/// Information used to initialize a temporary entity that exists at a single point in space.
 #[derive(Debug)]
 pub struct TempEntityPoint {
     origin: Vector3<f32>,
@@ -216,9 +219,10 @@ impl TempEntityPoint {
     }
 }
 
-/// Data describing a temporary entity that spans two points.
+/// Information used to initialize a temporary entity that spans a line segment.
 #[derive(Debug)]
 pub struct TempEntityBeam {
+    entity_id: u16,
     start: Vector3<f32>,
     end: Vector3<f32>,
 }
@@ -228,6 +232,8 @@ impl TempEntityBeam {
     where
         R: BufRead + ReadBytesExt,
     {
+        let entity_id = reader.read_u16::<LittleEndian>()?;
+
         let mut start = Vector3::zero();
         for i in 0..3 {
             start[i] = read_coord(reader)?;
@@ -238,7 +244,11 @@ impl TempEntityBeam {
             end[i] = read_coord(reader)?;
         }
 
-        Ok(TempEntityBeam { start, end })
+        Ok(TempEntityBeam {
+            entity_id,
+            start,
+            end,
+        })
     }
 
     pub fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
@@ -257,7 +267,7 @@ impl TempEntityBeam {
     }
 }
 
-/// Data describing a color-mapped explosion.
+/// Information used to initialize a temporary entity representing a color-mapped explosion.
 #[derive(Debug)]
 pub struct TempEntityColorExplosion {
     origin: Vector3<f32>,
@@ -300,7 +310,6 @@ impl TempEntityColorExplosion {
     }
 }
 
-#[derive(Debug)]
 pub enum TempEntity {
     Spike(TempEntityPoint),
     SuperSpike(TempEntityPoint),
@@ -327,10 +336,9 @@ impl TempEntity {
         let code = match TempEntityCode::from_u8(code_byte) {
             Some(c) => c,
             None => {
-                return Err(NetError::with_msg(format!(
-                    "Invalid value for temp entity code: {}",
-                    code_byte
-                )))
+                return Err(NetError::with_msg(
+                    format!("Invalid value for temp entity code: {}", code_byte),
+                ))
             }
         };
 
@@ -631,10 +639,9 @@ impl Cmd for ServerCmdSound {
         let flags = match SoundFlags::from_bits(flags_bits) {
             Some(f) => f,
             None => {
-                return Err(NetError::with_msg(format!(
-                    "Invalid value for SoundFlags: {:b}",
-                    flags_bits
-                )))
+                return Err(NetError::with_msg(
+                    format!("Invalid value for SoundFlags: {:b}", flags_bits),
+                ))
             }
         };
 
@@ -1301,7 +1308,7 @@ impl Cmd for ServerCmdUpdateColors {
 pub struct ServerCmdParticle {
     origin: Vector3<f32>,
     direction: Vector3<f32>,
-    count: u16,
+    count: u8,
     color: u8,
 }
 
@@ -1314,14 +1321,49 @@ impl Cmd for ServerCmdParticle {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let mut origin = Vector3::zero();
+        for i in 0..3 {
+            origin[i] = read_coord(reader)?;
+        }
+
+        let mut direction = Vector3::zero();
+        for i in 0..3 {
+            direction[i] = reader.read_i8()? as f32 * PARTICLE_DIRECTION_READ_FACTOR;
+        }
+
+        let count = reader.read_u8()?;
+        let color = reader.read_u8()?;
+
+        Ok(ServerCmdParticle {
+            origin,
+            direction,
+            count,
+            color,
+        })
     }
 
+    // see SV_StartParticle(),
+    // https://github.com/id-Software/Quake/blob/master/WinQuake/sv_main.c#L80-L101
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        for i in 0..3 {
+            write_coord(writer, self.origin[i])?;
+        }
+
+        for i in 0..3 {
+            writer.write_i8(match self.direction[i] *
+                PARTICLE_DIRECTION_WRITE_FACTOR {
+                d if d > ::std::i8::MAX as f32 => ::std::i8::MAX,
+                d if d < ::std::i8::MIN as f32 => ::std::i8::MIN,
+                d => d as i8,
+            })?;
+        }
+
+        writer.write_u8(self.count)?;
+        writer.write_u8(self.color)?;
+        Ok(())
     }
 }
 
@@ -1340,18 +1382,40 @@ impl Cmd for ServerCmdDamage {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let armor = reader.read_u8()?;
+        let blood = reader.read_u8()?;
+        let mut source = Vector3::zero();
+        for i in 0..3 {
+            source[i] = read_coord(reader)?;
+        }
+        Ok(ServerCmdDamage {
+            armor,
+            blood,
+            source,
+        })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        writer.write_u8(self.armor)?;
+        writer.write_u8(self.blood)?;
+        for i in 0..3 {
+            write_coord(writer, self.source[i])?;
+        }
+        Ok(())
     }
 }
 
-pub struct ServerCmdSpawnStatic {}
+pub struct ServerCmdSpawnStatic {
+    model_index: u8,
+    frame_index: u8,
+    color_map: u8,
+    skin_index: u8,
+    origin: Vector3<f32>,
+    angles: Vector3<Deg<f32>>,
+}
 
 impl Cmd for ServerCmdSpawnStatic {
     fn code(&self) -> u8 {
@@ -1362,18 +1426,52 @@ impl Cmd for ServerCmdSpawnStatic {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let model_index = reader.read_u8()?;
+        let frame_index = reader.read_u8()?;
+        let color_map = reader.read_u8()?;
+        let skin_index = reader.read_u8()?;
+        let mut origin = Vector3::zero();
+        let mut angles = Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0));
+        for i in 0..3 {
+            origin[i] = read_coord(reader)?;
+            angles[i] = read_angle(reader)?;
+        }
+        Ok(ServerCmdSpawnStatic {
+            model_index,
+            frame_index,
+            color_map,
+            skin_index,
+            origin,
+            angles,
+        })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        writer.write_u8(self.model_index)?;
+        writer.write_u8(self.frame_index)?;
+        writer.write_u8(self.color_map)?;
+        writer.write_u8(self.skin_index)?;
+
+        for i in 0..3 {
+            write_coord(writer, self.origin[i])?;
+            write_angle(writer, self.angles[i])?;
+        }
+
+        Ok(())
     }
 }
 
-pub struct ServerCmdSpawnBaseline {}
+pub struct ServerCmdSpawnBaseline {
+    model_index: u8,
+    frame_index: u8,
+    color_map: u8,
+    skin_index: u8,
+    origin: Vector3<f32>,
+    angles: Vector3<Deg<f32>>,
+}
 
 impl Cmd for ServerCmdSpawnBaseline {
     fn code(&self) -> u8 {
@@ -1384,14 +1482,41 @@ impl Cmd for ServerCmdSpawnBaseline {
     where
         R: BufRead + ReadBytesExt,
     {
-        unimplemented!();
+        let model_index = reader.read_u8()?;
+        let frame_index = reader.read_u8()?;
+        let color_map = reader.read_u8()?;
+        let skin_index = reader.read_u8()?;
+        let mut origin = Vector3::zero();
+        let mut angles = Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0));
+        for i in 0..3 {
+            origin[i] = read_coord(reader)?;
+            angles[i] = read_angle(reader)?;
+        }
+        Ok(ServerCmdSpawnBaseline {
+            model_index,
+            frame_index,
+            color_map,
+            skin_index,
+            origin,
+            angles,
+        })
     }
 
     fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
-        unimplemented!();
+        writer.write_u8(self.model_index)?;
+        writer.write_u8(self.frame_index)?;
+        writer.write_u8(self.color_map)?;
+        writer.write_u8(self.skin_index)?;
+
+        for i in 0..3 {
+            write_coord(writer, self.origin[i])?;
+            write_angle(writer, self.angles[i])?;
+        }
+
+        Ok(())
     }
 }
 
@@ -1439,10 +1564,9 @@ impl Cmd for ServerCmdSetPause {
             0 => false,
             1 => true,
             x => {
-                return Err(NetError::with_msg(format!(
-                    "Invalid value for setpause: {}",
-                    x
-                )))
+                return Err(NetError::with_msg(
+                    format!("Invalid value for setpause: {}", x),
+                ))
             }
         };
 
@@ -1479,10 +1603,9 @@ impl Cmd for ServerCmdSignOnStage {
         let stage = match SignOnStage::from_u8(stage_num) {
             Some(s) => s,
             None => {
-                return Err(NetError::with_msg(format!(
-                    "Invalid value for sign-on stage: {}",
-                    stage_num
-                )))
+                return Err(NetError::with_msg(
+                    format!("Invalid value for sign-on stage: {}", stage_num),
+                ))
             }
         };
         Ok(ServerCmdSignOnStage { stage })
@@ -1784,9 +1907,7 @@ mod test {
 
     #[test]
     fn test_server_cmd_print_read_write_eq() {
-        let src = ServerCmdPrint {
-            text: String::from("print test"),
-        };
+        let src = ServerCmdPrint { text: String::from("print test") };
 
         let mut packet = Vec::new();
         src.write_content(&mut packet).unwrap();
@@ -1798,9 +1919,7 @@ mod test {
 
     #[test]
     fn test_server_cmd_stuff_text_read_write_eq() {
-        let src = ServerCmdStuffText {
-            text: String::from("stufftext test"),
-        };
+        let src = ServerCmdStuffText { text: String::from("stufftext test") };
 
         let mut packet = Vec::new();
         src.write_content(&mut packet).unwrap();
@@ -1916,9 +2035,7 @@ mod test {
 
     #[test]
     fn test_server_cmd_sign_on_stage_read_write_eq() {
-        let src = ServerCmdSignOnStage {
-            stage: SignOnStage::Begin,
-        };
+        let src = ServerCmdSignOnStage { stage: SignOnStage::Begin };
         let mut packet = Vec::new();
         src.write_content(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
@@ -1929,9 +2046,7 @@ mod test {
 
     #[test]
     fn test_server_cmd_center_print_read_write_eq() {
-        let src = ServerCmdCenterPrint {
-            text: String::from("Center print test"),
-        };
+        let src = ServerCmdCenterPrint { text: String::from("Center print test") };
         let mut packet = Vec::new();
         src.write_content(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
@@ -1942,9 +2057,7 @@ mod test {
 
     #[test]
     fn test_server_cmd_finale_read_write_eq() {
-        let src = ServerCmdFinale {
-            text: String::from("Finale test"),
-        };
+        let src = ServerCmdFinale { text: String::from("Finale test") };
         let mut packet = Vec::new();
         src.write_content(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
@@ -1966,9 +2079,7 @@ mod test {
 
     #[test]
     fn test_server_cmd_cutscene_read_write_eq() {
-        let src = ServerCmdCutscene {
-            text: String::from("Cutscene test"),
-        };
+        let src = ServerCmdCutscene { text: String::from("Cutscene test") };
         let mut packet = Vec::new();
         src.write_content(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
