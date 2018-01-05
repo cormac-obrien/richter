@@ -42,7 +42,7 @@ extern crate time;
 extern crate winit;
 
 pub mod bsp;
-// pub mod client;
+pub mod client;
 pub mod console;
 pub mod engine;
 pub mod event;

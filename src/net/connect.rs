@@ -22,6 +22,8 @@ use net::NetError;
 
 use std::io::BufReader;
 use std::io::Cursor;
+use std::io::Error as IoError;
+use std::io::ErrorKind;
 use std::mem::size_of;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
@@ -30,12 +32,14 @@ use std::net::UdpSocket;
 use net::MAX_NET_MESSAGE;
 use util;
 
+use byteorder::LittleEndian;
 use byteorder::NetworkEndian;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
+use chrono::Duration;
 use num::FromPrimitive;
 
-const CONNECT_PROTOCOL_VERSION: u8 = 3;
+pub const CONNECT_PROTOCOL_VERSION: u8 = 3;
 const CONNECT_CONTROL: i32 = 1 << 31;
 const CONNECT_LENGTH_MASK: i32 = 0x0000FFFF;
 
@@ -82,7 +86,7 @@ pub trait ConnectPacket {
     }
 }
 
-#[derive(FromPrimitive)]
+#[derive(Debug, FromPrimitive)]
 pub enum RequestCode {
     Connect = 1,
     ServerInfo = 2,
@@ -90,9 +94,10 @@ pub enum RequestCode {
     RuleInfo = 4,
 }
 
+#[derive(Debug)]
 pub struct RequestConnect {
-    game_name: String,
-    proto_ver: u8,
+    pub game_name: String,
+    pub proto_ver: u8,
 }
 
 impl ConnectPacket for RequestConnect {
@@ -123,8 +128,9 @@ impl ConnectPacket for RequestConnect {
     }
 }
 
+#[derive(Debug)]
 pub struct RequestServerInfo {
-    game_name: String,
+    pub game_name: String,
 }
 
 impl ConnectPacket for RequestServerInfo {
@@ -147,8 +153,9 @@ impl ConnectPacket for RequestServerInfo {
     }
 }
 
+#[derive(Debug)]
 pub struct RequestPlayerInfo {
-    player_id: u8,
+    pub player_id: u8,
 }
 
 impl ConnectPacket for RequestPlayerInfo {
@@ -170,8 +177,9 @@ impl ConnectPacket for RequestPlayerInfo {
     }
 }
 
+#[derive(Debug)]
 pub struct RequestRuleInfo {
-    prev_cvar: String,
+    pub prev_cvar: String,
 }
 
 impl ConnectPacket for RequestRuleInfo {
@@ -195,11 +203,46 @@ impl ConnectPacket for RequestRuleInfo {
 }
 
 /// A request from a client to retrieve information from or connect to the server.
+#[derive(Debug)]
 pub enum Request {
     Connect(RequestConnect),
     ServerInfo(RequestServerInfo),
     PlayerInfo(RequestPlayerInfo),
     RuleInfo(RequestRuleInfo),
+}
+
+impl Request {
+    pub fn connect<S>(game_name: S, proto_ver: u8) -> Request
+    where
+        S: AsRef<str>,
+    {
+        Request::Connect(RequestConnect {
+            game_name: game_name.as_ref().to_owned(),
+            proto_ver,
+        })
+    }
+
+    pub fn server_info<S>(game_name: S) -> Request
+    where
+        S: AsRef<str>,
+    {
+        Request::ServerInfo(RequestServerInfo {
+            game_name: game_name.as_ref().to_owned(),
+        })
+    }
+
+    pub fn player_info(player_id: u8) -> Request {
+        Request::PlayerInfo(RequestPlayerInfo { player_id })
+    }
+
+    pub fn rule_info<S>(prev_cvar: S) -> Request
+    where
+        S: AsRef<str>,
+    {
+        Request::RuleInfo(RequestRuleInfo {
+            prev_cvar: prev_cvar.as_ref().to_string(),
+        })
+    }
 }
 
 impl ConnectPacket for Request {
@@ -237,7 +280,7 @@ impl ConnectPacket for Request {
     }
 }
 
-#[derive(FromPrimitive)]
+#[derive(Debug, FromPrimitive)]
 pub enum ResponseCode {
     Accept = 0x81,
     Reject = 0x82,
@@ -246,8 +289,9 @@ pub enum ResponseCode {
     RuleInfo = 0x85,
 }
 
+#[derive(Debug)]
 pub struct ResponseAccept {
-    port: i32,
+    pub port: i32,
 }
 
 impl ConnectPacket for ResponseAccept {
@@ -264,13 +308,14 @@ impl ConnectPacket for ResponseAccept {
     where
         W: WriteBytesExt,
     {
-        writer.write_i32::<NetworkEndian>(self.port)?;
+        writer.write_i32::<LittleEndian>(self.port)?;
         Ok(())
     }
 }
 
+#[derive(Debug)]
 pub struct ResponseReject {
-    message: String,
+    pub message: String,
 }
 
 impl ConnectPacket for ResponseReject {
@@ -293,13 +338,14 @@ impl ConnectPacket for ResponseReject {
     }
 }
 
+#[derive(Debug)]
 pub struct ResponseServerInfo {
-    address: String,
-    hostname: String,
-    levelname: String,
-    client_count: u8,
-    client_max: u8,
-    protocol_version: u8,
+    pub address: String,
+    pub hostname: String,
+    pub levelname: String,
+    pub client_count: u8,
+    pub client_max: u8,
+    pub protocol_version: u8,
 }
 
 impl ConnectPacket for ResponseServerInfo {
@@ -348,13 +394,14 @@ impl ConnectPacket for ResponseServerInfo {
     }
 }
 
+#[derive(Debug)]
 pub struct ResponsePlayerInfo {
-    player_id: u8,
-    player_name: String,
-    colors: i32,
-    frags: i32,
-    connect_duration: i32,
-    address: String,
+    pub player_id: u8,
+    pub player_name: String,
+    pub colors: i32,
+    pub frags: i32,
+    pub connect_duration: i32,
+    pub address: String,
 }
 
 impl ConnectPacket for ResponsePlayerInfo {
@@ -393,18 +440,19 @@ impl ConnectPacket for ResponsePlayerInfo {
         writer.write_u8(self.player_id)?;
         writer.write(self.player_name.as_bytes())?;
         writer.write_u8(0)?;
-        writer.write_i32::<NetworkEndian>(self.colors)?;
-        writer.write_i32::<NetworkEndian>(self.frags)?;
-        writer.write_i32::<NetworkEndian>(self.connect_duration)?;
+        writer.write_i32::<LittleEndian>(self.colors)?;
+        writer.write_i32::<LittleEndian>(self.frags)?;
+        writer.write_i32::<LittleEndian>(self.connect_duration)?;
         writer.write(self.address.as_bytes())?;
         writer.write_u8(0)?;
         Ok(())
     }
 }
 
+#[derive(Debug)]
 pub struct ResponseRuleInfo {
-    cvar_name: String,
-    cvar_val: String,
+    pub cvar_name: String,
+    pub cvar_val: String,
 }
 
 impl ConnectPacket for ResponseRuleInfo {
@@ -436,6 +484,7 @@ impl ConnectPacket for ResponseRuleInfo {
     }
 }
 
+#[derive(Debug)]
 pub enum Response {
     Accept(ResponseAccept),
     Reject(ResponseReject),
@@ -515,13 +564,16 @@ impl ConnectListener {
 
         // high 4 bits must be 0x8000 (CONNECT_CONTROL)
         if control & !CONNECT_LENGTH_MASK != CONNECT_CONTROL {
-            return Err(NetError::with_msg("Invalid control value"));
+            return Err(NetError::InvalidData(format!(
+                "control value {:X}",
+                control & !CONNECT_LENGTH_MASK
+            )));
         }
 
         // low 4 bits must be total length of packet
         let control_len = (control & CONNECT_LENGTH_MASK) as usize;
         if control_len != len {
-            return Err(NetError::with_msg(format!(
+            return Err(NetError::InvalidData(format!(
                 "Actual packet length ({}) differs from header value ({})", len,
                 control_len,
             )));
@@ -531,7 +583,11 @@ impl ConnectListener {
         let request_byte = reader.read_u8()?;
         let request_code = match RequestCode::from_u8(request_byte) {
             Some(r) => r,
-            None => return Err(NetError::InvalidRequest(request_byte)),
+            None => {
+                return Err(NetError::InvalidData(
+                    format!("request code {}", request_byte),
+                ))
+            }
         };
 
         let request = match request_code {
@@ -574,22 +630,46 @@ pub struct ConnectSocket {
 }
 
 impl ConnectSocket {
-    pub fn bind<A>(addr: A) -> Result<ConnectSocket, NetError>
+    pub fn bind<A>(local: A) -> Result<ConnectSocket, NetError>
     where
         A: ToSocketAddrs,
     {
-        let socket = UdpSocket::bind(addr)?;
+        let socket = UdpSocket::bind(local)?;
+
         Ok(ConnectSocket { socket })
     }
 
-    pub fn send_request(&self, request: Request, remote: SocketAddr) -> Result<(), NetError> {
+    /// Send a `Request` to the server at the specified address.
+    pub fn send_request(&mut self, request: Request, remote: SocketAddr) -> Result<(), NetError> {
         self.socket.send_to(&request.to_bytes()?, remote)?;
         Ok(())
     }
 
-    pub fn recv_response(&self) -> Result<(Response, SocketAddr), NetError> {
+    /// Receive a `Response` from the server.
+    ///
+    /// If `timeout` is not `None`, the operation times out after the specified duration and the
+    /// function returns `None`.
+    pub fn recv_response(
+        &mut self,
+        timeout: Option<Duration>,
+    ) -> Result<Option<(Response, SocketAddr)>, NetError> {
         let mut recv_buf = [0u8; MAX_NET_MESSAGE];
-        let (len, remote) = self.socket.recv_from(&mut recv_buf)?;
+
+        // if a timeout was specified, apply it for this recv
+        self.socket.set_read_timeout(
+            timeout.map(|d| d.to_std().unwrap()),
+        )?;
+        let (len, remote) = match self.socket.recv_from(&mut recv_buf) {
+            Err(e) => {
+                match e.kind() {
+                    ErrorKind::WouldBlock | ErrorKind::TimedOut => return Ok(None),
+                    _ => return Err(NetError::from(e)),
+                }
+            }
+            Ok(ret) => ret,
+        };
+        self.socket.set_read_timeout(None)?;
+
         let mut reader = BufReader::new(&recv_buf[..len]);
 
         let control = reader.read_i32::<NetworkEndian>()?;
@@ -601,7 +681,10 @@ impl ConnectSocket {
 
         // high 4 bits must be 0x8000 (CONNECT_CONTROL)
         if control & !CONNECT_LENGTH_MASK != CONNECT_CONTROL {
-            return Err(NetError::with_msg("Invalid control value"));
+            return Err(NetError::InvalidData(format!(
+                "control value {:X}",
+                control & !CONNECT_LENGTH_MASK
+            )));
         }
 
         // low 4 bits must be total length of packet
@@ -616,12 +699,16 @@ impl ConnectSocket {
         let response_byte = reader.read_u8()?;
         let response_code = match ResponseCode::from_u8(response_byte) {
             Some(r) => r,
-            None => return Err(NetError::InvalidResponse(response_byte)),
+            None => {
+                return Err(NetError::InvalidData(
+                    format!("response code {}", response_byte),
+                ))
+            }
         };
 
         let response = match response_code {
             ResponseCode::Accept => {
-                let port = reader.read_i32::<NetworkEndian>()?;
+                let port = reader.read_i32::<LittleEndian>()?;
                 Response::Accept(ResponseAccept { port })
             }
 
@@ -652,7 +739,7 @@ impl ConnectSocket {
             ResponseCode::RuleInfo => unimplemented!(),
         };
 
-        Ok((response, remote))
+        Ok(Some((response, remote)))
     }
 }
 
@@ -660,6 +747,10 @@ impl ConnectSocket {
 mod test {
     use super::*;
 
+    // test_request_*_packet_len
+    //
+    // These tests ensure that ConnectPacket::packet_len() returns an accurate value by comparing it
+    // with the number of bytes returned by ConnectPacket::to_bytes().
     #[test]
     fn test_request_connect_packet_len() {
         let request_connect = RequestConnect {

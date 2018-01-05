@@ -44,7 +44,7 @@ const MAX_DATAGRAM: usize = 1024;
 const NAME_LEN: usize = 64;
 const HEADER_SIZE: usize = 8;
 const DATAGRAM_SIZE: usize = HEADER_SIZE + MAX_DATAGRAM;
-const PROTOCOL_VERSION: i32 = 15;
+pub const PROTOCOL_VERSION: u8 = 15;
 
 const VELOCITY_READ_FACTOR: f32 = 16.0;
 const VELOCITY_WRITE_FACTOR: f32 = 1.0 / VELOCITY_READ_FACTOR;
@@ -52,13 +52,12 @@ const VELOCITY_WRITE_FACTOR: f32 = 1.0 / VELOCITY_READ_FACTOR;
 const PARTICLE_DIRECTION_READ_FACTOR: f32 = 1.0 / 16.0;
 const PARTICLE_DIRECTION_WRITE_FACTOR: f32 = 1.0 / PARTICLE_DIRECTION_READ_FACTOR;
 
-static GAME_NAME: &'static str = "QUAKE";
+pub static GAME_NAME: &'static str = "QUAKE";
 
 #[derive(Debug)]
 pub enum NetError {
     Io(::std::io::Error),
-    InvalidRequest(u8),
-    InvalidResponse(u8),
+    InvalidData(String),
     Other(String),
 }
 
@@ -78,8 +77,7 @@ impl fmt::Display for NetError {
                 write!(f, "I/O error: ")?;
                 err.fmt(f)
             }
-            NetError::InvalidRequest(code) => write!(f, "Invalid request code: {:X}", code),
-            NetError::InvalidResponse(code) => write!(f, "Invalid response code: {:X}", code),
+            NetError::InvalidData(ref msg) => write!(f, "Invalid data: {}", msg),
             NetError::Other(ref msg) => write!(f, "{}", msg),
         }
     }
@@ -89,8 +87,7 @@ impl Error for NetError {
     fn description(&self) -> &str {
         match *self {
             NetError::Io(ref err) => err.description(),
-            NetError::InvalidRequest(_) => "Invalid request code",
-            NetError::InvalidResponse(_) => "Invalid response code",
+            NetError::InvalidData(_) => "Invalid data",
             NetError::Other(ref msg) => &msg,
         }
     }
@@ -300,7 +297,7 @@ impl TempEntityColorExplosion {
         W: WriteBytesExt,
     {
         for i in 0..3 {
-            write_coord(writer, self.origin[i]);
+            write_coord(writer, self.origin[i])?;
         }
 
         writer.write_u8(self.color_start)?;
@@ -336,8 +333,8 @@ impl TempEntity {
         let code = match TempEntityCode::from_u8(code_byte) {
             Some(c) => c,
             None => {
-                return Err(NetError::with_msg(
-                    format!("Invalid value for temp entity code: {}", code_byte),
+                return Err(NetError::InvalidData(
+                    format!("Temp entity code {}", code_byte),
                 ))
             }
         };
@@ -542,8 +539,8 @@ impl Cmd for ServerCmdUpdateStat {
         let stat = match ClientStat::from_u8(stat_id) {
             Some(c) => c,
             None => {
-                return Err(NetError::with_msg(format!(
-                    "Invalid value for ClientStat: {}",
+                return Err(NetError::InvalidData(format!(
+                    "value for ClientStat: {}",
                     stat_id,
                 )))
             }
@@ -639,8 +636,8 @@ impl Cmd for ServerCmdSound {
         let flags = match SoundFlags::from_bits(flags_bits) {
             Some(f) => f,
             None => {
-                return Err(NetError::with_msg(
-                    format!("Invalid value for SoundFlags: {:b}", flags_bits),
+                return Err(NetError::InvalidData(
+                    format!("SoundFlags: {:b}", flags_bits),
                 ))
             }
         };
@@ -1046,10 +1043,9 @@ impl Cmd for ServerCmdClientData {
         let flags = match ClientUpdateFlags::from_bits(flags_bits) {
             Some(f) => f,
             None => {
-                return Err(NetError::with_msg(format!(
-                    "Invalid value for client update flags: {:b}",
-                    flags_bits
-                )))
+                return Err(NetError::InvalidData(
+                    format!("client update flags: {:b}", flags_bits),
+                ))
             }
         };
 
@@ -1563,11 +1559,7 @@ impl Cmd for ServerCmdSetPause {
         let paused = match reader.read_u8()? {
             0 => false,
             1 => true,
-            x => {
-                return Err(NetError::with_msg(
-                    format!("Invalid value for setpause: {}", x),
-                ))
-            }
+            x => return Err(NetError::InvalidData(format!("setpause: {}", x))),
         };
 
         Ok(ServerCmdSetPause { paused })
@@ -1603,7 +1595,7 @@ impl Cmd for ServerCmdSignOnStage {
         let stage = match SignOnStage::from_u8(stage_num) {
             Some(s) => s,
             None => {
-                return Err(NetError::with_msg(
+                return Err(NetError::InvalidData(
                     format!("Invalid value for sign-on stage: {}", stage_num),
                 ))
             }
