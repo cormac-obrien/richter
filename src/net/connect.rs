@@ -30,6 +30,7 @@ use std::net::ToSocketAddrs;
 use std::net::UdpSocket;
 
 use net::MAX_NET_MESSAGE;
+use net::QSocket;
 use util;
 
 use byteorder::LittleEndian;
@@ -637,6 +638,10 @@ impl ConnectSocket {
         let socket = UdpSocket::bind(local)?;
 
         Ok(ConnectSocket { socket })
+    }
+
+    pub fn into_qsocket(self, remote: SocketAddr) -> QSocket {
+        QSocket::new(self.socket, remote)
     }
 
     /// Send a `Request` to the server at the specified address.

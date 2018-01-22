@@ -25,18 +25,22 @@ pub mod connect;
 use std::error::Error;
 use std::fmt;
 use std::io::BufRead;
+use std::io::BufReader;
+use std::io::Cursor;
+use std::io::Read;
 use std::net::SocketAddr;
-use std::net::ToSocketAddrs;
 use std::net::UdpSocket;
 
 use util;
 
 use byteorder::LittleEndian;
+use byteorder::NetworkEndian;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 use cgmath::Deg;
 use cgmath::Vector3;
 use cgmath::Zero;
+use chrono::Duration;
 use num::FromPrimitive;
 
 const MAX_NET_MESSAGE: usize = 8192;
@@ -99,6 +103,17 @@ impl From<::std::io::Error> for NetError {
     }
 }
 
+// the original engine treats these as bitflags, but all of them are mutually exclusive except for
+// NETFLAG_DATA (reliable message) and NETFLAG_EOM (end of reliable message).
+#[derive(Debug, Eq, FromPrimitive, PartialEq)]
+pub enum MsgKind {
+    Reliable = 0x0001,
+    Ack = 0x0002,
+    ReliableEom = 0x0009,
+    Unreliable = 0x0010,
+    Ctl = 0x8000,
+}
+
 bitflags! {
     pub struct UpdateFlags: u16 {
         const MORE_BITS = 1 << 0;
@@ -145,6 +160,83 @@ bitflags! {
         const ATTENUATION = 1 << 1;
         const LOOPING = 1 << 2;
     }
+}
+
+bitflags! {
+    pub struct ItemFlags: u32 {
+        const SHOTGUN          = 0x00000001;
+        const SUPER_SHOTGUN    = 0x00000002;
+        const NAILGUN          = 0x00000004;
+        const SUPER_NAILGUN    = 0x00000008;
+        const GRENADE_LAUNCHER = 0x00000010;
+        const ROCKET_LAUNCHER  = 0x00000020;
+        const LIGHTNING        = 0x00000040;
+        const SUPER_LIGHTNING  = 0x00000080;
+        const SHELLS           = 0x00000100;
+        const NAILS            = 0x00000200;
+        const ROCKETS          = 0x00000400;
+        const CELLS            = 0x00000800;
+        const AXE              = 0x00001000;
+        const ARMOR_1          = 0x00002000;
+        const ARMOR_2          = 0x00004000;
+        const ARMOR_3          = 0x00008000;
+        const SUPER_HEALTH     = 0x00010000;
+        const KEY_1            = 0x00020000;
+        const KEY_2            = 0x00040000;
+        const INVISIBILITY     = 0x00080000;
+        const INVULNERABILITY  = 0x00100000;
+        const SUIT             = 0x00200000;
+        const QUAD             = 0x00400000;
+        const SIGIL_1          = 0x10000000;
+        const SIGIL_2          = 0x20000000;
+        const SIGIL_3          = 0x40000000;
+        const SIGIL_4          = 0x80000000;
+    }
+}
+
+pub struct PlayerColor {
+    top: u8,
+    bottom: u8,
+}
+
+impl PlayerColor {
+    pub fn new(top: u8, bottom: u8) -> PlayerColor {
+        if top > 15 {
+            warn!("Top color index ({}) will be truncated", top);
+        }
+
+        if bottom > 15 {
+            warn!("Bottom color index ({}) will be truncated", bottom);
+        }
+
+        PlayerColor { top, bottom }
+    }
+
+    pub fn bits(&self) -> u8 {
+        self.top << 4 | (self.bottom & 0x0F)
+    }
+}
+
+impl ::std::convert::From<u8> for PlayerColor {
+    fn from(src: u8) -> PlayerColor {
+        PlayerColor {
+            top: src >> 4,
+            bottom: src & 0x0F,
+        }
+    }
+}
+
+pub struct ColorShift {
+    pub dest_color: [u8; 3],
+    pub percent: u8,
+}
+
+#[derive(FromPrimitive)]
+pub enum IntermissionKind {
+    None = 0,
+    Intermission = 1,
+    Finale = 2,
+    Cutscene = 3,
 }
 
 #[derive(Copy, Clone, Debug, Eq, FromPrimitive, PartialEq)]
@@ -307,6 +399,7 @@ impl TempEntityColorExplosion {
     }
 }
 
+#[derive(Debug)]
 pub enum TempEntity {
     Spike(TempEntityPoint),
     SuperSpike(TempEntityPoint),
@@ -614,6 +707,7 @@ impl Cmd for ServerCmdSetView {
     }
 }
 
+#[derive(Debug)]
 pub struct ServerCmdSound {
     volume: Option<u8>,
     attenuation: Option<u8>,
@@ -739,7 +833,7 @@ impl Cmd for ServerCmdTime {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdPrint {
-    text: String,
+    pub text: String,
 }
 
 impl Cmd for ServerCmdPrint {
@@ -801,6 +895,7 @@ impl Cmd for ServerCmdStuffText {
     }
 }
 
+#[derive(Debug)]
 pub struct ServerCmdSetAngle {
     angles: Vector3<Deg<f32>>,
 }
@@ -833,13 +928,20 @@ impl Cmd for ServerCmdSetAngle {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, FromPrimitive, PartialEq)]
+pub enum GameType {
+    CoOp = 0,
+    Deathmatch = 1,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdServerInfo {
-    protocol_version: i32,
-    max_clients: u8,
-    game_type: u8,
-    model_precache: Vec<String>,
-    sound_precache: Vec<String>,
+    pub protocol_version: i32,
+    pub max_clients: u8,
+    pub game_type: GameType,
+    pub message: String,
+    pub model_precache: Vec<String>,
+    pub sound_precache: Vec<String>,
 }
 
 impl Cmd for ServerCmdServerInfo {
@@ -853,7 +955,17 @@ impl Cmd for ServerCmdServerInfo {
     {
         let protocol_version = reader.read_i32::<LittleEndian>()?;
         let max_clients = reader.read_u8()?;
-        let game_type = reader.read_u8()?;
+        let game_type_code = reader.read_u8()?;
+        let game_type = match GameType::from_u8(game_type_code) {
+            Some(g) => g,
+            None => {
+                return Err(NetError::InvalidData(
+                    format!("Invalid game type ({})", game_type_code),
+                ))
+            }
+        };
+
+        let message = util::read_cstring(reader).unwrap();
 
         let mut model_precache = Vec::new();
         loop {
@@ -877,6 +989,7 @@ impl Cmd for ServerCmdServerInfo {
             protocol_version,
             max_clients,
             game_type,
+            message,
             model_precache,
             sound_precache,
         })
@@ -888,7 +1001,10 @@ impl Cmd for ServerCmdServerInfo {
     {
         writer.write_i32::<LittleEndian>(self.protocol_version)?;
         writer.write_u8(self.max_clients)?;
-        writer.write_u8(self.game_type)?;
+        writer.write_u8(self.game_type as u8)?;
+
+        writer.write(self.message.as_bytes())?;
+        writer.write_u8(0)?;
 
         for model_name in self.model_precache.iter() {
             writer.write(model_name.as_bytes())?;
@@ -1006,6 +1122,7 @@ impl Cmd for ServerCmdUpdateFrags {
     }
 }
 
+#[derive(Debug)]
 pub struct ServerCmdClientData {
     view_height: Option<f32>,
     ideal_pitch: Option<Deg<f32>>,
@@ -1301,6 +1418,7 @@ impl Cmd for ServerCmdUpdateColors {
     }
 }
 
+#[derive(Debug)]
 pub struct ServerCmdParticle {
     origin: Vector3<f32>,
     direction: Vector3<f32>,
@@ -1363,6 +1481,7 @@ impl Cmd for ServerCmdParticle {
     }
 }
 
+#[derive(Debug)]
 pub struct ServerCmdDamage {
     armor: u8,
     blood: u8,
@@ -1404,6 +1523,7 @@ impl Cmd for ServerCmdDamage {
     }
 }
 
+#[derive(Debug)]
 pub struct ServerCmdSpawnStatic {
     model_index: u8,
     frame_index: u8,
@@ -1460,6 +1580,7 @@ impl Cmd for ServerCmdSpawnStatic {
     }
 }
 
+#[derive(Debug)]
 pub struct ServerCmdSpawnBaseline {
     model_index: u8,
     frame_index: u8,
@@ -1516,6 +1637,7 @@ impl Cmd for ServerCmdSpawnBaseline {
     }
 }
 
+#[derive(Debug)]
 pub struct ServerCmdTempEntity {
     temp_entity: TempEntity,
 }
@@ -1644,6 +1766,7 @@ impl Cmd for ServerCmdCenterPrint {
     }
 }
 
+#[derive(Debug)]
 pub struct ServerCmdSpawnStaticSound {
     origin: Vector3<f32>,
     sound_id: u8,
@@ -1787,8 +1910,330 @@ impl Cmd for ServerCmdCutscene {
     }
 }
 
+#[derive(Debug)]
+pub enum ServerCmd {
+    Bad,
+    NoOp,
+    Disconnect,
+    UpdateStat(ServerCmdUpdateStat),
+    Version(ServerCmdVersion),
+    SetView(ServerCmdSetView),
+    Sound(ServerCmdSound),
+    Time(ServerCmdTime),
+    Print(ServerCmdPrint),
+    StuffText(ServerCmdStuffText),
+    SetAngle(ServerCmdSetAngle),
+    ServerInfo(ServerCmdServerInfo),
+    LightStyle(ServerCmdLightStyle),
+    UpdateName(ServerCmdUpdateName),
+    UpdateFrags(ServerCmdUpdateFrags),
+    ClientData(ServerCmdClientData),
+    StopSound(ServerCmdStopSound),
+    UpdateColors(ServerCmdUpdateColors),
+    Particle(ServerCmdParticle),
+    Damage(ServerCmdDamage),
+    SpawnStatic(ServerCmdSpawnStatic),
+    // SpawnBinary, // unused
+    SpawnBaseline(ServerCmdSpawnBaseline),
+    TempEntity(ServerCmdTempEntity),
+    SetPause(ServerCmdSetPause),
+    SignOnStage(ServerCmdSignOnStage),
+    CenterPrint(ServerCmdCenterPrint),
+    KilledMonster,
+    FoundSecret,
+    SpawnStaticSound(ServerCmdSpawnStaticSound),
+    Intermission,
+    Finale(ServerCmdFinale),
+    CdTrack(ServerCmdCdTrack),
+    SellScreen,
+    Cutscene(ServerCmdCutscene),
+}
+
+impl ServerCmd {
+    pub fn code(&self) -> u8 {
+        let code = match *self {
+            ServerCmd::Bad => ServerCmdCode::Bad,
+            ServerCmd::NoOp => ServerCmdCode::NoOp,
+            ServerCmd::Disconnect => ServerCmdCode::Disconnect,
+            ServerCmd::UpdateStat(_) => ServerCmdCode::UpdateStat,
+            ServerCmd::Version(_) => ServerCmdCode::Version,
+            ServerCmd::SetView(_) => ServerCmdCode::SetView,
+            ServerCmd::Sound(_) => ServerCmdCode::Sound,
+            ServerCmd::Time(_) => ServerCmdCode::Time,
+            ServerCmd::Print(_) => ServerCmdCode::Print,
+            ServerCmd::StuffText(_) => ServerCmdCode::StuffText,
+            ServerCmd::SetAngle(_) => ServerCmdCode::SetAngle,
+            ServerCmd::ServerInfo(_) => ServerCmdCode::ServerInfo,
+            ServerCmd::LightStyle(_) => ServerCmdCode::LightStyle,
+            ServerCmd::UpdateName(_) => ServerCmdCode::UpdateName,
+            ServerCmd::UpdateFrags(_) => ServerCmdCode::UpdateFrags,
+            ServerCmd::ClientData(_) => ServerCmdCode::ClientData,
+            ServerCmd::StopSound(_) => ServerCmdCode::StopSound,
+            ServerCmd::UpdateColors(_) => ServerCmdCode::UpdateColors,
+            ServerCmd::Particle(_) => ServerCmdCode::Particle,
+            ServerCmd::Damage(_) => ServerCmdCode::Damage,
+            ServerCmd::SpawnStatic(_) => ServerCmdCode::SpawnStatic,
+            ServerCmd::SpawnBaseline(_) => ServerCmdCode::SpawnBaseline,
+            ServerCmd::TempEntity(_) => ServerCmdCode::TempEntity,
+            ServerCmd::SetPause(_) => ServerCmdCode::SetPause,
+            ServerCmd::SignOnStage(_) => ServerCmdCode::SignOnStage,
+            ServerCmd::CenterPrint(_) => ServerCmdCode::CenterPrint,
+            ServerCmd::KilledMonster => ServerCmdCode::KilledMonster,
+            ServerCmd::FoundSecret => ServerCmdCode::FoundSecret,
+            ServerCmd::SpawnStaticSound(_) => ServerCmdCode::SpawnStaticSound,
+            ServerCmd::Intermission => ServerCmdCode::Intermission,
+            ServerCmd::Finale(_) => ServerCmdCode::Finale,
+            ServerCmd::CdTrack(_) => ServerCmdCode::CdTrack,
+            ServerCmd::SellScreen => ServerCmdCode::SellScreen,
+            ServerCmd::Cutscene(_) => ServerCmdCode::Cutscene,
+        };
+
+        code as u8
+    }
+
+    pub fn read_cmd<R>(reader: &mut R) -> Result<Option<ServerCmd>, NetError>
+    where
+        R: BufRead + ReadBytesExt,
+    {
+        let code_num = match reader.read_u8() {
+            Ok(c) => c,
+            Err(ref e) if e.kind() == ::std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(NetError::from(e)),
+        };
+
+        if code_num & 0x80 != 0 {
+            panic!("fast update handling not implemented");
+        }
+
+        let code = match ServerCmdCode::from_u8(code_num) {
+            Some(c) => c,
+            None => {
+                return Err(NetError::InvalidData(
+                    format!("Invalid server command code: {}", code_num),
+                ))
+            }
+        };
+
+        let cmd = match code {
+            ServerCmdCode::Bad => ServerCmd::Bad,
+            ServerCmdCode::NoOp => ServerCmd::NoOp,
+            ServerCmdCode::Disconnect => ServerCmd::Disconnect,
+            ServerCmdCode::UpdateStat => ServerCmd::UpdateStat(
+                ServerCmdUpdateStat::read_content(reader)?,
+            ),
+            ServerCmdCode::Version => ServerCmd::Version(ServerCmdVersion::read_content(reader)?),
+            ServerCmdCode::SetView => ServerCmd::SetView(ServerCmdSetView::read_content(reader)?),
+            ServerCmdCode::Sound => ServerCmd::Sound(ServerCmdSound::read_content(reader)?),
+            ServerCmdCode::Time => ServerCmd::Time(ServerCmdTime::read_content(reader)?),
+            ServerCmdCode::Print => ServerCmd::Print(ServerCmdPrint::read_content(reader)?),
+            ServerCmdCode::StuffText => ServerCmd::StuffText(
+                ServerCmdStuffText::read_content(reader)?,
+            ),
+            ServerCmdCode::SetAngle => ServerCmd::SetAngle(
+                ServerCmdSetAngle::read_content(reader)?,
+            ),
+            ServerCmdCode::ServerInfo => ServerCmd::ServerInfo(
+                ServerCmdServerInfo::read_content(reader)?,
+            ),
+            ServerCmdCode::LightStyle => ServerCmd::LightStyle(
+                ServerCmdLightStyle::read_content(reader)?,
+            ),
+            ServerCmdCode::UpdateName => ServerCmd::UpdateName(
+                ServerCmdUpdateName::read_content(reader)?,
+            ),
+            ServerCmdCode::UpdateFrags => ServerCmd::UpdateFrags(
+                ServerCmdUpdateFrags::read_content(reader)?,
+            ),
+            ServerCmdCode::ClientData => ServerCmd::ClientData(
+                ServerCmdClientData::read_content(reader)?,
+            ),
+            ServerCmdCode::StopSound => ServerCmd::StopSound(
+                ServerCmdStopSound::read_content(reader)?,
+            ),
+            ServerCmdCode::UpdateColors => ServerCmd::UpdateColors(
+                ServerCmdUpdateColors::read_content(reader)?,
+            ),
+            ServerCmdCode::Particle => ServerCmd::Particle(
+                ServerCmdParticle::read_content(reader)?,
+            ),
+            ServerCmdCode::Damage => ServerCmd::Damage(ServerCmdDamage::read_content(reader)?),
+            ServerCmdCode::SpawnStatic => ServerCmd::SpawnStatic(
+                ServerCmdSpawnStatic::read_content(reader)?,
+            ),
+            ServerCmdCode::SpawnBaseline => ServerCmd::SpawnBaseline(
+                ServerCmdSpawnBaseline::read_content(reader)?,
+            ),
+            ServerCmdCode::TempEntity => ServerCmd::TempEntity(
+                ServerCmdTempEntity::read_content(reader)?,
+            ),
+            ServerCmdCode::SetPause => ServerCmd::SetPause(
+                ServerCmdSetPause::read_content(reader)?,
+            ),
+            ServerCmdCode::SignOnStage => ServerCmd::SignOnStage(
+                ServerCmdSignOnStage::read_content(reader)?,
+            ),
+            ServerCmdCode::CenterPrint => ServerCmd::CenterPrint(
+                ServerCmdCenterPrint::read_content(reader)?,
+            ),
+            ServerCmdCode::KilledMonster => ServerCmd::KilledMonster,
+            ServerCmdCode::FoundSecret => ServerCmd::FoundSecret,
+            ServerCmdCode::SpawnStaticSound => ServerCmd::SpawnStaticSound(
+                ServerCmdSpawnStaticSound::read_content(reader)?,
+            ),
+            ServerCmdCode::Intermission => ServerCmd::Intermission,
+            ServerCmdCode::Finale => ServerCmd::Finale(ServerCmdFinale::read_content(reader)?),
+            ServerCmdCode::CdTrack => ServerCmd::CdTrack(ServerCmdCdTrack::read_content(reader)?),
+            ServerCmdCode::SellScreen => ServerCmd::SellScreen,
+            ServerCmdCode::Cutscene => ServerCmd::Cutscene(
+                ServerCmdCutscene::read_content(reader)?,
+            ),
+        };
+
+        Ok(Some(cmd))
+    }
+
+    pub fn write_cmd<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        match *self {
+            ServerCmd::Bad => {
+                writer.write_u8(self.code())?;
+            }
+            ServerCmd::NoOp => {
+                writer.write_u8(self.code())?;
+            }
+            ServerCmd::Disconnect => {
+                writer.write_u8(self.code())?;
+            }
+            ServerCmd::UpdateStat(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::Version(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::SetView(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::Sound(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::Time(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::Print(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::StuffText(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::SetAngle(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::ServerInfo(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::LightStyle(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::UpdateName(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::UpdateFrags(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::ClientData(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::StopSound(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::UpdateColors(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::Particle(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::Damage(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::SpawnStatic(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::SpawnBaseline(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::TempEntity(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::SetPause(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::SignOnStage(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::CenterPrint(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::KilledMonster => {
+                writer.write_u8(self.code())?;
+            }
+            ServerCmd::FoundSecret => {
+                writer.write_u8(self.code())?;
+            }
+            ServerCmd::SpawnStaticSound(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::Intermission => {
+                writer.write_u8(self.code())?;
+            }
+            ServerCmd::Finale(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::CdTrack(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+            ServerCmd::SellScreen => {
+                writer.write_u8(self.code())?;
+            }
+            ServerCmd::Cutscene(ref sc) => {
+                writer.write_u8(self.code())?;
+                sc.write_content(writer)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(FromPrimitive)]
-pub enum ClientCmd {
+pub enum ClientCmdCode {
     Bad = 0,
     NoOp = 1,
     Disconnect = 2,
@@ -1796,11 +2241,19 @@ pub enum ClientCmd {
     StringCmd = 4,
 }
 
+#[derive(PartialEq)]
+pub enum BlockingMode {
+    Blocking,
+    NonBlocking,
+    Timeout(Duration),
+}
+
 pub struct QSocket {
     socket: UdpSocket,
     remote: SocketAddr,
 
     ack_sequence: u32,
+
     send_sequence: u32,
     unreliable_send_sequence: u32,
     send_buf: [u8; MAX_NET_MESSAGE],
@@ -1808,6 +2261,177 @@ pub struct QSocket {
     recv_sequence: u32,
     unreliable_recv_sequence: u32,
     recv_buf: [u8; MAX_NET_MESSAGE],
+}
+
+impl QSocket {
+    pub fn new(socket: UdpSocket, remote: SocketAddr) -> QSocket {
+        QSocket {
+            socket,
+            remote,
+
+            ack_sequence: 0,
+
+            send_sequence: 0,
+            unreliable_send_sequence: 0,
+            send_buf: [0; MAX_NET_MESSAGE],
+
+            recv_sequence: 0,
+            unreliable_recv_sequence: 0,
+            recv_buf: [0; MAX_NET_MESSAGE],
+        }
+    }
+
+    /// Receive a message on this socket.
+    // TODO: the flow control in this function is completely baffling, make it a little less awful
+    pub fn recv_msg(&mut self, block: BlockingMode) -> Result<Vec<u8>, NetError> {
+        let mut msg = Vec::new();
+
+        match block {
+            BlockingMode::Blocking => {
+                self.socket.set_nonblocking(false)?;
+                self.socket.set_read_timeout(None)?;
+            }
+
+            BlockingMode::NonBlocking => {
+                self.socket.set_nonblocking(true)?;
+                self.socket.set_read_timeout(None)?;
+            }
+
+            BlockingMode::Timeout(d) => {
+                self.socket.set_nonblocking(false);
+                self.socket.set_read_timeout(Some(d.to_std().unwrap()))?;
+            }
+        }
+
+        loop {
+            let (packet_len, src_addr) = match self.socket.recv_from(&mut self.recv_buf) {
+                Ok(x) => x,
+                Err(e) => {
+                    use std::io::ErrorKind;
+                    match e.kind() {
+                        // these errors are expected in nonblocking mode
+                        ErrorKind::WouldBlock | ErrorKind::TimedOut => return Ok(Vec::new()),
+                        _ => return Err(NetError::from(e)),
+                    }
+                }
+            };
+
+            if src_addr != self.remote {
+                // this packet didn't come from remote, drop it
+                debug!(
+                    "forged packet (src_addr was {}, should be {})",
+                    src_addr,
+                    self.remote
+                );
+                continue;
+            }
+
+            let mut reader = BufReader::new(Cursor::new(&self.recv_buf[..packet_len]));
+
+            let msg_kind_code = reader.read_u16::<NetworkEndian>()?;
+            let msg_kind = match MsgKind::from_u16(msg_kind_code) {
+                Some(f) => f,
+                None => {
+                    return Err(NetError::InvalidData(
+                        format!("Invalid message kind: {}", msg_kind_code),
+                    ))
+                }
+            };
+
+            if packet_len < HEADER_SIZE {
+                // TODO: increment short packet count
+                debug!("short packet");
+                continue;
+            }
+
+            let field_len = reader.read_u16::<NetworkEndian>()?;
+            if field_len as usize != packet_len {
+                return Err(NetError::InvalidData(format!(
+                    "Length field and actual length differ ({} != {})",
+                    field_len,
+                    packet_len
+                )));
+            }
+
+            let sequence;
+            if msg_kind != MsgKind::Ctl {
+                sequence = reader.read_u32::<NetworkEndian>()?;
+            } else {
+                sequence = 0;
+            }
+
+            match msg_kind {
+                // ignore control messages
+                MsgKind::Ctl => (),
+
+                MsgKind::Unreliable => {
+                    // we've received a newer datagram, ignore
+                    if sequence < self.unreliable_recv_sequence {
+                        println!("Stale datagram with sequence # {}", sequence);
+                        break;
+                    }
+
+                    // we've skipped some datagrams, count them as dropped
+                    if sequence > self.unreliable_recv_sequence {
+                        let drop_count = sequence - self.unreliable_recv_sequence;
+                        println!(
+                            "Dropped {} packet(s) ({} -> {})",
+                            drop_count,
+                            sequence,
+                            self.unreliable_recv_sequence
+                        );
+                    }
+
+                    self.unreliable_recv_sequence = sequence + 1;
+
+                    // copy the rest of the packet into the message buffer and return
+                    reader.read_to_end(&mut msg)?;
+                    return Ok(msg);
+                }
+
+                MsgKind::Ack => {
+                    if sequence != self.send_sequence - 1 {
+                        println!("Stale ACK received");
+                    } else if sequence != self.ack_sequence {
+                        println!("Duplicate ACK received");
+                    } else if sequence == self.ack_sequence {
+                        self.ack_sequence += 1;
+                        if self.ack_sequence != self.send_sequence {
+                            return Err(NetError::with_msg("ACK sequencing error"));
+                        }
+                    } else {
+                        println!("Duplicate ACK received");
+                    }
+                }
+
+                MsgKind::Reliable | MsgKind::ReliableEom => {
+                    // send ack message and increment self.recv_sequence
+                    let mut ack_buf: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
+                    let mut ack_curs = Cursor::new(&mut ack_buf[..]);
+                    ack_curs.write_u16::<NetworkEndian>(MsgKind::Ack as u16)?;
+                    ack_curs.write_u16::<NetworkEndian>(HEADER_SIZE as u16)?;
+                    ack_curs.write_u32::<NetworkEndian>(sequence)?;
+                    self.socket.send_to(ack_curs.into_inner(), self.remote)?;
+
+                    // if this was a duplicate, drop it
+                    if sequence != self.recv_sequence {
+                        println!("Duplicate message received");
+                        continue;
+                    }
+
+                    self.recv_sequence += 1;
+                    reader.read_to_end(&mut msg)?;
+
+                    // if this is the last chunk of a reliable message, break out and return
+                    if msg_kind == MsgKind::ReliableEom {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(msg)
+    }
 }
 
 fn read_coord<R>(reader: &mut R) -> Result<f32, NetError>
@@ -1926,7 +2550,7 @@ mod test {
         let src = ServerCmdServerInfo {
             protocol_version: 42,
             max_clients: 16,
-            game_type: 3,
+            game_type: GameType::Deathmatch,
             model_precache: vec![String::from("test1.bsp"), String::from("test2.bsp")],
             sound_precache: vec![String::from("test1.wav"), String::from("test2.wav")],
         };
