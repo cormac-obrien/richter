@@ -539,7 +539,7 @@ impl TempEntity {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, FromPrimitive, PartialEq)]
+#[derive(Copy, Clone, Ord, Debug, Eq, FromPrimitive, PartialOrd, PartialEq)]
 pub enum SignOnStage {
     Not = 0,
     Prespawn = 1,
@@ -682,7 +682,7 @@ impl Cmd for ServerCmdVersion {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdSetView {
-    view_ent: i16,
+    pub view_ent: i16,
 }
 
 impl Cmd for ServerCmdSetView {
@@ -1701,7 +1701,7 @@ impl Cmd for ServerCmdSetPause {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ServerCmdSignOnStage {
-    stage: SignOnStage,
+    pub stage: SignOnStage,
 }
 
 impl Cmd for ServerCmdSignOnStage {
@@ -2279,6 +2279,10 @@ impl QSocket {
             unreliable_recv_sequence: 0,
             recv_buf: [0; MAX_NET_MESSAGE],
         }
+    }
+
+    pub fn send_msg(&mut self, data: &[u8]) -> Result<(), NetError> {
+        unimplemented!();
     }
 
     /// Receive a message on this socket.

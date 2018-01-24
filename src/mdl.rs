@@ -28,6 +28,7 @@ use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 use cgmath::Vector2;
 use cgmath::Vector3;
+use chrono::Duration;
 use num::FromPrimitive;
 
 pub const MAGIC: i32 = ('I' as i32) << 0 | ('D' as i32) << 8 | ('P' as i32) << 16 |
@@ -41,7 +42,7 @@ pub struct SkinSingle {
 }
 
 pub struct SkinGroup {
-    intervals: Box<[f32]>,
+    intervals: Box<[Duration]>,
     skins: Box<[SkinSingle]>,
 }
 
@@ -60,7 +61,7 @@ pub struct FrameSingle {
 pub struct FrameGroup {
     pub min: Vector3<f32>,
     pub max: Vector3<f32>,
-    pub times: Vec<f32>,
+    pub times: Vec<Duration>,
     pub frames: Vec<FrameSingle>,
 }
 
@@ -156,6 +157,7 @@ pub fn load(data: &[u8]) -> Result<AliasModel, ()> {
     let mut skins: Vec<Skin> = Vec::with_capacity(skin_count as usize);
 
     for _ in 0..skin_count {
+        // TODO: add a SkinKind type
         let skin = match reader.read_i32::<LittleEndian>().unwrap() {
             // Static
             0 => {
@@ -171,15 +173,32 @@ pub fn load(data: &[u8]) -> Result<AliasModel, ()> {
 
             // Animated
             1 => {
-                let count = reader.read_i32::<LittleEndian>().unwrap();
-                unimplemented!();
-                // for _ in 0..count {
-                //
-                // }
-                // GlMdlSkin::Group(GlMdlSkinGroup {
-                //     times: Vec::new(),
-                //     textures: Vec::new(),
-                // })
+                // TODO: sanity check this value
+                let skin_frame_count = reader.read_i32::<LittleEndian>().unwrap() as usize;
+
+                let mut intervals = Vec::with_capacity(skin_frame_count);
+                for _ in 0..skin_frame_count {
+                    intervals.push(engine::duration_from_f32(
+                        reader.read_f32::<LittleEndian>().unwrap(),
+                    ));
+                }
+
+                let mut frames = Vec::with_capacity(skin_frame_count);
+                for _ in 0..skin_frame_count {
+                    let mut indexed: Vec<u8> = Vec::with_capacity((skin_w * skin_h) as usize);
+                    (&mut reader)
+                        .take((skin_w * skin_h) as u64)
+                        .read_to_end(&mut indexed)
+                        .unwrap();
+                    frames.push(SkinSingle {
+                        rgba: engine::indexed_to_rgba(&indexed).into_boxed_slice(),
+                    });
+                }
+
+                Skin::Group(SkinGroup {
+                    intervals: intervals.into_boxed_slice(),
+                    skins: frames.into_boxed_slice(),
+                })
             }
 
             _ => panic!("Bad skin type"),
@@ -287,7 +306,97 @@ pub fn load(data: &[u8]) -> Result<AliasModel, ()> {
                 })
             }
 
-            1 => unimplemented!(),
+            1 => {
+                let subframe_count = match reader.read_i32::<LittleEndian>().unwrap() {
+                    s if s <= 0 => panic!("Invalid subframe count: {}", s),
+                    s => s,
+                };
+
+                let abs_min = Vector3::new(
+                    reader.read_u8().unwrap() as f32 * scale[0] + origin[0],
+                    reader.read_u8().unwrap() as f32 * scale[1] + origin[1],
+                    reader.read_u8().unwrap() as f32 * scale[2] + origin[2],
+                );
+
+                reader.read_u8().unwrap(); // discard vertex normal
+
+                let abs_max = Vector3::new(
+                    reader.read_u8().unwrap() as f32 * scale[0] + origin[0],
+                    reader.read_u8().unwrap() as f32 * scale[1] + origin[1],
+                    reader.read_u8().unwrap() as f32 * scale[2] + origin[2],
+                );
+
+                reader.read_u8().unwrap(); // discard vertex normal
+
+                let mut intervals = Vec::new();
+                for _ in 0..subframe_count {
+                    intervals.push(engine::duration_from_f32(
+                        reader.read_f32::<LittleEndian>().unwrap(),
+                    ));
+                }
+
+                let mut subframes = Vec::new();
+                for _ in 0..subframe_count {
+                    let min = Vector3::new(
+                        reader.read_u8().unwrap() as f32 * scale[0] + origin[0],
+                        reader.read_u8().unwrap() as f32 * scale[1] + origin[1],
+                        reader.read_u8().unwrap() as f32 * scale[2] + origin[2],
+                    );
+
+                    reader.read_u8().unwrap(); // discard vertex normal
+
+                    let max = Vector3::new(
+                        reader.read_u8().unwrap() as f32 * scale[0] + origin[0],
+                        reader.read_u8().unwrap() as f32 * scale[1] + origin[1],
+                        reader.read_u8().unwrap() as f32 * scale[2] + origin[2],
+                    );
+
+                    reader.read_u8().unwrap(); // discard vertex normal
+
+                    let name = {
+                        let mut bytes: [u8; 16] = [0; 16];
+                        reader.read(&mut bytes).unwrap();
+                        let len = {
+                            let mut _len = 0;
+                            for i in 0..bytes.len() {
+                                if bytes[i] == 0 {
+                                    _len = i - 1;
+                                    break;
+                                }
+                            }
+                            _len
+                        };
+                        String::from_utf8(bytes[0..(len + 1)].to_vec()).unwrap()
+                    };
+
+                    debug!("Frame name: {}", name);
+
+                    let mut vertices: Vec<Vector3<f32>> = Vec::with_capacity(vertex_count as usize);
+                    for _ in 0..vertex_count {
+                        vertices.push(Vector3::new(
+                            reader.read_u8().unwrap() as f32 * scale[0] + origin[0],
+                            reader.read_u8().unwrap() as f32 * scale[1] + origin[1],
+                            reader.read_u8().unwrap() as f32 * scale[2] + origin[2],
+                        ));
+                        reader.read_u8().unwrap(); // discard vertex normal
+                    }
+
+                    subframes.push(FrameSingle {
+                        min,
+                        max,
+                        name,
+                        vertices: vertices.into_boxed_slice(),
+                    })
+                }
+
+                Frame::Group(FrameGroup {
+                    min: abs_min,
+                    max: abs_max,
+                    times: intervals,
+                    frames: subframes,
+                })
+            }
+
             x => panic!("Bad frame kind value: {}", x),
         });
     }

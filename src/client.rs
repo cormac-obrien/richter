@@ -37,6 +37,7 @@ use net::QSocket;
 use net::ServerCmd;
 use net::ServerCmdPrint;
 use net::ServerCmdServerInfo;
+use net::SignOnStage;
 use net::connect::CONNECT_PROTOCOL_VERSION;
 use net::connect::ConnectSocket;
 use net::connect::Request;
@@ -298,7 +299,7 @@ impl Client {
         }
 
         // make sure we actually got a response
-        // TODO: specific error for this. shouldn't be fatal.
+        // TODO: specific error for this. Shouldn't be fatal.
         if response.is_none() {
             return Err(ClientError::with_msg("No response"));
         }
@@ -349,12 +350,25 @@ impl Client {
 
         while let Some(cmd) = ServerCmd::read_cmd(&mut reader)? {
             match cmd {
+                ServerCmd::Bad => panic!("Invalid command from server"),
                 ServerCmd::NoOp => (),
+
+                ServerCmd::CdTrack(cdtrack_cmd) => {
+                    // TODO: play CD track
+                    debug!("CD tracks not yet implemented");
+                }
                 ServerCmd::Print(print_cmd) => {
                     // TODO: print to in-game console
                     println!("{}", print_cmd.text);
                 }
                 ServerCmd::ServerInfo(server_info) => self.update_server_info(server_info, pak)?,
+                ServerCmd::SetView(setview) => {
+                    // TODO: sanity check on this value
+                    // self.state.view_ent = setview.view_ent as usize;
+                }
+
+                ServerCmd::SignOnStage(signon) => self.handle_signon(signon.stage)?,
+
                 x => {
                     debug!("{:?}", x);
                     unimplemented!();
@@ -363,6 +377,10 @@ impl Client {
         }
 
         Ok(())
+    }
+
+    fn handle_signon(&mut self, stage: SignOnStage) -> Result<(), ClientError> {
+        unimplemented!();
     }
 
     fn update_server_info(
@@ -406,12 +424,16 @@ impl Client {
                 debug!("Loading model {}", mod_name);
                 models.push(Model::load(pak, mod_name));
             }
+
+            // TODO: send keepalive message?
         }
 
         let mut sounds = vec![Sound::silent()];
         for snd_name in server_info_cmd.sound_precache {
             debug!("Loading sound {}", snd_name);
             sounds.push(Sound::load(pak, snd_name).unwrap());
+
+            // TODO: send keepalive message?
         }
 
         let server_info = ServerInfo {
@@ -419,6 +441,7 @@ impl Client {
             game_type: server_info_cmd.game_type,
         };
 
-        unimplemented!();
+        // TODO: set up rest of client state (R_NewMap)
+        Ok(())
     }
 }
