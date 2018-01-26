@@ -22,12 +22,15 @@
 
 pub mod connect;
 
+use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::io::BufRead;
 use std::io::BufReader;
+use std::io::BufWriter;
 use std::io::Cursor;
 use std::io::Read;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
 
@@ -43,12 +46,14 @@ use cgmath::Zero;
 use chrono::Duration;
 use num::FromPrimitive;
 
-const MAX_NET_MESSAGE: usize = 8192;
+const MAX_MESSAGE: usize = 8192;
 const MAX_DATAGRAM: usize = 1024;
-const NAME_LEN: usize = 64;
 const HEADER_SIZE: usize = 8;
-const DATAGRAM_SIZE: usize = HEADER_SIZE + MAX_DATAGRAM;
+const MAX_PACKET: usize = HEADER_SIZE + MAX_DATAGRAM;
+
 pub const PROTOCOL_VERSION: u8 = 15;
+
+const NAME_LEN: usize = 64;
 
 const VELOCITY_READ_FACTOR: f32 = 16.0;
 const VELOCITY_WRITE_FACTOR: f32 = 1.0 / VELOCITY_READ_FACTOR;
@@ -2252,15 +2257,20 @@ pub struct QSocket {
     socket: UdpSocket,
     remote: SocketAddr,
 
+    unreliable_send_sequence: u32,
+    unreliable_recv_sequence: u32,
+
     ack_sequence: u32,
 
     send_sequence: u32,
-    unreliable_send_sequence: u32,
-    send_buf: [u8; MAX_NET_MESSAGE],
+    send_queue: VecDeque<Box<[u8]>>,
+    send_cache: Box<[u8]>,
+    send_next: bool,
+    send_count: usize,
+    resend_count: usize,
 
     recv_sequence: u32,
-    unreliable_recv_sequence: u32,
-    recv_buf: [u8; MAX_NET_MESSAGE],
+    recv_buf: [u8; MAX_MESSAGE],
 }
 
 impl QSocket {
@@ -2269,20 +2279,106 @@ impl QSocket {
             socket,
             remote,
 
+            unreliable_send_sequence: 0,
+            unreliable_recv_sequence: 0,
+
             ack_sequence: 0,
 
             send_sequence: 0,
-            unreliable_send_sequence: 0,
-            send_buf: [0; MAX_NET_MESSAGE],
+            send_queue: VecDeque::new(),
+            send_cache: Box::new([]),
+            send_count: 0,
+            send_next: false,
+            resend_count: 0,
 
             recv_sequence: 0,
-            unreliable_recv_sequence: 0,
-            recv_buf: [0; MAX_NET_MESSAGE],
+            recv_buf: [0; MAX_MESSAGE],
         }
     }
 
-    pub fn send_msg(&mut self, data: &[u8]) -> Result<(), NetError> {
-        unimplemented!();
+    /// Begin sending a reliable message over this socket.
+    pub fn begin_send_msg(&mut self, msg: &[u8]) -> Result<(), NetError> {
+        // make sure all reliable messages have been ACKed in their entirety
+        if !self.send_queue.is_empty() {
+            return Err(NetError::with_msg(
+                "Called begin_send_msg() with previous message unacknowledged",
+            ));
+        }
+
+        // empty messages are an error
+        if msg.len() == 0 {
+            return Err(NetError::with_msg("Input data has zero length"));
+        }
+
+        // check upper message length bound
+        if msg.len() > MAX_MESSAGE {
+            return Err(NetError::with_msg("Input data exceeds MAX_MESSAGE"));
+        }
+
+        // split the message into chunks and enqueue them
+        for chunk in msg.chunks(MAX_DATAGRAM) {
+            self.send_queue.push_back(
+                chunk.to_owned().into_boxed_slice(),
+            );
+        }
+
+        // send the first chunk
+        self.send_msg_next()?;
+
+        Ok(())
+    }
+
+    /// Resend the last reliable message packet.
+    pub fn resend_msg(&mut self) -> Result<(), NetError> {
+        if self.send_cache.is_empty() {
+            Err(NetError::with_msg("Attempted resend with empty send cache"))
+        } else {
+            self.socket.send_to(&self.send_cache, self.remote)?;
+            self.resend_count += 1;
+
+            Ok(())
+        }
+    }
+
+    /// Send the next segment of a reliable message.
+    pub fn send_msg_next(&mut self) -> Result<(), NetError> {
+        // grab the first chunk in the queue
+        let content = self.send_queue.pop_front().expect(
+            "Send queue is empty (this is a bug)",
+        );
+
+        // if this was the last chunk, set the EOM flag
+        let msg_kind = match self.send_queue.is_empty() {
+            true => MsgKind::ReliableEom,
+            false => MsgKind::Reliable,
+        };
+
+        // compose the packet
+        let mut compose = Vec::with_capacity(MAX_PACKET);
+        compose.write_u16::<NetworkEndian>(msg_kind as u16)?;
+        compose.write_u16::<NetworkEndian>(
+            (HEADER_SIZE + content.len()) as u16,
+        )?;
+        compose.write_u32::<NetworkEndian>(self.send_sequence)?;
+        compose.write_all(&content);
+
+        // store packet to send cache
+        self.send_cache = compose.into_boxed_slice();
+
+        // increment send sequence
+        self.send_sequence += 1;
+
+        // send the composed packet
+        self.socket.send_to(&self.send_cache, self.remote)?;
+
+        // TODO: update send time
+        // bump send count
+        self.send_count += 1;
+
+        // don't send the next chunk until this one gets ACKed
+        self.send_next = false;
+
+        Ok(())
     }
 
     /// Receive a message on this socket.
@@ -2398,16 +2494,25 @@ impl QSocket {
                         println!("Stale ACK received");
                     } else if sequence != self.ack_sequence {
                         println!("Duplicate ACK received");
-                    } else if sequence == self.ack_sequence {
+                    } else {
                         self.ack_sequence += 1;
                         if self.ack_sequence != self.send_sequence {
                             return Err(NetError::with_msg("ACK sequencing error"));
                         }
-                    } else {
-                        println!("Duplicate ACK received");
+
+                        // our last reliable message has been acked
+                        if self.send_queue.is_empty() {
+                            // the whole message is through, clear the send cache
+                            self.send_cache = Box::new([]);
+                        } else {
+                            // send the next chunk before returning
+                            self.send_next = true;
+                        }
                     }
                 }
 
+                // TODO: once we start reading a reliable message, don't allow other packets until
+                // we have the whole thing
                 MsgKind::Reliable | MsgKind::ReliableEom => {
                     // send ack message and increment self.recv_sequence
                     let mut ack_buf: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
@@ -2432,6 +2537,10 @@ impl QSocket {
                     }
                 }
             }
+        }
+
+        if self.send_next {
+            self.send_msg_next()?;
         }
 
         Ok(msg)
@@ -2555,6 +2664,7 @@ mod test {
             protocol_version: 42,
             max_clients: 16,
             game_type: GameType::Deathmatch,
+            message: String::from("Test message"),
             model_precache: vec![String::from("test1.bsp"), String::from("test2.bsp")],
             sound_precache: vec![String::from("test1.wav"), String::from("test2.wav")],
         };

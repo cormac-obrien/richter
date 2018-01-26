@@ -29,7 +29,7 @@ use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::net::UdpSocket;
 
-use net::MAX_NET_MESSAGE;
+use net::MAX_MESSAGE;
 use net::QSocket;
 use util;
 
@@ -552,7 +552,7 @@ impl ConnectListener {
     pub fn recv_request(&self) -> Result<(Request, SocketAddr), NetError> {
         // Original engine receives connection requests in `net_message`,
         // allocated at https://github.com/id-Software/Quake/blob/master/WinQuake/net_main.c#L851
-        let mut recv_buf = [0u8; MAX_NET_MESSAGE];
+        let mut recv_buf = [0u8; MAX_MESSAGE];
         let (len, remote) = self.socket.recv_from(&mut recv_buf)?;
         let mut reader = BufReader::new(&recv_buf[..len]);
 
@@ -658,7 +658,7 @@ impl ConnectSocket {
         &mut self,
         timeout: Option<Duration>,
     ) -> Result<Option<(Response, SocketAddr)>, NetError> {
-        let mut recv_buf = [0u8; MAX_NET_MESSAGE];
+        let mut recv_buf = [0u8; MAX_MESSAGE];
 
         // if a timeout was specified, apply it for this recv
         self.socket.set_read_timeout(
