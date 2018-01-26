@@ -2381,6 +2381,42 @@ impl QSocket {
         Ok(())
     }
 
+    pub fn send_msg_unreliable(&mut self, content: &[u8]) -> Result<(), NetError> {
+        if content.len() == 0 {
+            return Err(NetError::with_msg("Unreliable message has zero length"));
+        }
+
+        if content.len() > MAX_DATAGRAM {
+            return Err(NetError::with_msg(
+                "Unreliable message length exceeds MAX_DATAGRAM",
+            ));
+        }
+
+        let packet_len = HEADER_SIZE + content.len();
+
+        // compose the packet
+        let mut packet = Vec::with_capacity(MAX_PACKET);
+        packet.write_u16::<NetworkEndian>(
+            MsgKind::Unreliable as u16,
+        )?;
+        packet.write_u16::<NetworkEndian>(packet_len as u16)?;
+        packet.write_u32::<NetworkEndian>(
+            self.unreliable_send_sequence,
+        )?;
+        packet.write_all(content)?;
+
+        // increment unreliable send sequence
+        self.unreliable_send_sequence += 1;
+
+        // send the message
+        self.socket.send_to(&packet, self.remote)?;
+
+        // bump send count
+        self.send_count += 1;
+
+        Ok(())
+    }
+
     /// Receive a message on this socket.
     // TODO: the flow control in this function is completely baffling, make it a little less awful
     pub fn recv_msg(&mut self, block: BlockingMode) -> Result<Vec<u8>, NetError> {
@@ -2816,5 +2852,47 @@ mod test {
         let dst = ServerCmdCutscene::read_content(&mut reader).unwrap();
 
         assert_eq!(src, dst);
+    }
+
+    fn gen_qsocket_pair() -> (QSocket, QSocket) {
+        let src_udp = UdpSocket::bind("localhost:0").unwrap();
+        let src_addr = src_udp.local_addr().unwrap();
+
+        let dst_udp = UdpSocket::bind("localhost:0").unwrap();
+        let dst_addr = dst_udp.local_addr().unwrap();
+
+        (
+            QSocket::new(src_udp, dst_addr),
+            QSocket::new(dst_udp, src_addr),
+        )
+    }
+
+    #[test]
+    fn test_qsocket_send_msg_unreliable_recv_msg_eq() {
+        let (mut src, mut dst) = gen_qsocket_pair();
+
+        let message = String::from("test message").into_bytes();
+        src.send_msg_unreliable(&message).unwrap();
+        let received = dst.recv_msg(BlockingMode::Timeout(Duration::seconds(1)))
+            .unwrap();
+        assert_eq!(message, received);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_qsocket_send_msg_unreliable_zero_length_fails() {
+        let (mut src, _) = gen_qsocket_pair();
+
+        let message = [];
+        src.send_msg_unreliable(&message).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_qsocket_send_msg_unreliable_exceeds_max_length_fails() {
+        let (mut src, _) = gen_qsocket_pair();
+
+        let message = [0; MAX_DATAGRAM + 1];
+        src.send_msg_unreliable(&message).unwrap();
     }
 }
