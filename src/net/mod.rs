@@ -25,6 +25,7 @@ pub mod connect;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
+use std::io;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::BufWriter;
@@ -34,6 +35,7 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
 
+use engine;
 use util;
 
 use byteorder::LittleEndian;
@@ -199,6 +201,13 @@ bitflags! {
     }
 }
 
+bitflags! {
+    pub struct ButtonFlags: u8 {
+        const ATTACK = 0x01;
+        const JUMP = 0x02;
+    }
+}
+
 pub struct PlayerColor {
     top: u8,
     bottom: u8,
@@ -289,7 +298,7 @@ pub struct TempEntityPoint {
 }
 
 impl TempEntityPoint {
-    pub fn read_content<R>(reader: &mut R) -> Result<TempEntityPoint, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<TempEntityPoint, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -301,7 +310,7 @@ impl TempEntityPoint {
         Ok(TempEntityPoint { origin })
     }
 
-    pub fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -322,7 +331,7 @@ pub struct TempEntityBeam {
 }
 
 impl TempEntityBeam {
-    pub fn read_content<R>(reader: &mut R) -> Result<TempEntityBeam, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<TempEntityBeam, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -345,7 +354,7 @@ impl TempEntityBeam {
         })
     }
 
-    pub fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -370,7 +379,7 @@ pub struct TempEntityColorExplosion {
 }
 
 impl TempEntityColorExplosion {
-    pub fn read_content<R>(reader: &mut R) -> Result<TempEntityColorExplosion, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<TempEntityColorExplosion, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -389,7 +398,7 @@ impl TempEntityColorExplosion {
         })
     }
 
-    pub fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -438,42 +447,38 @@ impl TempEntity {
         };
 
         Ok(match code {
-            TempEntityCode::Spike => TempEntity::Spike(TempEntityPoint::read_content(reader)?),
+            TempEntityCode::Spike => TempEntity::Spike(TempEntityPoint::deserialize(reader)?),
             TempEntityCode::SuperSpike => {
-                TempEntity::SuperSpike(TempEntityPoint::read_content(reader)?)
+                TempEntity::SuperSpike(TempEntityPoint::deserialize(reader)?)
             }
-            TempEntityCode::Gunshot => TempEntity::Gunshot(TempEntityPoint::read_content(reader)?),
+            TempEntityCode::Gunshot => TempEntity::Gunshot(TempEntityPoint::deserialize(reader)?),
             TempEntityCode::Explosion => {
-                TempEntity::Explosion(TempEntityPoint::read_content(reader)?)
+                TempEntity::Explosion(TempEntityPoint::deserialize(reader)?)
             }
             TempEntityCode::TarExplosion => {
-                TempEntity::TarExplosion(TempEntityPoint::read_content(reader)?)
+                TempEntity::TarExplosion(TempEntityPoint::deserialize(reader)?)
             }
             TempEntityCode::Lightning1 => {
-                TempEntity::Lightning1(TempEntityBeam::read_content(reader)?)
+                TempEntity::Lightning1(TempEntityBeam::deserialize(reader)?)
             }
             TempEntityCode::Lightning2 => {
-                TempEntity::Lightning2(TempEntityBeam::read_content(reader)?)
+                TempEntity::Lightning2(TempEntityBeam::deserialize(reader)?)
             }
-            TempEntityCode::WizSpike => {
-                TempEntity::WizSpike(TempEntityPoint::read_content(reader)?)
-            }
+            TempEntityCode::WizSpike => TempEntity::WizSpike(TempEntityPoint::deserialize(reader)?),
             TempEntityCode::KnightSpike => {
-                TempEntity::KnightSpike(TempEntityPoint::read_content(reader)?)
+                TempEntity::KnightSpike(TempEntityPoint::deserialize(reader)?)
             }
             TempEntityCode::Lightning3 => {
-                TempEntity::Lightning3(TempEntityBeam::read_content(reader)?)
+                TempEntity::Lightning3(TempEntityBeam::deserialize(reader)?)
             }
             TempEntityCode::LavaSplash => {
-                TempEntity::LavaSplash(TempEntityPoint::read_content(reader)?)
+                TempEntity::LavaSplash(TempEntityPoint::deserialize(reader)?)
             }
-            TempEntityCode::Teleport => {
-                TempEntity::Teleport(TempEntityPoint::read_content(reader)?)
-            }
+            TempEntityCode::Teleport => TempEntity::Teleport(TempEntityPoint::deserialize(reader)?),
             TempEntityCode::Explosion2 => {
-                TempEntity::Explosion2(TempEntityColorExplosion::read_content(reader)?)
+                TempEntity::Explosion2(TempEntityColorExplosion::deserialize(reader)?)
             }
-            TempEntityCode::Beam => TempEntity::Beam(TempEntityBeam::read_content(reader)?),
+            TempEntityCode::Beam => TempEntity::Beam(TempEntityBeam::deserialize(reader)?),
         })
     }
 
@@ -484,59 +489,59 @@ impl TempEntity {
         match *self {
             TempEntity::Spike(ref point) => {
                 writer.write_u8(TempEntityCode::Spike as u8)?;
-                point.write_content(writer)?;
+                point.serialize(writer)?;
             }
             TempEntity::SuperSpike(ref point) => {
                 writer.write_u8(TempEntityCode::SuperSpike as u8)?;
-                point.write_content(writer)?;
+                point.serialize(writer)?;
             }
             TempEntity::Gunshot(ref point) => {
                 writer.write_u8(TempEntityCode::Gunshot as u8)?;
-                point.write_content(writer)?;
+                point.serialize(writer)?;
             }
             TempEntity::Explosion(ref point) => {
                 writer.write_u8(TempEntityCode::Explosion as u8)?;
-                point.write_content(writer)?;
+                point.serialize(writer)?;
             }
             TempEntity::TarExplosion(ref point) => {
                 writer.write_u8(TempEntityCode::TarExplosion as u8)?;
-                point.write_content(writer)?;
+                point.serialize(writer)?;
             }
             TempEntity::Lightning1(ref beam) => {
                 writer.write_u8(TempEntityCode::Lightning1 as u8)?;
-                beam.write_content(writer)?;
+                beam.serialize(writer)?;
             }
             TempEntity::Lightning2(ref beam) => {
                 writer.write_u8(TempEntityCode::Lightning2 as u8)?;
-                beam.write_content(writer)?;
+                beam.serialize(writer)?;
             }
             TempEntity::WizSpike(ref point) => {
                 writer.write_u8(TempEntityCode::WizSpike as u8)?;
-                point.write_content(writer)?;
+                point.serialize(writer)?;
             }
             TempEntity::KnightSpike(ref point) => {
                 writer.write_u8(TempEntityCode::KnightSpike as u8)?;
-                point.write_content(writer)?;
+                point.serialize(writer)?;
             }
             TempEntity::Lightning3(ref beam) => {
                 writer.write_u8(TempEntityCode::Lightning3 as u8)?;
-                beam.write_content(writer)?;
+                beam.serialize(writer)?;
             }
             TempEntity::LavaSplash(ref point) => {
                 writer.write_u8(TempEntityCode::LavaSplash as u8)?;
-                point.write_content(writer)?;
+                point.serialize(writer)?;
             }
             TempEntity::Teleport(ref point) => {
                 writer.write_u8(TempEntityCode::Teleport as u8)?;
-                point.write_content(writer)?;
+                point.serialize(writer)?;
             }
             TempEntity::Explosion2(ref expl) => {
                 writer.write_u8(TempEntityCode::Explosion2 as u8)?;
-                expl.write_content(writer)?;
+                expl.serialize(writer)?;
             }
             TempEntity::Beam(ref beam) => {
                 writer.write_u8(TempEntityCode::Beam as u8)?;
-                beam.write_content(writer)?;
+                beam.serialize(writer)?;
             }
         }
 
@@ -559,24 +564,14 @@ pub trait Cmd: Sized {
     fn code(&self) -> u8;
 
     /// Reads data from the given source and constructs a command object.
-    fn read_content<R>(reader: &mut R) -> Result<Self, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<Self, NetError>
     where
         R: BufRead + ReadBytesExt;
 
     /// Writes this command's content to the given sink.
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt;
-
-    /// Writes this command to the given sink.
-    fn write_cmd<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_u8(self.code())?;
-        self.write_content(writer)?;
-        Ok(())
-    }
 }
 
 #[derive(Debug, FromPrimitive)]
@@ -629,7 +624,7 @@ impl Cmd for ServerCmdUpdateStat {
         ServerCmdCode::UpdateStat as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdUpdateStat, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdUpdateStat, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -648,7 +643,7 @@ impl Cmd for ServerCmdUpdateStat {
         Ok(ServerCmdUpdateStat { stat, value })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -668,7 +663,7 @@ impl Cmd for ServerCmdVersion {
         ServerCmdCode::Version as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdVersion, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdVersion, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -676,7 +671,7 @@ impl Cmd for ServerCmdVersion {
         Ok(ServerCmdVersion { version })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -695,7 +690,7 @@ impl Cmd for ServerCmdSetView {
         ServerCmdCode::SetView as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSetView, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSetView, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -703,7 +698,7 @@ impl Cmd for ServerCmdSetView {
         Ok(ServerCmdSetView { view_ent })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -727,7 +722,7 @@ impl Cmd for ServerCmdSound {
         ServerCmdCode::Sound as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSound, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSound, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -771,7 +766,7 @@ impl Cmd for ServerCmdSound {
         })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -819,7 +814,7 @@ impl Cmd for ServerCmdTime {
         ServerCmdCode::Time as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdTime, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdTime, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -827,7 +822,7 @@ impl Cmd for ServerCmdTime {
         Ok(ServerCmdTime { time })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -846,7 +841,7 @@ impl Cmd for ServerCmdPrint {
         ServerCmdCode::Print as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdPrint, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdPrint, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -858,7 +853,7 @@ impl Cmd for ServerCmdPrint {
         Ok(ServerCmdPrint { text })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -878,7 +873,7 @@ impl Cmd for ServerCmdStuffText {
         ServerCmdCode::StuffText as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdStuffText, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdStuffText, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -890,7 +885,7 @@ impl Cmd for ServerCmdStuffText {
         Ok(ServerCmdStuffText { text })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -910,7 +905,7 @@ impl Cmd for ServerCmdSetAngle {
         ServerCmdCode::SetAngle as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSetAngle, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSetAngle, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -922,7 +917,7 @@ impl Cmd for ServerCmdSetAngle {
         Ok(ServerCmdSetAngle { angles })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -954,7 +949,7 @@ impl Cmd for ServerCmdServerInfo {
         ServerCmdCode::ServerInfo as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdServerInfo, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdServerInfo, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1000,7 +995,7 @@ impl Cmd for ServerCmdServerInfo {
         })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1038,7 +1033,7 @@ impl Cmd for ServerCmdLightStyle {
         ServerCmdCode::LightStyle as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdLightStyle, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdLightStyle, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1047,7 +1042,7 @@ impl Cmd for ServerCmdLightStyle {
         Ok(ServerCmdLightStyle { id, value })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1069,7 +1064,7 @@ impl Cmd for ServerCmdUpdateName {
         ServerCmdCode::UpdateName as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdUpdateName, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdUpdateName, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1081,7 +1076,7 @@ impl Cmd for ServerCmdUpdateName {
         })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1103,7 +1098,7 @@ impl Cmd for ServerCmdUpdateFrags {
         ServerCmdCode::UpdateFrags as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdUpdateFrags, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdUpdateFrags, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1116,7 +1111,7 @@ impl Cmd for ServerCmdUpdateFrags {
         })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1157,7 +1152,7 @@ impl Cmd for ServerCmdClientData {
         ServerCmdCode::ClientData as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdClientData, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdClientData, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1263,7 +1258,7 @@ impl Cmd for ServerCmdClientData {
         })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1372,7 +1367,7 @@ impl Cmd for ServerCmdStopSound {
         ServerCmdCode::StopSound as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdStopSound, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdStopSound, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1383,7 +1378,7 @@ impl Cmd for ServerCmdStopSound {
         Ok(ServerCmdStopSound { entity_id, channel })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1404,7 +1399,7 @@ impl Cmd for ServerCmdUpdateColors {
         ServerCmdCode::UpdateColors as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdUpdateColors, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdUpdateColors, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1413,7 +1408,7 @@ impl Cmd for ServerCmdUpdateColors {
         Ok(ServerCmdUpdateColors { client_id, colors })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1436,7 +1431,7 @@ impl Cmd for ServerCmdParticle {
         ServerCmdCode::Particle as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdParticle, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdParticle, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1463,7 +1458,7 @@ impl Cmd for ServerCmdParticle {
 
     // see SV_StartParticle(),
     // https://github.com/id-Software/Quake/blob/master/WinQuake/sv_main.c#L80-L101
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1498,7 +1493,7 @@ impl Cmd for ServerCmdDamage {
         ServerCmdCode::Damage as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdDamage, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdDamage, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1515,7 +1510,7 @@ impl Cmd for ServerCmdDamage {
         })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1543,7 +1538,7 @@ impl Cmd for ServerCmdSpawnStatic {
         ServerCmdCode::SpawnStatic as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSpawnStatic, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSpawnStatic, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1567,7 +1562,7 @@ impl Cmd for ServerCmdSpawnStatic {
         })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1600,7 +1595,7 @@ impl Cmd for ServerCmdSpawnBaseline {
         ServerCmdCode::SpawnBaseline as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSpawnBaseline, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSpawnBaseline, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1624,7 +1619,7 @@ impl Cmd for ServerCmdSpawnBaseline {
         })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1652,7 +1647,7 @@ impl Cmd for ServerCmdTempEntity {
         ServerCmdCode::TempEntity as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdTempEntity, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdTempEntity, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1660,7 +1655,7 @@ impl Cmd for ServerCmdTempEntity {
         Ok(ServerCmdTempEntity { temp_entity })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1679,7 +1674,7 @@ impl Cmd for ServerCmdSetPause {
         ServerCmdCode::SetPause as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSetPause, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSetPause, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1692,7 +1687,7 @@ impl Cmd for ServerCmdSetPause {
         Ok(ServerCmdSetPause { paused })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1714,7 +1709,7 @@ impl Cmd for ServerCmdSignOnStage {
         ServerCmdCode::SignOnStage as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSignOnStage, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSignOnStage, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1730,7 +1725,7 @@ impl Cmd for ServerCmdSignOnStage {
         Ok(ServerCmdSignOnStage { stage })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1749,7 +1744,7 @@ impl Cmd for ServerCmdCenterPrint {
         ServerCmdCode::CenterPrint as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdCenterPrint, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdCenterPrint, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1761,7 +1756,7 @@ impl Cmd for ServerCmdCenterPrint {
         Ok(ServerCmdCenterPrint { text })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1784,7 +1779,7 @@ impl Cmd for ServerCmdSpawnStaticSound {
         ServerCmdCode::SpawnStaticSound as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdSpawnStaticSound, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSpawnStaticSound, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1805,7 +1800,7 @@ impl Cmd for ServerCmdSpawnStaticSound {
         })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1831,7 +1826,7 @@ impl Cmd for ServerCmdFinale {
         ServerCmdCode::Finale as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdFinale, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdFinale, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1843,7 +1838,7 @@ impl Cmd for ServerCmdFinale {
         Ok(ServerCmdFinale { text })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1864,7 +1859,7 @@ impl Cmd for ServerCmdCdTrack {
         ServerCmdCode::CdTrack as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdCdTrack, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdCdTrack, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1873,7 +1868,7 @@ impl Cmd for ServerCmdCdTrack {
         Ok(ServerCmdCdTrack { track, loop_ })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1893,7 +1888,7 @@ impl Cmd for ServerCmdCutscene {
         ServerCmdCode::Cutscene as u8
     }
 
-    fn read_content<R>(reader: &mut R) -> Result<ServerCmdCutscene, NetError>
+    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdCutscene, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -1905,7 +1900,7 @@ impl Cmd for ServerCmdCutscene {
         Ok(ServerCmdCutscene { text })
     }
 
-    fn write_content<W>(&self, writer: &mut W) -> Result<(), NetError>
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -1996,7 +1991,7 @@ impl ServerCmd {
         code as u8
     }
 
-    pub fn read_cmd<R>(reader: &mut R) -> Result<Option<ServerCmd>, NetError>
+    pub fn deserialize<R>(reader: &mut R) -> Result<Option<ServerCmd>, NetError>
     where
         R: BufRead + ReadBytesExt,
     {
@@ -2024,80 +2019,72 @@ impl ServerCmd {
             ServerCmdCode::NoOp => ServerCmd::NoOp,
             ServerCmdCode::Disconnect => ServerCmd::Disconnect,
             ServerCmdCode::UpdateStat => ServerCmd::UpdateStat(
-                ServerCmdUpdateStat::read_content(reader)?,
+                ServerCmdUpdateStat::deserialize(reader)?,
             ),
-            ServerCmdCode::Version => ServerCmd::Version(ServerCmdVersion::read_content(reader)?),
-            ServerCmdCode::SetView => ServerCmd::SetView(ServerCmdSetView::read_content(reader)?),
-            ServerCmdCode::Sound => ServerCmd::Sound(ServerCmdSound::read_content(reader)?),
-            ServerCmdCode::Time => ServerCmd::Time(ServerCmdTime::read_content(reader)?),
-            ServerCmdCode::Print => ServerCmd::Print(ServerCmdPrint::read_content(reader)?),
+            ServerCmdCode::Version => ServerCmd::Version(ServerCmdVersion::deserialize(reader)?),
+            ServerCmdCode::SetView => ServerCmd::SetView(ServerCmdSetView::deserialize(reader)?),
+            ServerCmdCode::Sound => ServerCmd::Sound(ServerCmdSound::deserialize(reader)?),
+            ServerCmdCode::Time => ServerCmd::Time(ServerCmdTime::deserialize(reader)?),
+            ServerCmdCode::Print => ServerCmd::Print(ServerCmdPrint::deserialize(reader)?),
             ServerCmdCode::StuffText => ServerCmd::StuffText(
-                ServerCmdStuffText::read_content(reader)?,
+                ServerCmdStuffText::deserialize(reader)?,
             ),
-            ServerCmdCode::SetAngle => ServerCmd::SetAngle(
-                ServerCmdSetAngle::read_content(reader)?,
-            ),
+            ServerCmdCode::SetAngle => ServerCmd::SetAngle(ServerCmdSetAngle::deserialize(reader)?),
             ServerCmdCode::ServerInfo => ServerCmd::ServerInfo(
-                ServerCmdServerInfo::read_content(reader)?,
+                ServerCmdServerInfo::deserialize(reader)?,
             ),
             ServerCmdCode::LightStyle => ServerCmd::LightStyle(
-                ServerCmdLightStyle::read_content(reader)?,
+                ServerCmdLightStyle::deserialize(reader)?,
             ),
             ServerCmdCode::UpdateName => ServerCmd::UpdateName(
-                ServerCmdUpdateName::read_content(reader)?,
+                ServerCmdUpdateName::deserialize(reader)?,
             ),
             ServerCmdCode::UpdateFrags => ServerCmd::UpdateFrags(
-                ServerCmdUpdateFrags::read_content(reader)?,
+                ServerCmdUpdateFrags::deserialize(reader)?,
             ),
             ServerCmdCode::ClientData => ServerCmd::ClientData(
-                ServerCmdClientData::read_content(reader)?,
+                ServerCmdClientData::deserialize(reader)?,
             ),
             ServerCmdCode::StopSound => ServerCmd::StopSound(
-                ServerCmdStopSound::read_content(reader)?,
+                ServerCmdStopSound::deserialize(reader)?,
             ),
             ServerCmdCode::UpdateColors => ServerCmd::UpdateColors(
-                ServerCmdUpdateColors::read_content(reader)?,
+                ServerCmdUpdateColors::deserialize(reader)?,
             ),
-            ServerCmdCode::Particle => ServerCmd::Particle(
-                ServerCmdParticle::read_content(reader)?,
-            ),
-            ServerCmdCode::Damage => ServerCmd::Damage(ServerCmdDamage::read_content(reader)?),
+            ServerCmdCode::Particle => ServerCmd::Particle(ServerCmdParticle::deserialize(reader)?),
+            ServerCmdCode::Damage => ServerCmd::Damage(ServerCmdDamage::deserialize(reader)?),
             ServerCmdCode::SpawnStatic => ServerCmd::SpawnStatic(
-                ServerCmdSpawnStatic::read_content(reader)?,
+                ServerCmdSpawnStatic::deserialize(reader)?,
             ),
             ServerCmdCode::SpawnBaseline => ServerCmd::SpawnBaseline(
-                ServerCmdSpawnBaseline::read_content(reader)?,
+                ServerCmdSpawnBaseline::deserialize(reader)?,
             ),
             ServerCmdCode::TempEntity => ServerCmd::TempEntity(
-                ServerCmdTempEntity::read_content(reader)?,
+                ServerCmdTempEntity::deserialize(reader)?,
             ),
-            ServerCmdCode::SetPause => ServerCmd::SetPause(
-                ServerCmdSetPause::read_content(reader)?,
-            ),
+            ServerCmdCode::SetPause => ServerCmd::SetPause(ServerCmdSetPause::deserialize(reader)?),
             ServerCmdCode::SignOnStage => ServerCmd::SignOnStage(
-                ServerCmdSignOnStage::read_content(reader)?,
+                ServerCmdSignOnStage::deserialize(reader)?,
             ),
             ServerCmdCode::CenterPrint => ServerCmd::CenterPrint(
-                ServerCmdCenterPrint::read_content(reader)?,
+                ServerCmdCenterPrint::deserialize(reader)?,
             ),
             ServerCmdCode::KilledMonster => ServerCmd::KilledMonster,
             ServerCmdCode::FoundSecret => ServerCmd::FoundSecret,
             ServerCmdCode::SpawnStaticSound => ServerCmd::SpawnStaticSound(
-                ServerCmdSpawnStaticSound::read_content(reader)?,
+                ServerCmdSpawnStaticSound::deserialize(reader)?,
             ),
             ServerCmdCode::Intermission => ServerCmd::Intermission,
-            ServerCmdCode::Finale => ServerCmd::Finale(ServerCmdFinale::read_content(reader)?),
-            ServerCmdCode::CdTrack => ServerCmd::CdTrack(ServerCmdCdTrack::read_content(reader)?),
+            ServerCmdCode::Finale => ServerCmd::Finale(ServerCmdFinale::deserialize(reader)?),
+            ServerCmdCode::CdTrack => ServerCmd::CdTrack(ServerCmdCdTrack::deserialize(reader)?),
             ServerCmdCode::SellScreen => ServerCmd::SellScreen,
-            ServerCmdCode::Cutscene => ServerCmd::Cutscene(
-                ServerCmdCutscene::read_content(reader)?,
-            ),
+            ServerCmdCode::Cutscene => ServerCmd::Cutscene(ServerCmdCutscene::deserialize(reader)?),
         };
 
         Ok(Some(cmd))
     }
 
-    pub fn write_cmd<W>(&self, writer: &mut W) -> Result<(), NetError>
+    pub fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: WriteBytesExt,
     {
@@ -2113,95 +2100,95 @@ impl ServerCmd {
             }
             ServerCmd::UpdateStat(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::Version(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::SetView(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::Sound(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::Time(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::Print(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::StuffText(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::SetAngle(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::ServerInfo(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::LightStyle(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::UpdateName(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::UpdateFrags(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::ClientData(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::StopSound(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::UpdateColors(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::Particle(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::Damage(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::SpawnStatic(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::SpawnBaseline(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::TempEntity(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::SetPause(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::SignOnStage(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::CenterPrint(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::KilledMonster => {
                 writer.write_u8(self.code())?;
@@ -2211,25 +2198,25 @@ impl ServerCmd {
             }
             ServerCmd::SpawnStaticSound(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::Intermission => {
                 writer.write_u8(self.code())?;
             }
             ServerCmd::Finale(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::CdTrack(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
             ServerCmd::SellScreen => {
                 writer.write_u8(self.code())?;
             }
             ServerCmd::Cutscene(ref sc) => {
                 writer.write_u8(self.code())?;
-                sc.write_content(writer)?;
+                sc.serialize(writer)?;
             }
         }
 
@@ -2244,6 +2231,170 @@ pub enum ClientCmdCode {
     Disconnect = 2,
     Move = 3,
     StringCmd = 4,
+}
+
+pub struct ClientCmdMove {
+    send_time: Duration,
+    angles: Vector3<Deg<f32>>,
+    fwd_move: u16,
+    side_move: u16,
+    up_move: u16,
+    button_flags: ButtonFlags,
+    impulse: u8,
+}
+
+impl Cmd for ClientCmdMove {
+    fn code(&self) -> u8 {
+        ClientCmdCode::Move as u8
+    }
+
+    fn deserialize<R>(reader: &mut R) -> Result<ClientCmdMove, NetError>
+    where
+        R: ReadBytesExt + BufRead,
+    {
+        let send_time = engine::duration_from_f32(reader.read_f32::<LittleEndian>()?);
+        let angles = Vector3::new(
+            read_angle(reader)?,
+            read_angle(reader)?,
+            read_angle(reader)?,
+        );
+        let fwd_move = reader.read_u16::<LittleEndian>()?;
+        let side_move = reader.read_u16::<LittleEndian>()?;
+        let up_move = reader.read_u16::<LittleEndian>()?;
+        let button_flags_val = reader.read_u8()?;
+        let button_flags = match ButtonFlags::from_bits(button_flags_val) {
+            Some(bf) => bf,
+            None => {
+                return Err(NetError::InvalidData(format!(
+                    "Invalid value for button flags: {}",
+                    button_flags_val
+                )))
+            }
+        };
+        let impulse = reader.read_u8()?;
+
+        Ok(ClientCmdMove {
+            send_time,
+            angles,
+            fwd_move,
+            side_move,
+            up_move,
+            button_flags,
+            impulse,
+        })
+    }
+
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        writer.write_f32::<LittleEndian>(
+            engine::duration_to_f32(self.send_time),
+        )?;
+        for i in 0..3 {
+            write_angle(writer, self.angles[i])?;
+        }
+        writer.write_u16::<LittleEndian>(self.fwd_move)?;
+        writer.write_u16::<LittleEndian>(self.side_move)?;
+        writer.write_u16::<LittleEndian>(self.up_move)?;
+        writer.write_u8(self.button_flags.bits())?;
+        writer.write_u8(self.impulse)?;
+
+        Ok(())
+    }
+}
+
+pub struct ClientCmdStringCmd {
+    pub cmd: String,
+}
+
+impl Cmd for ClientCmdStringCmd {
+    fn code(&self) -> u8 {
+        ClientCmdCode::StringCmd as u8
+    }
+
+    fn deserialize<R>(reader: &mut R) -> Result<ClientCmdStringCmd, NetError>
+    where
+        R: ReadBytesExt + BufRead,
+    {
+        let cmd = util::read_cstring(reader).unwrap();
+
+        Ok(ClientCmdStringCmd { cmd })
+    }
+
+    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        writer.write(self.cmd.as_bytes())?;
+        writer.write_u8(0)?;
+
+        Ok(())
+    }
+}
+
+pub enum ClientCmd {
+    Bad,
+    NoOp,
+    Disconnect,
+    Move(ClientCmdMove),
+    StringCmd(ClientCmdStringCmd),
+}
+
+impl ClientCmd {
+    pub fn code(&self) -> u8 {
+        match *self {
+            ClientCmd::Bad => ClientCmdCode::Bad as u8,
+            ClientCmd::NoOp => ClientCmdCode::NoOp as u8,
+            ClientCmd::Disconnect => ClientCmdCode::Disconnect as u8,
+            ClientCmd::Move(_) => ClientCmdCode::Move as u8,
+            ClientCmd::StringCmd(_) => ClientCmdCode::StringCmd as u8,
+        }
+    }
+
+    pub fn deserialize<R>(reader: &mut R) -> Result<ClientCmd, NetError>
+    where
+        R: ReadBytesExt + BufRead,
+    {
+        let code_val = reader.read_u8()?;
+        let code = match ClientCmdCode::from_u8(code_val) {
+            Some(c) => c,
+            None => {
+                return Err(NetError::InvalidData(
+                    format!("Invalid client command code: {}", code_val),
+                ))
+            }
+        };
+
+        let cmd = match code {
+            ClientCmdCode::Bad => ClientCmd::Bad,
+            ClientCmdCode::NoOp => ClientCmd::NoOp,
+            ClientCmdCode::Disconnect => ClientCmd::Disconnect,
+            ClientCmdCode::Move => ClientCmd::Move(ClientCmdMove::deserialize(reader)?),
+            ClientCmdCode::StringCmd => ClientCmd::StringCmd(
+                ClientCmdStringCmd::deserialize(reader)?,
+            ),
+        };
+
+        Ok(cmd)
+    }
+
+    pub fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
+    where
+        W: WriteBytesExt,
+    {
+        writer.write_u8(self.code())?;
+
+        match *self {
+            ClientCmd::Bad => (),
+            ClientCmd::NoOp => (),
+            ClientCmd::Disconnect => (),
+            ClientCmd::Move(ref move_cmd) => move_cmd.serialize(writer)?,
+            ClientCmd::StringCmd(ref string_cmd) => string_cmd.serialize(writer)?,
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(PartialEq)]
@@ -2294,6 +2445,10 @@ impl QSocket {
             recv_sequence: 0,
             recv_buf: [0; MAX_MESSAGE],
         }
+    }
+
+    pub fn can_send(&self) -> bool {
+        self.send_queue.is_empty() && self.send_cache.is_empty()
     }
 
     /// Begin sending a reliable message over this socket.
@@ -2627,9 +2782,9 @@ mod test {
         };
 
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdUpdateStat::read_content(&mut reader).unwrap();
+        let dst = ServerCmdUpdateStat::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2639,9 +2794,9 @@ mod test {
         let src = ServerCmdVersion { version: 42 };
 
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdVersion::read_content(&mut reader).unwrap();
+        let dst = ServerCmdVersion::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2651,9 +2806,9 @@ mod test {
         let src = ServerCmdSetView { view_ent: 17 };
 
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdSetView::read_content(&mut reader).unwrap();
+        let dst = ServerCmdSetView::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2663,9 +2818,9 @@ mod test {
         let src = ServerCmdTime { time: 23.07 };
 
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdTime::read_content(&mut reader).unwrap();
+        let dst = ServerCmdTime::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2675,9 +2830,9 @@ mod test {
         let src = ServerCmdPrint { text: String::from("print test") };
 
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdPrint::read_content(&mut reader).unwrap();
+        let dst = ServerCmdPrint::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2687,9 +2842,9 @@ mod test {
         let src = ServerCmdStuffText { text: String::from("stufftext test") };
 
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdStuffText::read_content(&mut reader).unwrap();
+        let dst = ServerCmdStuffText::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2706,9 +2861,9 @@ mod test {
         };
 
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdServerInfo::read_content(&mut reader).unwrap();
+        let dst = ServerCmdServerInfo::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2721,9 +2876,9 @@ mod test {
         };
 
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdLightStyle::read_content(&mut reader).unwrap();
+        let dst = ServerCmdLightStyle::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2736,9 +2891,9 @@ mod test {
         };
 
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdUpdateName::read_content(&mut reader).unwrap();
+        let dst = ServerCmdUpdateName::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2751,9 +2906,9 @@ mod test {
         };
 
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdUpdateFrags::read_content(&mut reader).unwrap();
+        let dst = ServerCmdUpdateFrags::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2766,9 +2921,9 @@ mod test {
         };
 
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdStopSound::read_content(&mut reader).unwrap();
+        let dst = ServerCmdStopSound::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2781,9 +2936,9 @@ mod test {
         };
 
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdUpdateColors::read_content(&mut reader).unwrap();
+        let dst = ServerCmdUpdateColors::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2792,9 +2947,9 @@ mod test {
     fn test_server_cmd_set_pause_read_write_eq() {
         let src = ServerCmdSetPause { paused: true };
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdSetPause::read_content(&mut reader).unwrap();
+        let dst = ServerCmdSetPause::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2803,9 +2958,9 @@ mod test {
     fn test_server_cmd_sign_on_stage_read_write_eq() {
         let src = ServerCmdSignOnStage { stage: SignOnStage::Begin };
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdSignOnStage::read_content(&mut reader).unwrap();
+        let dst = ServerCmdSignOnStage::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2814,9 +2969,9 @@ mod test {
     fn test_server_cmd_center_print_read_write_eq() {
         let src = ServerCmdCenterPrint { text: String::from("Center print test") };
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdCenterPrint::read_content(&mut reader).unwrap();
+        let dst = ServerCmdCenterPrint::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2825,9 +2980,9 @@ mod test {
     fn test_server_cmd_finale_read_write_eq() {
         let src = ServerCmdFinale { text: String::from("Finale test") };
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdFinale::read_content(&mut reader).unwrap();
+        let dst = ServerCmdFinale::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2836,9 +2991,9 @@ mod test {
     fn test_server_cmd_cd_track_read_write_eq() {
         let src = ServerCmdCdTrack { track: 5, loop_: 1 };
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdCdTrack::read_content(&mut reader).unwrap();
+        let dst = ServerCmdCdTrack::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2847,9 +3002,9 @@ mod test {
     fn test_server_cmd_cutscene_read_write_eq() {
         let src = ServerCmdCutscene { text: String::from("Cutscene test") };
         let mut packet = Vec::new();
-        src.write_content(&mut packet).unwrap();
+        src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdCutscene::read_content(&mut reader).unwrap();
+        let dst = ServerCmdCutscene::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2865,6 +3020,19 @@ mod test {
             QSocket::new(src_udp, dst_addr),
             QSocket::new(dst_udp, src_addr),
         )
+    }
+
+    #[test]
+    fn test_qsocket_send_msg_short() {
+        let (mut src, mut dst) = gen_qsocket_pair();
+
+        let message = String::from("test message").into_bytes();
+        src.begin_send_msg(&message).unwrap();
+        let received = dst.recv_msg(BlockingMode::Timeout(Duration::seconds(1)))
+            .unwrap();
+        assert_eq!(message, received);
+
+        // TODO: assert can_send == true, send_next == false, etc
     }
 
     #[test]

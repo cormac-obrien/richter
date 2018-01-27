@@ -27,6 +27,8 @@ use bsp;
 use model::Model;
 use net;
 use net::BlockingMode;
+use net::ClientCmd;
+use net::ClientCmdStringCmd;
 use net::ColorShift;
 use net::GameType;
 use net::IntermissionKind;
@@ -248,6 +250,7 @@ impl ClientState {
 
 pub struct Client {
     qsock: QSocket,
+    compose: Vec<u8>,
 }
 
 impl Client {
@@ -335,7 +338,24 @@ impl Client {
         // we're done with the connection socket, so turn it into a QSocket with the new address
         let mut qsock = con_sock.into_qsocket(new_addr);
 
-        Ok(Client { qsock })
+        Ok(Client {
+            qsock,
+            compose: Vec::new(),
+        })
+    }
+
+    pub fn add_cmd(&mut self, cmd: ClientCmd) -> Result<(), ClientError> {
+        cmd.serialize(&mut self.compose)?;
+
+        Ok(())
+    }
+
+    pub fn send(&mut self) -> Result<(), ClientError> {
+        // TODO: check can_send on qsock
+        self.qsock.begin_send_msg(&self.compose)?;
+        self.compose.clear();
+
+        Ok(())
     }
 
     pub fn parse_server_msg(&mut self, block: BlockingMode, pak: &Pak) -> Result<(), ClientError> {
@@ -348,7 +368,7 @@ impl Client {
 
         let mut reader = BufReader::new(msg.as_slice());
 
-        while let Some(cmd) = ServerCmd::read_cmd(&mut reader)? {
+        while let Some(cmd) = ServerCmd::deserialize(&mut reader)? {
             match cmd {
                 ServerCmd::Bad => panic!("Invalid command from server"),
                 ServerCmd::NoOp => (),
@@ -380,7 +400,37 @@ impl Client {
     }
 
     fn handle_signon(&mut self, stage: SignOnStage) -> Result<(), ClientError> {
-        unimplemented!();
+        match stage {
+            SignOnStage::Not => (), // TODO this is an error (invalid value)
+            SignOnStage::Prespawn => {
+                self.add_cmd(ClientCmd::StringCmd(
+                    ClientCmdStringCmd { cmd: String::from("prespawn") },
+                ));
+            }
+            SignOnStage::ClientInfo => {
+                // TODO: fill in client info here
+                self.add_cmd(ClientCmd::StringCmd(ClientCmdStringCmd {
+                    cmd: format!("name \"{}\"\n", "UNNAMED"),
+                }));
+                self.add_cmd(ClientCmd::StringCmd(
+                    ClientCmdStringCmd { cmd: format!("color {} {}", 0, 0) },
+                ));
+                // TODO: need default spawn parameters?
+                self.add_cmd(ClientCmd::StringCmd(
+                    ClientCmdStringCmd { cmd: format!("spawn {}", "") },
+                ));
+            }
+            SignOnStage::Begin => {
+                self.add_cmd(ClientCmd::StringCmd(
+                    ClientCmdStringCmd { cmd: String::from("begin") },
+                ));
+            }
+            SignOnStage::Done => {
+                // TODO: end load screen and start render loop
+            }
+        }
+
+        Ok(())
     }
 
     fn update_server_info(
