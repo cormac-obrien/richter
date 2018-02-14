@@ -25,10 +25,14 @@ use std::io::Cursor;
 
 use pak::Pak;
 
+use cgmath::Vector3;
 use rodio::Decoder;
+use rodio::Endpoint;
 use rodio::Sink;
 use rodio::Source;
 use rodio::decoder::DecoderError;
+use rodio::source::Buffered;
+use rodio::source::SamplesConverter;
 use rodio::source::Zero as ZeroSource;
 
 #[derive(Debug)]
@@ -85,12 +89,11 @@ impl From<::std::io::Error> for SoundError {
     }
 }
 
-pub struct Sound {
-    src: Box<Source<Item = f32>>,
-}
+#[derive(Clone)]
+pub struct AudioSource(Buffered<SamplesConverter<Decoder<BufReader<Cursor<Vec<u8>>>>, f32>>);
 
-impl Sound {
-    pub fn load<S>(pak: &Pak, name: S) -> Result<Sound, SoundError>
+impl AudioSource {
+    pub fn load<S>(pak: &Pak, name: S) -> Result<AudioSource, SoundError>
     where
         S: AsRef<str>,
     {
@@ -104,19 +107,62 @@ impl Sound {
             }
         };
 
-        let src = Box::new(
-            Decoder::new(BufReader::new(Cursor::new(data)))?
-                .convert_samples(),
-        );
+        let src = Decoder::new(BufReader::new(Cursor::new(data)))?
+            .convert_samples()
+            .buffered();
 
-        Ok(Sound { src: src as Box<_> })
+        Ok(AudioSource(src))
+    }
+}
+
+pub struct StaticSound {
+    origin: Vector3<f32>,
+    src: AudioSource,
+    sink: Sink,
+    volume: u8,
+    attenuation: u8,
+}
+
+impl StaticSound {
+    pub fn new(
+        endpoint: &Endpoint,
+        origin: Vector3<f32>,
+        src: AudioSource,
+        volume: u8,
+        attenuation: u8,
+    ) -> StaticSound {
+        StaticSound {
+            origin,
+            src,
+            sink: Sink::new(endpoint),
+            volume,
+            attenuation,
+        }
     }
 
-    pub fn silent() -> Sound {
-        Sound { src: Box::new(ZeroSource::new(1, 11025)) }
+    pub fn play(&self) {
+        self.sink.append(self.src.0.clone().repeat_infinite());
+        self.sink.play();
     }
 }
 
 pub struct Channel {
     sink: Sink,
+}
+
+impl Channel {
+    pub fn new(endpoint: &Endpoint) -> Channel {
+        Channel { sink: Sink::new(endpoint) }
+    }
+
+    pub fn play(&self, src: AudioSource) {
+        // stop and remove the previous sound
+        self.sink.stop();
+
+        // add the new sound
+        self.sink.append(src.0);
+
+        // play the new sound
+        self.sink.play();
+    }
 }

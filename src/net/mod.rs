@@ -1768,10 +1768,10 @@ impl Cmd for ServerCmdCenterPrint {
 
 #[derive(Debug)]
 pub struct ServerCmdSpawnStaticSound {
-    origin: Vector3<f32>,
-    sound_id: u8,
-    volume: u8,
-    attenuation: u8,
+    pub origin: Vector3<f32>,
+    pub sound_id: u8,
+    pub volume: u8,
+    pub attenuation: u8,
 }
 
 impl Cmd for ServerCmdSpawnStaticSound {

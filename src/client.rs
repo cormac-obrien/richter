@@ -45,12 +45,16 @@ use net::connect::ConnectSocket;
 use net::connect::Request;
 use net::connect::Response;
 use pak::Pak;
-use sound::Sound;
+use sound::AudioSource;
+use sound::Channel;
+use sound::StaticSound;
 
 use cgmath::Deg;
 use cgmath::Vector3;
 use cgmath::Zero;
 use chrono::Duration;
+use rodio;
+use rodio::Endpoint;
 
 // connections are tried 3 times, see
 // https://github.com/id-Software/Quake/blob/master/WinQuake/net_dgrm.c#L1248
@@ -132,125 +136,97 @@ struct ScoreboardEntry {
     // translations: [u8; VID_GRADES],
 }
 
+struct ClientEntity {
+    force_link: bool,
+
+    // baseline: EntityState,
+    last_update: Duration,
+
+    msg_origins: [Vector3<f32>; 2],
+    origin: Vector3<f32>,
+
+    msg_angles: [Vector3<Deg<f32>>; 2],
+    angles: Vector3<Deg<f32>>,
+
+    model: Option<Model>,
+    frame: usize,
+
+    // TODO: make Duration?
+    sync_base: f32,
+
+    effects: i32,
+    skin_id: usize,
+    vis_frame: usize,
+}
+
+// client information regarding the current level
 struct ClientState {
-    move_msg_count: usize,
+    // model precache
+    models: Vec<Model>,
+
+    // audio source precache
+    sounds: Vec<AudioSource>,
+
+    // ambient sounds (infinite looping, static position)
+    static_sounds: Vec<StaticSound>,
+
+    // move_msg_count: usize,
     // cmd: MoveCmd,
-    stats: [i32; MAX_STATS],
-    items: ItemFlags,
-    item_get_time: [f32; 32],
-    face_anim_time: f32,
-    color_shifts: [ColorShift; 4],
-    prev_color_shifts: [ColorShift; 4],
+    // stats: [i32; MAX_STATS],
+    // items: ItemFlags,
+    // item_get_time: [f32; 32],
+    // face_anim_time: f32,
+    // color_shifts: [ColorShift; 4],
+    // prev_color_shifts: [ColorShift; 4],
 
-    view: ClientView,
+    // view: ClientView,
 
-    m_velocity: [Vector3<f32>; 2],
-    velocity: Vector3<f32>,
+    // m_velocity: [Vector3<f32>; 2],
+    // velocity: Vector3<f32>,
 
-    ideal_pitch: Deg<f32>,
-    pitch_velocity: f32,
-    no_drift: bool,
-    drift_move: f32,
-    last_stop: f64,
+    // ideal_pitch: Deg<f32>,
+    // pitch_velocity: f32,
+    // no_drift: bool,
+    // drift_move: f32,
+    // last_stop: f64,
 
-    paused: bool,
-    on_ground: bool,
-    in_water: bool,
+    // paused: bool,
+    // on_ground: bool,
+    // in_water: bool,
 
-    intermission: IntermissionKind,
-    completed_time: Duration,
+    // intermission: IntermissionKind,
+    // completed_time: Duration,
 
-    m_time: [Duration; 2],
-    time: Duration,
-    old_time: Duration,
+    // m_time: [Duration; 2],
+    // time: Duration,
+    // old_time: Duration,
 
-    last_received_message: f32,
+    // last_received_message: f32,
 
-    model_precache: Vec<Model>,
-    // sound_precache: Vec<Sfx>,
-    level_name: String,
-    view_ent: usize,
+    // level_name: String,
+    // view_ent: usize,
 
-    server_info: ServerInfo,
+    // server_info: ServerInfo,
 
-    worldmodel: Model,
+    // worldmodel: Model,
 }
 
 impl ClientState {
-    /*
-    pub fn new() -> ClientState {
+    pub fn new(pak: &Pak) -> ClientState {
         ClientState {
-            move_msg_count: 0,
-            // cmd: MoveCmd::new(),
-            stats: [0; MAX_STATS],
-            items: ItemFlags::empty(),
-            item_get_time: [f32; 32],
-            face_anim_time: f32,
-            color_shifts: [
-                ColorShift::new(),
-                ColorShift::new(),
-                ColorShift::new(),
-                ColorShift::new(),
-            ],
-            prev_color_shifts: [
-                ColorShift::new(),
-                ColorShift::new(),
-                ColorShift::new(),
-                ColorShift::new(),
-            ],
-
-            m_view_angles: [
-                Vector3::new(Deg::zero(), Deg::zero(), Deg::zero()),
-                Vector3::new(Deg::zero(), Deg::zero(), Deg::zero()),
-            ],
-
-            view_angles: Vector3::new(Deg::zero(), Deg::zero(), Deg::zero()),
-
-            m_velocity: [
-                Vector3::new(0.0, 0.0, 0.0),
-                Vector3::new(0.0, 0.0, 0.0),
-            ],
-
-            velocity: Vector3::new(0.0, 0.0, 0.0),
-
-            punch_angle: Vector3::new(Deg::zero(), Deg::zero(), Deg::zero()),
-            ideal_pitch: Deg::zero(),
-            pitch_velocity: 0.0,
-            no_drift: false,
-            drift_move: 0.0,
-            last_stop: 0.0,
-
-            view_height: 0.0,
-
-            paused: false,
-            on_ground: false,
-            in_water: false,
-
-            intermission: IntermissionKind::None,
-            completed_time: Duration::zero(),
-
-            m_time: [Duration::zero(), Duration::zero()],
-            time: Duration::zero(),
-            old_time: Duration::zero(),
-
-            last_received_message: 0.0,
-
-            model_precache: Vec::new(),
-
-            level_name: String::new(),
-            view_ent: 0,
-            max_clients: 0,
-            game_type: GameType::CoOp,
-
-            worldmodel: Model::none(),
+            models: vec![Model::none()],
+            sounds: vec![AudioSource::load(pak, "misc/null.wav").unwrap()],
+            static_sounds: Vec::new(),
         }
     }
-    */
 }
 
 pub struct Client {
     qsock: QSocket,
     compose: Vec<u8>,
+
+    audio_endpoint: Endpoint,
+    state: ClientState,
 }
 
 impl Client {
@@ -302,8 +278,8 @@ impl Client {
         }
 
         // make sure we actually got a response
-        // TODO: specific error for this. Shouldn't be fatal.
         if response.is_none() {
+            // TODO: specific error for this. Shouldn't be fatal.
             return Err(ClientError::with_msg("No response"));
         }
 
@@ -341,6 +317,9 @@ impl Client {
         Ok(Client {
             qsock,
             compose: Vec::new(),
+            // TODO: inherit endpoint from host
+            audio_endpoint: rodio::default_endpoint().unwrap(),
+            state: ClientState::new(pak),
         })
     }
 
@@ -388,6 +367,16 @@ impl Client {
                 }
 
                 ServerCmd::SignOnStage(signon) => self.handle_signon(signon.stage)?,
+                ServerCmd::SpawnStaticSound(static_sound) => {
+                    self.state.static_sounds.push(StaticSound::new(
+                        &self.audio_endpoint,
+                        static_sound.origin,
+                        self.state.sounds[static_sound.sound_id as usize]
+                            .clone(),
+                        static_sound.volume,
+                        static_sound.attenuation,
+                    ));
+                }
 
                 x => {
                     debug!("{:?}", x);
@@ -438,7 +427,7 @@ impl Client {
         server_info_cmd: ServerCmdServerInfo,
         pak: &Pak,
     ) -> Result<(), ClientError> {
-        // TODO: wipe client state
+        let mut new_client_state = ClientState::new(pak);
 
         if server_info_cmd.protocol_version != net::PROTOCOL_VERSION as i32 {
             return Err(ClientError::with_msg(format!(
@@ -450,11 +439,6 @@ impl Client {
 
         // TODO: print sign-on message to in-game console
         println!("{}", server_info_cmd.message);
-
-        // first model and first sound are null
-
-        let mut models = vec![Model::none()];
-        models.push(Model::none());
 
         // TODO: validate submodel names
         for mod_name in server_info_cmd.model_precache {
@@ -469,19 +453,29 @@ impl Client {
                 };
 
                 let (mut brush_models, _) = bsp::load(bsp_data).unwrap();
-                models.append(&mut brush_models);
+                new_client_state.models.append(&mut brush_models);
             } else if !mod_name.starts_with("*") {
                 debug!("Loading model {}", mod_name);
-                models.push(Model::load(pak, mod_name));
+                new_client_state.models.push(Model::load(pak, mod_name));
             }
 
             // TODO: send keepalive message?
         }
 
-        let mut sounds = vec![Sound::silent()];
-        for snd_name in server_info_cmd.sound_precache {
+        for ref snd_name in server_info_cmd.sound_precache {
             debug!("Loading sound {}", snd_name);
-            sounds.push(Sound::load(pak, snd_name).unwrap());
+
+            // TODO: waiting on ruuda/hound#20 (some WAV files don't load under rodio)
+            new_client_state.sounds.push(match AudioSource::load(
+                pak,
+                snd_name,
+            ) {
+                Ok(a) => a,
+                Err(e) => {
+                    warn!("Loading {} failed: {}", snd_name, e);
+                    AudioSource::load(pak, "misc/null.wav").unwrap()
+                }
+            });
 
             // TODO: send keepalive message?
         }
@@ -492,6 +486,8 @@ impl Client {
         };
 
         // TODO: set up rest of client state (R_NewMap)
+
+        self.state = new_client_state;
         Ok(())
     }
 }
