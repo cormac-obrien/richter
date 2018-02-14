@@ -21,8 +21,8 @@ use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
 
-use engine;
-use model::SyncType;
+use common::engine;
+use common::model::SyncType;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;

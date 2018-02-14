@@ -35,8 +35,8 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
 
-use engine;
-use util;
+use common::engine;
+use common::util;
 
 use byteorder::LittleEndian;
 use byteorder::NetworkEndian;
@@ -1582,6 +1582,7 @@ impl Cmd for ServerCmdSpawnStatic {
 
 #[derive(Debug)]
 pub struct ServerCmdSpawnBaseline {
+    ent_id: u16,
     model_index: u8,
     frame_index: u8,
     color_map: u8,
@@ -1599,6 +1600,7 @@ impl Cmd for ServerCmdSpawnBaseline {
     where
         R: BufRead + ReadBytesExt,
     {
+        let ent_id = reader.read_u16::<LittleEndian>()?;
         let model_index = reader.read_u8()?;
         let frame_index = reader.read_u8()?;
         let color_map = reader.read_u8()?;
@@ -1610,6 +1612,7 @@ impl Cmd for ServerCmdSpawnBaseline {
             angles[i] = read_angle(reader)?;
         }
         Ok(ServerCmdSpawnBaseline {
+            ent_id,
             model_index,
             frame_index,
             color_map,
@@ -1623,6 +1626,7 @@ impl Cmd for ServerCmdSpawnBaseline {
     where
         W: WriteBytesExt,
     {
+        writer.write_u16::<LittleEndian>(self.ent_id)?;
         writer.write_u8(self.model_index)?;
         writer.write_u8(self.frame_index)?;
         writer.write_u8(self.color_map)?;

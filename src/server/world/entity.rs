@@ -20,29 +20,24 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
-use engine;
-use progs::EntityId;
-use progs::FieldDef;
-use progs::FunctionId;
-use progs::ProgsError;
-use progs::StringId;
-use progs::StringTable;
-use progs::Type;
-use world::phys::MoveKind;
+use server::progs::EntityId;
+use server::progs::FieldDef;
+use server::progs::FunctionId;
+use server::progs::ProgsError;
+use server::progs::StringId;
+use server::progs::StringTable;
+use server::progs::Type;
+use server::world::phys::MoveKind;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 use cgmath::Deg;
 use cgmath::Vector3;
-use cgmath::Zero;
-use chrono::Duration;
 use num::FromPrimitive;
 
-const MAX_ENTITIES: usize = 600;
 pub const MAX_ENT_LEAVES: usize = 16;
 
-const ADDR_DYNAMIC_START: usize = 105;
 pub const STATIC_ADDRESS_COUNT: usize = 105;
 
 #[derive(Debug)]

@@ -16,6 +16,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 extern crate cgmath;
+extern crate chrono;
 extern crate env_logger;
 extern crate log;
 extern crate nom;
@@ -32,6 +33,7 @@ use richter::server;
 use richter::world;
 
 use cgmath::Vector3;
+use chrono::Duration;
 use nom::IResult;
 
 fn main() {
@@ -110,14 +112,14 @@ fn main() {
         .get_function_id(progs::GlobalAddrFunction::StartFrame as i16)
         .unwrap();
 
-    execution_context
-        .execute_program(
+    world
+        .physics(
             &mut globals,
-            &mut world,
+            &mut execution_context,
             &mut cvars,
             &mut server,
             &pak,
-            start_frame,
+            Duration::zero(),
         )
-        .unwrap();
+        .unwrap()
 }

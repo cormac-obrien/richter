@@ -110,13 +110,13 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::rc::Rc;
 
-use console::CvarRegistry;
-use pak::Pak;
+use common::console::CvarRegistry;
+use common::pak::Pak;
 use server::Server;
-use world::FieldAddrFloat;
-use world::EntityError;
-use world::EntityTypeDef;
-use world::World;
+use server::world::FieldAddrFloat;
+use server::world::EntityError;
+use server::world::EntityTypeDef;
+use server::world::World;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;

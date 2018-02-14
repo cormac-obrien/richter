@@ -15,18 +15,51 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+pub mod progs;
+pub mod world;
+
 use std::io::Cursor;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::rc::Rc;
 
-use progs::StringId;
-use progs::StringTable;
+use self::progs::EntityId;
+use self::progs::StringId;
+use self::progs::StringTable;
 
 use byteorder::WriteBytesExt;
 
 const MAX_DATAGRAM: usize = 1024;
 const MAX_LIGHTSTYLES: usize = 64;
+
+pub enum ClientSlot {
+    Disconnected,
+    InGame(ClientInGame),
+}
+
+pub struct ClientInGame {
+    privileged: bool,
+    entity_id: EntityId,
+}
+
+bitflags! {
+    pub struct ServerFlags: i32 {
+        const EPISODE_1 =      0x0001;
+        const EPISODE_2 =      0x0002;
+        const EPISODE_3 =      0x0004;
+        const EPISODE_4 =      0x0008;
+        const NEW_UNIT =       0x0010;
+        const NEW_EPISODE =    0x0020;
+        const CROSS_TRIGGERS = 0xFF00;
+    }
+}
+
+pub struct ServerStatics {
+    client_slot_limit: usize,
+
+    client_slot_count: usize,
+    client_slots: Vec<ClientSlot>,
+}
 
 pub struct Server {
     string_table: Rc<StringTable>,

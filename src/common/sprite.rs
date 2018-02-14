@@ -18,8 +18,8 @@
 use std::io::BufReader;
 use std::io::Cursor;
 
-use engine;
-use model::SyncType;
+use common::engine;
+use common::model::SyncType;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;

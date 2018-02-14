@@ -18,36 +18,39 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub mod input;
+pub mod sound;
+
 use std::error::Error;
 use std::fmt;
 use std::io::BufReader;
 use std::net::ToSocketAddrs;
 
-use bsp;
-use model::Model;
-use net;
-use net::BlockingMode;
-use net::ClientCmd;
-use net::ClientCmdStringCmd;
-use net::ColorShift;
-use net::GameType;
-use net::IntermissionKind;
-use net::ItemFlags;
-use net::NetError;
-use net::PlayerColor;
-use net::QSocket;
-use net::ServerCmd;
-use net::ServerCmdPrint;
-use net::ServerCmdServerInfo;
-use net::SignOnStage;
-use net::connect::CONNECT_PROTOCOL_VERSION;
-use net::connect::ConnectSocket;
-use net::connect::Request;
-use net::connect::Response;
-use pak::Pak;
-use sound::AudioSource;
-use sound::Channel;
-use sound::StaticSound;
+use client::sound::AudioSource;
+use client::sound::Channel;
+use client::sound::StaticSound;
+use common::bsp;
+use common::model::Model;
+use common::net;
+use common::net::BlockingMode;
+use common::net::ClientCmd;
+use common::net::ClientCmdStringCmd;
+use common::net::ColorShift;
+use common::net::GameType;
+use common::net::IntermissionKind;
+use common::net::ItemFlags;
+use common::net::NetError;
+use common::net::PlayerColor;
+use common::net::QSocket;
+use common::net::ServerCmd;
+use common::net::ServerCmdPrint;
+use common::net::ServerCmdServerInfo;
+use common::net::SignOnStage;
+use common::net::connect::CONNECT_PROTOCOL_VERSION;
+use common::net::connect::ConnectSocket;
+use common::net::connect::Request;
+use common::net::connect::Response;
+use common::pak::Pak;
 
 use cgmath::Deg;
 use cgmath::Vector3;
@@ -367,6 +370,11 @@ impl Client {
                 }
 
                 ServerCmd::SignOnStage(signon) => self.handle_signon(signon.stage)?,
+
+                ServerCmd::SpawnBaseline(baseline) => {
+                    // TODO
+                }
+
                 ServerCmd::SpawnStaticSound(static_sound) => {
                     self.state.static_sounds.push(StaticSound::new(
                         &self.audio_endpoint,

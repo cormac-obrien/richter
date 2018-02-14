@@ -124,12 +124,14 @@ use std::fmt;
 use std::ops::Deref;
 use std::rc::Rc;
 
-use math::Hyperplane;
-use math::HyperplaneSide;
-use math::LinePlaneIntersect;
-use world::Trace;
-use world::TraceStart;
-use world::TraceEnd;
+use common::math::Hyperplane;
+use common::math::HyperplaneSide;
+use common::math::LinePlaneIntersect;
+
+// TODO: Either Trace should be moved into common or the functions requiring it should be moved into server
+use server::world::Trace;
+use server::world::TraceStart;
+use server::world::TraceEnd;
 
 use chrono::Duration;
 use cgmath::InnerSpace;

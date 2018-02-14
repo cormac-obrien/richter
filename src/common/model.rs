@@ -15,12 +15,12 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use bsp::BspModel;
-use mdl;
-use mdl::AliasModel;
-use pak::Pak;
-use sprite;
-use sprite::SpriteModel;
+use common::bsp::BspModel;
+use common::mdl;
+use common::mdl::AliasModel;
+use common::pak::Pak;
+use common::sprite;
+use common::sprite::SpriteModel;
 
 use cgmath::Vector3;
 

@@ -18,8 +18,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use net::NetError;
-
 use std::io::BufReader;
 use std::io::Cursor;
 use std::io::Error as IoError;
@@ -29,9 +27,10 @@ use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::net::UdpSocket;
 
-use net::MAX_MESSAGE;
-use net::QSocket;
-use util;
+use common::net::MAX_MESSAGE;
+use common::net::NetError;
+use common::net::QSocket;
+use common::util;
 
 use byteorder::LittleEndian;
 use byteorder::NetworkEndian;

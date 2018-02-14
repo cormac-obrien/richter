@@ -18,28 +18,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-extern crate chrono;
-extern crate env_logger;
-extern crate richter;
-
-use std::net::UdpSocket;
-
-use richter::client::Client;
-use richter::common::net::BlockingMode;
-use richter::common::pak::Pak;
-
-use chrono::Duration;
-
-fn main() {
-    env_logger::init();
-    let mut pak = Pak::new();
-    pak.add("pak0.pak").unwrap();
-    let mut client = Client::connect("127.0.0.1:26000", &pak).unwrap();
-    client
-        .parse_server_msg(BlockingMode::Timeout(Duration::milliseconds(4000)), &pak)
-        .unwrap();
-    client.send().unwrap();
-    client
-        .parse_server_msg(BlockingMode::Timeout(Duration::milliseconds(4000)), &pak)
-        .unwrap();
-}
+pub mod bsp;
+pub mod console;
+pub mod engine;
+pub mod math;
+pub mod mdl;
+pub mod model;
+pub mod net;
+pub mod pak;
+pub mod parse;
+pub mod sprite;
+pub mod util;

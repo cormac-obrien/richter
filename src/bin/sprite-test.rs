@@ -1,4 +1,4 @@
-// Copyright © 2017 Cormac O'Brien
+// Copyright © 2017 Cormac O'Brien.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this software
 // and associated documentation files (the "Software"), to deal in the Software without
@@ -15,26 +15,13 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::collections::HashSet;
-use glutin::{ElementState, VirtualKeyCode};
+extern crate env_logger;
+extern crate richter;
 
-pub struct KeyState {
-    key_states: HashSet<VirtualKeyCode>,
-}
+fn main() {
+    env_logger::init();
 
-impl KeyState {
-    pub fn new() -> Self {
-        KeyState { key_states: HashSet::new() }
-    }
-
-    pub fn is_pressed(&self, key: VirtualKeyCode) -> bool {
-        self.key_states.contains(&key)
-    }
-
-    pub fn update(&mut self, key_code: VirtualKeyCode, key_state: ElementState) {
-        match key_state {
-            ElementState::Pressed => self.key_states.insert(key_code),
-            ElementState::Released => self.key_states.remove(&key_code),
-        };
-    }
+    let mut pak = richter::pak::Pak::new();
+    pak.add("pak0.pak").unwrap();
+    let spr = richter::sprite::load(pak.open("progs/s_explod.spr").unwrap());
 }

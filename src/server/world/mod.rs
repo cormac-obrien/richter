@@ -38,34 +38,37 @@ pub use self::entity::FieldAddrFloat;
 pub use self::entity::FieldAddrFunctionId;
 pub use self::entity::FieldAddrStringId;
 pub use self::entity::FieldAddrVector;
-use self::entity::STATIC_ADDRESS_COUNT;
 
-use bsp;
-use bsp::BspCollisionHull;
-use bsp::BspLeafContents;
-use console::CvarRegistry;
-use mdl;
-use model::Model;
-use model::ModelKind;
-use pak::Pak;
-use parse;
-use progs::EntityFieldAddr;
-use progs::EntityId;
-use progs::ExecutionContext;
-use progs::FieldAddr;
-use progs::FieldDef;
-use progs::GlobalAddrEntity;
-use progs::Globals;
-use progs::ProgsError;
-use progs::StringId;
-use progs::StringTable;
-use progs::Type;
+use common::bsp;
+use common::bsp::BspCollisionHull;
+use common::bsp::BspLeafContents;
+use common::console::CvarRegistry;
+use common::engine;
+use common::mdl;
+use common::model::Model;
+use common::model::ModelKind;
+use common::pak::Pak;
+use common::parse;
+use common::sprite;
+use server::progs::EntityFieldAddr;
+use server::progs::EntityId;
+use server::progs::ExecutionContext;
+use server::progs::FieldAddr;
+use server::progs::FieldDef;
+use server::progs::GlobalAddrEntity;
+use server::progs::GlobalAddrFloat;
+use server::progs::GlobalAddrFunction;
+use server::progs::Globals;
+use server::progs::ProgsError;
+use server::progs::StringId;
+use server::progs::StringTable;
+use server::progs::Type;
 use server::Server;
-use sprite;
 
 use cgmath::InnerSpace;
 use cgmath::Vector3;
 use cgmath::Zero;
+use chrono::Duration;
 
 const AREA_DEPTH: usize = 4;
 const MAX_ENTITIES: usize = 600;
@@ -927,6 +930,89 @@ impl World {
                 Ok((hull, offset))
             }
         }
+    }
+
+    pub fn physics(
+        &mut self,
+        globals: &mut Globals,
+        execution_context: &mut ExecutionContext,
+        cvars: &mut CvarRegistry,
+        server: &mut Server,
+        pak: &Pak,
+        sv_time: Duration,
+    ) -> Result<(), ProgsError> {
+        globals.put_entity_id(
+            EntityId(0),
+            GlobalAddrEntity::Self_ as i16,
+        )?;
+        globals.put_entity_id(
+            EntityId(0),
+            GlobalAddrEntity::Other as i16,
+        )?;
+        globals.put_float(
+            engine::duration_to_f32(sv_time),
+            GlobalAddrFloat::Time as i16,
+        )?;
+        let start_frame = globals.get_function_id(
+            GlobalAddrFunction::StartFrame as i16,
+        )?;
+        execution_context.execute_program(
+            globals,
+            self,
+            cvars,
+            server,
+            pak,
+            start_frame,
+        )?;
+
+        for i in 0..self.slots.len() {
+            if let AreaEntitySlot::Vacant = self.slots[i] {
+                continue;
+            }
+
+            // check force_retouch
+            if globals.get_float(GlobalAddrFloat::ForceRetouch as i16)? != 0.0 {
+                self.link_entity(EntityId(i), true)?;
+            }
+
+            if unimplemented!() {
+                // TODO: process client entities
+            } else {
+                match self.try_get_entity(EntityId(i))?.move_kind()? {
+                    MoveKind::Push => unimplemented!(),
+                    MoveKind::None => unimplemented!(),
+                    MoveKind::NoClip => unimplemented!(),
+                    MoveKind::Step => unimplemented!(),
+
+                    // all airborne entities have the same physics
+                    _ => unimplemented!(),
+                }
+            }
+
+            match globals.get_float(GlobalAddrFloat::ForceRetouch as i16)? {
+                f if f > 0.0 => {
+                    globals.put_float(
+                        f - 1.0,
+                        GlobalAddrFloat::ForceRetouch as i16,
+                    )?
+                }
+                _ => (),
+            }
+        }
+
+        // TODO: increase sv.time by host_frametime
+        unimplemented!();
+
+        Ok(())
+    }
+
+    pub fn physics_player(
+        &mut self,
+        globals: &mut Globals,
+        server: &Server,
+        e_id: EntityId,
+    ) -> Result<(), ProgsError> {
+        unimplemented!();
     }
 
     pub fn move_entity(

@@ -20,13 +20,13 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
-use progs::EntityId;
-use progs::FieldAddr;
-use progs::FunctionId;
-use progs::GlobalDef;
-use progs::StringId;
-use progs::StringTable;
-use progs::Type;
+use server::progs::EntityId;
+use server::progs::FieldAddr;
+use server::progs::FunctionId;
+use server::progs::GlobalDef;
+use server::progs::StringId;
+use server::progs::StringTable;
+use server::progs::Type;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
@@ -36,13 +36,10 @@ use cgmath::Euler;
 use cgmath::InnerSpace;
 use cgmath::Matrix3;
 use cgmath::Vector3;
-use chrono::Duration;
 
-pub const GLOBAL_RESERVED_START: usize = 0;
 pub const GLOBAL_STATIC_START: usize = 28;
 pub const GLOBAL_DYNAMIC_START: usize = 64;
 
-pub const GLOBAL_RESERVED_COUNT: usize = GLOBAL_STATIC_START - GLOBAL_RESERVED_START;
 pub const GLOBAL_STATIC_COUNT: usize = GLOBAL_DYNAMIC_START - GLOBAL_STATIC_START;
 
 pub const GLOBAL_ADDR_NULL: usize = 0;

@@ -23,7 +23,7 @@ use std::fmt;
 use std::io::BufReader;
 use std::io::Cursor;
 
-use pak::Pak;
+use common::pak::Pak;
 
 use cgmath::Vector3;
 use rodio::Decoder;
