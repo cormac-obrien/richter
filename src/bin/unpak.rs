@@ -20,13 +20,19 @@ extern crate richter;
 #[macro_use]
 extern crate serde_derive;
 
-use docopt::Docopt;
-use richter::pak::{Pak, PakError};
 use std::env;
-use std::fs::{self, File};
-use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::fs::File;
+use std::io::BufWriter;
+use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::exit;
+
+use richter::common::pak::Pak;
+use richter::common::pak::PakError;
+
+use docopt::Docopt;
 
 #[derive(Deserialize)]
 struct Args {
@@ -52,7 +58,7 @@ Options:
 
 const VERSION: &'static str = "
 unpak 0.1
-Copyright © 2017 Cormac O'Brien
+Copyright © 2018 Cormac O'Brien
 Released under the terms of the MIT License
 ";
 
