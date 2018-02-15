@@ -20,7 +20,6 @@
 
 use std::io::BufReader;
 use std::io::Cursor;
-use std::io::Error as IoError;
 use std::io::ErrorKind;
 use std::mem::size_of;
 use std::net::SocketAddr;

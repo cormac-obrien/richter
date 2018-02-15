@@ -20,6 +20,7 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
+use common::net::EntityState;
 use server::progs::EntityId;
 use server::progs::FieldDef;
 use server::progs::FunctionId;
@@ -242,15 +243,6 @@ bitflags! {
     }
 }
 
-bitflags! {
-    pub struct EntityEffects: u16 {
-        const BRIGHT_FIELD = 0b0001;
-        const MUZZLE_FLASH = 0b0010;
-        const BRIGHT_LIGHT = 0b0100;
-        const DIM_LIGHT    = 0b1000;
-    }
-}
-
 fn float_addr(addr: usize) -> Result<FieldAddrFloat, ProgsError> {
     match FieldAddrFloat::from_usize(addr) {
         Some(f) => Ok(f),
@@ -313,32 +305,6 @@ pub enum EntitySolid {
     BBox = 2,
     SlideBox = 3,
     Bsp = 4,
-}
-
-pub struct EntityState {
-    origin: Vector3<f32>,
-    angles: Vector3<Deg<f32>>,
-    model_id: usize,
-    frame_id: usize,
-
-    // TODO: more specific types for these
-    colormap: i32,
-    skin: i32,
-    effects: i32,
-}
-
-impl EntityState {
-    pub fn uninitialized() -> EntityState {
-        EntityState {
-            origin: Vector3::new(0.0, 0.0, 0.0),
-            angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            model_id: 0,
-            frame_id: 0,
-            colormap: 0,
-            skin: 0,
-            effects: 0,
-        }
-    }
 }
 
 pub struct Entity {

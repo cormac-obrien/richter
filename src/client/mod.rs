@@ -36,15 +36,16 @@ use common::net::BlockingMode;
 use common::net::ClientCmd;
 use common::net::ClientCmdStringCmd;
 use common::net::ColorShift;
+use common::net::EntityEffects;
+use common::net::EntityState;
 use common::net::GameType;
-use common::net::IntermissionKind;
-use common::net::ItemFlags;
 use common::net::NetError;
 use common::net::PlayerColor;
 use common::net::QSocket;
 use common::net::ServerCmd;
 use common::net::ServerCmdPrint;
 use common::net::ServerCmdServerInfo;
+use common::net::ServerCmdSpawnBaseline;
 use common::net::SignOnStage;
 use common::net::connect::CONNECT_PROTOCOL_VERSION;
 use common::net::connect::ConnectSocket;
@@ -54,7 +55,6 @@ use common::pak::Pak;
 
 use cgmath::Deg;
 use cgmath::Vector3;
-use cgmath::Zero;
 use chrono::Duration;
 use rodio;
 use rodio::Endpoint;
@@ -139,27 +139,33 @@ struct ScoreboardEntry {
     // translations: [u8; VID_GRADES],
 }
 
-struct ClientEntity {
-    force_link: bool,
+pub struct ClientEntity {
+    baseline: EntityState,
 
-    // baseline: EntityState,
-    last_update: Duration,
+    // last_update: Duration,
+    // msg_origins: [Vector3<f32>; 2],
+    // origin: Vector3<f32>,
+    // msg_angles: [Vector3<Deg<f32>>; 2],
+    // angles: Vector3<Deg<f32>>,
+    // model: Option<Model>,
+    // frame: usize,
 
-    msg_origins: [Vector3<f32>; 2],
-    origin: Vector3<f32>,
+    // // TODO: make Duration?
+    // sync_base: f32,
 
-    msg_angles: [Vector3<Deg<f32>>; 2],
-    angles: Vector3<Deg<f32>>,
+    // effects: i32,
+    // skin_id: usize,
+    // vis_frame: usize,
+}
 
-    model: Option<Model>,
-    frame: usize,
+impl ClientEntity {
+    pub fn from_baseline(baseline: EntityState) -> ClientEntity {
+        ClientEntity { baseline }
+    }
 
-    // TODO: make Duration?
-    sync_base: f32,
-
-    effects: i32,
-    skin_id: usize,
-    vis_frame: usize,
+    pub fn uninitialized() -> ClientEntity {
+        ClientEntity { baseline: EntityState::uninitialized() }
+    }
 }
 
 // client information regarding the current level
@@ -172,6 +178,8 @@ struct ClientState {
 
     // ambient sounds (infinite looping, static position)
     static_sounds: Vec<StaticSound>,
+
+    entities: Vec<ClientEntity>,
 
     // move_msg_count: usize,
     // cmd: MoveCmd,
@@ -215,11 +223,13 @@ struct ClientState {
 }
 
 impl ClientState {
+    // TODO: add parameter for number of player slots and reserve them in entity list
     pub fn new(pak: &Pak) -> ClientState {
         ClientState {
             models: vec![Model::none()],
             sounds: vec![AudioSource::load(pak, "misc/null.wav").unwrap()],
             static_sounds: Vec::new(),
+            entities: Vec::new(),
         }
     }
 }
@@ -340,6 +350,67 @@ impl Client {
         Ok(())
     }
 
+    // return an error if the given entity ID does not refer to a valid entity
+    fn check_entity_id(&self, id: usize) -> Result<(), ClientError> {
+        if id == 0 {
+            return Err(ClientError::Other(String::from("entity 0 is NULL")));
+        }
+
+        if id >= self.state.entities.len() {
+            return Err(ClientError::Other(format!("invalid entity id ({})", id)));
+        }
+
+        Ok(())
+    }
+
+    /// Spawn an entity with the given ID, also spawning any uninitialized entities between the former
+    /// last entity and the new one.
+    // TODO: skipping entities may be a sign of server misbehavior. SV_CreateBaseline should send one per entity
+    pub fn spawn_entities(&mut self, baseline: ServerCmdSpawnBaseline) -> Result<(), ClientError> {
+        let id = baseline.ent_id as usize;
+
+        // don't clobber existing entities
+        if id < self.state.entities.len() {
+            return Err(ClientError::Other(format!("entity {} already exists", id)));
+        }
+
+        // spawn intermediate entities (uninitialized)
+        for i in self.state.entities.len()..id {
+            debug!("Spawning uninitialized entity with ID {}", i);
+            self.state.entities.push(ClientEntity::uninitialized());
+        }
+
+        let baseline = EntityState {
+            origin: baseline.origin,
+            angles: baseline.angles,
+            model_id: baseline.model_id as usize,
+            frame_id: baseline.frame_id as usize,
+            colormap: baseline.colormap,
+            skin_id: baseline.skin_id,
+            effects: EntityEffects::empty(),
+        };
+
+        debug!(
+            "Spawning entity with id {} from baseline {:?}",
+            id,
+            baseline
+        );
+        self.state.entities.push(
+            ClientEntity::from_baseline(baseline),
+        );
+        Ok(())
+    }
+
+    pub fn get_entity(&self, id: usize) -> Result<&ClientEntity, ClientError> {
+        self.check_entity_id(id)?;
+        Ok(&self.state.entities[id])
+    }
+
+    pub fn get_entity_mut(&mut self, id: usize) -> Result<&mut ClientEntity, ClientError> {
+        self.check_entity_id(id)?;
+        Ok(&mut self.state.entities[id])
+    }
+
     pub fn parse_server_msg(&mut self, block: BlockingMode, pak: &Pak) -> Result<(), ClientError> {
         let msg = self.qsock.recv_msg(block)?;
 
@@ -372,7 +443,7 @@ impl Client {
                 ServerCmd::SignOnStage(signon) => self.handle_signon(signon.stage)?,
 
                 ServerCmd::SpawnBaseline(baseline) => {
-                    // TODO
+                    self.spawn_entities(baseline)?;
                 }
 
                 ServerCmd::SpawnStaticSound(static_sound) => {

@@ -558,6 +558,42 @@ pub enum SignOnStage {
     Done = 4,
 }
 
+bitflags! {
+    pub struct EntityEffects: u16 {
+        const BRIGHT_FIELD = 0b0001;
+        const MUZZLE_FLASH = 0b0010;
+        const BRIGHT_LIGHT = 0b0100;
+        const DIM_LIGHT    = 0b1000;
+    }
+}
+
+#[derive(Debug)]
+pub struct EntityState {
+    pub origin: Vector3<f32>,
+    pub angles: Vector3<Deg<f32>>,
+    pub model_id: usize,
+    pub frame_id: usize,
+
+    // TODO: more specific types for these
+    pub colormap: u8,
+    pub skin_id: u8,
+    pub effects: EntityEffects,
+}
+
+impl EntityState {
+    pub fn uninitialized() -> EntityState {
+        EntityState {
+            origin: Vector3::new(0.0, 0.0, 0.0),
+            angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            model_id: 0,
+            frame_id: 0,
+            colormap: 0,
+            skin_id: 0,
+            effects: EntityEffects::empty(),
+        }
+    }
+}
+
 /// A trait for in-game server and client network commands.
 pub trait Cmd: Sized {
     /// Returns the numeric value of this command's code.
@@ -1525,10 +1561,10 @@ impl Cmd for ServerCmdDamage {
 
 #[derive(Debug)]
 pub struct ServerCmdSpawnStatic {
-    model_index: u8,
-    frame_index: u8,
-    color_map: u8,
-    skin_index: u8,
+    model_id: u8,
+    frame_id: u8,
+    colormap: u8,
+    skin_id: u8,
     origin: Vector3<f32>,
     angles: Vector3<Deg<f32>>,
 }
@@ -1542,10 +1578,10 @@ impl Cmd for ServerCmdSpawnStatic {
     where
         R: BufRead + ReadBytesExt,
     {
-        let model_index = reader.read_u8()?;
-        let frame_index = reader.read_u8()?;
-        let color_map = reader.read_u8()?;
-        let skin_index = reader.read_u8()?;
+        let model_id = reader.read_u8()?;
+        let frame_id = reader.read_u8()?;
+        let colormap = reader.read_u8()?;
+        let skin_id = reader.read_u8()?;
         let mut origin = Vector3::zero();
         let mut angles = Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0));
         for i in 0..3 {
@@ -1553,10 +1589,10 @@ impl Cmd for ServerCmdSpawnStatic {
             angles[i] = read_angle(reader)?;
         }
         Ok(ServerCmdSpawnStatic {
-            model_index,
-            frame_index,
-            color_map,
-            skin_index,
+            model_id,
+            frame_id,
+            colormap,
+            skin_id,
             origin,
             angles,
         })
@@ -1566,10 +1602,10 @@ impl Cmd for ServerCmdSpawnStatic {
     where
         W: WriteBytesExt,
     {
-        writer.write_u8(self.model_index)?;
-        writer.write_u8(self.frame_index)?;
-        writer.write_u8(self.color_map)?;
-        writer.write_u8(self.skin_index)?;
+        writer.write_u8(self.model_id)?;
+        writer.write_u8(self.frame_id)?;
+        writer.write_u8(self.colormap)?;
+        writer.write_u8(self.skin_id)?;
 
         for i in 0..3 {
             write_coord(writer, self.origin[i])?;
@@ -1582,13 +1618,13 @@ impl Cmd for ServerCmdSpawnStatic {
 
 #[derive(Debug)]
 pub struct ServerCmdSpawnBaseline {
-    ent_id: u16,
-    model_index: u8,
-    frame_index: u8,
-    color_map: u8,
-    skin_index: u8,
-    origin: Vector3<f32>,
-    angles: Vector3<Deg<f32>>,
+    pub ent_id: u16,
+    pub model_id: u8,
+    pub frame_id: u8,
+    pub colormap: u8,
+    pub skin_id: u8,
+    pub origin: Vector3<f32>,
+    pub angles: Vector3<Deg<f32>>,
 }
 
 impl Cmd for ServerCmdSpawnBaseline {
@@ -1601,10 +1637,10 @@ impl Cmd for ServerCmdSpawnBaseline {
         R: BufRead + ReadBytesExt,
     {
         let ent_id = reader.read_u16::<LittleEndian>()?;
-        let model_index = reader.read_u8()?;
-        let frame_index = reader.read_u8()?;
-        let color_map = reader.read_u8()?;
-        let skin_index = reader.read_u8()?;
+        let model_id = reader.read_u8()?;
+        let frame_id = reader.read_u8()?;
+        let colormap = reader.read_u8()?;
+        let skin_id = reader.read_u8()?;
         let mut origin = Vector3::zero();
         let mut angles = Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0));
         for i in 0..3 {
@@ -1613,10 +1649,10 @@ impl Cmd for ServerCmdSpawnBaseline {
         }
         Ok(ServerCmdSpawnBaseline {
             ent_id,
-            model_index,
-            frame_index,
-            color_map,
-            skin_index,
+            model_id,
+            frame_id,
+            colormap,
+            skin_id,
             origin,
             angles,
         })
@@ -1627,10 +1663,10 @@ impl Cmd for ServerCmdSpawnBaseline {
         W: WriteBytesExt,
     {
         writer.write_u16::<LittleEndian>(self.ent_id)?;
-        writer.write_u8(self.model_index)?;
-        writer.write_u8(self.frame_index)?;
-        writer.write_u8(self.color_map)?;
-        writer.write_u8(self.skin_index)?;
+        writer.write_u8(self.model_id)?;
+        writer.write_u8(self.frame_id)?;
+        writer.write_u8(self.colormap)?;
+        writer.write_u8(self.skin_id)?;
 
         for i in 0..3 {
             write_coord(writer, self.origin[i])?;
