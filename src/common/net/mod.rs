@@ -842,7 +842,7 @@ impl Cmd for ServerCmdSound {
 
 #[derive(Debug, PartialEq)]
 pub struct ServerCmdTime {
-    time: f32,
+    pub time: f32,
 }
 
 impl Cmd for ServerCmdTime {

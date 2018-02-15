@@ -30,6 +30,7 @@ use client::sound::AudioSource;
 use client::sound::Channel;
 use client::sound::StaticSound;
 use common::bsp;
+use common::engine;
 use common::model::Model;
 use common::net;
 use common::net::BlockingMode;
@@ -181,6 +182,11 @@ struct ClientState {
 
     entities: Vec<ClientEntity>,
 
+    // the last two timestamps sent by the server (for lerping)
+    msg_times: [Duration; 2],
+    // time: Duration,
+    // old_time: Duration,
+
     // move_msg_count: usize,
     // cmd: MoveCmd,
     // stats: [i32; MAX_STATS],
@@ -208,10 +214,6 @@ struct ClientState {
     // intermission: IntermissionKind,
     // completed_time: Duration,
 
-    // m_time: [Duration; 2],
-    // time: Duration,
-    // old_time: Duration,
-
     // last_received_message: f32,
 
     // level_name: String,
@@ -230,6 +232,7 @@ impl ClientState {
             sounds: vec![AudioSource::load(pak, "misc/null.wav").unwrap()],
             static_sounds: Vec::new(),
             entities: Vec::new(),
+            msg_times: [Duration::zero(), Duration::zero()],
         }
     }
 }
@@ -365,7 +368,8 @@ impl Client {
 
     /// Spawn an entity with the given ID, also spawning any uninitialized entities between the former
     /// last entity and the new one.
-    // TODO: skipping entities may be a sign of server misbehavior. SV_CreateBaseline should send one per entity
+    // TODO: skipping entities indicates that the entities have been freed. it may make more sense
+    // to use a HashMap to store entities by ID since the lookup table is relatively sparse.
     pub fn spawn_entities(&mut self, baseline: ServerCmdSpawnBaseline) -> Result<(), ClientError> {
         let id = baseline.ent_id as usize;
 
@@ -457,6 +461,11 @@ impl Client {
                     ));
                 }
 
+                ServerCmd::Time(time) => {
+                    self.state.msg_times[1] = self.state.msg_times[0];
+                    self.state.msg_times[0] = engine::duration_from_f32(time.time);
+                }
+
                 x => {
                     debug!("{:?}", x);
                     unimplemented!();
@@ -494,6 +503,7 @@ impl Client {
                 ));
             }
             SignOnStage::Done => {
+                debug!("Signon complete");
                 // TODO: end load screen and start render loop
             }
         }

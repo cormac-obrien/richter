@@ -42,4 +42,8 @@ fn main() {
     client
         .parse_server_msg(BlockingMode::Timeout(Duration::milliseconds(4000)), &pak)
         .unwrap();
+    client.send().unwrap();
+    client
+        .parse_server_msg(BlockingMode::Timeout(Duration::milliseconds(4000)), &pak)
+        .unwrap();
 }
