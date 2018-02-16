@@ -64,6 +64,7 @@ const PARTICLE_DIRECTION_READ_FACTOR: f32 = 1.0 / 16.0;
 const PARTICLE_DIRECTION_WRITE_FACTOR: f32 = 1.0 / PARTICLE_DIRECTION_READ_FACTOR;
 
 pub static GAME_NAME: &'static str = "QUAKE";
+pub const MAX_CLIENTS: usize = 16;
 
 #[derive(Debug)]
 pub enum NetError {
@@ -234,7 +235,7 @@ impl PlayerColor {
 impl ::std::convert::From<u8> for PlayerColor {
     fn from(src: u8) -> PlayerColor {
         PlayerColor {
-            top: src >> 4,
+            top: src << 4,
             bottom: src & 0x0F,
         }
     }
@@ -273,7 +274,7 @@ pub enum ClientStat {
 }
 
 /// Numeric codes used to identify the type of a temporary entity.
-#[derive(Debug, FromPrimitive)]
+#[derive(Debug, Eq, FromPrimitive, PartialEq)]
 pub enum TempEntityCode {
     Spike = 0,
     SuperSpike = 1,
@@ -292,7 +293,7 @@ pub enum TempEntityCode {
 }
 
 /// Information used to initialize a temporary entity that exists at a single point in space.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct TempEntityPoint {
     origin: Vector3<f32>,
 }
@@ -323,7 +324,7 @@ impl TempEntityPoint {
 }
 
 /// Information used to initialize a temporary entity that spans a line segment.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct TempEntityBeam {
     entity_id: u16,
     start: Vector3<f32>,
@@ -371,7 +372,7 @@ impl TempEntityBeam {
 }
 
 /// Information used to initialize a temporary entity representing a color-mapped explosion.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct TempEntityColorExplosion {
     origin: Vector3<f32>,
     color_start: u8,
@@ -413,7 +414,7 @@ impl TempEntityColorExplosion {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum TempEntity {
     Spike(TempEntityPoint),
     SuperSpike(TempEntityPoint),
@@ -649,1344 +650,114 @@ pub enum ServerCmdCode {
     Cutscene = 34,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdUpdateStat {
-    stat: ClientStat,
-    value: i32,
-}
-
-impl Cmd for ServerCmdUpdateStat {
-    fn code(&self) -> u8 {
-        ServerCmdCode::UpdateStat as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdUpdateStat, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let stat_id = reader.read_u8()?;
-        let stat = match ClientStat::from_u8(stat_id) {
-            Some(c) => c,
-            None => {
-                return Err(NetError::InvalidData(format!(
-                    "value for ClientStat: {}",
-                    stat_id,
-                )))
-            }
-        };
-        let value = reader.read_i32::<LittleEndian>()?;
-
-        Ok(ServerCmdUpdateStat { stat, value })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_u8(self.stat as u8)?;
-        writer.write_i32::<LittleEndian>(self.value)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdVersion {
-    version: i32,
-}
-
-impl Cmd for ServerCmdVersion {
-    fn code(&self) -> u8 {
-        ServerCmdCode::Version as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdVersion, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let version = reader.read_i32::<LittleEndian>()?;
-        Ok(ServerCmdVersion { version })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_i32::<LittleEndian>(self.version)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdSetView {
-    pub view_ent: i16,
-}
-
-impl Cmd for ServerCmdSetView {
-    fn code(&self) -> u8 {
-        ServerCmdCode::SetView as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSetView, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let view_ent = reader.read_i16::<LittleEndian>()?;
-        Ok(ServerCmdSetView { view_ent })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_i16::<LittleEndian>(self.view_ent)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct ServerCmdSound {
-    volume: Option<u8>,
-    attenuation: Option<u8>,
-    entity_id: u16,
-    channel: u8,
-    sound_id: u8,
-    position: Vector3<f32>,
-}
-
-impl Cmd for ServerCmdSound {
-    fn code(&self) -> u8 {
-        ServerCmdCode::Sound as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSound, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let flags_bits = reader.read_u8()?;
-        let flags = match SoundFlags::from_bits(flags_bits) {
-            Some(f) => f,
-            None => {
-                return Err(NetError::InvalidData(
-                    format!("SoundFlags: {:b}", flags_bits),
-                ))
-            }
-        };
-
-        let volume = match flags.contains(SoundFlags::VOLUME) {
-            true => Some(reader.read_u8()?),
-            false => None,
-        };
-
-        let attenuation = match flags.contains(SoundFlags::ATTENUATION) {
-            true => Some(reader.read_u8()?),
-            false => None,
-        };
-
-        let entity_channel = reader.read_i16::<LittleEndian>()?;
-        let entity_id = (entity_channel >> 3) as u16;
-        let channel = (entity_channel & 0b111) as u8;
-        let sound_id = reader.read_u8()?;
-        let position = Vector3::new(
-            read_coord(reader)?,
-            read_coord(reader)?,
-            read_coord(reader)?,
-        );
-
-        Ok(ServerCmdSound {
-            volume,
-            attenuation,
-            entity_id,
-            channel,
-            sound_id,
-            position,
-        })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        let mut sound_flags = SoundFlags::empty();
-
-        if self.volume.is_some() {
-            sound_flags |= SoundFlags::VOLUME;
-        }
-
-        if self.attenuation.is_some() {
-            sound_flags |= SoundFlags::ATTENUATION;
-        }
-
-        writer.write_u8(sound_flags.bits())?;
-
-        if let Some(v) = self.volume {
-            writer.write_u8(v)?;
-        }
-
-        if let Some(a) = self.attenuation {
-            writer.write_u8(a)?;
-        }
-
-        // TODO: document this better. The entity and channel fields are combined in Sound commands.
-        let ent_channel = (self.entity_id as i16) << 3 | self.channel as i16 & 0b111;
-        writer.write_i16::<LittleEndian>(ent_channel)?;
-
-        writer.write_u8(self.sound_id)?;
-
-        for component in 0..3 {
-            write_coord(writer, self.position[component])?;
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub struct ServerCmdTime {
-    pub time: f32,
-}
-
-impl Cmd for ServerCmdTime {
-    fn code(&self) -> u8 {
-        ServerCmdCode::Time as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdTime, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let time = reader.read_f32::<LittleEndian>()?;
-        Ok(ServerCmdTime { time })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_f32::<LittleEndian>(self.time)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdPrint {
-    pub text: String,
-}
-
-impl Cmd for ServerCmdPrint {
-    fn code(&self) -> u8 {
-        ServerCmdCode::Print as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdPrint, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let text = match util::read_cstring(reader) {
-            Ok(t) => t,
-            Err(e) => return Err(NetError::with_msg(format!("{}", e))),
-        };
-
-        Ok(ServerCmdPrint { text })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write(self.text.as_bytes())?;
-        writer.write_u8(0)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdStuffText {
-    text: String,
-}
-
-impl Cmd for ServerCmdStuffText {
-    fn code(&self) -> u8 {
-        ServerCmdCode::StuffText as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdStuffText, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let text = match util::read_cstring(reader) {
-            Ok(t) => t,
-            Err(e) => return Err(NetError::with_msg(format!("{}", e))),
-        };
-
-        Ok(ServerCmdStuffText { text })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write(self.text.as_bytes())?;
-        writer.write_u8(0)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct ServerCmdSetAngle {
-    angles: Vector3<Deg<f32>>,
-}
-
-impl Cmd for ServerCmdSetAngle {
-    fn code(&self) -> u8 {
-        ServerCmdCode::SetAngle as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSetAngle, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let angles = Vector3::new(
-            read_angle(reader)?,
-            read_angle(reader)?,
-            read_angle(reader)?,
-        );
-        Ok(ServerCmdSetAngle { angles })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        for i in 0..3 {
-            write_angle(writer, self.angles[i])?;
-        }
-        Ok(())
-    }
-}
-
 #[derive(Copy, Clone, Debug, Eq, FromPrimitive, PartialEq)]
 pub enum GameType {
     CoOp = 0,
     Deathmatch = 1,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdServerInfo {
-    pub protocol_version: i32,
-    pub max_clients: u8,
-    pub game_type: GameType,
-    pub message: String,
-    pub model_precache: Vec<String>,
-    pub sound_precache: Vec<String>,
-}
-
-impl Cmd for ServerCmdServerInfo {
-    fn code(&self) -> u8 {
-        ServerCmdCode::ServerInfo as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdServerInfo, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let protocol_version = reader.read_i32::<LittleEndian>()?;
-        let max_clients = reader.read_u8()?;
-        let game_type_code = reader.read_u8()?;
-        let game_type = match GameType::from_u8(game_type_code) {
-            Some(g) => g,
-            None => {
-                return Err(NetError::InvalidData(
-                    format!("Invalid game type ({})", game_type_code),
-                ))
-            }
-        };
-
-        let message = util::read_cstring(reader).unwrap();
-
-        let mut model_precache = Vec::new();
-        loop {
-            let model_name = util::read_cstring(reader).unwrap();
-            if model_name.is_empty() {
-                break;
-            }
-            model_precache.push(model_name);
-        }
-
-        let mut sound_precache = Vec::new();
-        loop {
-            let sound_name = util::read_cstring(reader).unwrap();
-            if sound_name.is_empty() {
-                break;
-            }
-            sound_precache.push(sound_name);
-        }
-
-        Ok(ServerCmdServerInfo {
-            protocol_version,
-            max_clients,
-            game_type,
-            message,
-            model_precache,
-            sound_precache,
-        })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_i32::<LittleEndian>(self.protocol_version)?;
-        writer.write_u8(self.max_clients)?;
-        writer.write_u8(self.game_type as u8)?;
-
-        writer.write(self.message.as_bytes())?;
-        writer.write_u8(0)?;
-
-        for model_name in self.model_precache.iter() {
-            writer.write(model_name.as_bytes())?;
-            writer.write_u8(0)?;
-        }
-        writer.write_u8(0)?;
-
-        for sound_name in self.sound_precache.iter() {
-            writer.write(sound_name.as_bytes())?;
-            writer.write_u8(0)?;
-        }
-        writer.write_u8(0)?;
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdLightStyle {
-    id: u8,
-    value: String,
-}
-
-impl Cmd for ServerCmdLightStyle {
-    fn code(&self) -> u8 {
-        ServerCmdCode::LightStyle as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdLightStyle, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let id = reader.read_u8()?;
-        let value = util::read_cstring(reader).unwrap();
-        Ok(ServerCmdLightStyle { id, value })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_u8(self.id)?;
-        writer.write(self.value.as_bytes())?;
-        writer.write_u8(0)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdUpdateName {
-    player_id: u8,
-    new_name: String,
-}
-
-impl Cmd for ServerCmdUpdateName {
-    fn code(&self) -> u8 {
-        ServerCmdCode::UpdateName as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdUpdateName, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let player_id = reader.read_u8()?;
-        let new_name = util::read_cstring(reader).unwrap();
-        Ok(ServerCmdUpdateName {
-            player_id,
-            new_name,
-        })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_u8(self.player_id)?;
-        writer.write(self.new_name.as_bytes())?;
-        writer.write_u8(0)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdUpdateFrags {
-    player_id: u8,
-    new_frags: i16,
-}
-
-impl Cmd for ServerCmdUpdateFrags {
-    fn code(&self) -> u8 {
-        ServerCmdCode::UpdateFrags as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdUpdateFrags, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let player_id = reader.read_u8()?;
-        let new_frags = reader.read_i16::<LittleEndian>()?;
-
-        Ok(ServerCmdUpdateFrags {
-            player_id,
-            new_frags,
-        })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_u8(self.player_id)?;
-        writer.write_i16::<LittleEndian>(self.new_frags)?;
-
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct ServerCmdClientData {
-    view_height: Option<f32>,
-    ideal_pitch: Option<Deg<f32>>,
-    punch_pitch: Option<Deg<f32>>,
-    velocity_x: Option<f32>,
-    punch_yaw: Option<Deg<f32>>,
-    velocity_y: Option<f32>,
-    punch_roll: Option<Deg<f32>>,
-    velocity_z: Option<f32>,
-    items: i32,
-    on_ground: bool,
-    in_water: bool,
-    weapon_frame: Option<u8>,
-    armor: Option<u8>,
-    weapon: Option<u8>,
-    health: i16,
-    ammo: u8,
-    ammo_shells: u8,
-    ammo_nails: u8,
-    ammo_rockets: u8,
-    ammo_cells: u8,
-    active_weapon: u8,
-}
-
-impl Cmd for ServerCmdClientData {
-    fn code(&self) -> u8 {
-        ServerCmdCode::ClientData as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdClientData, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let flags_bits = reader.read_u16::<LittleEndian>()?;
-        let flags = match ClientUpdateFlags::from_bits(flags_bits) {
-            Some(f) => f,
-            None => {
-                return Err(NetError::InvalidData(
-                    format!("client update flags: {:b}", flags_bits),
-                ))
-            }
-        };
-
-        let view_height = match flags.contains(ClientUpdateFlags::VIEW_HEIGHT) {
-            true => Some(reader.read_i8()? as f32),
-            false => None,
-        };
-
-        let ideal_pitch = match flags.contains(ClientUpdateFlags::IDEAL_PITCH) {
-            true => Some(Deg(reader.read_i8()? as f32)),
-            false => None,
-        };
-
-        let punch_pitch = match flags.contains(ClientUpdateFlags::PUNCH_PITCH) {
-            true => Some(Deg(reader.read_i8()? as f32)),
-            false => None,
-        };
-
-        let velocity_x = match flags.contains(ClientUpdateFlags::VELOCITY_X) {
-            true => Some(reader.read_i8()? as f32 * VELOCITY_READ_FACTOR),
-            false => None,
-        };
-
-        let punch_yaw = match flags.contains(ClientUpdateFlags::PUNCH_YAW) {
-            true => Some(Deg(reader.read_i8()? as f32)),
-            false => None,
-        };
-
-        let velocity_y = match flags.contains(ClientUpdateFlags::VELOCITY_Y) {
-            true => Some(reader.read_i8()? as f32 * VELOCITY_READ_FACTOR),
-            false => None,
-        };
-
-        let punch_roll = match flags.contains(ClientUpdateFlags::PUNCH_ROLL) {
-            true => Some(Deg(reader.read_i8()? as f32)),
-            false => None,
-        };
-
-        let velocity_z = match flags.contains(ClientUpdateFlags::VELOCITY_Z) {
-            true => Some(reader.read_i8()? as f32 * VELOCITY_READ_FACTOR),
-            false => None,
-        };
-
-        let items = reader.read_i32::<LittleEndian>()?;
-        let on_ground = flags.contains(ClientUpdateFlags::ON_GROUND);
-        let in_water = flags.contains(ClientUpdateFlags::IN_WATER);
-
-        let weapon_frame = match flags.contains(ClientUpdateFlags::WEAPON_FRAME) {
-            true => Some(reader.read_u8()?),
-            false => None,
-        };
-
-        let armor = match flags.contains(ClientUpdateFlags::ARMOR) {
-            true => Some(reader.read_u8()?),
-            false => None,
-        };
-
-        let weapon = match flags.contains(ClientUpdateFlags::WEAPON) {
-            true => Some(reader.read_u8()?),
-            false => None,
-        };
-
-        let health = reader.read_i16::<LittleEndian>()?;
-        let ammo = reader.read_u8()?;
-        let ammo_shells = reader.read_u8()?;
-        let ammo_nails = reader.read_u8()?;
-        let ammo_rockets = reader.read_u8()?;
-        let ammo_cells = reader.read_u8()?;
-        let active_weapon = reader.read_u8()?;
-
-        Ok(ServerCmdClientData {
-            view_height,
-            ideal_pitch,
-            punch_pitch,
-            velocity_x,
-            punch_yaw,
-            velocity_y,
-            punch_roll,
-            velocity_z,
-            items,
-            on_ground,
-            in_water,
-            weapon_frame,
-            armor,
-            weapon,
-            health,
-            ammo,
-            ammo_shells,
-            ammo_nails,
-            ammo_rockets,
-            ammo_cells,
-            active_weapon,
-        })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        let mut flags = ClientUpdateFlags::empty();
-        if self.view_height.is_some() {
-            flags |= ClientUpdateFlags::VIEW_HEIGHT;
-        }
-        if self.ideal_pitch.is_some() {
-            flags |= ClientUpdateFlags::IDEAL_PITCH;
-        }
-        if self.punch_pitch.is_some() {
-            flags |= ClientUpdateFlags::PUNCH_PITCH;
-        }
-        if self.velocity_x.is_some() {
-            flags |= ClientUpdateFlags::VELOCITY_X;
-        }
-        if self.punch_yaw.is_some() {
-            flags |= ClientUpdateFlags::PUNCH_YAW;
-        }
-        if self.velocity_y.is_some() {
-            flags |= ClientUpdateFlags::VELOCITY_Y;
-        }
-        if self.punch_roll.is_some() {
-            flags |= ClientUpdateFlags::PUNCH_ROLL;
-        }
-        if self.velocity_z.is_some() {
-            flags |= ClientUpdateFlags::VELOCITY_Z;
-        }
-
-        // items are always sent
-        flags |= ClientUpdateFlags::ITEMS;
-
-        if self.on_ground {
-            flags |= ClientUpdateFlags::ON_GROUND;
-        }
-        if self.in_water {
-            flags |= ClientUpdateFlags::IN_WATER;
-        }
-        if self.weapon_frame.is_some() {
-            flags |= ClientUpdateFlags::WEAPON_FRAME;
-        }
-        if self.armor.is_some() {
-            flags |= ClientUpdateFlags::ARMOR;
-        }
-        if self.weapon.is_some() {
-            flags |= ClientUpdateFlags::WEAPON;
-        }
-
-        // write flags
-        writer.write_u16::<LittleEndian>(flags.bits())?;
-
-        if let Some(vh) = self.view_height {
-            writer.write_u8(vh as i32 as u8)?;
-        }
-        if let Some(ip) = self.ideal_pitch {
-            writer.write_u8(ip.0 as i32 as u8)?;
-        }
-        if let Some(pp) = self.punch_pitch {
-            writer.write_u8(pp.0 as i32 as u8)?;
-        }
-        if let Some(vx) = self.velocity_x {
-            writer.write_u8((vx * VELOCITY_WRITE_FACTOR) as i32 as u8)?;
-        }
-        if let Some(py) = self.punch_yaw {
-            writer.write_u8(py.0 as i32 as u8)?;
-        }
-        if let Some(vy) = self.velocity_y {
-            writer.write_u8((vy * VELOCITY_WRITE_FACTOR) as i32 as u8)?;
-        }
-        if let Some(pr) = self.punch_roll {
-            writer.write_u8(pr.0 as i32 as u8)?;
-        }
-        if let Some(vz) = self.velocity_z {
-            writer.write_u8((vz * VELOCITY_WRITE_FACTOR) as i32 as u8)?;
-        }
-        writer.write_i32::<LittleEndian>(self.items)?;
-        if let Some(wf) = self.weapon_frame {
-            writer.write_u8(wf)?;
-        }
-        if let Some(a) = self.armor {
-            writer.write_u8(a)?;
-        }
-        if let Some(w) = self.weapon {
-            writer.write_u8(w)?;
-        }
-        writer.write_i16::<LittleEndian>(self.health)?;
-        writer.write_u8(self.ammo)?;
-        writer.write_u8(self.ammo_shells)?;
-        writer.write_u8(self.ammo_nails)?;
-        writer.write_u8(self.ammo_rockets)?;
-        writer.write_u8(self.ammo_cells)?;
-        writer.write_u8(self.active_weapon)?;
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdStopSound {
-    entity_id: u16,
-    channel: u8,
-}
-
-impl Cmd for ServerCmdStopSound {
-    fn code(&self) -> u8 {
-        ServerCmdCode::StopSound as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdStopSound, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let entity_channel = reader.read_u16::<LittleEndian>()?;
-        let entity_id = entity_channel >> 3;
-        let channel = (entity_channel & 0b111) as u8;
-
-        Ok(ServerCmdStopSound { entity_id, channel })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        let entity_channel = self.entity_id << 3 | self.channel as u16 & 0b111;
-        writer.write_u16::<LittleEndian>(entity_channel)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdUpdateColors {
-    client_id: u8,
-    colors: u8,
-}
-
-impl Cmd for ServerCmdUpdateColors {
-    fn code(&self) -> u8 {
-        ServerCmdCode::UpdateColors as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdUpdateColors, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let client_id = reader.read_u8()?;
-        let colors = reader.read_u8()?;
-        Ok(ServerCmdUpdateColors { client_id, colors })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_u8(self.client_id)?;
-        writer.write_u8(self.colors)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct ServerCmdParticle {
-    origin: Vector3<f32>,
-    direction: Vector3<f32>,
-    count: u8,
-    color: u8,
-}
-
-impl Cmd for ServerCmdParticle {
-    fn code(&self) -> u8 {
-        ServerCmdCode::Particle as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdParticle, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let mut origin = Vector3::zero();
-        for i in 0..3 {
-            origin[i] = read_coord(reader)?;
-        }
-
-        let mut direction = Vector3::zero();
-        for i in 0..3 {
-            direction[i] = reader.read_i8()? as f32 * PARTICLE_DIRECTION_READ_FACTOR;
-        }
-
-        let count = reader.read_u8()?;
-        let color = reader.read_u8()?;
-
-        Ok(ServerCmdParticle {
-            origin,
-            direction,
-            count,
-            color,
-        })
-    }
-
-    // see SV_StartParticle(),
-    // https://github.com/id-Software/Quake/blob/master/WinQuake/sv_main.c#L80-L101
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        for i in 0..3 {
-            write_coord(writer, self.origin[i])?;
-        }
-
-        for i in 0..3 {
-            writer.write_i8(match self.direction[i] *
-                PARTICLE_DIRECTION_WRITE_FACTOR {
-                d if d > ::std::i8::MAX as f32 => ::std::i8::MAX,
-                d if d < ::std::i8::MIN as f32 => ::std::i8::MIN,
-                d => d as i8,
-            })?;
-        }
-
-        writer.write_u8(self.count)?;
-        writer.write_u8(self.color)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct ServerCmdDamage {
-    armor: u8,
-    blood: u8,
-    source: Vector3<f32>,
-}
-
-impl Cmd for ServerCmdDamage {
-    fn code(&self) -> u8 {
-        ServerCmdCode::Damage as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdDamage, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let armor = reader.read_u8()?;
-        let blood = reader.read_u8()?;
-        let mut source = Vector3::zero();
-        for i in 0..3 {
-            source[i] = read_coord(reader)?;
-        }
-        Ok(ServerCmdDamage {
-            armor,
-            blood,
-            source,
-        })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_u8(self.armor)?;
-        writer.write_u8(self.blood)?;
-        for i in 0..3 {
-            write_coord(writer, self.source[i])?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct ServerCmdSpawnStatic {
-    model_id: u8,
-    frame_id: u8,
-    colormap: u8,
-    skin_id: u8,
-    origin: Vector3<f32>,
-    angles: Vector3<Deg<f32>>,
-}
-
-impl Cmd for ServerCmdSpawnStatic {
-    fn code(&self) -> u8 {
-        ServerCmdCode::SpawnStatic as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSpawnStatic, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let model_id = reader.read_u8()?;
-        let frame_id = reader.read_u8()?;
-        let colormap = reader.read_u8()?;
-        let skin_id = reader.read_u8()?;
-        let mut origin = Vector3::zero();
-        let mut angles = Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0));
-        for i in 0..3 {
-            origin[i] = read_coord(reader)?;
-            angles[i] = read_angle(reader)?;
-        }
-        Ok(ServerCmdSpawnStatic {
-            model_id,
-            frame_id,
-            colormap,
-            skin_id,
-            origin,
-            angles,
-        })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_u8(self.model_id)?;
-        writer.write_u8(self.frame_id)?;
-        writer.write_u8(self.colormap)?;
-        writer.write_u8(self.skin_id)?;
-
-        for i in 0..3 {
-            write_coord(writer, self.origin[i])?;
-            write_angle(writer, self.angles[i])?;
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct ServerCmdSpawnBaseline {
-    pub ent_id: u16,
-    pub model_id: u8,
-    pub frame_id: u8,
-    pub colormap: u8,
-    pub skin_id: u8,
-    pub origin: Vector3<f32>,
-    pub angles: Vector3<Deg<f32>>,
-}
-
-impl Cmd for ServerCmdSpawnBaseline {
-    fn code(&self) -> u8 {
-        ServerCmdCode::SpawnBaseline as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSpawnBaseline, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let ent_id = reader.read_u16::<LittleEndian>()?;
-        let model_id = reader.read_u8()?;
-        let frame_id = reader.read_u8()?;
-        let colormap = reader.read_u8()?;
-        let skin_id = reader.read_u8()?;
-        let mut origin = Vector3::zero();
-        let mut angles = Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0));
-        for i in 0..3 {
-            origin[i] = read_coord(reader)?;
-            angles[i] = read_angle(reader)?;
-        }
-        Ok(ServerCmdSpawnBaseline {
-            ent_id,
-            model_id,
-            frame_id,
-            colormap,
-            skin_id,
-            origin,
-            angles,
-        })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_u16::<LittleEndian>(self.ent_id)?;
-        writer.write_u8(self.model_id)?;
-        writer.write_u8(self.frame_id)?;
-        writer.write_u8(self.colormap)?;
-        writer.write_u8(self.skin_id)?;
-
-        for i in 0..3 {
-            write_coord(writer, self.origin[i])?;
-            write_angle(writer, self.angles[i])?;
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct ServerCmdTempEntity {
-    temp_entity: TempEntity,
-}
-
-impl Cmd for ServerCmdTempEntity {
-    fn code(&self) -> u8 {
-        ServerCmdCode::TempEntity as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdTempEntity, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let temp_entity = TempEntity::read_temp_entity(reader)?;
-        Ok(ServerCmdTempEntity { temp_entity })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        self.temp_entity.write_temp_entity(writer)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdSetPause {
-    paused: bool,
-}
-
-impl Cmd for ServerCmdSetPause {
-    fn code(&self) -> u8 {
-        ServerCmdCode::SetPause as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSetPause, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let paused = match reader.read_u8()? {
-            0 => false,
-            1 => true,
-            x => return Err(NetError::InvalidData(format!("setpause: {}", x))),
-        };
-
-        Ok(ServerCmdSetPause { paused })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_u8(match self.paused {
-            false => 0,
-            true => 1,
-        })?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdSignOnStage {
-    pub stage: SignOnStage,
-}
-
-impl Cmd for ServerCmdSignOnStage {
-    fn code(&self) -> u8 {
-        ServerCmdCode::SignOnStage as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSignOnStage, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let stage_num = reader.read_u8()?;
-        let stage = match SignOnStage::from_u8(stage_num) {
-            Some(s) => s,
-            None => {
-                return Err(NetError::InvalidData(
-                    format!("Invalid value for sign-on stage: {}", stage_num),
-                ))
-            }
-        };
-        Ok(ServerCmdSignOnStage { stage })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_u8(self.stage as u8)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdCenterPrint {
-    text: String,
-}
-
-impl Cmd for ServerCmdCenterPrint {
-    fn code(&self) -> u8 {
-        ServerCmdCode::CenterPrint as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdCenterPrint, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let text = match util::read_cstring(reader) {
-            Ok(t) => t,
-            Err(e) => return Err(NetError::with_msg(format!("{}", e))),
-        };
-
-        Ok(ServerCmdCenterPrint { text })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write(self.text.as_bytes())?;
-        writer.write_u8(0)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct ServerCmdSpawnStaticSound {
-    pub origin: Vector3<f32>,
-    pub sound_id: u8,
-    pub volume: u8,
-    pub attenuation: u8,
-}
-
-impl Cmd for ServerCmdSpawnStaticSound {
-    fn code(&self) -> u8 {
-        ServerCmdCode::SpawnStaticSound as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdSpawnStaticSound, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let mut origin = Vector3::zero();
-        for i in 0..3 {
-            origin[i] = read_coord(reader)?;
-        }
-
-        let sound_id = reader.read_u8()?;
-        let volume = reader.read_u8()?;
-        let attenuation = reader.read_u8()?;
-
-        Ok(ServerCmdSpawnStaticSound {
-            origin,
-            sound_id,
-            volume,
-            attenuation,
-        })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        for i in 0..3 {
-            write_coord(writer, self.origin[i]);
-        }
-
-        writer.write_u8(self.sound_id)?;
-        writer.write_u8(self.volume)?;
-        writer.write_u8(self.attenuation)?;
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdFinale {
-    text: String,
-}
-
-impl Cmd for ServerCmdFinale {
-    fn code(&self) -> u8 {
-        ServerCmdCode::Finale as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdFinale, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let text = match util::read_cstring(reader) {
-            Ok(t) => t,
-            Err(e) => return Err(NetError::with_msg(format!("{}", e))),
-        };
-
-        Ok(ServerCmdFinale { text })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write(self.text.as_bytes())?;
-        writer.write_u8(0)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdCdTrack {
-    track: u8,
-    loop_: u8,
-}
-
-impl Cmd for ServerCmdCdTrack {
-    fn code(&self) -> u8 {
-        ServerCmdCode::CdTrack as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdCdTrack, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let track = reader.read_u8()?;
-        let loop_ = reader.read_u8()?;
-        Ok(ServerCmdCdTrack { track, loop_ })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_u8(self.track)?;
-        writer.write_u8(self.loop_)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ServerCmdCutscene {
-    text: String,
-}
-
-impl Cmd for ServerCmdCutscene {
-    fn code(&self) -> u8 {
-        ServerCmdCode::Cutscene as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ServerCmdCutscene, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let text = match util::read_cstring(reader) {
-            Ok(t) => t,
-            Err(e) => return Err(NetError::with_msg(format!("{}", e))),
-        };
-
-        Ok(ServerCmdCutscene { text })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write(self.text.as_bytes())?;
-        writer.write_u8(0)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ServerCmd {
     Bad,
     NoOp,
     Disconnect,
-    UpdateStat(ServerCmdUpdateStat),
-    Version(ServerCmdVersion),
-    SetView(ServerCmdSetView),
-    Sound(ServerCmdSound),
-    Time(ServerCmdTime),
-    Print(ServerCmdPrint),
-    StuffText(ServerCmdStuffText),
-    SetAngle(ServerCmdSetAngle),
-    ServerInfo(ServerCmdServerInfo),
-    LightStyle(ServerCmdLightStyle),
-    UpdateName(ServerCmdUpdateName),
-    UpdateFrags(ServerCmdUpdateFrags),
-    ClientData(ServerCmdClientData),
-    StopSound(ServerCmdStopSound),
-    UpdateColors(ServerCmdUpdateColors),
-    Particle(ServerCmdParticle),
-    Damage(ServerCmdDamage),
-    SpawnStatic(ServerCmdSpawnStatic),
+    UpdateStat { stat: ClientStat, value: i32 },
+    Version { version: i32 },
+    SetView { ent_id: i16 },
+    Sound {
+        volume: Option<u8>,
+        attenuation: Option<u8>,
+        entity_id: u16,
+        channel: u8,
+        sound_id: u8,
+        position: Vector3<f32>,
+    },
+    Time { time: f32 },
+    Print { text: String },
+    StuffText { text: String },
+    SetAngle { angles: Vector3<Deg<f32>> },
+    ServerInfo {
+        protocol_version: i32,
+        max_clients: u8,
+        game_type: GameType,
+        message: String,
+        model_precache: Vec<String>,
+        sound_precache: Vec<String>,
+    },
+    LightStyle { id: u8, value: String },
+    UpdateName { player_id: u8, new_name: String },
+    UpdateFrags { player_id: u8, new_frags: i16 },
+    ClientData {
+        view_height: Option<f32>,
+        ideal_pitch: Option<Deg<f32>>,
+        punch_pitch: Option<Deg<f32>>,
+        velocity_x: Option<f32>,
+        punch_yaw: Option<Deg<f32>>,
+        velocity_y: Option<f32>,
+        punch_roll: Option<Deg<f32>>,
+        velocity_z: Option<f32>,
+        items: i32,
+        on_ground: bool,
+        in_water: bool,
+        weapon_frame: Option<u8>,
+        armor: Option<u8>,
+        weapon: Option<u8>,
+        health: i16,
+        ammo: u8,
+        ammo_shells: u8,
+        ammo_nails: u8,
+        ammo_rockets: u8,
+        ammo_cells: u8,
+        active_weapon: u8,
+    },
+    StopSound { entity_id: u16, channel: u8 },
+    UpdateColors { player_id: u8, colors: u8 },
+    Particle {
+        origin: Vector3<f32>,
+        direction: Vector3<f32>,
+        count: u8,
+        color: u8,
+    },
+    Damage {
+        armor: u8,
+        blood: u8,
+        source: Vector3<f32>,
+    },
+    SpawnStatic {
+        model_id: u8,
+        frame_id: u8,
+        colormap: u8,
+        skin_id: u8,
+        origin: Vector3<f32>,
+        angles: Vector3<Deg<f32>>,
+    },
     // SpawnBinary, // unused
-    SpawnBaseline(ServerCmdSpawnBaseline),
-    TempEntity(ServerCmdTempEntity),
-    SetPause(ServerCmdSetPause),
-    SignOnStage(ServerCmdSignOnStage),
-    CenterPrint(ServerCmdCenterPrint),
+    SpawnBaseline {
+        ent_id: u16,
+        model_id: u8,
+        frame_id: u8,
+        colormap: u8,
+        skin_id: u8,
+        origin: Vector3<f32>,
+        angles: Vector3<Deg<f32>>,
+    },
+    TempEntity { temp_entity: TempEntity },
+    SetPause { paused: bool },
+    SignOnStage { stage: SignOnStage },
+    CenterPrint { text: String },
     KilledMonster,
     FoundSecret,
-    SpawnStaticSound(ServerCmdSpawnStaticSound),
+    SpawnStaticSound {
+        origin: Vector3<f32>,
+        sound_id: u8,
+        volume: u8,
+        attenuation: u8,
+    },
     Intermission,
-    Finale(ServerCmdFinale),
-    CdTrack(ServerCmdCdTrack),
+    Finale { text: String },
+    CdTrack { track: u8, loop_: u8 },
     SellScreen,
-    Cutscene(ServerCmdCutscene),
+    Cutscene { text: String },
 }
 
 impl ServerCmd {
@@ -1995,37 +766,37 @@ impl ServerCmd {
             ServerCmd::Bad => ServerCmdCode::Bad,
             ServerCmd::NoOp => ServerCmdCode::NoOp,
             ServerCmd::Disconnect => ServerCmdCode::Disconnect,
-            ServerCmd::UpdateStat(_) => ServerCmdCode::UpdateStat,
-            ServerCmd::Version(_) => ServerCmdCode::Version,
-            ServerCmd::SetView(_) => ServerCmdCode::SetView,
-            ServerCmd::Sound(_) => ServerCmdCode::Sound,
-            ServerCmd::Time(_) => ServerCmdCode::Time,
-            ServerCmd::Print(_) => ServerCmdCode::Print,
-            ServerCmd::StuffText(_) => ServerCmdCode::StuffText,
-            ServerCmd::SetAngle(_) => ServerCmdCode::SetAngle,
-            ServerCmd::ServerInfo(_) => ServerCmdCode::ServerInfo,
-            ServerCmd::LightStyle(_) => ServerCmdCode::LightStyle,
-            ServerCmd::UpdateName(_) => ServerCmdCode::UpdateName,
-            ServerCmd::UpdateFrags(_) => ServerCmdCode::UpdateFrags,
-            ServerCmd::ClientData(_) => ServerCmdCode::ClientData,
-            ServerCmd::StopSound(_) => ServerCmdCode::StopSound,
-            ServerCmd::UpdateColors(_) => ServerCmdCode::UpdateColors,
-            ServerCmd::Particle(_) => ServerCmdCode::Particle,
-            ServerCmd::Damage(_) => ServerCmdCode::Damage,
-            ServerCmd::SpawnStatic(_) => ServerCmdCode::SpawnStatic,
-            ServerCmd::SpawnBaseline(_) => ServerCmdCode::SpawnBaseline,
-            ServerCmd::TempEntity(_) => ServerCmdCode::TempEntity,
-            ServerCmd::SetPause(_) => ServerCmdCode::SetPause,
-            ServerCmd::SignOnStage(_) => ServerCmdCode::SignOnStage,
-            ServerCmd::CenterPrint(_) => ServerCmdCode::CenterPrint,
+            ServerCmd::UpdateStat { .. } => ServerCmdCode::UpdateStat,
+            ServerCmd::Version { .. } => ServerCmdCode::Version,
+            ServerCmd::SetView { .. } => ServerCmdCode::SetView,
+            ServerCmd::Sound { .. } => ServerCmdCode::Sound,
+            ServerCmd::Time { .. } => ServerCmdCode::Time,
+            ServerCmd::Print { .. } => ServerCmdCode::Print,
+            ServerCmd::StuffText { .. } => ServerCmdCode::StuffText,
+            ServerCmd::SetAngle { .. } => ServerCmdCode::SetAngle,
+            ServerCmd::ServerInfo { .. } => ServerCmdCode::ServerInfo,
+            ServerCmd::LightStyle { .. } => ServerCmdCode::LightStyle,
+            ServerCmd::UpdateName { .. } => ServerCmdCode::UpdateName,
+            ServerCmd::UpdateFrags { .. } => ServerCmdCode::UpdateFrags,
+            ServerCmd::ClientData { .. } => ServerCmdCode::ClientData,
+            ServerCmd::StopSound { .. } => ServerCmdCode::StopSound,
+            ServerCmd::UpdateColors { .. } => ServerCmdCode::UpdateColors,
+            ServerCmd::Particle { .. } => ServerCmdCode::Particle,
+            ServerCmd::Damage { .. } => ServerCmdCode::Damage,
+            ServerCmd::SpawnStatic { .. } => ServerCmdCode::SpawnStatic,
+            ServerCmd::SpawnBaseline { .. } => ServerCmdCode::SpawnBaseline,
+            ServerCmd::TempEntity { .. } => ServerCmdCode::TempEntity,
+            ServerCmd::SetPause { .. } => ServerCmdCode::SetPause,
+            ServerCmd::SignOnStage { .. } => ServerCmdCode::SignOnStage,
+            ServerCmd::CenterPrint { .. } => ServerCmdCode::CenterPrint,
             ServerCmd::KilledMonster => ServerCmdCode::KilledMonster,
             ServerCmd::FoundSecret => ServerCmdCode::FoundSecret,
-            ServerCmd::SpawnStaticSound(_) => ServerCmdCode::SpawnStaticSound,
+            ServerCmd::SpawnStaticSound { .. } => ServerCmdCode::SpawnStaticSound,
             ServerCmd::Intermission => ServerCmdCode::Intermission,
-            ServerCmd::Finale(_) => ServerCmdCode::Finale,
-            ServerCmd::CdTrack(_) => ServerCmdCode::CdTrack,
+            ServerCmd::Finale { .. } => ServerCmdCode::Finale,
+            ServerCmd::CdTrack { .. } => ServerCmdCode::CdTrack,
             ServerCmd::SellScreen => ServerCmdCode::SellScreen,
-            ServerCmd::Cutscene(_) => ServerCmdCode::Cutscene,
+            ServerCmd::Cutscene { .. } => ServerCmdCode::Cutscene,
         };
 
         code as u8
@@ -2058,67 +829,466 @@ impl ServerCmd {
             ServerCmdCode::Bad => ServerCmd::Bad,
             ServerCmdCode::NoOp => ServerCmd::NoOp,
             ServerCmdCode::Disconnect => ServerCmd::Disconnect,
-            ServerCmdCode::UpdateStat => ServerCmd::UpdateStat(
-                ServerCmdUpdateStat::deserialize(reader)?,
-            ),
-            ServerCmdCode::Version => ServerCmd::Version(ServerCmdVersion::deserialize(reader)?),
-            ServerCmdCode::SetView => ServerCmd::SetView(ServerCmdSetView::deserialize(reader)?),
-            ServerCmdCode::Sound => ServerCmd::Sound(ServerCmdSound::deserialize(reader)?),
-            ServerCmdCode::Time => ServerCmd::Time(ServerCmdTime::deserialize(reader)?),
-            ServerCmdCode::Print => ServerCmd::Print(ServerCmdPrint::deserialize(reader)?),
-            ServerCmdCode::StuffText => ServerCmd::StuffText(
-                ServerCmdStuffText::deserialize(reader)?,
-            ),
-            ServerCmdCode::SetAngle => ServerCmd::SetAngle(ServerCmdSetAngle::deserialize(reader)?),
-            ServerCmdCode::ServerInfo => ServerCmd::ServerInfo(
-                ServerCmdServerInfo::deserialize(reader)?,
-            ),
-            ServerCmdCode::LightStyle => ServerCmd::LightStyle(
-                ServerCmdLightStyle::deserialize(reader)?,
-            ),
-            ServerCmdCode::UpdateName => ServerCmd::UpdateName(
-                ServerCmdUpdateName::deserialize(reader)?,
-            ),
-            ServerCmdCode::UpdateFrags => ServerCmd::UpdateFrags(
-                ServerCmdUpdateFrags::deserialize(reader)?,
-            ),
-            ServerCmdCode::ClientData => ServerCmd::ClientData(
-                ServerCmdClientData::deserialize(reader)?,
-            ),
-            ServerCmdCode::StopSound => ServerCmd::StopSound(
-                ServerCmdStopSound::deserialize(reader)?,
-            ),
-            ServerCmdCode::UpdateColors => ServerCmd::UpdateColors(
-                ServerCmdUpdateColors::deserialize(reader)?,
-            ),
-            ServerCmdCode::Particle => ServerCmd::Particle(ServerCmdParticle::deserialize(reader)?),
-            ServerCmdCode::Damage => ServerCmd::Damage(ServerCmdDamage::deserialize(reader)?),
-            ServerCmdCode::SpawnStatic => ServerCmd::SpawnStatic(
-                ServerCmdSpawnStatic::deserialize(reader)?,
-            ),
-            ServerCmdCode::SpawnBaseline => ServerCmd::SpawnBaseline(
-                ServerCmdSpawnBaseline::deserialize(reader)?,
-            ),
-            ServerCmdCode::TempEntity => ServerCmd::TempEntity(
-                ServerCmdTempEntity::deserialize(reader)?,
-            ),
-            ServerCmdCode::SetPause => ServerCmd::SetPause(ServerCmdSetPause::deserialize(reader)?),
-            ServerCmdCode::SignOnStage => ServerCmd::SignOnStage(
-                ServerCmdSignOnStage::deserialize(reader)?,
-            ),
-            ServerCmdCode::CenterPrint => ServerCmd::CenterPrint(
-                ServerCmdCenterPrint::deserialize(reader)?,
-            ),
+
+            ServerCmdCode::UpdateStat => {
+                let stat_id = reader.read_u8()?;
+                let stat = match ClientStat::from_u8(stat_id) {
+                    Some(c) => c,
+                    None => {
+                        return Err(NetError::InvalidData(format!(
+                            "value for ClientStat: {}",
+                            stat_id,
+                        )))
+                    }
+                };
+                let value = reader.read_i32::<LittleEndian>()?;
+
+                ServerCmd::UpdateStat { stat, value }
+            }
+
+            ServerCmdCode::Version => {
+                let version = reader.read_i32::<LittleEndian>()?;
+                ServerCmd::Version { version }
+            }
+
+            ServerCmdCode::SetView => {
+                let ent_id = reader.read_i16::<LittleEndian>()?;
+                ServerCmd::SetView { ent_id }
+            }
+
+            ServerCmdCode::Sound => {
+                let flags_bits = reader.read_u8()?;
+                let flags = match SoundFlags::from_bits(flags_bits) {
+                    Some(f) => f,
+                    None => {
+                        return Err(NetError::InvalidData(
+                            format!("SoundFlags: {:b}", flags_bits),
+                        ))
+                    }
+                };
+
+                let volume = match flags.contains(SoundFlags::VOLUME) {
+                    true => Some(reader.read_u8()?),
+                    false => None,
+                };
+
+                let attenuation = match flags.contains(SoundFlags::ATTENUATION) {
+                    true => Some(reader.read_u8()?),
+                    false => None,
+                };
+
+                let entity_channel = reader.read_i16::<LittleEndian>()?;
+                let entity_id = (entity_channel >> 3) as u16;
+                let channel = (entity_channel & 0b111) as u8;
+                let sound_id = reader.read_u8()?;
+                let position = Vector3::new(
+                    read_coord(reader)?,
+                    read_coord(reader)?,
+                    read_coord(reader)?,
+                );
+
+                ServerCmd::Sound {
+                    volume,
+                    attenuation,
+                    entity_id,
+                    channel,
+                    sound_id,
+                    position,
+                }
+            }
+
+            ServerCmdCode::Time => {
+                let time = reader.read_f32::<LittleEndian>()?;
+                ServerCmd::Time { time }
+            }
+
+            ServerCmdCode::Print => {
+                let text = match util::read_cstring(reader) {
+                    Ok(t) => t,
+                    Err(e) => return Err(NetError::with_msg(format!("{}", e))),
+                };
+
+                ServerCmd::Print { text }
+            }
+
+            ServerCmdCode::StuffText => {
+                let text = match util::read_cstring(reader) {
+                    Ok(t) => t,
+                    Err(e) => return Err(NetError::with_msg(format!("{}", e))),
+                };
+
+                ServerCmd::StuffText { text }
+            }
+
+            ServerCmdCode::SetAngle => {
+                let angles = Vector3::new(
+                    read_angle(reader)?,
+                    read_angle(reader)?,
+                    read_angle(reader)?,
+                );
+
+                ServerCmd::SetAngle { angles }
+            }
+
+            ServerCmdCode::ServerInfo => {
+                let protocol_version = reader.read_i32::<LittleEndian>()?;
+                let max_clients = reader.read_u8()?;
+                let game_type_code = reader.read_u8()?;
+                let game_type = match GameType::from_u8(game_type_code) {
+                    Some(g) => g,
+                    None => {
+                        return Err(NetError::InvalidData(
+                            format!("Invalid game type ({})", game_type_code),
+                        ))
+                    }
+                };
+
+                let message = util::read_cstring(reader).unwrap();
+
+                let mut model_precache = Vec::new();
+                loop {
+                    let model_name = util::read_cstring(reader).unwrap();
+                    if model_name.is_empty() {
+                        break;
+                    }
+                    model_precache.push(model_name);
+                }
+
+                let mut sound_precache = Vec::new();
+                loop {
+                    let sound_name = util::read_cstring(reader).unwrap();
+                    if sound_name.is_empty() {
+                        break;
+                    }
+                    sound_precache.push(sound_name);
+                }
+
+                ServerCmd::ServerInfo {
+                    protocol_version,
+                    max_clients,
+                    game_type,
+                    message,
+                    model_precache,
+                    sound_precache,
+                }
+            }
+
+            ServerCmdCode::LightStyle => {
+                let id = reader.read_u8()?;
+                let value = util::read_cstring(reader).unwrap();
+                ServerCmd::LightStyle { id, value }
+            }
+
+            ServerCmdCode::UpdateName => {
+                let player_id = reader.read_u8()?;
+                let new_name = util::read_cstring(reader).unwrap();
+                ServerCmd::UpdateName {
+                    player_id,
+                    new_name,
+                }
+            }
+
+            ServerCmdCode::UpdateFrags => {
+                let player_id = reader.read_u8()?;
+                let new_frags = reader.read_i16::<LittleEndian>()?;
+
+                ServerCmd::UpdateFrags {
+                    player_id,
+                    new_frags,
+                }
+            }
+
+            ServerCmdCode::ClientData => {
+                let flags_bits = reader.read_u16::<LittleEndian>()?;
+                let flags = match ClientUpdateFlags::from_bits(flags_bits) {
+                    Some(f) => f,
+                    None => {
+                        return Err(NetError::InvalidData(
+                            format!("client update flags: {:b}", flags_bits),
+                        ))
+                    }
+                };
+
+                let view_height = match flags.contains(ClientUpdateFlags::VIEW_HEIGHT) {
+                    true => Some(reader.read_i8()? as f32),
+                    false => None,
+                };
+
+                let ideal_pitch = match flags.contains(ClientUpdateFlags::IDEAL_PITCH) {
+                    true => Some(Deg(reader.read_i8()? as f32)),
+                    false => None,
+                };
+
+                let punch_pitch = match flags.contains(ClientUpdateFlags::PUNCH_PITCH) {
+                    true => Some(Deg(reader.read_i8()? as f32)),
+                    false => None,
+                };
+
+                let velocity_x = match flags.contains(ClientUpdateFlags::VELOCITY_X) {
+                    true => Some(reader.read_i8()? as f32 * VELOCITY_READ_FACTOR),
+                    false => None,
+                };
+
+                let punch_yaw = match flags.contains(ClientUpdateFlags::PUNCH_YAW) {
+                    true => Some(Deg(reader.read_i8()? as f32)),
+                    false => None,
+                };
+
+                let velocity_y = match flags.contains(ClientUpdateFlags::VELOCITY_Y) {
+                    true => Some(reader.read_i8()? as f32 * VELOCITY_READ_FACTOR),
+                    false => None,
+                };
+
+                let punch_roll = match flags.contains(ClientUpdateFlags::PUNCH_ROLL) {
+                    true => Some(Deg(reader.read_i8()? as f32)),
+                    false => None,
+                };
+
+                let velocity_z = match flags.contains(ClientUpdateFlags::VELOCITY_Z) {
+                    true => Some(reader.read_i8()? as f32 * VELOCITY_READ_FACTOR),
+                    false => None,
+                };
+
+                let items = reader.read_i32::<LittleEndian>()?;
+                let on_ground = flags.contains(ClientUpdateFlags::ON_GROUND);
+                let in_water = flags.contains(ClientUpdateFlags::IN_WATER);
+
+                let weapon_frame = match flags.contains(ClientUpdateFlags::WEAPON_FRAME) {
+                    true => Some(reader.read_u8()?),
+                    false => None,
+                };
+
+                let armor = match flags.contains(ClientUpdateFlags::ARMOR) {
+                    true => Some(reader.read_u8()?),
+                    false => None,
+                };
+
+                let weapon = match flags.contains(ClientUpdateFlags::WEAPON) {
+                    true => Some(reader.read_u8()?),
+                    false => None,
+                };
+
+                let health = reader.read_i16::<LittleEndian>()?;
+                let ammo = reader.read_u8()?;
+                let ammo_shells = reader.read_u8()?;
+                let ammo_nails = reader.read_u8()?;
+                let ammo_rockets = reader.read_u8()?;
+                let ammo_cells = reader.read_u8()?;
+                let active_weapon = reader.read_u8()?;
+
+                ServerCmd::ClientData {
+                    view_height,
+                    ideal_pitch,
+                    punch_pitch,
+                    velocity_x,
+                    punch_yaw,
+                    velocity_y,
+                    punch_roll,
+                    velocity_z,
+                    items,
+                    on_ground,
+                    in_water,
+                    weapon_frame,
+                    armor,
+                    weapon,
+                    health,
+                    ammo,
+                    ammo_shells,
+                    ammo_nails,
+                    ammo_rockets,
+                    ammo_cells,
+                    active_weapon,
+                }
+            }
+
+            ServerCmdCode::StopSound => {
+                let entity_channel = reader.read_u16::<LittleEndian>()?;
+                let entity_id = entity_channel >> 3;
+                let channel = (entity_channel & 0b111) as u8;
+
+                ServerCmd::StopSound { entity_id, channel }
+            }
+
+            ServerCmdCode::UpdateColors => {
+                let player_id = reader.read_u8()?;
+                let colors = reader.read_u8()?;
+
+                ServerCmd::UpdateColors { player_id, colors }
+            }
+
+            ServerCmdCode::Particle => {
+                let mut origin = Vector3::zero();
+                for i in 0..3 {
+                    origin[i] = read_coord(reader)?;
+                }
+
+                let mut direction = Vector3::zero();
+                for i in 0..3 {
+                    direction[i] = reader.read_i8()? as f32 * PARTICLE_DIRECTION_READ_FACTOR;
+                }
+
+                let count = reader.read_u8()?;
+                let color = reader.read_u8()?;
+
+                ServerCmd::Particle {
+                    origin,
+                    direction,
+                    count,
+                    color,
+                }
+            }
+
+            ServerCmdCode::Damage => {
+                let armor = reader.read_u8()?;
+                let blood = reader.read_u8()?;
+                let mut source = Vector3::zero();
+
+                for i in 0..3 {
+                    source[i] = read_coord(reader)?;
+                }
+
+                ServerCmd::Damage {
+                    armor,
+                    blood,
+                    source,
+                }
+            }
+
+            ServerCmdCode::SpawnStatic => {
+                let model_id = reader.read_u8()?;
+                let frame_id = reader.read_u8()?;
+                let colormap = reader.read_u8()?;
+                let skin_id = reader.read_u8()?;
+
+                let mut origin = Vector3::zero();
+                let mut angles = Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0));
+                for i in 0..3 {
+                    origin[i] = read_coord(reader)?;
+                    angles[i] = read_angle(reader)?;
+                }
+
+                ServerCmd::SpawnStatic {
+                    model_id,
+                    frame_id,
+                    colormap,
+                    skin_id,
+                    origin,
+                    angles,
+                }
+            }
+
+            ServerCmdCode::SpawnBaseline => {
+                let ent_id = reader.read_u16::<LittleEndian>()?;
+                let model_id = reader.read_u8()?;
+                let frame_id = reader.read_u8()?;
+                let colormap = reader.read_u8()?;
+                let skin_id = reader.read_u8()?;
+
+                let mut origin = Vector3::zero();
+                let mut angles = Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0));
+                for i in 0..3 {
+                    origin[i] = read_coord(reader)?;
+                    angles[i] = read_angle(reader)?;
+                }
+
+                ServerCmd::SpawnBaseline {
+                    ent_id,
+                    model_id,
+                    frame_id,
+                    colormap,
+                    skin_id,
+                    origin,
+                    angles,
+                }
+            }
+
+            ServerCmdCode::TempEntity => {
+                let temp_entity = TempEntity::read_temp_entity(reader)?;
+
+                ServerCmd::TempEntity { temp_entity }
+            }
+
+            ServerCmdCode::SetPause => {
+                let paused = match reader.read_u8()? {
+                    0 => false,
+                    1 => true,
+                    x => return Err(NetError::InvalidData(format!("setpause: {}", x))),
+                };
+
+                ServerCmd::SetPause { paused }
+            }
+
+            ServerCmdCode::SignOnStage => {
+                let stage_num = reader.read_u8()?;
+                let stage = match SignOnStage::from_u8(stage_num) {
+                    Some(s) => s,
+                    None => {
+                        return Err(NetError::InvalidData(
+                            format!("Invalid value for sign-on stage: {}", stage_num),
+                        ))
+                    }
+                };
+
+                ServerCmd::SignOnStage { stage }
+            }
+
+            ServerCmdCode::CenterPrint => {
+                let text = match util::read_cstring(reader) {
+                    Ok(t) => t,
+                    Err(e) => return Err(NetError::with_msg(format!("{}", e))),
+                };
+
+                ServerCmd::CenterPrint { text }
+            }
+
             ServerCmdCode::KilledMonster => ServerCmd::KilledMonster,
             ServerCmdCode::FoundSecret => ServerCmd::FoundSecret,
-            ServerCmdCode::SpawnStaticSound => ServerCmd::SpawnStaticSound(
-                ServerCmdSpawnStaticSound::deserialize(reader)?,
-            ),
+
+            ServerCmdCode::SpawnStaticSound => {
+                let mut origin = Vector3::zero();
+                for i in 0..3 {
+                    origin[i] = read_coord(reader)?;
+                }
+
+                let sound_id = reader.read_u8()?;
+                let volume = reader.read_u8()?;
+                let attenuation = reader.read_u8()?;
+
+                ServerCmd::SpawnStaticSound {
+                    origin,
+                    sound_id,
+                    volume,
+                    attenuation,
+                }
+            }
+
             ServerCmdCode::Intermission => ServerCmd::Intermission,
-            ServerCmdCode::Finale => ServerCmd::Finale(ServerCmdFinale::deserialize(reader)?),
-            ServerCmdCode::CdTrack => ServerCmd::CdTrack(ServerCmdCdTrack::deserialize(reader)?),
+
+            ServerCmdCode::Finale => {
+                let text = match util::read_cstring(reader) {
+                    Ok(t) => t,
+                    Err(e) => return Err(NetError::with_msg(format!("{}", e))),
+                };
+
+                ServerCmd::Finale { text }
+            }
+
+            ServerCmdCode::CdTrack => {
+                let track = reader.read_u8()?;
+                let loop_ = reader.read_u8()?;
+                ServerCmd::CdTrack { track, loop_ }
+            }
+
             ServerCmdCode::SellScreen => ServerCmd::SellScreen,
-            ServerCmdCode::Cutscene => ServerCmd::Cutscene(ServerCmdCutscene::deserialize(reader)?),
+
+            ServerCmdCode::Cutscene => {
+                let text = match util::read_cstring(reader) {
+                    Ok(t) => t,
+                    Err(e) => return Err(NetError::with_msg(format!("{}", e))),
+                };
+
+                ServerCmd::Cutscene { text }
+            }
         };
 
         Ok(Some(cmd))
@@ -2128,135 +1298,388 @@ impl ServerCmd {
     where
         W: WriteBytesExt,
     {
+        writer.write_u8(self.code())?;
+
         match *self {
-            ServerCmd::Bad => {
-                writer.write_u8(self.code())?;
+            ServerCmd::Bad | ServerCmd::NoOp | ServerCmd::Disconnect => (),
+
+            ServerCmd::UpdateStat { stat, value } => {
+                writer.write_u8(stat as u8)?;
+                writer.write_i32::<LittleEndian>(value)?;
             }
-            ServerCmd::NoOp => {
-                writer.write_u8(self.code())?;
+
+            ServerCmd::Version { version } => {
+                writer.write_i32::<LittleEndian>(version)?;
             }
-            ServerCmd::Disconnect => {
-                writer.write_u8(self.code())?;
+
+            ServerCmd::SetView { ent_id } => {
+                writer.write_i16::<LittleEndian>(ent_id)?;
             }
-            ServerCmd::UpdateStat(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::Sound {
+                volume,
+                attenuation,
+                entity_id,
+                channel,
+                sound_id,
+                position,
+            } => {
+                let mut sound_flags = SoundFlags::empty();
+
+                if volume.is_some() {
+                    sound_flags |= SoundFlags::VOLUME;
+                }
+
+                if attenuation.is_some() {
+                    sound_flags |= SoundFlags::ATTENUATION;
+                }
+
+                writer.write_u8(sound_flags.bits())?;
+
+                if let Some(v) = volume {
+                    writer.write_u8(v)?;
+                }
+
+                if let Some(a) = attenuation {
+                    writer.write_u8(a)?;
+                }
+
+                // TODO: document this better. The entity and channel fields are combined in Sound commands.
+                let ent_channel = (entity_id as i16) << 3 | channel as i16 & 0b111;
+                writer.write_i16::<LittleEndian>(ent_channel)?;
+
+                writer.write_u8(sound_id)?;
+
+                for component in 0..3 {
+                    write_coord(writer, position[component])?;
+                }
             }
-            ServerCmd::Version(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::Time { time } => {
+                writer.write_f32::<LittleEndian>(time)?;
             }
-            ServerCmd::SetView(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::Print { ref text } => {
+                writer.write(text.as_bytes())?;
+                writer.write_u8(0)?;
             }
-            ServerCmd::Sound(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::StuffText { ref text } => {
+                writer.write(text.as_bytes())?;
+                writer.write_u8(0)?;
             }
-            ServerCmd::Time(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::SetAngle { angles } => {
+                for i in 0..3 {
+                    write_angle(writer, angles[i])?;
+                }
             }
-            ServerCmd::Print(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::ServerInfo {
+                protocol_version,
+                max_clients,
+                game_type,
+                ref message,
+                ref model_precache,
+                ref sound_precache,
+            } => {
+                writer.write_i32::<LittleEndian>(protocol_version)?;
+                writer.write_u8(max_clients)?;
+                writer.write_u8(game_type as u8)?;
+
+                writer.write(message.as_bytes())?;
+                writer.write_u8(0)?;
+
+                for model_name in model_precache.iter() {
+                    writer.write(model_name.as_bytes())?;
+                    writer.write_u8(0)?;
+                }
+                writer.write_u8(0)?;
+
+                for sound_name in sound_precache.iter() {
+                    writer.write(sound_name.as_bytes())?;
+                    writer.write_u8(0)?;
+                }
+                writer.write_u8(0)?;
             }
-            ServerCmd::StuffText(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::LightStyle { id, ref value } => {
+                writer.write_u8(id)?;
+                writer.write(value.as_bytes())?;
+                writer.write_u8(0)?;
             }
-            ServerCmd::SetAngle(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::UpdateName {
+                player_id,
+                ref new_name,
+            } => {
+                writer.write_u8(player_id)?;
+                writer.write(new_name.as_bytes())?;
+                writer.write_u8(0)?;
             }
-            ServerCmd::ServerInfo(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::UpdateFrags {
+                player_id,
+                new_frags,
+            } => {
+                writer.write_u8(player_id)?;
+                writer.write_i16::<LittleEndian>(new_frags)?;
             }
-            ServerCmd::LightStyle(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::ClientData {
+                view_height,
+                ideal_pitch,
+                punch_pitch,
+                velocity_x,
+                punch_yaw,
+                velocity_y,
+                punch_roll,
+                velocity_z,
+                items,
+                on_ground,
+                in_water,
+                weapon_frame,
+                armor,
+                weapon,
+                health,
+                ammo,
+                ammo_shells,
+                ammo_nails,
+                ammo_rockets,
+                ammo_cells,
+                active_weapon,
+            } => {
+                let mut flags = ClientUpdateFlags::empty();
+                if view_height.is_some() {
+                    flags |= ClientUpdateFlags::VIEW_HEIGHT;
+                }
+                if ideal_pitch.is_some() {
+                    flags |= ClientUpdateFlags::IDEAL_PITCH;
+                }
+                if punch_pitch.is_some() {
+                    flags |= ClientUpdateFlags::PUNCH_PITCH;
+                }
+                if velocity_x.is_some() {
+                    flags |= ClientUpdateFlags::VELOCITY_X;
+                }
+                if punch_yaw.is_some() {
+                    flags |= ClientUpdateFlags::PUNCH_YAW;
+                }
+                if velocity_y.is_some() {
+                    flags |= ClientUpdateFlags::VELOCITY_Y;
+                }
+                if punch_roll.is_some() {
+                    flags |= ClientUpdateFlags::PUNCH_ROLL;
+                }
+                if velocity_z.is_some() {
+                    flags |= ClientUpdateFlags::VELOCITY_Z;
+                }
+
+                // items are always sent
+                flags |= ClientUpdateFlags::ITEMS;
+
+                if on_ground {
+                    flags |= ClientUpdateFlags::ON_GROUND;
+                }
+                if in_water {
+                    flags |= ClientUpdateFlags::IN_WATER;
+                }
+                if weapon_frame.is_some() {
+                    flags |= ClientUpdateFlags::WEAPON_FRAME;
+                }
+                if armor.is_some() {
+                    flags |= ClientUpdateFlags::ARMOR;
+                }
+                if weapon.is_some() {
+                    flags |= ClientUpdateFlags::WEAPON;
+                }
+
+                // write flags
+                writer.write_u16::<LittleEndian>(flags.bits())?;
+
+                if let Some(vh) = view_height {
+                    writer.write_u8(vh as i32 as u8)?;
+                }
+                if let Some(ip) = ideal_pitch {
+                    writer.write_u8(ip.0 as i32 as u8)?;
+                }
+                if let Some(pp) = punch_pitch {
+                    writer.write_u8(pp.0 as i32 as u8)?;
+                }
+                if let Some(vx) = velocity_x {
+                    writer.write_u8((vx * VELOCITY_WRITE_FACTOR) as i32 as u8)?;
+                }
+                if let Some(py) = punch_yaw {
+                    writer.write_u8(py.0 as i32 as u8)?;
+                }
+                if let Some(vy) = velocity_y {
+                    writer.write_u8((vy * VELOCITY_WRITE_FACTOR) as i32 as u8)?;
+                }
+                if let Some(pr) = punch_roll {
+                    writer.write_u8(pr.0 as i32 as u8)?;
+                }
+                if let Some(vz) = velocity_z {
+                    writer.write_u8((vz * VELOCITY_WRITE_FACTOR) as i32 as u8)?;
+                }
+                writer.write_i32::<LittleEndian>(items)?;
+                if let Some(wf) = weapon_frame {
+                    writer.write_u8(wf)?;
+                }
+                if let Some(a) = armor {
+                    writer.write_u8(a)?;
+                }
+                if let Some(w) = weapon {
+                    writer.write_u8(w)?;
+                }
+                writer.write_i16::<LittleEndian>(health)?;
+                writer.write_u8(ammo)?;
+                writer.write_u8(ammo_shells)?;
+                writer.write_u8(ammo_nails)?;
+                writer.write_u8(ammo_rockets)?;
+                writer.write_u8(ammo_cells)?;
+                writer.write_u8(active_weapon)?;
             }
-            ServerCmd::UpdateName(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::StopSound { entity_id, channel } => {
+                let entity_channel = entity_id << 3 | channel as u16 & 0b111;
+                writer.write_u16::<LittleEndian>(entity_channel)?;
             }
-            ServerCmd::UpdateFrags(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::UpdateColors { player_id, colors } => {
+                writer.write_u8(player_id)?;
+                writer.write_u8(colors)?;
             }
-            ServerCmd::ClientData(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::Particle {
+                origin,
+                direction,
+                count,
+                color,
+            } => {
+                for i in 0..3 {
+                    write_coord(writer, origin[i])?;
+                }
+
+                for i in 0..3 {
+                    writer.write_i8(
+                        match direction[i] * PARTICLE_DIRECTION_WRITE_FACTOR {
+                            d if d > ::std::i8::MAX as f32 => ::std::i8::MAX,
+                            d if d < ::std::i8::MIN as f32 => ::std::i8::MIN,
+                            d => d as i8,
+                        },
+                    )?;
+                }
+
+                writer.write_u8(count)?;
+                writer.write_u8(color)?;
             }
-            ServerCmd::StopSound(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::Damage {
+                armor,
+                blood,
+                source,
+            } => {
+                writer.write_u8(armor)?;
+                writer.write_u8(blood)?;
+                for i in 0..3 {
+                    write_coord(writer, source[i])?;
+                }
             }
-            ServerCmd::UpdateColors(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::SpawnStatic {
+                model_id,
+                frame_id,
+                colormap,
+                skin_id,
+                origin,
+                angles,
+            } => {
+                writer.write_u8(model_id)?;
+                writer.write_u8(frame_id)?;
+                writer.write_u8(colormap)?;
+                writer.write_u8(skin_id)?;
+
+                for i in 0..3 {
+                    write_coord(writer, origin[i])?;
+                    write_angle(writer, angles[i])?;
+                }
             }
-            ServerCmd::Particle(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::SpawnBaseline {
+                ent_id,
+                model_id,
+                frame_id,
+                colormap,
+                skin_id,
+                origin,
+                angles,
+            } => {
+                writer.write_u16::<LittleEndian>(ent_id)?;
+                writer.write_u8(model_id)?;
+                writer.write_u8(frame_id)?;
+                writer.write_u8(colormap)?;
+                writer.write_u8(skin_id)?;
+
+                for i in 0..3 {
+                    write_coord(writer, origin[i])?;
+                    write_angle(writer, angles[i])?;
+                }
             }
-            ServerCmd::Damage(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::TempEntity { ref temp_entity } => {
+                temp_entity.write_temp_entity(writer)?;
             }
-            ServerCmd::SpawnStatic(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::SetPause { paused } => {
+                writer.write_u8(match paused {
+                    false => 0,
+                    true => 1,
+                })?;
             }
-            ServerCmd::SpawnBaseline(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::SignOnStage { stage } => {
+                writer.write_u8(stage as u8)?;
             }
-            ServerCmd::TempEntity(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::CenterPrint { ref text } => {
+                writer.write(text.as_bytes())?;
+                writer.write_u8(0)?;
             }
-            ServerCmd::SetPause(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::KilledMonster | ServerCmd::FoundSecret => (),
+
+            ServerCmd::SpawnStaticSound {
+                origin,
+                sound_id,
+                volume,
+                attenuation,
+            } => {
+                for i in 0..3 {
+                    write_coord(writer, origin[i]);
+                }
+
+                writer.write_u8(sound_id)?;
+                writer.write_u8(volume)?;
+                writer.write_u8(attenuation)?;
             }
-            ServerCmd::SignOnStage(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::Intermission => (),
+
+            ServerCmd::Finale { ref text } => {
+                writer.write(text.as_bytes())?;
+                writer.write_u8(0)?;
             }
-            ServerCmd::CenterPrint(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::CdTrack { track, loop_ } => {
+                writer.write_u8(track)?;
+                writer.write_u8(loop_)?;
             }
-            ServerCmd::KilledMonster => {
-                writer.write_u8(self.code())?;
-            }
-            ServerCmd::FoundSecret => {
-                writer.write_u8(self.code())?;
-            }
-            ServerCmd::SpawnStaticSound(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
-            }
-            ServerCmd::Intermission => {
-                writer.write_u8(self.code())?;
-            }
-            ServerCmd::Finale(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
-            }
-            ServerCmd::CdTrack(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
-            }
-            ServerCmd::SellScreen => {
-                writer.write_u8(self.code())?;
-            }
-            ServerCmd::Cutscene(ref sc) => {
-                writer.write_u8(self.code())?;
-                sc.serialize(writer)?;
+
+            ServerCmd::SellScreen => (),
+
+            ServerCmd::Cutscene { ref text } => {
+                writer.write(text.as_bytes())?;
+                writer.write_u8(0)?;
             }
         }
 
@@ -2816,7 +2239,7 @@ mod test {
 
     #[test]
     fn test_server_cmd_update_stat_read_write_eq() {
-        let src = ServerCmdUpdateStat {
+        let src = ServerCmd::UpdateStat {
             stat: ClientStat::Nails,
             value: 64,
         };
@@ -2824,74 +2247,74 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdUpdateStat::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_version_read_write_eq() {
-        let src = ServerCmdVersion { version: 42 };
+        let src = ServerCmd::Version { version: 42 };
 
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdVersion::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_set_view_read_write_eq() {
-        let src = ServerCmdSetView { view_ent: 17 };
+        let src = ServerCmd::SetView { ent_id: 17 };
 
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdSetView::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_time_read_write_eq() {
-        let src = ServerCmdTime { time: 23.07 };
+        let src = ServerCmd::Time { time: 23.07 };
 
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdTime::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_print_read_write_eq() {
-        let src = ServerCmdPrint { text: String::from("print test") };
+        let src = ServerCmd::Print { text: String::from("print test") };
 
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdPrint::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_stuff_text_read_write_eq() {
-        let src = ServerCmdStuffText { text: String::from("stufftext test") };
+        let src = ServerCmd::StuffText { text: String::from("stufftext test") };
 
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdStuffText::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_server_info_read_write_eq() {
-        let src = ServerCmdServerInfo {
+        let src = ServerCmd::ServerInfo {
             protocol_version: 42,
             max_clients: 16,
             game_type: GameType::Deathmatch,
@@ -2903,14 +2326,14 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdServerInfo::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_light_style_read_write_eq() {
-        let src = ServerCmdLightStyle {
+        let src = ServerCmd::LightStyle {
             id: 11,
             value: String::from("aaaaabcddeefgghjjjkaaaazzzzyxwaaaba"),
         };
@@ -2918,14 +2341,14 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdLightStyle::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_update_name_read_write_eq() {
-        let src = ServerCmdUpdateName {
+        let src = ServerCmd::UpdateName {
             player_id: 7,
             new_name: String::from("newname"),
         };
@@ -2933,14 +2356,14 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdUpdateName::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_update_frags_read_write_eq() {
-        let src = ServerCmdUpdateFrags {
+        let src = ServerCmd::UpdateFrags {
             player_id: 7,
             new_frags: 11,
         };
@@ -2948,14 +2371,14 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdUpdateFrags::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_stop_sound_read_write_eq() {
-        let src = ServerCmdStopSound {
+        let src = ServerCmd::StopSound {
             entity_id: 17,
             channel: 3,
         };
@@ -2963,88 +2386,88 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdStopSound::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_update_colors_read_write_eq() {
-        let src = ServerCmdUpdateColors {
-            client_id: 11,
+        let src = ServerCmd::UpdateColors {
+            player_id: 11,
             colors: 0x73,
         };
 
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdUpdateColors::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_set_pause_read_write_eq() {
-        let src = ServerCmdSetPause { paused: true };
+        let src = ServerCmd::SetPause { paused: true };
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdSetPause::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_sign_on_stage_read_write_eq() {
-        let src = ServerCmdSignOnStage { stage: SignOnStage::Begin };
+        let src = ServerCmd::SignOnStage { stage: SignOnStage::Begin };
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdSignOnStage::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_center_print_read_write_eq() {
-        let src = ServerCmdCenterPrint { text: String::from("Center print test") };
+        let src = ServerCmd::CenterPrint { text: String::from("Center print test") };
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdCenterPrint::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_finale_read_write_eq() {
-        let src = ServerCmdFinale { text: String::from("Finale test") };
+        let src = ServerCmd::Finale { text: String::from("Finale test") };
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdFinale::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_cd_track_read_write_eq() {
-        let src = ServerCmdCdTrack { track: 5, loop_: 1 };
+        let src = ServerCmd::CdTrack { track: 5, loop_: 1 };
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdCdTrack::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }
 
     #[test]
     fn test_server_cmd_cutscene_read_write_eq() {
-        let src = ServerCmdCutscene { text: String::from("Cutscene test") };
+        let src = ServerCmd::Cutscene { text: String::from("Cutscene test") };
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmdCutscene::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }

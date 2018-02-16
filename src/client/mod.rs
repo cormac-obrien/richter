@@ -44,9 +44,6 @@ use common::net::NetError;
 use common::net::PlayerColor;
 use common::net::QSocket;
 use common::net::ServerCmd;
-use common::net::ServerCmdPrint;
-use common::net::ServerCmdServerInfo;
-use common::net::ServerCmdSpawnBaseline;
 use common::net::SignOnStage;
 use common::net::connect::CONNECT_PROTOCOL_VERSION;
 use common::net::connect::ConnectSocket;
@@ -132,7 +129,7 @@ struct ClientView {
     view_height: f32,
 }
 
-struct ScoreboardEntry {
+struct PlayerInfo {
     name: String,
     join_time: Duration,
     frags: i32,
@@ -181,6 +178,9 @@ struct ClientState {
     static_sounds: Vec<StaticSound>,
 
     entities: Vec<ClientEntity>,
+
+    max_players: usize,
+    player_info: [Option<PlayerInfo>; net::MAX_CLIENTS],
 
     // the last two timestamps sent by the server (for lerping)
     msg_times: [Duration; 2],
@@ -232,6 +232,26 @@ impl ClientState {
             sounds: vec![AudioSource::load(pak, "misc/null.wav").unwrap()],
             static_sounds: Vec::new(),
             entities: Vec::new(),
+            max_players: 0,
+            // TODO: for the love of god can the lang team hurry up (https://github.com/rust-lang/rfcs/pull/2203)
+            player_info: [
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
             msg_times: [Duration::zero(), Duration::zero()],
         }
     }
@@ -366,12 +386,42 @@ impl Client {
         Ok(())
     }
 
+    fn check_player_id(&self, id: usize) -> Result<(), ClientError> {
+        if id > net::MAX_CLIENTS {
+            return Err(ClientError::Other(format!(
+                "player ID {} exceeds net::MAX_CLIENTS ({})",
+                id,
+                net::MAX_CLIENTS
+            )));
+        }
+
+        if id > self.state.max_players {
+            return Err(ClientError::Other(format!(
+                "player ID ({}) exceeds max_players ({})",
+                id,
+                self.state.max_players,
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Spawn an entity with the given ID, also spawning any uninitialized entities between the former
     /// last entity and the new one.
-    // TODO: skipping entities indicates that the entities have been freed. it may make more sense
-    // to use a HashMap to store entities by ID since the lookup table is relatively sparse.
-    pub fn spawn_entities(&mut self, baseline: ServerCmdSpawnBaseline) -> Result<(), ClientError> {
-        let id = baseline.ent_id as usize;
+    // TODO: skipping entities indicates that the entities have been freed by the server. it may
+    // make more sense to use a HashMap to store entities by ID since the lookup table is relatively
+    // sparse.
+    pub fn spawn_entities(
+        &mut self,
+        ent_id: u16,
+        model_id: u8,
+        frame_id: u8,
+        colormap: u8,
+        skin_id: u8,
+        origin: Vector3<f32>,
+        angles: Vector3<Deg<f32>>,
+    ) -> Result<(), ClientError> {
+        let id = ent_id as usize;
 
         // don't clobber existing entities
         if id < self.state.entities.len() {
@@ -385,12 +435,12 @@ impl Client {
         }
 
         let baseline = EntityState {
-            origin: baseline.origin,
-            angles: baseline.angles,
-            model_id: baseline.model_id as usize,
-            frame_id: baseline.frame_id as usize,
-            colormap: baseline.colormap,
-            skin_id: baseline.skin_id,
+            origin: origin,
+            angles: angles,
+            model_id: model_id as usize,
+            frame_id: frame_id as usize,
+            colormap: colormap,
+            skin_id: skin_id,
             effects: EntityEffects::empty(),
         };
 
@@ -399,9 +449,11 @@ impl Client {
             id,
             baseline
         );
+
         self.state.entities.push(
             ClientEntity::from_baseline(baseline),
         );
+
         Ok(())
     }
 
@@ -430,40 +482,129 @@ impl Client {
                 ServerCmd::Bad => panic!("Invalid command from server"),
                 ServerCmd::NoOp => (),
 
-                ServerCmd::CdTrack(cdtrack_cmd) => {
+                ServerCmd::CdTrack { track, loop_ } => {
                     // TODO: play CD track
                     debug!("CD tracks not yet implemented");
                 }
-                ServerCmd::Print(print_cmd) => {
+
+                ServerCmd::Print { text } => {
                     // TODO: print to in-game console
-                    println!("{}", print_cmd.text);
+                    println!("{}", text);
                 }
-                ServerCmd::ServerInfo(server_info) => self.update_server_info(server_info, pak)?,
-                ServerCmd::SetView(setview) => {
+
+                ServerCmd::ServerInfo {
+                    protocol_version,
+                    max_clients,
+                    game_type,
+                    message,
+                    model_precache,
+                    sound_precache,
+                } => {
+                    self.update_server_info(
+                        protocol_version,
+                        max_clients,
+                        game_type,
+                        message,
+                        model_precache,
+                        sound_precache,
+                        pak,
+                    )?;
+                }
+
+                ServerCmd::SetView { ent_id } => {
                     // TODO: sanity check on this value
                     // self.state.view_ent = setview.view_ent as usize;
                 }
 
-                ServerCmd::SignOnStage(signon) => self.handle_signon(signon.stage)?,
+                ServerCmd::SignOnStage { stage } => self.handle_signon(stage)?,
 
-                ServerCmd::SpawnBaseline(baseline) => {
-                    self.spawn_entities(baseline)?;
+                ServerCmd::SpawnBaseline {
+                    ent_id,
+                    model_id,
+                    frame_id,
+                    colormap,
+                    skin_id,
+                    origin,
+                    angles,
+                } => {
+                    self.spawn_entities(
+                        ent_id,
+                        model_id,
+                        frame_id,
+                        colormap,
+                        skin_id,
+                        origin,
+                        angles,
+                    )?;
                 }
 
-                ServerCmd::SpawnStaticSound(static_sound) => {
+                ServerCmd::SpawnStaticSound {
+                    origin,
+                    sound_id,
+                    volume,
+                    attenuation,
+                } => {
                     self.state.static_sounds.push(StaticSound::new(
                         &self.audio_endpoint,
-                        static_sound.origin,
-                        self.state.sounds[static_sound.sound_id as usize]
-                            .clone(),
-                        static_sound.volume,
-                        static_sound.attenuation,
+                        origin,
+                        self.state.sounds[sound_id as usize].clone(),
+                        volume,
+                        attenuation,
                     ));
                 }
 
-                ServerCmd::Time(time) => {
+                ServerCmd::Time { time } => {
                     self.state.msg_times[1] = self.state.msg_times[0];
-                    self.state.msg_times[0] = engine::duration_from_f32(time.time);
+                    self.state.msg_times[0] = engine::duration_from_f32(time);
+                }
+
+                ServerCmd::UpdateFrags {
+                    player_id,
+                    new_frags,
+                } => {
+                    let player_id = player_id as usize;
+                    self.check_player_id(player_id)?;
+
+                    match self.state.player_info[player_id] {
+                        Some(ref mut info) => {
+                            debug!(
+                                "Player {} (ID {}) frags: {} -> {}",
+                                &info.name,
+                                player_id,
+                                info.frags,
+                                new_frags
+                            );
+                            info.frags = new_frags as i32;
+                        }
+                        None => {
+                            return Err(ClientError::with_msg(
+                                format!("No player with ID {}", player_id),
+                            ))
+                        }
+                    }
+                }
+
+                ServerCmd::UpdateName {
+                    player_id,
+                    new_name,
+                } => {
+                    let player_id = player_id as usize;
+                    self.check_player_id(player_id)?;
+
+                    if let Some(ref mut info) = self.state.player_info[player_id] {
+                        // if this player is already connected, it's a name change
+                        debug!("Player {} has changed name to {}", &info.name, &new_name);
+                        info.name = new_name.to_owned();
+                    } else {
+                        // if this player is not connected, it's a join
+                        debug!("Player {} with ID {} has joined", &new_name, player_id);
+                        self.state.player_info[player_id] = Some(PlayerInfo {
+                            name: new_name.to_owned(),
+                            colors: PlayerColor::new(0, 0),
+                            frags: 0,
+                            join_time: Duration::zero(),
+                        });
+                    }
                 }
 
                 x => {
@@ -513,24 +654,29 @@ impl Client {
 
     fn update_server_info(
         &mut self,
-        server_info_cmd: ServerCmdServerInfo,
+        protocol_version: i32,
+        max_clients: u8,
+        game_type: GameType,
+        message: String,
+        model_precache: Vec<String>,
+        sound_precache: Vec<String>,
         pak: &Pak,
     ) -> Result<(), ClientError> {
         let mut new_client_state = ClientState::new(pak);
 
-        if server_info_cmd.protocol_version != net::PROTOCOL_VERSION as i32 {
+        if protocol_version != net::PROTOCOL_VERSION as i32 {
             return Err(ClientError::with_msg(format!(
                 "Incompatible protocol version (got {}, should be {})",
-                server_info_cmd.protocol_version,
+                protocol_version,
                 net::PROTOCOL_VERSION
             )));
         }
 
         // TODO: print sign-on message to in-game console
-        println!("{}", server_info_cmd.message);
+        println!("{}", message);
 
         // TODO: validate submodel names
-        for mod_name in server_info_cmd.model_precache {
+        for mod_name in model_precache {
             if mod_name.ends_with(".bsp") {
                 let bsp_data = match pak.open(&mod_name) {
                     Some(b) => b,
@@ -551,7 +697,7 @@ impl Client {
             // TODO: send keepalive message?
         }
 
-        for ref snd_name in server_info_cmd.sound_precache {
+        for ref snd_name in sound_precache {
             debug!("Loading sound {}", snd_name);
 
             // TODO: waiting on ruuda/hound#20 (some WAV files don't load under rodio)
@@ -570,9 +716,11 @@ impl Client {
         }
 
         let server_info = ServerInfo {
-            max_clients: server_info_cmd.max_clients,
-            game_type: server_info_cmd.game_type,
+            max_clients: max_clients,
+            game_type: game_type,
         };
+
+        new_client_state.max_players = server_info.max_clients as usize;
 
         // TODO: set up rest of client state (R_NewMap)
 
