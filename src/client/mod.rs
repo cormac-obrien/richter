@@ -37,10 +37,12 @@ use common::net;
 use common::net::BlockingMode;
 use common::net::ClientCmd;
 use common::net::ClientCmdStringCmd;
+use common::net::ClientStat;
 use common::net::ColorShift;
 use common::net::EntityEffects;
 use common::net::EntityState;
 use common::net::GameType;
+use common::net::ItemFlags;
 use common::net::NetError;
 use common::net::PlayerColor;
 use common::net::QSocket;
@@ -54,6 +56,7 @@ use common::pak::Pak;
 
 use cgmath::Deg;
 use cgmath::Vector3;
+use cgmath::Zero;
 use chrono::Duration;
 use rodio;
 use rodio::Endpoint;
@@ -125,7 +128,11 @@ struct ServerInfo {
 
 struct ClientView {
     msg_view_angles: [Vector3<Deg<f32>>; 2],
+
+    // TODO: this may not need to be a field (calculated once per frame)
     view_angles: Vector3<Deg<f32>>,
+
+    ideal_pitch: Deg<f32>,
     punch_angle: Vector3<Deg<f32>>,
     view_height: f32,
 }
@@ -138,6 +145,7 @@ impl ClientView {
                 Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
             ],
             view_angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            ideal_pitch: Deg(0.0),
             punch_angle: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
             view_height: 0.0,
         }
@@ -204,20 +212,20 @@ struct ClientState {
 
     // the last two timestamps sent by the server (for lerping)
     msg_times: [Duration; 2],
-    // time: Duration,
+    time: Duration,
     // old_time: Duration,
 
     // move_msg_count: usize,
     // cmd: MoveCmd,
-    // items: ItemFlags,
-    // item_get_time: [f32; 32],
+    items: ItemFlags,
+    item_get_time: [Duration; net::MAX_ITEMS],
     // face_anim_time: f32,
     // color_shifts: [ColorShift; 4],
     // prev_color_shifts: [ColorShift; 4],
     view: ClientView,
 
-    // m_velocity: [Vector3<f32>; 2],
-    // velocity: Vector3<f32>,
+    msg_velocity: [Vector3<f32>; 2],
+    velocity: Vector3<f32>,
 
     // ideal_pitch: Deg<f32>,
     // pitch_velocity: f32,
@@ -226,8 +234,8 @@ struct ClientState {
     // last_stop: f64,
 
     // paused: bool,
-    // on_ground: bool,
-    // in_water: bool,
+    on_ground: bool,
+    in_water: bool,
 
     // intermission: IntermissionKind,
     // completed_time: Duration,
@@ -254,6 +262,7 @@ impl ClientState {
             stats: [0; MAX_STATS],
             max_players: 0,
             // TODO: for the love of god can the lang team hurry up (https://github.com/rust-lang/rfcs/pull/2203)
+            // this might make more sense as a different data structure anyway who knows
             player_info: [
                 None,
                 None,
@@ -273,7 +282,48 @@ impl ClientState {
                 None,
             ],
             msg_times: [Duration::zero(), Duration::zero()],
+            time: Duration::zero(),
+            items: ItemFlags::empty(),
+            // TODO: make this less horrific once const fn array initializers are available
+            item_get_time: [
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+                Duration::zero(),
+            ],
             view: ClientView::new(),
+            msg_velocity: [Vector3::zero(), Vector3::zero()],
+            velocity: Vector3::zero(),
+            on_ground: false,
+            in_water: false,
         }
     }
 }
@@ -506,6 +556,116 @@ impl Client {
                 ServerCmd::CdTrack { track, loop_ } => {
                     // TODO: play CD track
                     debug!("CD tracks not yet implemented");
+                }
+
+                ServerCmd::ClientData {
+                    view_height,
+                    ideal_pitch,
+                    punch_pitch,
+                    velocity_x,
+                    punch_yaw,
+                    velocity_y,
+                    punch_roll,
+                    velocity_z,
+                    items,
+                    on_ground,
+                    in_water,
+                    weapon_frame,
+                    armor,
+                    weapon,
+                    health,
+                    ammo,
+                    ammo_shells,
+                    ammo_nails,
+                    ammo_rockets,
+                    ammo_cells,
+                    active_weapon,
+                } => {
+                    debug!("Updating local client data: {:?}", &cmd);
+                    self.state.view.view_height = view_height.unwrap_or(net::DEFAULT_VIEWHEIGHT);
+                    self.state.view.ideal_pitch = ideal_pitch.unwrap_or(Deg(0.0));
+
+                    self.state.view.punch_angle[0] = punch_pitch.unwrap_or(Deg(0.0));
+                    self.state.view.punch_angle[1] = punch_yaw.unwrap_or(Deg(0.0));
+                    self.state.view.punch_angle[2] = punch_roll.unwrap_or(Deg(0.0));
+
+                    // store old velocity
+                    self.state.msg_velocity[1] = self.state.msg_velocity[0];
+                    self.state.msg_velocity[0].x = velocity_x.unwrap_or(0.0);
+                    self.state.msg_velocity[0].y = velocity_y.unwrap_or(0.0);
+                    self.state.msg_velocity[0].z = velocity_z.unwrap_or(0.0);
+
+                    if items != self.state.items {
+                        // item flags have changed, something got picked up
+                        // TODO: original engine calls Sbar_Changed() here to update status bar
+                        for i in 0..net::MAX_ITEMS {
+                            if (items.bits() & 1 << i) != 0 &&
+                                (self.state.items.bits() & 1 << i) == 0
+                            {
+                                // item with flag value `i` was picked up
+                                self.state.item_get_time[i] = self.state.time;
+                            }
+                        }
+
+                        self.state.items = items;
+                    }
+
+                    self.state.on_ground = on_ground;
+                    self.state.in_water = in_water;
+
+                    self.state.stats[ClientStat::WeaponFrame as usize] =
+                        weapon_frame.unwrap_or(0) as i32;
+
+                    // TODO: these ClientStat conditionals should be convertible to a method
+
+                    let armor = armor.unwrap_or(0);
+                    if self.state.stats[ClientStat::Armor as usize] != armor as i32 {
+                        self.state.stats[ClientStat::Armor as usize] = armor as i32;
+                        // TODO: update status bar
+                    }
+
+                    let weapon = weapon.unwrap_or(0);
+                    if self.state.stats[ClientStat::Weapon as usize] != weapon as i32 {
+                        self.state.stats[ClientStat::Weapon as usize] = weapon as i32;
+                        // TODO: update status bar
+                    }
+
+                    if self.state.stats[ClientStat::Health as usize] != health as i32 {
+                        self.state.stats[ClientStat::Health as usize] = health as i32;
+                        // TODO: update status bar
+                    }
+
+                    if self.state.stats[ClientStat::Ammo as usize] != ammo as i32 {
+                        self.state.stats[ClientStat::Ammo as usize] = ammo as i32;
+                        // TODO: update status bar
+                    }
+
+                    if self.state.stats[ClientStat::Shells as usize] != ammo_shells as i32 {
+                        self.state.stats[ClientStat::Shells as usize] = ammo_shells as i32;
+                        // TODO: update status bar
+                    }
+
+                    if self.state.stats[ClientStat::Nails as usize] != ammo_nails as i32 {
+                        self.state.stats[ClientStat::Nails as usize] = ammo_nails as i32;
+                        // TODO: update status bar
+                    }
+
+                    if self.state.stats[ClientStat::Rockets as usize] != ammo_rockets as i32 {
+                        self.state.stats[ClientStat::Rockets as usize] = ammo_rockets as i32;
+                        // TODO: update status bar
+                    }
+
+                    if self.state.stats[ClientStat::Cells as usize] != ammo_cells as i32 {
+                        self.state.stats[ClientStat::Cells as usize] = ammo_cells as i32;
+                        // TODO: update status bar
+                    }
+
+                    // TODO: this behavior assumes the `standard_quake` behavior and will likely
+                    // break with the mission packs
+                    if self.state.stats[ClientStat::ActiveWeapon as usize] != active_weapon as i32 {
+                        self.state.stats[ClientStat::ActiveWeapon as usize] = active_weapon as i32;
+                        // TODO: update status bar
+                    }
                 }
 
                 ServerCmd::LightStyle { id, value } => {

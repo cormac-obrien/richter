@@ -65,6 +65,9 @@ const PARTICLE_DIRECTION_WRITE_FACTOR: f32 = 1.0 / PARTICLE_DIRECTION_READ_FACTO
 
 pub static GAME_NAME: &'static str = "QUAKE";
 pub const MAX_CLIENTS: usize = 16;
+pub const MAX_ITEMS: usize = 32;
+
+pub const DEFAULT_VIEWHEIGHT: f32 = 22.0;
 
 #[derive(Debug)]
 pub enum NetError {
@@ -704,7 +707,7 @@ pub enum ServerCmd {
         velocity_y: Option<f32>,
         punch_roll: Option<Deg<f32>>,
         velocity_z: Option<f32>,
-        items: i32,
+        items: ItemFlags,
         on_ground: bool,
         in_water: bool,
         weapon_frame: Option<u8>,
@@ -1060,7 +1063,16 @@ impl ServerCmd {
                     false => None,
                 };
 
-                let items = reader.read_i32::<LittleEndian>()?;
+                let items_bits = reader.read_u32::<LittleEndian>()?;
+                let items = match ItemFlags::from_bits(items_bits) {
+                    Some(i) => i,
+                    None => {
+                        return Err(NetError::InvalidData(
+                            format!("ItemFlags: {:b}", items_bits),
+                        ))
+                    }
+                };
+
                 let on_ground = flags.contains(ClientUpdateFlags::ON_GROUND);
                 let in_water = flags.contains(ClientUpdateFlags::IN_WATER);
 
@@ -1536,7 +1548,7 @@ impl ServerCmd {
                 if let Some(vz) = velocity_z {
                     writer.write_u8((vz * VELOCITY_WRITE_FACTOR) as i32 as u8)?;
                 }
-                writer.write_i32::<LittleEndian>(items)?;
+                writer.write_u32::<LittleEndian>(items.bits())?;
                 if let Some(wf) = weapon_frame {
                     writer.write_u8(wf)?;
                 }
