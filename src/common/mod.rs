@@ -29,3 +29,5 @@ pub mod pak;
 pub mod parse;
 pub mod sprite;
 pub mod util;
+
+pub const MAX_LIGHTSTYLES: usize = 64;

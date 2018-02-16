@@ -21,6 +21,7 @@
 pub mod input;
 pub mod sound;
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::io::BufReader;
@@ -123,10 +124,24 @@ struct ServerInfo {
 }
 
 struct ClientView {
-    lerp_view_angles: [Vector3<Deg<f32>>; 2],
+    msg_view_angles: [Vector3<Deg<f32>>; 2],
     view_angles: Vector3<Deg<f32>>,
     punch_angle: Vector3<Deg<f32>>,
     view_height: f32,
+}
+
+impl ClientView {
+    pub fn new() -> ClientView {
+        ClientView {
+            msg_view_angles: [
+                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            ],
+            view_angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            punch_angle: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            view_height: 0.0,
+        }
+    }
 }
 
 struct PlayerInfo {
@@ -179,6 +194,11 @@ struct ClientState {
 
     entities: Vec<ClientEntity>,
 
+    light_styles: HashMap<u8, String>,
+
+    // various values relevant to the player and level (see common::net::ClientStat)
+    stats: [i32; MAX_STATS],
+
     max_players: usize,
     player_info: [Option<PlayerInfo>; net::MAX_CLIENTS],
 
@@ -189,14 +209,12 @@ struct ClientState {
 
     // move_msg_count: usize,
     // cmd: MoveCmd,
-    // stats: [i32; MAX_STATS],
     // items: ItemFlags,
     // item_get_time: [f32; 32],
     // face_anim_time: f32,
     // color_shifts: [ColorShift; 4],
     // prev_color_shifts: [ColorShift; 4],
-
-    // view: ClientView,
+    view: ClientView,
 
     // m_velocity: [Vector3<f32>; 2],
     // velocity: Vector3<f32>,
@@ -232,6 +250,8 @@ impl ClientState {
             sounds: vec![AudioSource::load(pak, "misc/null.wav").unwrap()],
             static_sounds: Vec::new(),
             entities: Vec::new(),
+            light_styles: HashMap::new(),
+            stats: [0; MAX_STATS],
             max_players: 0,
             // TODO: for the love of god can the lang team hurry up (https://github.com/rust-lang/rfcs/pull/2203)
             player_info: [
@@ -253,6 +273,7 @@ impl ClientState {
                 None,
             ],
             msg_times: [Duration::zero(), Duration::zero()],
+            view: ClientView::new(),
         }
     }
 }
@@ -487,6 +508,11 @@ impl Client {
                     debug!("CD tracks not yet implemented");
                 }
 
+                ServerCmd::LightStyle { id, value } => {
+                    debug!("Inserting light style {} with value {}", id, &value);
+                    let _ = self.state.light_styles.insert(id, value);
+                }
+
                 ServerCmd::Print { text } => {
                     // TODO: print to in-game console
                     println!("{}", text);
@@ -509,6 +535,12 @@ impl Client {
                         sound_precache,
                         pak,
                     )?;
+                }
+
+                ServerCmd::SetAngle { angles } => {
+                    debug!("Set view angles to {:?}", angles);
+                    self.state.view.msg_view_angles[1] = self.state.view.msg_view_angles[0];
+                    self.state.view.msg_view_angles[0] = angles;
                 }
 
                 ServerCmd::SetView { ent_id } => {
@@ -558,6 +590,33 @@ impl Client {
                     self.state.msg_times[0] = engine::duration_from_f32(time);
                 }
 
+                ServerCmd::UpdateColors {
+                    player_id,
+                    new_colors,
+                } => {
+                    let player_id = player_id as usize;
+                    self.check_player_id(player_id)?;
+
+                    match self.state.player_info[player_id] {
+                        Some(ref mut info) => {
+                            debug!(
+                                "Player {} (ID {}) colors: {:?} -> {:?}",
+                                info.name,
+                                player_id,
+                                info.colors,
+                                new_colors,
+                            );
+                            info.colors = new_colors;
+                        }
+
+                        None => {
+                            return Err(ClientError::with_msg(
+                                format!("No player with ID {}", player_id),
+                            ));
+                        }
+                    }
+                }
+
                 ServerCmd::UpdateFrags {
                     player_id,
                     new_frags,
@@ -579,7 +638,7 @@ impl Client {
                         None => {
                             return Err(ClientError::with_msg(
                                 format!("No player with ID {}", player_id),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -605,6 +664,16 @@ impl Client {
                             join_time: Duration::zero(),
                         });
                     }
+                }
+
+                ServerCmd::UpdateStat { stat, value } => {
+                    debug!(
+                        "{:?}: {} -> {}",
+                        stat,
+                        self.state.stats[stat as usize],
+                        value
+                    );
+                    self.state.stats[stat as usize] = value;
                 }
 
                 x => {

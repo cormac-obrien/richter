@@ -209,6 +209,7 @@ bitflags! {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PlayerColor {
     top: u8,
     bottom: u8,
@@ -223,6 +224,13 @@ impl PlayerColor {
         if bottom > 15 {
             warn!("Bottom color index ({}) will be truncated", bottom);
         }
+
+        PlayerColor { top, bottom }
+    }
+
+    pub fn from_bits(bits: u8) -> PlayerColor {
+        let top = bits >> 4;
+        let bottom = bits & 0x0F;
 
         PlayerColor { top, bottom }
     }
@@ -711,7 +719,10 @@ pub enum ServerCmd {
         active_weapon: u8,
     },
     StopSound { entity_id: u16, channel: u8 },
-    UpdateColors { player_id: u8, colors: u8 },
+    UpdateColors {
+        player_id: u8,
+        new_colors: PlayerColor,
+    },
     Particle {
         origin: Vector3<f32>,
         direction: Vector3<f32>,
@@ -1111,9 +1122,13 @@ impl ServerCmd {
 
             ServerCmdCode::UpdateColors => {
                 let player_id = reader.read_u8()?;
-                let colors = reader.read_u8()?;
+                let new_colors_bits = reader.read_u8()?;
+                let new_colors = PlayerColor::from_bits(new_colors_bits);
 
-                ServerCmd::UpdateColors { player_id, colors }
+                ServerCmd::UpdateColors {
+                    player_id,
+                    new_colors,
+                }
             }
 
             ServerCmdCode::Particle => {
@@ -1545,9 +1560,12 @@ impl ServerCmd {
                 writer.write_u16::<LittleEndian>(entity_channel)?;
             }
 
-            ServerCmd::UpdateColors { player_id, colors } => {
+            ServerCmd::UpdateColors {
+                player_id,
+                new_colors,
+            } => {
                 writer.write_u8(player_id)?;
-                writer.write_u8(colors)?;
+                writer.write_u8(new_colors.bits())?;
             }
 
             ServerCmd::Particle {
@@ -2395,7 +2413,7 @@ mod test {
     fn test_server_cmd_update_colors_read_write_eq() {
         let src = ServerCmd::UpdateColors {
             player_id: 11,
-            colors: 0x73,
+            new_colors: PlayerColor::new(4, 13),
         };
 
         let mut packet = Vec::new();
