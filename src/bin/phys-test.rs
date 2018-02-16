@@ -24,13 +24,13 @@ extern crate richter;
 
 use std::io::Write;
 
-use richter::bsp;
-use richter::console::CvarRegistry;
-use richter::pak::Pak;
-use richter::parse;
-use richter::progs;
+use richter::common::bsp;
+use richter::common::console::CvarRegistry;
+use richter::common::pak::Pak;
+use richter::common::parse;
 use richter::server;
-use richter::world;
+use richter::server::progs;
+use richter::server::world;
 
 use cgmath::Vector3;
 use chrono::Duration;

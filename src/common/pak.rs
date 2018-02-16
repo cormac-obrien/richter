@@ -90,7 +90,7 @@ impl Pak {
     /// # Examples
     /// ```
     /// # extern crate richter;
-    /// use richter::pak::Pak;
+    /// use richter::common::pak::Pak;
     ///
     /// # fn main() {
     /// let pak = Pak::new();
@@ -105,7 +105,7 @@ impl Pak {
     /// # Examples
     /// ```no_run
     /// # extern crate richter;
-    /// use richter::pak::Pak;
+    /// use richter::common::pak::Pak;
     ///
     /// # fn main() {
     /// let mut pak = Pak::new();
@@ -178,7 +178,7 @@ impl Pak {
     /// # Examples
     /// ```no_run
     /// # extern crate richter;
-    /// use richter::pak::Pak;
+    /// use richter::common::pak::Pak;
     ///
     /// # fn main() {
     /// let mut pak = Pak::new();

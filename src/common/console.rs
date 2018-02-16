@@ -463,7 +463,7 @@ impl<'a> Tokenizer<'a> {
     ///
     /// ```
     /// # extern crate richter;
-    /// use richter::console::Tokenizer;
+    /// use richter::common::console::Tokenizer;
     ///
     /// # fn main() {
     /// let tokenizer = Tokenizer::new("map e1m1");
@@ -519,7 +519,7 @@ impl<'a> Tokenizer<'a> {
     ///
     /// ```
     /// # extern crate richter;
-    /// use richter::console::Tokenizer;
+    /// use richter::common::console::Tokenizer;
     ///
     /// # fn main() {
     /// let mut tokenizer = Tokenizer::new("map e1m1");

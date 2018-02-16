@@ -21,7 +21,7 @@ extern crate richter;
 fn main() {
     env_logger::init();
 
-    let mut pak = richter::pak::Pak::new();
+    let mut pak = richter::common::pak::Pak::new();
     pak.add("pak0.pak").unwrap();
-    let spr = richter::sprite::load(pak.open("progs/s_explod.spr").unwrap());
+    let spr = richter::common::sprite::load(pak.open("progs/s_explod.spr").unwrap());
 }

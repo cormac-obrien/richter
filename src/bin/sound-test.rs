@@ -21,11 +21,11 @@ extern crate rodio;
 use std::io::BufReader;
 use std::io::Cursor;
 
-use richter::pak;
+use richter::common::pak;
 use rodio::Source;
 
 fn main() {
-    let mut pak = richter::pak::Pak::new();
+    let mut pak = richter::common::pak::Pak::new();
     pak.add("pak0.pak").unwrap();
     let comp1 = pak.open("sound/knight/sword1.wav").unwrap().to_owned();
 

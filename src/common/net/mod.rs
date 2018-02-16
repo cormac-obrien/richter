@@ -2247,7 +2247,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2259,7 +2259,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2271,7 +2271,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2283,7 +2283,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2295,7 +2295,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2307,7 +2307,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2326,7 +2326,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2341,7 +2341,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2356,7 +2356,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2371,7 +2371,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2386,7 +2386,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2401,7 +2401,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2412,7 +2412,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2423,7 +2423,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2434,7 +2434,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2445,7 +2445,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2456,7 +2456,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
@@ -2467,7 +2467,7 @@ mod test {
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
-        let dst = ServerCmd::deserialize(&mut reader).unwrap();
+        let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
 
         assert_eq!(src, dst);
     }
