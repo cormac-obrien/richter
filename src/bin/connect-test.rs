@@ -22,7 +22,7 @@ extern crate chrono;
 extern crate env_logger;
 extern crate richter;
 
-use std::net::UdpSocket;
+use std::env;
 
 use richter::client::Client;
 use richter::common::net::BlockingMode;
@@ -31,10 +31,13 @@ use richter::common::pak::Pak;
 use chrono::Duration;
 
 fn main() {
-    env_logger::init();
+    env_logger::init().unwrap_or_else(|_| println!("Failed to initialize env_logger."));
+
     let mut pak = Pak::new();
     pak.add("pak0.pak").unwrap();
-    let mut client = Client::connect("127.0.0.1:26000", &pak).unwrap();
+
+    let args: Vec<String> = env::args().collect();
+    let mut client = Client::connect(&args[1], &pak).unwrap();
     client
         .parse_server_msg(BlockingMode::Timeout(Duration::milliseconds(4000)), &pak)
         .unwrap();
