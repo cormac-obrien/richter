@@ -28,7 +28,6 @@ use std::io::BufReader;
 use std::net::ToSocketAddrs;
 
 use client::sound::AudioSource;
-use client::sound::Channel;
 use client::sound::StaticSound;
 use common::bsp;
 use common::engine;
@@ -38,7 +37,6 @@ use common::net::BlockingMode;
 use common::net::ClientCmd;
 use common::net::ClientCmdStringCmd;
 use common::net::ClientStat;
-use common::net::ColorShift;
 use common::net::EntityEffects;
 use common::net::EntityState;
 use common::net::GameType;
@@ -154,7 +152,6 @@ impl ClientView {
 
 struct PlayerInfo {
     name: String,
-    join_time: Duration,
     frags: i32,
     colors: PlayerColor,
     // translations: [u8; VID_GRADES],
@@ -419,7 +416,7 @@ impl Client {
         new_addr.set_port(port);
 
         // we're done with the connection socket, so turn it into a QSocket with the new address
-        let mut qsock = con_sock.into_qsocket(new_addr);
+        let qsock = con_sock.into_qsocket(new_addr);
 
         Ok(Client {
             qsock,
@@ -553,7 +550,7 @@ impl Client {
                 ServerCmd::Bad => panic!("Invalid command from server"),
                 ServerCmd::NoOp => (),
 
-                ServerCmd::CdTrack { track, loop_ } => {
+                ServerCmd::CdTrack { .. } => {
                     // TODO: play CD track
                     debug!("CD tracks not yet implemented");
                 }
@@ -703,7 +700,7 @@ impl Client {
                     self.state.view.msg_view_angles[0] = angles;
                 }
 
-                ServerCmd::SetView { ent_id } => {
+                ServerCmd::SetView { .. } => {
                     // TODO: sanity check on this value
                     // self.state.view_ent = setview.view_ent as usize;
                 }
@@ -821,7 +818,6 @@ impl Client {
                             name: new_name.to_owned(),
                             colors: PlayerColor::new(0, 0),
                             frags: 0,
-                            join_time: Duration::zero(),
                         });
                     }
                 }
@@ -852,25 +848,25 @@ impl Client {
             SignOnStage::Prespawn => {
                 self.add_cmd(ClientCmd::StringCmd(
                     ClientCmdStringCmd { cmd: String::from("prespawn") },
-                ));
+                ))?;
             }
             SignOnStage::ClientInfo => {
                 // TODO: fill in client info here
                 self.add_cmd(ClientCmd::StringCmd(ClientCmdStringCmd {
                     cmd: format!("name \"{}\"\n", "UNNAMED"),
-                }));
+                }))?;
                 self.add_cmd(ClientCmd::StringCmd(
                     ClientCmdStringCmd { cmd: format!("color {} {}", 0, 0) },
-                ));
+                ))?;
                 // TODO: need default spawn parameters?
                 self.add_cmd(ClientCmd::StringCmd(
                     ClientCmdStringCmd { cmd: format!("spawn {}", "") },
-                ));
+                ))?;
             }
             SignOnStage::Begin => {
                 self.add_cmd(ClientCmd::StringCmd(
                     ClientCmdStringCmd { cmd: String::from("begin") },
-                ));
+                ))?;
             }
             SignOnStage::Done => {
                 debug!("Signon complete");

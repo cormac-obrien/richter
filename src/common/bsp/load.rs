@@ -344,8 +344,8 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
 
         let mut anim1 = [None; MAX_TEXTURE_FRAMES];
         let mut anim2 = [None; MAX_TEXTURE_FRAMES];
-        let mut anim1_len = 0;
-        let mut anim2_len = 0;
+        let mut anim1_len;
+        let mut anim2_len;
 
         let mut frame_char = textures[t].name.chars().nth(1).expect(
             "Invalid texture name",

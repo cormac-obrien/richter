@@ -1002,15 +1002,14 @@ impl World {
 
         // TODO: increase sv.time by host_frametime
         unimplemented!();
-
-        Ok(())
     }
 
+    // TODO: rename arguments when implementing
     pub fn physics_player(
         &mut self,
-        globals: &mut Globals,
-        server: &Server,
-        e_id: EntityId,
+        _globals: &mut Globals,
+        _server: &Server,
+        _ent_id: EntityId,
     ) -> Result<(), ProgsError> {
         unimplemented!();
     }
@@ -1033,7 +1032,7 @@ impl World {
         );
 
         debug!("Collision test: Entity {} with world entity", e_id.0);
-        let mut trace = self.collide_move_with_entity(
+        let trace = self.collide_move_with_entity(
             EntityId(0),
             start,
             min,
@@ -1093,7 +1092,6 @@ impl World {
         );
 
         let mut collide_entity = None;
-        let mut start_solid = false;
 
         let area = &self.area_nodes[area_id];
 

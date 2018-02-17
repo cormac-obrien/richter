@@ -33,7 +33,6 @@ use rodio::Source;
 use rodio::decoder::DecoderError;
 use rodio::source::Buffered;
 use rodio::source::SamplesConverter;
-use rodio::source::Zero as ZeroSource;
 
 #[derive(Debug)]
 pub enum SoundError {

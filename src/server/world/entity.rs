@@ -33,7 +33,6 @@ use server::world::phys::MoveKind;
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
-use cgmath::Deg;
 use cgmath::Vector3;
 use num::FromPrimitive;
 
@@ -243,6 +242,8 @@ bitflags! {
     }
 }
 
+// TODO: if this never gets used, remove it
+#[allow(dead_code)]
 fn float_addr(addr: usize) -> Result<FieldAddrFloat, ProgsError> {
     match FieldAddrFloat::from_usize(addr) {
         Some(f) => Ok(f),
@@ -254,6 +255,8 @@ fn float_addr(addr: usize) -> Result<FieldAddrFloat, ProgsError> {
     }
 }
 
+// TODO: if this never gets used, remove it
+#[allow(dead_code)]
 fn vector_addr(addr: usize) -> Result<FieldAddrVector, ProgsError> {
     match FieldAddrVector::from_usize(addr) {
         Some(v) => Ok(v),
