@@ -127,6 +127,7 @@ struct ServerInfo {
 }
 
 struct ClientView {
+    ent_id: usize,
     msg_view_angles: [Vector3<Deg<f32>>; 2],
 
     // TODO: this may not need to be a field (calculated once per frame)
@@ -140,6 +141,7 @@ struct ClientView {
 impl ClientView {
     pub fn new() -> ClientView {
         ClientView {
+            ent_id: 0,
             msg_view_angles: [
                 Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
                 Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
@@ -800,10 +802,14 @@ impl Client {
                     }
 
                     if force_link {
-                        self.state.entities[ent_id].msg_origins[1] = self.state.entities[ent_id].msg_origins[0];
-                        self.state.entities[ent_id].origin = self.state.entities[ent_id].msg_origins[0];
-                        self.state.entities[ent_id].msg_angles[1] = self.state.entities[ent_id].msg_angles[0];
-                        self.state.entities[ent_id].angles = self.state.entities[ent_id].msg_angles[0];
+                        self.state.entities[ent_id].msg_origins[1] =
+                            self.state.entities[ent_id].msg_origins[0];
+                        self.state.entities[ent_id].origin =
+                            self.state.entities[ent_id].msg_origins[0];
+                        self.state.entities[ent_id].msg_angles[1] =
+                            self.state.entities[ent_id].msg_angles[0];
+                        self.state.entities[ent_id].angles =
+                            self.state.entities[ent_id].msg_angles[0];
                         self.state.entities[ent_id].force_link = true;
                     }
                 }
@@ -843,9 +849,21 @@ impl Client {
                     self.state.view.msg_view_angles[0] = angles;
                 }
 
-                ServerCmd::SetView { .. } => {
-                    // TODO: sanity check on this value
-                    // self.state.view_ent = setview.view_ent as usize;
+                ServerCmd::SetView { ent_id } => {
+                    let new_view_ent_id = ent_id as usize;
+                    if new_view_ent_id == 0 {
+                        return Err(ClientError::with_msg("Server set view entity to NULL"));
+                    }
+
+                    if new_view_ent_id >= self.state.entities.len() {
+                        return Err(ClientError::with_msg(format!(
+                            "View entity ID is out of range: {}",
+                            new_view_ent_id
+                        )));
+                    }
+
+                    debug!("Set view entity to {}", ent_id);
+                    self.state.view.ent_id = new_view_ent_id;
                 }
 
                 ServerCmd::SignOnStage { stage } => self.handle_signon(stage)?,
