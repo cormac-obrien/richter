@@ -18,7 +18,6 @@
 #![feature(custom_derive)]
 #![feature(try_from)]
 
-extern crate arrayvec;
 #[macro_use]
 extern crate bitflags;
 extern crate byteorder;
@@ -38,7 +37,6 @@ extern crate num_derive;
 extern crate rand;
 extern crate regex;
 extern crate rodio;
-extern crate time;
 extern crate winit;
 
 pub mod client;

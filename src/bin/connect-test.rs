@@ -31,7 +31,7 @@ use richter::common::pak::Pak;
 use chrono::Duration;
 
 fn main() {
-    env_logger::init().unwrap_or_else(|_| println!("Failed to initialize env_logger."));
+    env_logger::init();
 
     let mut pak = Pak::new();
     pak.add("pak0.pak").unwrap();
