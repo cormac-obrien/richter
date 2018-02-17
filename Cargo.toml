@@ -14,7 +14,6 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 "gfx_app" = "0.5.0"
 "gfx_device_gl" = "0.14.4"
 "gfx_window_glutin" = "0.18.0"
-"glium" = "0.16.0"
 "glutin" = "0.10.0"
 "nom" = "2.0.1"
 "num" = "0.1.36"
@@ -25,9 +24,6 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 "regex" = "0.2.1"
 "rodio" = "0.6.0"
 "time" = "0.1.37"
-"vulkano" = "0.7.2"
-"vulkano-shader-derive" = "0.7.2"
-"vulkano-win" = "0.7.2"
 "winit" = "0.7"
 
 # binaries only
