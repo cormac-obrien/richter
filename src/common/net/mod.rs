@@ -55,6 +55,8 @@ pub const PROTOCOL_VERSION: u8 = 15;
 
 const NAME_LEN: usize = 64;
 
+const FAST_UPDATE_FLAG: u8 = 0x80;
+
 const VELOCITY_READ_FACTOR: f32 = 16.0;
 const VELOCITY_WRITE_FACTOR: f32 = 1.0 / VELOCITY_READ_FACTOR;
 
@@ -569,7 +571,7 @@ pub enum SignOnStage {
 }
 
 bitflags! {
-    pub struct EntityEffects: u16 {
+    pub struct EntityEffects: u8 {
         const BRIGHT_FIELD = 0b0001;
         const MUZZLE_FLASH = 0b0010;
         const BRIGHT_LIGHT = 0b0100;
@@ -770,6 +772,21 @@ pub enum ServerCmd {
     CdTrack { track: u8, loop_: u8 },
     SellScreen,
     Cutscene { text: String },
+    FastUpdate {
+        ent_id: u16,
+        model_id: Option<u8>,
+        frame_id: Option<u8>,
+        colormap: Option<u8>,
+        skin_id: Option<u8>,
+        effects: Option<EntityEffects>,
+        origin_x: Option<f32>,
+        pitch: Option<Deg<f32>>,
+        origin_y: Option<f32>,
+        yaw: Option<Deg<f32>>,
+        origin_z: Option<f32>,
+        roll: Option<Deg<f32>>,
+        no_lerp: bool,
+    }
 }
 
 impl ServerCmd {
@@ -809,6 +826,8 @@ impl ServerCmd {
             ServerCmd::CdTrack { .. } => ServerCmdCode::CdTrack,
             ServerCmd::SellScreen => ServerCmdCode::SellScreen,
             ServerCmd::Cutscene { .. } => ServerCmdCode::Cutscene,
+            // TODO: figure out a more elegant way of doing this
+            ServerCmd::FastUpdate { .. } => panic!("FastUpdate has no code"),
         };
 
         code as u8
@@ -824,8 +843,126 @@ impl ServerCmd {
             Err(e) => return Err(NetError::from(e)),
         };
 
-        if code_num & 0x80 != 0 {
-            panic!("fast update handling not implemented");
+        if code_num & FAST_UPDATE_FLAG != 0 {
+            let all_bits;
+            let low_bits = code_num & !FAST_UPDATE_FLAG;
+            if low_bits & UpdateFlags::MORE_BITS.bits() as u8 != 0 {
+                let high_bits = reader.read_u8()?;
+                all_bits = (high_bits as u16) << 8 | low_bits as u16;
+            } else {
+                all_bits = low_bits as u16;
+            }
+
+            let update_flags = match UpdateFlags::from_bits(all_bits) {
+                Some(u) => u,
+                None => return Err(NetError::InvalidData(format!("UpdateFlags: {:b}", all_bits))),
+            };
+
+            let ent_id;
+            if update_flags.contains(UpdateFlags::LONG_ENTITY) {
+                ent_id = reader.read_u16::<LittleEndian>()?;
+            } else {
+                ent_id = reader.read_u8()? as u16;
+            }
+
+            let model_id;
+            if update_flags.contains(UpdateFlags::MODEL) {
+                model_id = Some(reader.read_u8()?);
+            } else {
+                model_id = None;
+            }
+
+            let frame_id;
+            if update_flags.contains(UpdateFlags::FRAME) {
+                frame_id = Some(reader.read_u8()?);
+            } else {
+                frame_id = None;
+            }
+
+            let colormap;
+            if update_flags.contains(UpdateFlags::COLORMAP) {
+                colormap = Some(reader.read_u8()?);
+            } else {
+                colormap = None;
+            }
+
+            let skin_id;
+            if update_flags.contains(UpdateFlags::SKIN) {
+                skin_id = Some(reader.read_u8()?);
+            } else {
+                skin_id = None;
+            }
+
+            let effects;
+            if update_flags.contains(UpdateFlags::EFFECTS) {
+                let effects_bits = reader.read_u8()?;
+                effects = match EntityEffects::from_bits(effects_bits) {
+                    Some(e) => Some(e),
+                    None => return Err(NetError::InvalidData(format!("EntityEffects: {:b}", effects_bits))),
+                };
+            } else {
+                effects = None;
+            }
+
+            let origin_x;
+            if update_flags.contains(UpdateFlags::ORIGIN_X) {
+                origin_x = Some(read_coord(reader)?);
+            } else {
+                origin_x = None;
+            }
+
+            let pitch;
+            if update_flags.contains(UpdateFlags::PITCH) {
+                pitch = Some(read_angle(reader)?);
+            } else {
+                pitch = None;
+            }
+
+            let origin_y;
+            if update_flags.contains(UpdateFlags::ORIGIN_Y) {
+                origin_y = Some(read_coord(reader)?);
+            } else {
+                origin_y = None;
+            }
+
+            let yaw;
+            if update_flags.contains(UpdateFlags::YAW) {
+                yaw = Some(read_angle(reader)?);
+            } else {
+                yaw = None;
+            }
+
+            let origin_z;
+            if update_flags.contains(UpdateFlags::ORIGIN_Z) {
+                origin_z = Some(read_coord(reader)?);
+            } else {
+                origin_z = None;
+            }
+
+            let roll;
+            if update_flags.contains(UpdateFlags::ROLL) {
+                roll = Some(read_angle(reader)?);
+            } else {
+                roll = None;
+            }
+
+            let no_lerp = update_flags.contains(UpdateFlags::NO_LERP);
+
+            return Ok(Some(ServerCmd::FastUpdate {
+                ent_id,
+                model_id,
+                frame_id,
+                colormap,
+                skin_id,
+                effects,
+                origin_x,
+                pitch,
+                origin_y,
+                yaw,
+                origin_z,
+                roll,
+                no_lerp
+            }))
         }
 
         let code = match ServerCmdCode::from_u8(code_num) {
@@ -1709,6 +1846,9 @@ impl ServerCmd {
                 writer.write(text.as_bytes())?;
                 writer.write_u8(0)?;
             }
+
+            // TODO
+            ServerCmd::FastUpdate { .. } => unimplemented!(),
         }
 
         Ok(())
