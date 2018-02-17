@@ -579,7 +579,7 @@ bitflags! {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct EntityState {
     pub origin: Vector3<f32>,
     pub angles: Vector3<Deg<f32>>,
@@ -588,7 +588,7 @@ pub struct EntityState {
 
     // TODO: more specific types for these
     pub colormap: u8,
-    pub skin_id: u8,
+    pub skin_id: usize,
     pub effects: EntityEffects,
 }
 

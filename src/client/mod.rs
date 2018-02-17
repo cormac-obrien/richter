@@ -32,6 +32,8 @@ use client::sound::StaticSound;
 use common::bsp;
 use common::engine;
 use common::model::Model;
+use common::model::ModelKind;
+use common::model::SyncType;
 use common::net;
 use common::net::BlockingMode;
 use common::net::ClientCmd;
@@ -158,31 +160,61 @@ struct PlayerInfo {
 }
 
 pub struct ClientEntity {
+    force_link: bool,
     baseline: EntityState,
 
-    // last_update: Duration,
-    // msg_origins: [Vector3<f32>; 2],
-    // origin: Vector3<f32>,
-    // msg_angles: [Vector3<Deg<f32>>; 2],
-    // angles: Vector3<Deg<f32>>,
-    // model: Option<Model>,
-    // frame: usize,
-
-    // // TODO: make Duration?
-    // sync_base: f32,
-
-    // effects: i32,
-    // skin_id: usize,
+    msg_time: Duration,
+    msg_origins: [Vector3<f32>; 2],
+    origin: Vector3<f32>,
+    msg_angles: [Vector3<Deg<f32>>; 2],
+    angles: Vector3<Deg<f32>>,
+    model_id: usize,
+    frame_id: usize,
+    skin_id: usize,
+    sync_base: Duration,
+    effects: EntityEffects,
     // vis_frame: usize,
 }
 
 impl ClientEntity {
     pub fn from_baseline(baseline: EntityState) -> ClientEntity {
-        ClientEntity { baseline }
+        ClientEntity {
+            force_link: false,
+            baseline: baseline.clone(),
+            msg_time: Duration::zero(),
+            msg_origins: [Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0)],
+            origin: baseline.origin,
+            msg_angles: [
+                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            ],
+            angles: baseline.angles,
+            model_id: baseline.model_id,
+            frame_id: baseline.frame_id,
+            skin_id: baseline.skin_id,
+            sync_base: Duration::zero(),
+            effects: baseline.effects,
+        }
     }
 
     pub fn uninitialized() -> ClientEntity {
-        ClientEntity { baseline: EntityState::uninitialized() }
+        ClientEntity {
+            force_link: false,
+            baseline: EntityState::uninitialized(),
+            msg_time: Duration::zero(),
+            msg_origins: [Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0)],
+            origin: Vector3::new(0.0, 0.0, 0.0),
+            msg_angles: [
+                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            ],
+            angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            model_id: 0,
+            frame_id: 0,
+            skin_id: 0,
+            sync_base: Duration::zero(),
+            effects: EntityEffects::empty(),
+        }
     }
 }
 
@@ -233,7 +265,6 @@ struct ClientState {
     // paused: bool,
     on_ground: bool,
     in_water: bool,
-
     // intermission: IntermissionKind,
     // completed_time: Duration,
 
@@ -261,22 +292,8 @@ impl ClientState {
             // TODO: for the love of god can the lang team hurry up (https://github.com/rust-lang/rfcs/pull/2203)
             // this might make more sense as a different data structure anyway who knows
             player_info: [
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             msg_times: [Duration::zero(), Duration::zero()],
             time: Duration::zero(),
@@ -328,6 +345,7 @@ impl ClientState {
 pub struct Client {
     qsock: QSocket,
     compose: Vec<u8>,
+    signon: SignOnStage,
 
     audio_endpoint: Endpoint,
     state: ClientState,
@@ -350,10 +368,7 @@ impl Client {
                 MAX_CONNECT_ATTEMPTS
             );
             con_sock.send_request(
-                Request::connect(
-                    net::GAME_NAME,
-                    CONNECT_PROTOCOL_VERSION,
-                ),
+                Request::connect(net::GAME_NAME, CONNECT_PROTOCOL_VERSION),
                 server_addr,
             )?;
 
@@ -401,9 +416,10 @@ impl Client {
 
             // our request was rejected. TODO: this error shouldn't be fatal.
             Response::Reject(reject) => {
-                return Err(ClientError::with_msg(
-                    format!("Connection rejected: {}", reject.message),
-                ))
+                return Err(ClientError::with_msg(format!(
+                    "Connection rejected: {}",
+                    reject.message
+                )))
             }
 
             // the server sent back a response that doesn't make sense here (i.e. something other
@@ -421,6 +437,7 @@ impl Client {
         Ok(Client {
             qsock,
             compose: Vec::new(),
+            signon: SignOnStage::Not,
             // TODO: inherit endpoint from host
             audio_endpoint: rodio::default_endpoint().unwrap(),
             state: ClientState::new(pak),
@@ -466,8 +483,7 @@ impl Client {
         if id > self.state.max_players {
             return Err(ClientError::Other(format!(
                 "player ID ({}) exceeds max_players ({})",
-                id,
-                self.state.max_players,
+                id, self.state.max_players,
             )));
         }
 
@@ -508,19 +524,18 @@ impl Client {
             model_id: model_id as usize,
             frame_id: frame_id as usize,
             colormap: colormap,
-            skin_id: skin_id,
+            skin_id: skin_id as usize,
             effects: EntityEffects::empty(),
         };
 
         debug!(
             "Spawning entity with id {} from baseline {:?}",
-            id,
-            baseline
+            id, baseline
         );
 
-        self.state.entities.push(
-            ClientEntity::from_baseline(baseline),
-        );
+        self.state
+            .entities
+            .push(ClientEntity::from_baseline(baseline));
 
         Ok(())
     }
@@ -596,8 +611,8 @@ impl Client {
                         // item flags have changed, something got picked up
                         // TODO: original engine calls Sbar_Changed() here to update status bar
                         for i in 0..net::MAX_ITEMS {
-                            if (items.bits() & 1 << i) != 0 &&
-                                (self.state.items.bits() & 1 << i) == 0
+                            if (items.bits() & 1 << i) != 0
+                                && (self.state.items.bits() & 1 << i) == 0
                             {
                                 // item with flag value `i` was picked up
                                 self.state.item_get_time[i] = self.state.time;
@@ -662,6 +677,134 @@ impl Client {
                     if self.state.stats[ClientStat::ActiveWeapon as usize] != active_weapon as i32 {
                         self.state.stats[ClientStat::ActiveWeapon as usize] = active_weapon as i32;
                         // TODO: update status bar
+                    }
+                }
+
+                ServerCmd::FastUpdate {
+                    ent_id,
+                    model_id,
+                    frame_id,
+                    colormap,
+                    skin_id,
+                    effects,
+                    origin_x,
+                    pitch,
+                    origin_y,
+                    yaw,
+                    origin_z,
+                    roll,
+                    no_lerp,
+                } => {
+                    // first update signals the last sign-on stage
+                    if self.signon == SignOnStage::Begin {
+                        self.signon = SignOnStage::Done;
+                        let signon = self.signon;
+                        self.handle_signon(signon);
+                    }
+
+                    let mut force_link = false;
+
+                    let ent_id = ent_id as usize;
+                    self.check_entity_id(ent_id)?;
+
+                    // did we get an update for this entity last frame?
+                    if self.state.entities[ent_id].msg_time != self.state.msg_times[1] {
+                        // if not, we can't lerp
+                        force_link = true;
+                    }
+
+                    // update entity update time
+                    self.state.entities[ent_id].msg_time = self.state.msg_times[0];
+
+                    let new_model_id = match model_id {
+                        Some(m_id) => {
+                            if m_id as usize >= self.state.models.len() {
+                                return Err(ClientError::with_msg(format!(
+                                    "Update for entity {}: model ID {} is out of range",
+                                    ent_id, m_id
+                                )));
+                            }
+
+                            m_id as usize
+                        }
+
+                        None => self.state.entities[ent_id].baseline.model_id,
+                    };
+
+                    if self.state.entities[ent_id].model_id != new_model_id {
+                        // model has changed
+                        self.state.entities[ent_id].model_id = new_model_id;
+                        match self.state.models[new_model_id].kind() {
+                            &ModelKind::None => force_link = true,
+                            m => {
+                                self.state.entities[ent_id].sync_base =
+                                    match self.state.models[new_model_id].sync_type() {
+                                        SyncType::Sync => Duration::zero(),
+                                        SyncType::Rand => unimplemented!(), // TODO
+                                    }
+                            }
+                        }
+                    }
+
+                    self.state.entities[ent_id].frame_id = frame_id
+                        .map(|x| x as usize)
+                        .unwrap_or(self.state.entities[ent_id].baseline.frame_id);
+
+                    let new_colormap =
+                        colormap.unwrap_or(self.state.entities[ent_id].baseline.colormap) as usize;
+                    if new_colormap == 0 {
+                        // TODO: use default colormap
+                    } else {
+                        // only players may have custom colormaps
+                        if new_colormap > self.state.max_players {
+                            return Err(ClientError::with_msg(format!(
+                                "Attempted to assign custom colormap to entity with ID {}",
+                                ent_id
+                            )));
+                        }
+
+                        // TODO: set player custom colormaps
+                        warn!("Player colormaps not yet implemented");
+                    }
+
+                    self.state.entities[ent_id].skin_id = skin_id
+                        .map(|x| x as usize)
+                        .unwrap_or(self.state.entities[ent_id].baseline.skin_id);
+                    self.state.entities[ent_id].effects =
+                        effects.unwrap_or(self.state.entities[ent_id].baseline.effects);
+
+                    // save previous origin and angles
+                    self.state.entities[ent_id].msg_origins[1] =
+                        self.state.entities[ent_id].msg_origins[0];
+                    self.state.entities[ent_id].msg_angles[1] =
+                        self.state.entities[ent_id].msg_angles[0];
+
+                    // update origin
+                    self.state.entities[ent_id].msg_origins[0].x =
+                        origin_x.unwrap_or(self.state.entities[ent_id].baseline.origin.x);
+                    self.state.entities[ent_id].msg_origins[0].y =
+                        origin_y.unwrap_or(self.state.entities[ent_id].baseline.origin.y);
+                    self.state.entities[ent_id].msg_origins[0].z =
+                        origin_z.unwrap_or(self.state.entities[ent_id].baseline.origin.z);
+
+                    // update angles
+                    self.state.entities[ent_id].msg_angles[0][0] =
+                        pitch.unwrap_or(self.state.entities[ent_id].baseline.angles[0]);
+                    self.state.entities[ent_id].msg_angles[0][1] =
+                        yaw.unwrap_or(self.state.entities[ent_id].baseline.angles[1]);
+                    self.state.entities[ent_id].msg_angles[0][2] =
+                        roll.unwrap_or(self.state.entities[ent_id].baseline.angles[2]);
+
+                    if no_lerp {
+                        force_link = true;
+                    }
+
+                    if force_link {
+                        self.state.entities[ent_id].msg_origins[1] = self.state.entities[ent_id].msg_origins[0];
+                        self.state.entities[ent_id].origin = self.state.entities[ent_id].msg_origins[0];
+                        self.state.entities[ent_id].msg_angles[1] = self.state.entities[ent_id].msg_angles[0];
+                        self.state.entities[ent_id].angles = self.state.entities[ent_id].msg_angles[0];
+                        self.state.entities[ent_id].force_link = true;
                     }
                 }
 
@@ -758,18 +901,16 @@ impl Client {
                         Some(ref mut info) => {
                             debug!(
                                 "Player {} (ID {}) colors: {:?} -> {:?}",
-                                info.name,
-                                player_id,
-                                info.colors,
-                                new_colors,
+                                info.name, player_id, info.colors, new_colors,
                             );
                             info.colors = new_colors;
                         }
 
                         None => {
-                            return Err(ClientError::with_msg(
-                                format!("No player with ID {}", player_id),
-                            ));
+                            return Err(ClientError::with_msg(format!(
+                                "No player with ID {}",
+                                player_id
+                            )));
                         }
                     }
                 }
@@ -785,17 +926,15 @@ impl Client {
                         Some(ref mut info) => {
                             debug!(
                                 "Player {} (ID {}) frags: {} -> {}",
-                                &info.name,
-                                player_id,
-                                info.frags,
-                                new_frags
+                                &info.name, player_id, info.frags, new_frags
                             );
                             info.frags = new_frags as i32;
                         }
                         None => {
-                            return Err(ClientError::with_msg(
-                                format!("No player with ID {}", player_id),
-                            ));
+                            return Err(ClientError::with_msg(format!(
+                                "No player with ID {}",
+                                player_id
+                            )));
                         }
                     }
                 }
@@ -825,9 +964,7 @@ impl Client {
                 ServerCmd::UpdateStat { stat, value } => {
                     debug!(
                         "{:?}: {} -> {}",
-                        stat,
-                        self.state.stats[stat as usize],
-                        value
+                        stat, self.state.stats[stat as usize], value
                     );
                     self.state.stats[stat as usize] = value;
                 }
@@ -846,33 +983,35 @@ impl Client {
         match stage {
             SignOnStage::Not => (), // TODO this is an error (invalid value)
             SignOnStage::Prespawn => {
-                self.add_cmd(ClientCmd::StringCmd(
-                    ClientCmdStringCmd { cmd: String::from("prespawn") },
-                ))?;
+                self.add_cmd(ClientCmd::StringCmd(ClientCmdStringCmd {
+                    cmd: String::from("prespawn"),
+                }))?;
             }
             SignOnStage::ClientInfo => {
                 // TODO: fill in client info here
                 self.add_cmd(ClientCmd::StringCmd(ClientCmdStringCmd {
                     cmd: format!("name \"{}\"\n", "UNNAMED"),
                 }))?;
-                self.add_cmd(ClientCmd::StringCmd(
-                    ClientCmdStringCmd { cmd: format!("color {} {}", 0, 0) },
-                ))?;
+                self.add_cmd(ClientCmd::StringCmd(ClientCmdStringCmd {
+                    cmd: format!("color {} {}", 0, 0),
+                }))?;
                 // TODO: need default spawn parameters?
-                self.add_cmd(ClientCmd::StringCmd(
-                    ClientCmdStringCmd { cmd: format!("spawn {}", "") },
-                ))?;
+                self.add_cmd(ClientCmd::StringCmd(ClientCmdStringCmd {
+                    cmd: format!("spawn {}", ""),
+                }))?;
             }
             SignOnStage::Begin => {
-                self.add_cmd(ClientCmd::StringCmd(
-                    ClientCmdStringCmd { cmd: String::from("begin") },
-                ))?;
+                self.add_cmd(ClientCmd::StringCmd(ClientCmdStringCmd {
+                    cmd: String::from("begin"),
+                }))?;
             }
             SignOnStage::Done => {
                 debug!("Signon complete");
                 // TODO: end load screen and start render loop
             }
         }
+
+        self.signon = stage;
 
         Ok(())
     }
@@ -906,9 +1045,10 @@ impl Client {
                 let bsp_data = match pak.open(&mod_name) {
                     Some(b) => b,
                     None => {
-                        return Err(ClientError::with_msg(
-                            format!("Model not found in pak archive: {}", mod_name),
-                        ))
+                        return Err(ClientError::with_msg(format!(
+                            "Model not found in pak archive: {}",
+                            mod_name
+                        )))
                     }
                 };
 
@@ -926,16 +1066,15 @@ impl Client {
             debug!("Loading sound {}", snd_name);
 
             // TODO: waiting on ruuda/hound#20 (some WAV files don't load under rodio)
-            new_client_state.sounds.push(match AudioSource::load(
-                pak,
-                snd_name,
-            ) {
-                Ok(a) => a,
-                Err(e) => {
-                    warn!("Loading {} failed: {}", snd_name, e);
-                    AudioSource::load(pak, "misc/null.wav").unwrap()
-                }
-            });
+            new_client_state
+                .sounds
+                .push(match AudioSource::load(pak, snd_name) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        warn!("Loading {} failed: {}", snd_name, e);
+                        AudioSource::load(pak, "misc/null.wav").unwrap()
+                    }
+                });
 
             // TODO: send keepalive message?
         }

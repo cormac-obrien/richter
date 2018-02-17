@@ -143,4 +143,15 @@ impl Model {
             ModelKind::Alias(_) => Vector3::new(16.0, 16.0, 16.0),
         }
     }
+
+    pub fn sync_type(&self) -> SyncType {
+        match self.kind {
+            ModelKind::None => panic!("Attempted to take sync_type() of NULL model"),
+            ModelKind::Brush(_) => SyncType::Sync,
+            // TODO: expose sync_type in Sprite and reflect it here
+            ModelKind::Sprite(ref smodel) => SyncType::Sync,
+            // TODO: expose sync_type in Mdl and reflect it here
+            ModelKind::Alias(ref amodel) => SyncType::Sync,
+        }
+    }
 }
