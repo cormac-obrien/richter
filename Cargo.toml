@@ -22,7 +22,7 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 "rand" = "0.4.2"
 "regex" = "0.2.6"
 "rodio" = "0.6.0"
-"winit" = "0.7"
+"winit" = "0.11"
 
 # binaries only
 "docopt" = "0.8"
