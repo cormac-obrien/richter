@@ -573,8 +573,8 @@ impl ConnectListener {
         let control_len = (control & CONNECT_LENGTH_MASK) as usize;
         if control_len != len {
             return Err(NetError::InvalidData(format!(
-                "Actual packet length ({}) differs from header value ({})", len,
-                control_len,
+                "Actual packet length ({}) differs from header value ({})",
+                len, control_len,
             )));
         }
 
@@ -583,9 +583,10 @@ impl ConnectListener {
         let request_code = match RequestCode::from_u8(request_byte) {
             Some(r) => r,
             None => {
-                return Err(NetError::InvalidData(
-                    format!("request code {}", request_byte),
-                ))
+                return Err(NetError::InvalidData(format!(
+                    "request code {}",
+                    request_byte
+                )))
             }
         };
 
@@ -659,16 +660,13 @@ impl ConnectSocket {
         let mut recv_buf = [0u8; MAX_MESSAGE];
 
         // if a timeout was specified, apply it for this recv
-        self.socket.set_read_timeout(
-            timeout.map(|d| d.to_std().unwrap()),
-        )?;
+        self.socket
+            .set_read_timeout(timeout.map(|d| d.to_std().unwrap()))?;
         let (len, remote) = match self.socket.recv_from(&mut recv_buf) {
-            Err(e) => {
-                match e.kind() {
-                    ErrorKind::WouldBlock | ErrorKind::TimedOut => return Ok(None),
-                    _ => return Err(NetError::from(e)),
-                }
-            }
+            Err(e) => match e.kind() {
+                ErrorKind::WouldBlock | ErrorKind::TimedOut => return Ok(None),
+                _ => return Err(NetError::from(e)),
+            },
             Ok(ret) => ret,
         };
         self.socket.set_read_timeout(None)?;
@@ -694,8 +692,8 @@ impl ConnectSocket {
         let control_len = (control & CONNECT_LENGTH_MASK) as usize;
         if control_len != len {
             return Err(NetError::with_msg(format!(
-                "Actual packet length ({}) differs from header value ({})", len,
-                control_len,
+                "Actual packet length ({}) differs from header value ({})",
+                len, control_len,
             )));
         }
 
@@ -703,9 +701,10 @@ impl ConnectSocket {
         let response_code = match ResponseCode::from_u8(response_byte) {
             Some(r) => r,
             None => {
-                return Err(NetError::InvalidData(
-                    format!("response code {}", response_byte),
-                ))
+                return Err(NetError::InvalidData(format!(
+                    "response code {}",
+                    response_byte
+                )))
             }
         };
 
@@ -768,7 +767,9 @@ mod test {
 
     #[test]
     fn test_request_server_info_packet_len() {
-        let request_server_info = RequestServerInfo { game_name: String::from("QUAKE") };
+        let request_server_info = RequestServerInfo {
+            game_name: String::from("QUAKE"),
+        };
         let packet_len = request_server_info.packet_len() as usize;
         let packet = request_server_info.to_bytes().unwrap();
         assert_eq!(packet_len, packet.len());
@@ -784,7 +785,9 @@ mod test {
 
     #[test]
     fn test_request_rule_info_packet_len() {
-        let request_rule_info = RequestRuleInfo { prev_cvar: String::from("sv_gravity") };
+        let request_rule_info = RequestRuleInfo {
+            prev_cvar: String::from("sv_gravity"),
+        };
         let packet_len = request_rule_info.packet_len() as usize;
         let packet = request_rule_info.to_bytes().unwrap();
         assert_eq!(packet_len, packet.len());
@@ -800,7 +803,9 @@ mod test {
 
     #[test]
     fn test_response_reject_packet_len() {
-        let response_reject = ResponseReject { message: String::from("error") };
+        let response_reject = ResponseReject {
+            message: String::from("error"),
+        };
         let packet_len = response_reject.packet_len() as usize;
         let packet = response_reject.to_bytes().unwrap();
         assert_eq!(packet_len, packet.len());

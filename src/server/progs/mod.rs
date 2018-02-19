@@ -411,7 +411,15 @@ impl StringTable {
 /// This returns objects representing the necessary context to execute QuakeC bytecode.
 pub fn load(
     data: &[u8],
-) -> Result<(ExecutionContext, Globals, Rc<EntityTypeDef>, Rc<StringTable>), ProgsError> {
+) -> Result<
+    (
+        ExecutionContext,
+        Globals,
+        Rc<EntityTypeDef>,
+        Rc<StringTable>,
+    ),
+    ProgsError,
+> {
     let mut src = BufReader::new(Cursor::new(data));
     assert!(src.read_i32::<LittleEndian>()? == VERSION);
     assert!(src.read_i32::<LittleEndian>()? == CRC);
@@ -438,9 +446,9 @@ pub fn load(
     let string_lump = &lumps[LumpId::Strings as usize];
     src.seek(SeekFrom::Start(string_lump.offset as u64))?;
     let mut strings = Vec::new();
-    (&mut src).take(string_lump.count as u64).read_to_end(
-        &mut strings,
-    )?;
+    (&mut src)
+        .take(string_lump.count as u64)
+        .read_to_end(&mut strings)?;
     let string_table = Rc::new(StringTable::new(strings));
 
     assert_eq!(
@@ -464,16 +472,15 @@ pub fn load(
         );
 
         let kind = match src.read_i32::<LittleEndian>()? {
-            x if x < 0 => {
-                match BuiltinFunctionId::from_i32(-x) {
-                    Some(f) => FunctionKind::BuiltIn(f),
-                    None => {
-                        return Err(ProgsError::with_msg(
-                            format!("Invalid built-in function ID {}", -x),
-                        ))
-                    }
+            x if x < 0 => match BuiltinFunctionId::from_i32(-x) {
+                Some(f) => FunctionKind::BuiltIn(f),
+                None => {
+                    return Err(ProgsError::with_msg(format!(
+                        "Invalid built-in function ID {}",
+                        -x
+                    )))
                 }
-            }
+            },
             x => FunctionKind::QuakeC(x as usize),
         };
 
@@ -504,8 +511,7 @@ pub fn load(
     assert_eq!(
         src.seek(SeekFrom::Current(0))?,
         src.seek(SeekFrom::Start(
-            (function_lump.offset + function_lump.count * FUNCTION_SIZE) as
-                u64,
+            (function_lump.offset + function_lump.count * FUNCTION_SIZE) as u64,
         ))?
     );
 
@@ -524,8 +530,7 @@ pub fn load(
     assert_eq!(
         src.seek(SeekFrom::Current(0))?,
         src.seek(SeekFrom::Start(
-            (statement_lump.offset + statement_lump.count * STATEMENT_SIZE) as
-                u64,
+            (statement_lump.offset + statement_lump.count * STATEMENT_SIZE) as u64,
         ))?
     );
 
@@ -553,8 +558,7 @@ pub fn load(
     assert_eq!(
         src.seek(SeekFrom::Current(0))?,
         src.seek(SeekFrom::Start(
-            (globaldef_lump.offset +
-                 globaldef_lump.count * DEF_SIZE) as u64,
+            (globaldef_lump.offset + globaldef_lump.count * DEF_SIZE) as u64,
         ))?
     );
 
@@ -581,8 +585,7 @@ pub fn load(
     assert_eq!(
         src.seek(SeekFrom::Current(0))?,
         src.seek(SeekFrom::Start(
-            (fielddef_lump.offset +
-                 fielddef_lump.count * DEF_SIZE) as u64,
+            (fielddef_lump.offset + fielddef_lump.count * DEF_SIZE) as u64,
         ))?
     );
 
@@ -681,16 +684,13 @@ impl ExecutionContext {
 
         // save locals to stack
         for i in 0..def.locals {
-            self.local_stack.push(globals.get_bytes(
-                (def.arg_start + i) as i16,
-            )?);
+            self.local_stack
+                .push(globals.get_bytes((def.arg_start + i) as i16)?);
         }
 
         for arg in 0..def.argc {
             for component in 0..def.argsz[arg] as usize {
-                let val = globals.get_bytes(
-                    (GLOBAL_ADDR_ARG_0 + arg * 3 + component) as i16,
-                )?;
+                let val = globals.get_bytes((GLOBAL_ADDR_ARG_0 + arg * 3 + component) as i16)?;
                 globals.put_bytes(val, def.arg_start as i16)?;
             }
         }
@@ -715,10 +715,7 @@ impl ExecutionContext {
         );
 
         for i in (0..def.locals).rev() {
-            globals.put_bytes(
-                self.local_stack.pop().unwrap(),
-                (def.arg_start + i) as i16,
-            )?;
+            globals.put_bytes(self.local_stack.pop().unwrap(), (def.arg_start + i) as i16)?;
         }
 
         let frame = match self.call_stack.pop() {
@@ -848,10 +845,7 @@ impl ExecutionContext {
                     let self_ent = world.try_get_entity_mut(self_id)?;
                     let next_think_time = globals.get_float(GlobalAddrFloat::Time as i16)? + 0.1;
 
-                    self_ent.put_float(
-                        next_think_time,
-                        FieldAddrFloat::NextThink as i16,
-                    )?;
+                    self_ent.put_float(next_think_time, FieldAddrFloat::NextThink as i16)?;
 
                     let frame_id = globals.get_float(a)?;
                     self_ent.put_float(frame_id, FieldAddrFloat::FrameId as i16)?;
@@ -922,9 +916,8 @@ impl ExecutionContext {
                             }
 
                             Remove => {
-                                world.remove_entity(
-                                    globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?,
-                                )?;
+                                world
+                                    .remove_entity(globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?)?;
                             }
                             TraceLine => unimplemented!(),
                             CheckClient => unimplemented!(),
@@ -972,8 +965,9 @@ impl ExecutionContext {
                                 }
                             }
                             LightStyle => {
-                                let index = match globals.get_float(GLOBAL_ADDR_ARG_0 as i16)? as
-                                    i32 {
+                                let index = match globals.get_float(GLOBAL_ADDR_ARG_0 as i16)?
+                                    as i32
+                                {
                                     i if i < 0 => {
                                         return Err(ProgsError::with_msg("negative lightstyle ID"))
                                     }
@@ -1096,14 +1090,7 @@ impl ExecutionContext {
         S: AsRef<str>,
     {
         let func_id = self.functions.find_function_by_name(name)?;
-        self.execute_program(
-            globals,
-            world,
-            cvars,
-            server,
-            pak,
-            func_id,
-        )?;
+        self.execute_program(globals, world, cvars, server, pak, func_id)?;
         Ok(())
     }
 }
@@ -1459,9 +1446,9 @@ fn load_v(
 ) -> Result<(), ProgsError> {
     let ent_id = globals.get_entity_id(ent_id_addr)?;
     let ent_vector = globals.get_field_addr(ent_vector_addr)?;
-    let v = world.try_get_entity(ent_id)?.get_vector(
-        ent_vector.0 as i16,
-    )?;
+    let v = world
+        .try_get_entity(ent_id)?
+        .get_vector(ent_vector.0 as i16)?;
     globals.put_vector(v, dest_addr)?;
 
     Ok(())
@@ -1476,9 +1463,9 @@ fn load_s(
 ) -> Result<(), ProgsError> {
     let ent_id = globals.get_entity_id(ent_id_addr)?;
     let ent_string_id = globals.get_field_addr(ent_string_id_addr)?;
-    let s = world.try_get_entity(ent_id)?.get_string_id(
-        ent_string_id.0 as i16,
-    )?;
+    let s = world
+        .try_get_entity(ent_id)?
+        .get_string_id(ent_string_id.0 as i16)?;
     globals.put_string_id(s, dest_addr)?;
 
     Ok(())
@@ -1493,9 +1480,9 @@ fn load_ent(
 ) -> Result<(), ProgsError> {
     let ent_id = globals.get_entity_id(ent_id_addr)?;
     let ent_entity_id = globals.get_field_addr(ent_entity_id_addr)?;
-    let e = world.try_get_entity(ent_id)?.get_entity_id(
-        ent_entity_id.0 as i16,
-    )?;
+    let e = world
+        .try_get_entity(ent_id)?
+        .get_entity_id(ent_entity_id.0 as i16)?;
     globals.put_entity_id(e, dest_addr)?;
 
     Ok(())
@@ -1510,9 +1497,9 @@ fn load_fnc(
 ) -> Result<(), ProgsError> {
     let ent_id = globals.get_entity_id(ent_id_addr)?;
     let fnc_function_id = globals.get_field_addr(ent_function_id_addr)?;
-    let f = world.try_get_entity(ent_id)?.get_function_id(
-        fnc_function_id.0 as i16,
-    )?;
+    let f = world
+        .try_get_entity(ent_id)?
+        .get_function_id(fnc_function_id.0 as i16)?;
     globals.put_function_id(f, dest_addr)?;
 
     Ok(())
@@ -1571,10 +1558,7 @@ fn store_v(
         // https://github.com/id-Software/Quake-Tools/blob/master/qcc/pr_comp.c#L362) into the global
         // argument slots.
         for c in 0..3 {
-            globals.untyped_copy(
-                src_ofs + c as i16,
-                dest_ofs + c as i16,
-            )?;
+            globals.untyped_copy(src_ofs + c as i16, dest_ofs + c as i16)?;
         }
     } else {
         for c in 0..3 {
@@ -1894,10 +1878,7 @@ fn bit_and(
     let f1 = globals.get_float(f1_ofs)?;
     let f2 = globals.get_float(f2_ofs)?;
 
-    globals.put_float(
-        (f1 as i32 & f2 as i32) as f32,
-        bit_and_ofs,
-    )?;
+    globals.put_float((f1 as i32 & f2 as i32) as f32, bit_and_ofs)?;
 
     Ok(())
 }
@@ -1912,10 +1893,7 @@ fn bit_or(
     let f1 = globals.get_float(f1_ofs)?;
     let f2 = globals.get_float(f2_ofs)?;
 
-    globals.put_float(
-        (f1 as i32 | f2 as i32) as f32,
-        bit_or_ofs,
-    )?;
+    globals.put_float((f1 as i32 | f2 as i32) as f32, bit_or_ofs)?;
 
     Ok(())
 }

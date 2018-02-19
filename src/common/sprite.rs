@@ -87,8 +87,7 @@ pub fn load(data: &[u8]) -> SpriteModel {
     if magic != MAGIC {
         panic!(
             "Bad magic number for sprite model (got {}, should be {})",
-            magic,
-            MAGIC
+            magic, MAGIC
         );
     }
 
@@ -96,8 +95,7 @@ pub fn load(data: &[u8]) -> SpriteModel {
     if version != VERSION {
         panic!(
             "Bad version number for sprite model (got {}, should be {})",
-            version,
-            VERSION
+            version, VERSION
         );
     }
 
@@ -128,9 +126,7 @@ pub fn load(data: &[u8]) -> SpriteModel {
 
     debug!(
         "max_width = {} max_height = {} frame_count = {}",
-        max_width,
-        max_height,
-        frame_count
+        max_width, max_height, frame_count
     );
 
     let sync_type = SyncType::from_i32(reader.read_i32::<LittleEndian>().unwrap()).unwrap();

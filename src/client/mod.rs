@@ -19,6 +19,7 @@
 // SOFTWARE.
 
 pub mod input;
+pub mod render;
 pub mod sound;
 
 use std::collections::HashMap;

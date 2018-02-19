@@ -21,7 +21,7 @@ use std::collections::VecDeque;
 use std::collections::HashMap;
 use std::iter::FromIterator;
 
-use glutin::VirtualKeyCode as Key;
+use winit::VirtualKeyCode as Key;
 
 /// Stores console commands.
 pub struct CmdRegistry<'a> {
@@ -93,7 +93,7 @@ struct Cvar {
 }
 
 pub struct CvarRegistry {
-    cvars: HashMap<String, Cvar>
+    cvars: HashMap<String, Cvar>,
 }
 
 impl CvarRegistry {
@@ -105,19 +105,25 @@ impl CvarRegistry {
     }
 
     /// Register a new `Cvar` with the given name.
-    pub fn register<S>(&mut self, name: S, default: S) -> Result<(), ()> where S: AsRef<str> {
+    pub fn register<S>(&mut self, name: S, default: S) -> Result<(), ()>
+    where
+        S: AsRef<str>,
+    {
         let name = name.as_ref();
         let default = default.as_ref();
 
         match self.cvars.get(name) {
             Some(_) => return Err(()),
             None => {
-                self.cvars.insert(name.to_owned(), Cvar {
-                    val: default.to_owned(),
-                    archive: false,
-                    info: false,
-                    default: default.to_owned(),
-                });
+                self.cvars.insert(
+                    name.to_owned(),
+                    Cvar {
+                        val: default.to_owned(),
+                        archive: false,
+                        info: false,
+                        default: default.to_owned(),
+                    },
+                );
             }
         }
 
@@ -128,19 +134,25 @@ impl CvarRegistry {
     ///
     /// The value of this `Cvar` should be written to `vars.rc` whenever the game is closed or
     /// `host_writeconfig` is issued.
-    pub fn register_archive<S>(&mut self, name: S, default: S) -> Result<(), ()> where S: AsRef<str> {
+    pub fn register_archive<S>(&mut self, name: S, default: S) -> Result<(), ()>
+    where
+        S: AsRef<str>,
+    {
         let name = name.as_ref();
         let default = default.as_ref();
 
         match self.cvars.get(name) {
             Some(_) => return Err(()),
             None => {
-                self.cvars.insert(name.to_owned(), Cvar {
-                    val: default.to_owned(),
-                    archive: true,
-                    info: false,
-                    default: default.to_owned(),
-                });
+                self.cvars.insert(
+                    name.to_owned(),
+                    Cvar {
+                        val: default.to_owned(),
+                        archive: true,
+                        info: false,
+                        default: default.to_owned(),
+                    },
+                );
             }
         }
 
@@ -151,19 +163,25 @@ impl CvarRegistry {
     ///
     /// When this `Cvar` is set, the serverinfo or userinfo string should be update to reflect its
     /// new value.
-    pub fn register_updateinfo<S>(&mut self, name: S, default: S) -> Result<(), ()> where S: AsRef<str> {
+    pub fn register_updateinfo<S>(&mut self, name: S, default: S) -> Result<(), ()>
+    where
+        S: AsRef<str>,
+    {
         let name = name.as_ref();
         let default = default.as_ref();
 
         match self.cvars.get(name) {
             Some(_) => return Err(()),
             None => {
-                self.cvars.insert(name.to_owned(), Cvar {
-                    val: default.to_owned(),
-                    archive: false,
-                    info: true,
-                    default: default.to_owned(),
-                });
+                self.cvars.insert(
+                    name.to_owned(),
+                    Cvar {
+                        val: default.to_owned(),
+                        archive: false,
+                        info: true,
+                        default: default.to_owned(),
+                    },
+                );
             }
         }
 
@@ -176,26 +194,34 @@ impl CvarRegistry {
     /// `host_writeconfig` is issued. Additionally, when this `Cvar` is set, the serverinfo or
     /// userinfo string should be updated to reflect its new value.
     pub fn register_archive_updateinfo<S>(&mut self, name: S, default: S) -> Result<(), ()>
-        where S: AsRef<str> {
+    where
+        S: AsRef<str>,
+    {
         let name = name.as_ref();
         let default = default.as_ref();
 
         match self.cvars.get(name) {
             Some(_) => return Err(()),
             None => {
-                self.cvars.insert(name.to_owned(), Cvar {
-                    val: default.to_owned(),
-                    archive: true,
-                    info: true,
-                    default: default.to_owned(),
-                });
+                self.cvars.insert(
+                    name.to_owned(),
+                    Cvar {
+                        val: default.to_owned(),
+                        archive: true,
+                        info: true,
+                        default: default.to_owned(),
+                    },
+                );
             }
         }
 
         Ok(())
     }
 
-    pub fn get<S>(&mut self, name: S) -> Result<&str, ()> where S: AsRef<str> {
+    pub fn get<S>(&mut self, name: S) -> Result<&str, ()>
+    where
+        S: AsRef<str>,
+    {
         debug!("cvar lookup: {}", name.as_ref());
         match self.cvars.get(name.as_ref()) {
             Some(s) => Ok(&s.val),
@@ -203,27 +229,31 @@ impl CvarRegistry {
         }
     }
 
-    pub fn get_value<S>(&mut self, name: S) -> Result<f32, ()> where S: AsRef<str> {
+    pub fn get_value<S>(&mut self, name: S) -> Result<f32, ()>
+    where
+        S: AsRef<str>,
+    {
         debug!("cvar value lookup: {}", name.as_ref());
         match self.cvars.get(name.as_ref()) {
-            Some(s) => {
-                match s.val.parse() {
-                    Ok(f) => Ok(f),
-                    Err(_) => Err(()),
-                }
-            }
-            None => Err(())
+            Some(s) => match s.val.parse() {
+                Ok(f) => Ok(f),
+                Err(_) => Err(()),
+            },
+            None => Err(()),
         }
     }
 
-    pub fn set<S>(&mut self, name: S, value: S) -> Result<(), ()> where S: AsRef<str> {
+    pub fn set<S>(&mut self, name: S, value: S) -> Result<(), ()>
+    where
+        S: AsRef<str>,
+    {
         debug!("cvar assignment: {} {}", name.as_ref(), value.as_ref());
         match self.cvars.get_mut(name.as_ref()) {
             Some(s) => {
                 s.val = value.as_ref().to_owned();
                 Ok(())
             }
-            None => Err(())
+            None => Err(()),
         }
     }
 }
@@ -424,11 +454,11 @@ impl Console {
         match key {
             Key::Up => if let Some(line) = self.hist.line_up() {
                 self.input.set_text(&line);
-            }
+            },
 
             Key::Down => if let Some(line) = self.hist.line_down() {
                 self.input.set_text(&line);
-            }
+            },
 
             Key::Right => self.input.cursor_right(),
             Key::Left => self.input.cursor_left(),

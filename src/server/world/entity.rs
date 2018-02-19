@@ -247,11 +247,10 @@ bitflags! {
 fn float_addr(addr: usize) -> Result<FieldAddrFloat, ProgsError> {
     match FieldAddrFloat::from_usize(addr) {
         Some(f) => Ok(f),
-        None => {
-            Err(ProgsError::with_msg(
-                format!("float_addr: invalid address ({})", addr),
-            ))
-        }
+        None => Err(ProgsError::with_msg(format!(
+            "float_addr: invalid address ({})",
+            addr
+        ))),
     }
 }
 
@@ -260,11 +259,10 @@ fn float_addr(addr: usize) -> Result<FieldAddrFloat, ProgsError> {
 fn vector_addr(addr: usize) -> Result<FieldAddrVector, ProgsError> {
     match FieldAddrVector::from_usize(addr) {
         Some(v) => Ok(v),
-        None => {
-            Err(ProgsError::with_msg(
-                format!("vector_addr: invalid address ({})", addr),
-            ))
-        }
+        None => Err(ProgsError::with_msg(format!(
+            "vector_addr: invalid address ({})",
+            addr
+        ))),
     }
 }
 
@@ -281,8 +279,7 @@ impl EntityTypeDef {
         if addr_count < STATIC_ADDRESS_COUNT {
             return Err(EntityError::with_msg(format!(
                 "addr_count ({}) < STATIC_ADDRESS_COUNT ({})",
-                addr_count,
-                STATIC_ADDRESS_COUNT
+                addr_count, STATIC_ADDRESS_COUNT
             )));
         }
 
@@ -338,9 +335,11 @@ impl Entity {
     }
 
     pub fn type_check(&self, addr: usize, type_: Type) -> Result<(), EntityError> {
-        match self.type_def.field_defs.iter().find(|def| {
-            def.type_ != Type::QVoid && def.offset as usize == addr
-        }) {
+        match self.type_def
+            .field_defs
+            .iter()
+            .find(|def| def.type_ != Type::QVoid && def.offset as usize == addr)
+        {
             Some(d) => {
                 if type_ == d.type_ {
                     return Ok(());
@@ -351,9 +350,7 @@ impl Entity {
                 } else {
                     return Err(EntityError::with_msg(format!(
                         "type check failed: addr={} expected={:?} actual={:?}",
-                        addr,
-                        type_,
-                        d.type_
+                        addr, type_, d.type_
                     )));
                 }
             }
@@ -477,18 +474,15 @@ impl Entity {
     pub fn get_string_id(&self, addr: i16) -> Result<StringId, EntityError> {
         self.type_check(addr as usize, Type::QString)?;
 
-        Ok(StringId(
-            self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize,
-        ))
+        Ok(StringId(self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize))
     }
 
     /// Stores a `StringId` at the given virtual address.
     pub fn put_string_id(&mut self, val: StringId, addr: i16) -> Result<(), EntityError> {
         self.type_check(addr as usize, Type::QString)?;
 
-        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
-            val.try_into().unwrap(),
-        )?;
+        self.get_addr_mut(addr)?
+            .write_i32::<LittleEndian>(val.try_into().unwrap())?;
         Ok(())
     }
 
@@ -506,26 +500,22 @@ impl Entity {
     pub fn put_entity_id(&mut self, val: EntityId, addr: i16) -> Result<(), EntityError> {
         self.type_check(addr as usize, Type::QEntity)?;
 
-        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
-            val.0 as i32,
-        )?;
+        self.get_addr_mut(addr)?
+            .write_i32::<LittleEndian>(val.0 as i32)?;
         Ok(())
     }
 
     /// Loads a `FunctionId` from the given virtual address.
     pub fn get_function_id(&self, addr: i16) -> Result<FunctionId, EntityError> {
         self.type_check(addr as usize, Type::QFunction)?;
-        Ok(FunctionId(
-            self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize,
-        ))
+        Ok(FunctionId(self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize))
     }
 
     /// Stores a `FunctionId` at the given virtual address.
     pub fn put_function_id(&mut self, val: FunctionId, addr: i16) -> Result<(), EntityError> {
         self.type_check(addr as usize, Type::QFunction)?;
-        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
-            val.try_into().unwrap(),
-        )?;
+        self.get_addr_mut(addr)?
+            .write_i32::<LittleEndian>(val.try_into().unwrap())?;
         Ok(())
     }
 
@@ -612,18 +602,16 @@ impl Entity {
         let flags_i = self.get_float(FieldAddrFloat::Flags as i16)? as u16;
         match EntityFlags::from_bits(flags_i) {
             Some(f) => Ok(f),
-            None => Err(EntityError::with_msg(
-                format!("Invalid internal flags value ({})", flags_i),
-            )),
+            None => Err(EntityError::with_msg(format!(
+                "Invalid internal flags value ({})",
+                flags_i
+            ))),
         }
     }
 
     pub fn add_flags(&mut self, flags: EntityFlags) -> Result<(), EntityError> {
         let result = self.flags()? | flags;
-        self.put_float(
-            result.bits() as f32,
-            FieldAddrFloat::Flags as i16,
-        )?;
+        self.put_float(result.bits() as f32, FieldAddrFloat::Flags as i16)?;
         Ok(())
     }
 

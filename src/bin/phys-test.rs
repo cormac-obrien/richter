@@ -37,7 +37,8 @@ use chrono::Duration;
 use nom::IResult;
 
 fn main() {
-    env_logger::init().unwrap();
+    env_logger::init();
+
     let mut pak = Pak::new();
     match pak.add("pak0.pak") {
         Ok(_) => (),
@@ -73,8 +74,8 @@ fn main() {
     cvars.register("deathmatch", "0").unwrap();
     cvars.register_updateinfo("sv_gravity", "800").unwrap();
 
-    let mut world = world::World::create(brush_models, entity_type_def, string_table.clone())
-        .unwrap();
+    let mut world =
+        world::World::create(brush_models, entity_type_def, string_table.clone()).unwrap();
 
     let mut dot_file = std::fs::File::create("hull.dot").unwrap();
     dot_file

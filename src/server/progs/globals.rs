@@ -349,18 +349,15 @@ impl Globals {
     pub fn get_string_id(&self, addr: i16) -> Result<StringId, GlobalsError> {
         self.type_check(addr as usize, Type::QString)?;
 
-        Ok(StringId(
-            self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize,
-        ))
+        Ok(StringId(self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize))
     }
 
     /// Stores a `StringId` at the given virtual address.
     pub fn put_string_id(&mut self, val: StringId, addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QString)?;
 
-        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
-            val.try_into().unwrap(),
-        )?;
+        self.get_addr_mut(addr)?
+            .write_i32::<LittleEndian>(val.try_into().unwrap())?;
         Ok(())
     }
 
@@ -369,9 +366,10 @@ impl Globals {
         self.type_check(addr as usize, Type::QEntity)?;
 
         match self.get_addr(addr)?.read_i32::<LittleEndian>()? {
-            e if e < 0 => Err(GlobalsError::with_msg(
-                format!("Negative entity ID ({})", e),
-            )),
+            e if e < 0 => Err(GlobalsError::with_msg(format!(
+                "Negative entity ID ({})",
+                e
+            ))),
             e => Ok(EntityId(e as usize)),
         }
     }
@@ -380,9 +378,8 @@ impl Globals {
     pub fn put_entity_id(&mut self, val: EntityId, addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QEntity)?;
 
-        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
-            val.0 as i32,
-        )?;
+        self.get_addr_mut(addr)?
+            .write_i32::<LittleEndian>(val.0 as i32)?;
         Ok(())
     }
 
@@ -391,9 +388,10 @@ impl Globals {
         self.type_check(addr as usize, Type::QField)?;
 
         match self.get_addr(addr)?.read_i32::<LittleEndian>()? {
-            f if f < 0 => Err(GlobalsError::with_msg(
-                format!("Negative entity ID ({})", f),
-            )),
+            f if f < 0 => Err(GlobalsError::with_msg(format!(
+                "Negative entity ID ({})",
+                f
+            ))),
             f => Ok(FieldAddr(f as usize)),
         }
     }
@@ -401,26 +399,22 @@ impl Globals {
     /// Stores a `FieldAddr` at the given virtual address.
     pub fn put_field_addr(&mut self, val: FieldAddr, addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QField)?;
-        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
-            val.0 as i32,
-        )?;
+        self.get_addr_mut(addr)?
+            .write_i32::<LittleEndian>(val.0 as i32)?;
         Ok(())
     }
 
     /// Loads a `FunctionId` from the given virtual address.
     pub fn get_function_id(&self, addr: i16) -> Result<FunctionId, GlobalsError> {
         self.type_check(addr as usize, Type::QFunction)?;
-        Ok(FunctionId(
-            self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize,
-        ))
+        Ok(FunctionId(self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize))
     }
 
     /// Stores a `FunctionId` at the given virtual address.
     pub fn put_function_id(&mut self, val: FunctionId, addr: i16) -> Result<(), GlobalsError> {
         self.type_check(addr as usize, Type::QFunction)?;
-        self.get_addr_mut(addr)?.write_i32::<LittleEndian>(
-            val.try_into().unwrap(),
-        )?;
+        self.get_addr_mut(addr)?
+            .write_i32::<LittleEndian>(val.try_into().unwrap())?;
         Ok(())
     }
 
@@ -460,18 +454,9 @@ impl Globals {
 
         let rotation_matrix = make_vectors(angles);
 
-        self.put_vector(
-            rotation_matrix.x.into(),
-            GlobalAddrVector::VForward as i16,
-        )?;
-        self.put_vector(
-            rotation_matrix.y.into(),
-            GlobalAddrVector::VRight as i16,
-        )?;
-        self.put_vector(
-            rotation_matrix.z.into(),
-            GlobalAddrVector::VUp as i16,
-        )?;
+        self.put_vector(rotation_matrix.x.into(), GlobalAddrVector::VForward as i16)?;
+        self.put_vector(rotation_matrix.y.into(), GlobalAddrVector::VRight as i16)?;
+        self.put_vector(rotation_matrix.z.into(), GlobalAddrVector::VUp as i16)?;
 
         Ok(())
     }

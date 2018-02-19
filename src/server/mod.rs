@@ -100,10 +100,11 @@ impl Server {
     pub fn sound_precache_lookup(&self, name_id: StringId) -> Result<usize, ()> {
         let target_name = self.string_table.get(name_id).unwrap();
 
-        match self.sound_precache.iter().enumerate().find(|&(_,
-           &ref item_name)| {
-            *item_name == target_name
-        }) {
+        match self.sound_precache
+            .iter()
+            .enumerate()
+            .find(|&(_, &ref item_name)| *item_name == target_name)
+        {
             Some((i, _)) => Ok(i),
             None => Err(()),
         }
@@ -124,10 +125,11 @@ impl Server {
         let target_name = self.string_table.get(name_id).unwrap();
         debug!("Model precache lookup: {}", target_name);
 
-        match self.model_precache.iter().enumerate().find(|&(_,
-           &ref item_name)| {
-            *item_name == target_name
-        }) {
+        match self.model_precache
+            .iter()
+            .enumerate()
+            .find(|&(_, &ref item_name)| *item_name == target_name)
+        {
             Some((i, _)) => {
                 debug!("Found {} at precache index {}", target_name, i);
                 Ok(i)

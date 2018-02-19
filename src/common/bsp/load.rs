@@ -143,7 +143,6 @@ impl BspLump {
     }
 }
 
-
 pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     let mut reader = BufReader::new(Cursor::new(data));
 
@@ -151,8 +150,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     if version != VERSION {
         error!(
             "Bad version number (found {}, should be {})",
-            version,
-            VERSION
+            version, VERSION
         );
         return Err(BspError::with_msg("Bad version number"));
     }
@@ -176,9 +174,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             size
         );
 
-        lumps.push(BspLump::from_i32s(offset, size).expect(
-            "Failed to read lump",
-        ));
+        lumps.push(BspLump::from_i32s(offset, size).expect("Failed to read lump"));
     }
 
     let ent_lump = &lumps[BspLumpId::Entities as usize];
@@ -190,10 +186,8 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     }
     let ent_string = String::from_utf8(ent_data).expect("Failed to create string from entity data");
 
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
-            ent_lump.offset + ent_lump.size as u64,
-        ))?
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(ent_lump.offset + ent_lump.size as u64))?
     {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
@@ -222,7 +216,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
                 Axis::X => Hyperplane::axis_x(dist),
                 Axis::Y => Hyperplane::axis_y(dist),
                 Axis::Z => Hyperplane::axis_z(dist),
-            }
+            },
             None => Hyperplane::new(normal, dist),
         };
         planes.push(plane);
@@ -230,10 +224,8 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
 
     let planes_rc = Rc::new(planes.into_boxed_slice());
 
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
-            plane_lump.offset + plane_lump.size as u64,
-        ))?
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(plane_lump.offset + plane_lump.size as u64))?
     {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
@@ -251,9 +243,10 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
 
         tex_offsets.push(match ofs {
             o if o < -1 => {
-                return Err(BspError::with_msg(
-                    format!("negative texture offset ({})", ofs),
-                ))
+                return Err(BspError::with_msg(format!(
+                    "negative texture offset ({})",
+                    ofs
+                )))
             }
             -1 => None,
             o => Some(o as usize),
@@ -278,9 +271,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             }
         };
 
-        reader.seek(
-            SeekFrom::Start(tex_lump.offset + tex_ofs as u64),
-        )?;
+        reader.seek(SeekFrom::Start(tex_lump.offset + tex_ofs as u64))?;
         let mut tex_name_bytes = [0u8; TEX_NAME_MAX];
         reader.read(&mut tex_name_bytes)?;
         let len = tex_name_bytes
@@ -312,9 +303,9 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             let mipmap_size = (width as usize / factor) * (height as usize / factor);
             let offset = tex_lump.offset + (tex_ofs + mip_offsets[m]) as u64;
             reader.seek(SeekFrom::Start(offset))?;
-            (&mut reader).take(mipmap_size as u64).read_to_end(
-                &mut mipmaps[m],
-            )?;
+            (&mut reader)
+                .take(mipmap_size as u64)
+                .read_to_end(&mut mipmaps[m])?;
         }
 
         textures.push(BspTexture {
@@ -326,10 +317,8 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         })
     }
 
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
-            tex_lump.offset + tex_lump.size as u64,
-        ))?
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(tex_lump.offset + tex_lump.size as u64))?
     {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
@@ -347,9 +336,11 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         let mut anim1_len;
         let mut anim2_len;
 
-        let mut frame_char = textures[t].name.chars().nth(1).expect(
-            "Invalid texture name",
-        ) as usize;
+        let mut frame_char = textures[t]
+            .name
+            .chars()
+            .nth(1)
+            .expect("Invalid texture name") as usize;
 
         match frame_char {
             ASCII_0...ASCII_9 => {
@@ -359,8 +350,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
                 anim1_len += 1;
             }
 
-            ASCII_CAPITAL_A...ASCII_CAPITAL_J |
-            ASCII_SMALL_A...ASCII_SMALL_J => {
+            ASCII_CAPITAL_A...ASCII_CAPITAL_J | ASCII_SMALL_A...ASCII_SMALL_J => {
                 if frame_char >= ASCII_SMALL_A && frame_char <= ASCII_SMALL_J {
                     frame_char -= ASCII_SMALL_A - ASCII_CAPITAL_A;
                 }
@@ -380,15 +370,17 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
 
         for t2 in t + 1..textures.len() {
             // check if this texture has the same base name
-            if !textures[t2].name.starts_with("+") ||
-                textures[t2].name[2..] != textures[t].name[2..]
+            if !textures[t2].name.starts_with("+")
+                || textures[t2].name[2..] != textures[t].name[2..]
             {
                 continue;
             }
 
-            let mut frame_n_char = textures[t2].name.chars().nth(1).expect(
-                "Invalid texture name",
-            ) as usize;
+            let mut frame_n_char = textures[t2]
+                .name
+                .chars()
+                .nth(1)
+                .expect("Invalid texture name") as usize;
 
             match frame_n_char {
                 ASCII_0...ASCII_9 => {
@@ -399,8 +391,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
                     }
                 }
 
-                ASCII_CAPITAL_A...ASCII_CAPITAL_J |
-                ASCII_SMALL_A...ASCII_SMALL_J => {
+                ASCII_CAPITAL_A...ASCII_CAPITAL_J | ASCII_SMALL_A...ASCII_SMALL_J => {
                     if frame_n_char >= ASCII_SMALL_A && frame_n_char <= ASCII_SMALL_J {
                         frame_n_char -= ASCII_SMALL_A - ASCII_CAPITAL_A;
                     }
@@ -424,9 +415,10 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             let mut tex2 = match anim1[frame] {
                 Some(t2) => t2,
                 None => {
-                    return Err(BspError::with_msg(
-                        format!("Missing frame {} of {}", frame, textures[t].name),
-                    ))
+                    return Err(BspError::with_msg(format!(
+                        "Missing frame {} of {}",
+                        frame, textures[t].name
+                    )))
                 }
             };
 
@@ -442,9 +434,10 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             let mut tex2 = match anim2[frame] {
                 Some(t2) => t2,
                 None => {
-                    return Err(BspError::with_msg(
-                        format!("Missing frame {} of {}", frame, textures[t].name),
-                    ))
+                    return Err(BspError::with_msg(format!(
+                        "Missing frame {} of {}",
+                        frame, textures[t].name
+                    )))
                 }
             };
 
@@ -476,10 +469,8 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             reader.read_f32::<LittleEndian>()?,
         ));
     }
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
-            vert_lump.offset + vert_lump.size as u64,
-        ))?
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(vert_lump.offset + vert_lump.size as u64))?
     {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
@@ -492,13 +483,11 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         ));
     }
     let mut vis_data = Vec::with_capacity(vis_lump.size);
-    (&mut reader).take(vis_lump.size as u64).read_to_end(
-        &mut vis_data,
-    )?;
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
-            vis_lump.offset + vis_lump.size as u64,
-        ))?
+    (&mut reader)
+        .take(vis_lump.size as u64)
+        .read_to_end(&mut vis_data)?;
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(vis_lump.offset + vis_lump.size as u64))?
     {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
@@ -512,7 +501,9 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     }
     let render_node_count = render_node_lump.size / RENDER_NODE_SIZE;
     if render_node_count > MAX_RENDER_NODES {
-        return Err(BspError::with_msg("Render node count exceeds MAX_RENDER_NODES"));
+        return Err(BspError::with_msg(
+            "Render node count exceeds MAX_RENDER_NODES",
+        ));
     }
     debug!("Render node count = {}", render_node_count);
     let mut render_nodes = Vec::with_capacity(render_node_count);
@@ -567,11 +558,10 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             face_count: face_count as usize,
         });
     }
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(
             render_node_lump.offset + render_node_lump.size as u64,
-        ))?
-    {
+        ))? {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
 
@@ -612,11 +602,10 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             },
         });
     }
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(
             texinfo_lump.offset + texinfo_lump.size as u64,
-        ))?
-    {
+        ))? {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
 
@@ -677,10 +666,8 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             lightmap_id: lightmap_id,
         });
     }
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
-            face_lump.offset + face_lump.size as u64,
-        ))?
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(face_lump.offset + face_lump.size as u64))?
     {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
@@ -688,14 +675,13 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     let lightmap_lump = &lumps[BspLumpId::Lightmaps as usize];
     reader.seek(SeekFrom::Start(lightmap_lump.offset))?;
     let mut lightmaps = Vec::with_capacity(lightmap_lump.size);
-    (&mut reader).take(lightmap_lump.size as u64).read_to_end(
-        &mut lightmaps,
-    )?;
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
+    (&mut reader)
+        .take(lightmap_lump.size as u64)
+        .read_to_end(&mut lightmaps)?;
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(
             lightmap_lump.offset + lightmap_lump.size as u64,
-        ))?
-    {
+        ))? {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
 
@@ -711,8 +697,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     if collision_node_count > MAX_COLLISION_NODES {
         return Err(BspError::with_msg(format!(
             "Collision node count ({}) exceeds MAX_COLLISION_NODES ({})",
-            collision_node_count,
-            MAX_COLLISION_NODES
+            collision_node_count, MAX_COLLISION_NODES
         )));
     }
 
@@ -726,22 +711,32 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         let front = match reader.read_i16::<LittleEndian>()? {
             x if x < 0 => match BspLeafContents::from_i16(-x) {
                 Some(c) => BspCollisionNodeChild::Contents(c),
-                None => return Err(BspError::with_msg(format!("Invalid leaf contents ({})", -x))),
-            }
+                None => {
+                    return Err(BspError::with_msg(format!(
+                        "Invalid leaf contents ({})",
+                        -x
+                    )))
+                }
+            },
             x => BspCollisionNodeChild::Node(x as usize),
         };
 
         let back = match reader.read_i16::<LittleEndian>()? {
             x if x < 0 => match BspLeafContents::from_i16(-x) {
                 Some(c) => BspCollisionNodeChild::Contents(c),
-                None => return Err(BspError::with_msg(format!("Invalid leaf contents ({})", -x))),
-            }
+                None => {
+                    return Err(BspError::with_msg(format!(
+                        "Invalid leaf contents ({})",
+                        -x
+                    )))
+                }
+            },
             x => BspCollisionNodeChild::Node(x as usize),
         };
 
         collision_nodes.push(BspCollisionNode {
             plane_id,
-            children: [front, back]
+            children: [front, back],
         });
     }
 
@@ -765,12 +760,10 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         maxs: Vector3::new(32.0, 32.0, 64.0),
     };
 
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
-            collision_node_lump.offset +
-                 collision_node_lump.size as u64,
-        ))?
-    {
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(
+            collision_node_lump.offset + collision_node_lump.size as u64,
+        ))? {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
 
@@ -795,7 +788,12 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
 
         let contents = match BspLeafContents::from_i32(contents_id) {
             Some(c) => c,
-            None => return Err(BspError::with_msg(format!("Invalid leaf contents ({})", contents_id))),
+            None => {
+                return Err(BspError::with_msg(format!(
+                    "Invalid leaf contents ({})",
+                    contents_id
+                )))
+            }
         };
 
         let vis_offset = match reader.read_i32::<LittleEndian>()? {
@@ -830,10 +828,8 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             sounds: sounds,
         });
     }
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
-            leaf_lump.offset + leaf_lump.size as u64,
-        ))?
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(leaf_lump.offset + leaf_lump.size as u64))?
     {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
@@ -850,11 +846,10 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     for _ in 0..facelist_count {
         facelist.push(reader.read_u16::<LittleEndian>()? as usize);
     }
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(
             facelist_lump.offset + facelist_lump.size as u64,
-        ))?
-    {
+        ))? {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
 
@@ -878,10 +873,8 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             ],
         });
     }
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
-            edge_lump.offset + edge_lump.size as u64,
-        ))?
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(edge_lump.offset + edge_lump.size as u64))?
     {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
@@ -913,11 +906,10 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             x => return Err(BspError::with_msg(format!("Invalid edge index {}", x))),
         });
     }
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(
             edgelist_lump.offset + edgelist_lump.size as u64,
-        ))?
-    {
+        ))? {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
 
@@ -929,14 +921,20 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     for i in 0..render_nodes.len() {
         render_as_collision_nodes.push(BspCollisionNode {
             plane_id: render_nodes[i].plane_id,
-            children: [match render_nodes[i].children[0] {
-                BspRenderNodeChild::Node(n) => BspCollisionNodeChild::Node(n),
-                BspRenderNodeChild::Leaf(l) => BspCollisionNodeChild::Contents(leaves[l].contents),
-            },
-            match render_nodes[i].children[1] {
-                BspRenderNodeChild::Node(n) => BspCollisionNodeChild::Node(n),
-                BspRenderNodeChild::Leaf(l) => BspCollisionNodeChild::Contents(leaves[l].contents),
-            }]
+            children: [
+                match render_nodes[i].children[0] {
+                    BspRenderNodeChild::Node(n) => BspCollisionNodeChild::Node(n),
+                    BspRenderNodeChild::Leaf(l) => {
+                        BspCollisionNodeChild::Contents(leaves[l].contents)
+                    }
+                },
+                match render_nodes[i].children[1] {
+                    BspRenderNodeChild::Node(n) => BspCollisionNodeChild::Node(n),
+                    BspRenderNodeChild::Leaf(l) => {
+                        BspCollisionNodeChild::Contents(leaves[l].contents)
+                    }
+                },
+            ],
         })
     }
     let render_as_collision_nodes_rc = Rc::new(render_as_collision_nodes.into_boxed_slice());
@@ -1063,15 +1061,14 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         });
     }
 
-    if reader.seek(SeekFrom::Current(0))? !=
-        reader.seek(SeekFrom::Start(
-            model_lump.offset + model_lump.size as u64,
-        ))?
+    if reader.seek(SeekFrom::Current(0))?
+        != reader.seek(SeekFrom::Start(model_lump.offset + model_lump.size as u64))?
     {
         return Err(BspError::with_msg("BSP read data misaligned"));
     }
 
-    let models = brush_models.into_iter()
+    let models = brush_models
+        .into_iter()
         .enumerate()
         .map(|(i, bmodel)| Model::from_brush_model(format!("*{}", i), bmodel))
         .collect();

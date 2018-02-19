@@ -196,10 +196,10 @@ pub enum BspTextureMipmap {
 
 #[derive(Debug)]
 pub struct BspTextureAnimation {
-    sequence_duration: Duration,
-    time_start: Duration,
-    time_end: Duration,
-    next: usize,
+    pub sequence_duration: Duration,
+    pub time_start: Duration,
+    pub time_end: Duration,
+    pub next: usize,
 }
 
 #[derive(Debug)]
@@ -217,6 +217,14 @@ impl BspTexture {
         self.name.as_ref()
     }
 
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
     /// Returns a tuple containing the width and height of the texture.
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
@@ -229,46 +237,46 @@ impl BspTexture {
 }
 
 #[derive(Debug)]
-enum BspRenderNodeChild {
+pub enum BspRenderNodeChild {
     Node(usize),
     Leaf(usize),
 }
 
 #[derive(Debug)]
-struct BspRenderNode {
-    plane_id: usize,
-    children: [BspRenderNodeChild; 2],
-    min: [i16; 3],
-    max: [i16; 3],
-    face_id: usize,
-    face_count: usize,
+pub struct BspRenderNode {
+    pub plane_id: usize,
+    pub children: [BspRenderNodeChild; 2],
+    pub min: [i16; 3],
+    pub max: [i16; 3],
+    pub face_id: usize,
+    pub face_count: usize,
 }
 
 #[derive(Debug)]
-struct BspTexInfo {
-    s_vector: Vector3<f32>,
-    s_offset: f32,
-    t_vector: Vector3<f32>,
-    t_offset: f32,
-    tex_id: usize,
-    animated: bool,
+pub struct BspTexInfo {
+    pub s_vector: Vector3<f32>,
+    pub s_offset: f32,
+    pub t_vector: Vector3<f32>,
+    pub t_offset: f32,
+    pub tex_id: usize,
+    pub animated: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
-enum BspFaceSide {
+pub enum BspFaceSide {
     Front,
     Back,
 }
 
 #[derive(Debug)]
 pub struct BspFace {
-    plane_id: usize,
-    side: BspFaceSide,
-    edge_id: usize,
-    edge_count: usize,
-    texinfo_id: usize,
-    light_styles: [u8; MAX_LIGHTSTYLES],
-    lightmap_id: Option<usize>,
+    pub plane_id: usize,
+    pub side: BspFaceSide,
+    pub edge_id: usize,
+    pub edge_count: usize,
+    pub texinfo_id: usize,
+    pub light_styles: [u8; MAX_LIGHTSTYLES],
+    pub lightmap_id: Option<usize>,
 }
 
 /// The contents of a leaf in the BSP tree, specifying how it should look and behave.
@@ -326,7 +334,7 @@ pub enum BspLeafContents {
 }
 
 #[derive(Debug)]
-enum BspCollisionNodeChild {
+pub enum BspCollisionNodeChild {
     Node(usize),
     Contents(BspLeafContents),
 }
@@ -359,8 +367,7 @@ impl BspCollisionHull {
     ) -> Result<BspCollisionHull, BspError> {
         debug!(
             "Generating collision hull for min = {:?} max = {:?}",
-            mins,
-            maxs
+            mins, maxs
         );
 
         if mins.x >= maxs.x || mins.y >= maxs.y || mins.z >= maxs.z {
@@ -485,12 +492,10 @@ impl BspCollisionHull {
         let ref plane = self.planes[node.plane_id];
 
         match plane.line_segment_intersection(start, end) {
-
             // start -> end falls entirely on one side of the plane
             LinePlaneIntersect::NoIntersection(side) => {
                 debug!("No intersection");
                 match node.children[side as usize] {
-
                     // this is an internal node, keep searching for a leaf
                     BspCollisionNodeChild::Node(n) => {
                         debug!("Descending to {:?} node with ID {}", side, n);
@@ -522,8 +527,7 @@ impl BspCollisionHull {
                     BspCollisionNodeChild::Node(near_n) => {
                         debug!(
                             "Descending to near ({:?}) node with ID {}",
-                            near_side,
-                            near_n
+                            near_side, near_n
                         );
                         self.recursive_trace(near_n, start, mid)?
                     }
@@ -636,7 +640,7 @@ impl BspCollisionHull {
 }
 
 #[derive(Debug)]
-struct BspLeaf {
+pub struct BspLeaf {
     contents: BspLeafContents,
     vis_offset: Option<usize>,
     min: [i16; 3],
@@ -647,20 +651,20 @@ struct BspLeaf {
 }
 
 #[derive(Debug)]
-struct BspEdge {
-    vertex_ids: [u16; 2],
+pub struct BspEdge {
+    pub vertex_ids: [u16; 2],
 }
 
 #[derive(Copy, Clone, Debug)]
-enum BspEdgeDirection {
+pub enum BspEdgeDirection {
     Forward = 0,
     Backward = 1,
 }
 
 #[derive(Debug)]
-struct BspEdgeIndex {
-    direction: BspEdgeDirection,
-    index: usize,
+pub struct BspEdgeIndex {
+    pub direction: BspEdgeDirection,
+    pub index: usize,
 }
 
 #[derive(Debug)]
@@ -681,8 +685,44 @@ pub struct BspData {
 }
 
 impl BspData {
+    pub fn planes(&self) -> &[Hyperplane] {
+        &self.planes
+    }
+
     pub fn textures(&self) -> &[BspTexture] {
         &self.textures
+    }
+
+    pub fn vertices(&self) -> &[Vector3<f32>] {
+        &self.vertices
+    }
+
+    pub fn render_nodes(&self) -> &[BspRenderNode] {
+        &self.render_nodes
+    }
+
+    pub fn texinfo(&self) -> &[BspTexInfo] {
+        &self.texinfo
+    }
+
+    pub fn faces(&self) -> &[BspFace] {
+        &self.faces
+    }
+
+    pub fn leaves(&self) -> &[BspLeaf] {
+        &self.leaves
+    }
+
+    pub fn facelist(&self) -> &[usize] {
+        &self.facelist
+    }
+
+    pub fn edges(&self) -> &[BspEdge] {
+        &self.edges
+    }
+
+    pub fn edgelist(&self) -> &[BspEdgeIndex] {
+        &self.edgelist
     }
 
     /// Find the index of the appropriate frame of the texture with index `first`.
@@ -770,9 +810,10 @@ impl BspModel {
 
     pub fn hull(&self, index: usize) -> Result<BspCollisionHull, BspError> {
         if index > MAX_HULLS {
-            return Err(BspError::with_msg(
-                format!("Invalid hull index ({})", index),
-            ));
+            return Err(BspError::with_msg(format!(
+                "Invalid hull index ({})",
+                index
+            )));
         }
 
         let main_hull = &self.bsp_data.hulls[index];
@@ -882,39 +923,37 @@ impl BspData {
 
             // Store the data for the base vertex of the fan
             let base_edge_id = &face_edge_ids[0];
-            let base_vertex_id = self.edges[base_edge_id.index].vertex_ids[base_edge_id.direction as
-                                                                               usize];
+            let base_vertex_id =
+                self.edges[base_edge_id.index].vertex_ids[base_edge_id.direction as usize];
             let base_position = self.vertices[base_vertex_id as usize];
             let base_pos_vec = Vector3::from(base_position);
-            let base_s = (base_pos_vec.dot(Vector3::from(texinfo.s_vector)) + texinfo.s_offset) /
-                tex.width as f32;
-            let base_t = (base_pos_vec.dot(Vector3::from(texinfo.t_vector)) + texinfo.t_offset) /
-                tex.height as f32;
+            let base_s = (base_pos_vec.dot(Vector3::from(texinfo.s_vector)) + texinfo.s_offset)
+                / tex.width as f32;
+            let base_t = (base_pos_vec.dot(Vector3::from(texinfo.t_vector)) + texinfo.t_offset)
+                / tex.height as f32;
 
             // Duplicate every subsequent pair of vertices in the fan
             for i in 1..face_edge_ids.len() - 1 {
                 // First push the base vertex
-                vertex_data.push(
-                    [
-                        base_position[0],
-                        base_position[1],
-                        base_position[2],
-                        base_s,
-                        base_t,
-                    ],
-                );
+                vertex_data.push([
+                    base_position[0],
+                    base_position[1],
+                    base_position[2],
+                    base_s,
+                    base_t,
+                ]);
 
                 // And then the vertices comprising the next section of the fan
                 for v in 0..2 {
                     let edge_id = &face_edge_ids[i + v];
-                    let vertex_id = self.edges[edge_id.index].vertex_ids[edge_id.direction as
-                                                                             usize];
+                    let vertex_id =
+                        self.edges[edge_id.index].vertex_ids[edge_id.direction as usize];
                     let position = self.vertices[vertex_id as usize];
                     let pos_vec = Vector3::from(self.vertices[vertex_id as usize]);
-                    let s = (pos_vec.dot(Vector3::from(texinfo.s_vector)) + texinfo.s_offset) /
-                        tex.width as f32;
-                    let t = (pos_vec.dot(Vector3::from(texinfo.t_vector)) + texinfo.t_offset) /
-                        tex.height as f32;
+                    let s = (pos_vec.dot(Vector3::from(texinfo.s_vector)) + texinfo.s_offset)
+                        / tex.width as f32;
+                    let t = (pos_vec.dot(Vector3::from(texinfo.t_vector)) + texinfo.t_offset)
+                        / tex.height as f32;
 
                     vertex_data.push([position[0], position[1], position[2], s, t]);
                 }
@@ -942,31 +981,24 @@ mod test {
 
     #[test]
     fn test_hull_for_bounds() {
-        let hull = BspCollisionHull::for_bounds(Vector3::zero(), Vector3::new(1.0, 1.0, 1.0))
-            .unwrap();
+        let hull =
+            BspCollisionHull::for_bounds(Vector3::zero(), Vector3::new(1.0, 1.0, 1.0)).unwrap();
 
         let empty_points = vec![
             // points strictly less than hull min should be empty
             Vector3::new(-1.0, -1.0, -1.0),
-
             // points strictly greater than hull max should be empty
             Vector3::new(2.0, 2.0, 2.0),
-
             // points in front of hull should be empty
             Vector3::new(2.0, 0.5, 0.5),
-
             // points behind hull should be empty
             Vector3::new(-1.0, 0.5, 0.5),
-
             // points left of hull should be empty
             Vector3::new(0.5, 2.0, 0.5),
-
             // points right of hull should be empty
             Vector3::new(0.5, -1.0, 0.5),
-
             // points above hull should be empty
             Vector3::new(0.5, 0.5, 2.0),
-
             // points below hull should be empty
             Vector3::new(0.5, 0.5, -1.0),
         ];
@@ -981,7 +1013,6 @@ mod test {
         let solid_points = vec![
             // center of the hull should be solid
             Vector3::new(0.5, 0.5, 0.5),
-
             // various interior corners should be solid
             Vector3::new(0.01, 0.01, 0.01),
             Vector3::new(0.99, 0.01, 0.01),

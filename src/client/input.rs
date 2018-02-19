@@ -139,7 +139,10 @@ impl GameInput {
     }
 }
 
-pub fn get_input_by_name<S>(name: S) -> Option<BindInput> where S: AsRef<str> {
+pub fn get_input_by_name<S>(name: S) -> Option<BindInput>
+where
+    S: AsRef<str>,
+{
     match name.as_ref().to_uppercase().as_ref() {
         "0" => Some(BindInput::Key(Key::Key0)),
         "1" => Some(BindInput::Key(Key::Key1)),

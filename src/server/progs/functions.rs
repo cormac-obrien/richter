@@ -177,17 +177,19 @@ impl Functions {
         if (value as usize) < self.defs.len() {
             Ok(FunctionId(value as usize))
         } else {
-            Err(ProgsError::with_msg(
-                format!("no function with ID {}", value),
-            ))
+            Err(ProgsError::with_msg(format!(
+                "no function with ID {}",
+                value
+            )))
         }
     }
 
     pub fn get_def(&self, id: FunctionId) -> Result<&FunctionDef, ProgsError> {
         if id.0 >= self.defs.len() {
-            Err(ProgsError::with_msg(
-                format!("No function with ID {}", id.0),
-            ))
+            Err(ProgsError::with_msg(format!(
+                "No function with ID {}",
+                id.0
+            )))
         } else {
             Ok(&self.defs[id.0])
         }
@@ -204,8 +206,9 @@ impl Functions {
             }
         }
 
-        Err(ProgsError::with_msg(
-            format!("No function named {}", name.as_ref()),
-        ))
+        Err(ProgsError::with_msg(format!(
+            "No function named {}",
+            name.as_ref()
+        )))
     }
 }

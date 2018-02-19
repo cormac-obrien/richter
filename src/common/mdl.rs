@@ -31,8 +31,8 @@ use cgmath::Vector3;
 use chrono::Duration;
 use num::FromPrimitive;
 
-pub const MAGIC: i32 = ('I' as i32) << 0 | ('D' as i32) << 8 | ('P' as i32) << 16 |
-    ('O' as i32) << 24;
+pub const MAGIC: i32 =
+    ('I' as i32) << 0 | ('D' as i32) << 8 | ('P' as i32) << 16 | ('O' as i32) << 24;
 pub const VERSION: i32 = 6;
 
 const HEADER_SIZE: u64 = 84;
@@ -148,8 +148,8 @@ pub fn load(data: &[u8]) -> Result<AliasModel, ()> {
         s => s,
     };
 
-    if reader.seek(SeekFrom::Current(0)).unwrap() !=
-        reader.seek(SeekFrom::Start(HEADER_SIZE)).unwrap()
+    if reader.seek(SeekFrom::Current(0)).unwrap()
+        != reader.seek(SeekFrom::Start(HEADER_SIZE)).unwrap()
     {
         panic!("Misaligned read on MDL header");
     }
@@ -226,10 +226,8 @@ pub fn load(data: &[u8]) -> Result<AliasModel, ()> {
         reader.read_i32::<LittleEndian>().unwrap();
 
         texcoords.push(Vector2::new(
-            reader.read_i32::<LittleEndian>().unwrap() as f32 /
-                skin_w as f32,
-            reader.read_i32::<LittleEndian>().unwrap() as f32 /
-                skin_h as f32,
+            reader.read_i32::<LittleEndian>().unwrap() as f32 / skin_w as f32,
+            reader.read_i32::<LittleEndian>().unwrap() as f32 / skin_h as f32,
         ));
     }
 

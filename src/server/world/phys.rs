@@ -160,10 +160,7 @@ impl Trace {
     pub fn join(self, other: Trace) -> Trace {
         debug!(
             "start1={:?} end1={:?} start2={:?} end2={:?}",
-            self.start.point,
-            self.end.point,
-            other.start.point,
-            other.end.point
+            self.start.point, self.end.point, other.start.point, other.end.point
         );
         // don't allow chaining after terminal
         // TODO: impose this constraint with the type system

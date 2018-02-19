@@ -452,9 +452,10 @@ impl TempEntity {
         let code = match TempEntityCode::from_u8(code_byte) {
             Some(c) => c,
             None => {
-                return Err(NetError::InvalidData(
-                    format!("Temp entity code {}", code_byte),
-                ))
+                return Err(NetError::InvalidData(format!(
+                    "Temp entity code {}",
+                    code_byte
+                )))
             }
         };
 
@@ -672,9 +673,16 @@ pub enum ServerCmd {
     Bad,
     NoOp,
     Disconnect,
-    UpdateStat { stat: ClientStat, value: i32 },
-    Version { version: i32 },
-    SetView { ent_id: i16 },
+    UpdateStat {
+        stat: ClientStat,
+        value: i32,
+    },
+    Version {
+        version: i32,
+    },
+    SetView {
+        ent_id: i16,
+    },
     Sound {
         volume: Option<u8>,
         attenuation: Option<u8>,
@@ -683,10 +691,18 @@ pub enum ServerCmd {
         sound_id: u8,
         position: Vector3<f32>,
     },
-    Time { time: f32 },
-    Print { text: String },
-    StuffText { text: String },
-    SetAngle { angles: Vector3<Deg<f32>> },
+    Time {
+        time: f32,
+    },
+    Print {
+        text: String,
+    },
+    StuffText {
+        text: String,
+    },
+    SetAngle {
+        angles: Vector3<Deg<f32>>,
+    },
     ServerInfo {
         protocol_version: i32,
         max_clients: u8,
@@ -695,9 +711,18 @@ pub enum ServerCmd {
         model_precache: Vec<String>,
         sound_precache: Vec<String>,
     },
-    LightStyle { id: u8, value: String },
-    UpdateName { player_id: u8, new_name: String },
-    UpdateFrags { player_id: u8, new_frags: i16 },
+    LightStyle {
+        id: u8,
+        value: String,
+    },
+    UpdateName {
+        player_id: u8,
+        new_name: String,
+    },
+    UpdateFrags {
+        player_id: u8,
+        new_frags: i16,
+    },
     ClientData {
         view_height: Option<f32>,
         ideal_pitch: Option<Deg<f32>>,
@@ -721,7 +746,10 @@ pub enum ServerCmd {
         ammo_cells: u8,
         active_weapon: u8,
     },
-    StopSound { entity_id: u16, channel: u8 },
+    StopSound {
+        entity_id: u16,
+        channel: u8,
+    },
     UpdateColors {
         player_id: u8,
         new_colors: PlayerColor,
@@ -755,10 +783,18 @@ pub enum ServerCmd {
         origin: Vector3<f32>,
         angles: Vector3<Deg<f32>>,
     },
-    TempEntity { temp_entity: TempEntity },
-    SetPause { paused: bool },
-    SignOnStage { stage: SignOnStage },
-    CenterPrint { text: String },
+    TempEntity {
+        temp_entity: TempEntity,
+    },
+    SetPause {
+        paused: bool,
+    },
+    SignOnStage {
+        stage: SignOnStage,
+    },
+    CenterPrint {
+        text: String,
+    },
     KilledMonster,
     FoundSecret,
     SpawnStaticSound {
@@ -768,10 +804,17 @@ pub enum ServerCmd {
         attenuation: u8,
     },
     Intermission,
-    Finale { text: String },
-    CdTrack { track: u8, loop_: u8 },
+    Finale {
+        text: String,
+    },
+    CdTrack {
+        track: u8,
+        loop_: u8,
+    },
     SellScreen,
-    Cutscene { text: String },
+    Cutscene {
+        text: String,
+    },
     FastUpdate {
         ent_id: u16,
         model_id: Option<u8>,
@@ -786,7 +829,7 @@ pub enum ServerCmd {
         origin_z: Option<f32>,
         roll: Option<Deg<f32>>,
         no_lerp: bool,
-    }
+    },
 }
 
 impl ServerCmd {
@@ -855,7 +898,12 @@ impl ServerCmd {
 
             let update_flags = match UpdateFlags::from_bits(all_bits) {
                 Some(u) => u,
-                None => return Err(NetError::InvalidData(format!("UpdateFlags: {:b}", all_bits))),
+                None => {
+                    return Err(NetError::InvalidData(format!(
+                        "UpdateFlags: {:b}",
+                        all_bits
+                    )))
+                }
             };
 
             let ent_id;
@@ -898,7 +946,12 @@ impl ServerCmd {
                 let effects_bits = reader.read_u8()?;
                 effects = match EntityEffects::from_bits(effects_bits) {
                     Some(e) => Some(e),
-                    None => return Err(NetError::InvalidData(format!("EntityEffects: {:b}", effects_bits))),
+                    None => {
+                        return Err(NetError::InvalidData(format!(
+                            "EntityEffects: {:b}",
+                            effects_bits
+                        )))
+                    }
                 };
             } else {
                 effects = None;
@@ -961,16 +1014,17 @@ impl ServerCmd {
                 yaw,
                 origin_z,
                 roll,
-                no_lerp
-            }))
+                no_lerp,
+            }));
         }
 
         let code = match ServerCmdCode::from_u8(code_num) {
             Some(c) => c,
             None => {
-                return Err(NetError::InvalidData(
-                    format!("Invalid server command code: {}", code_num),
-                ))
+                return Err(NetError::InvalidData(format!(
+                    "Invalid server command code: {}",
+                    code_num
+                )))
             }
         };
 
@@ -1010,9 +1064,10 @@ impl ServerCmd {
                 let flags = match SoundFlags::from_bits(flags_bits) {
                     Some(f) => f,
                     None => {
-                        return Err(NetError::InvalidData(
-                            format!("SoundFlags: {:b}", flags_bits),
-                        ))
+                        return Err(NetError::InvalidData(format!(
+                            "SoundFlags: {:b}",
+                            flags_bits
+                        )))
                     }
                 };
 
@@ -1086,9 +1141,10 @@ impl ServerCmd {
                 let game_type = match GameType::from_u8(game_type_code) {
                     Some(g) => g,
                     None => {
-                        return Err(NetError::InvalidData(
-                            format!("Invalid game type ({})", game_type_code),
-                        ))
+                        return Err(NetError::InvalidData(format!(
+                            "Invalid game type ({})",
+                            game_type_code
+                        )))
                     }
                 };
 
@@ -1152,9 +1208,10 @@ impl ServerCmd {
                 let flags = match ClientUpdateFlags::from_bits(flags_bits) {
                     Some(f) => f,
                     None => {
-                        return Err(NetError::InvalidData(
-                            format!("client update flags: {:b}", flags_bits),
-                        ))
+                        return Err(NetError::InvalidData(format!(
+                            "client update flags: {:b}",
+                            flags_bits
+                        )))
                     }
                 };
 
@@ -1202,9 +1259,10 @@ impl ServerCmd {
                 let items = match ItemFlags::from_bits(items_bits) {
                     Some(i) => i,
                     None => {
-                        return Err(NetError::InvalidData(
-                            format!("ItemFlags: {:b}", items_bits),
-                        ))
+                        return Err(NetError::InvalidData(format!(
+                            "ItemFlags: {:b}",
+                            items_bits
+                        )))
                     }
                 };
 
@@ -1385,9 +1443,10 @@ impl ServerCmd {
                 let stage = match SignOnStage::from_u8(stage_num) {
                     Some(s) => s,
                     None => {
-                        return Err(NetError::InvalidData(
-                            format!("Invalid value for sign-on stage: {}", stage_num),
-                        ))
+                        return Err(NetError::InvalidData(format!(
+                            "Invalid value for sign-on stage: {}",
+                            stage_num
+                        )))
                     }
                 };
 
@@ -1531,11 +1590,9 @@ impl ServerCmd {
                 writer.write_u8(0)?;
             }
 
-            ServerCmd::SetAngle { angles } => {
-                for i in 0..3 {
-                    write_angle(writer, angles[i])?;
-                }
-            }
+            ServerCmd::SetAngle { angles } => for i in 0..3 {
+                write_angle(writer, angles[i])?;
+            },
 
             ServerCmd::ServerInfo {
                 protocol_version,
@@ -1726,13 +1783,11 @@ impl ServerCmd {
                 }
 
                 for i in 0..3 {
-                    writer.write_i8(
-                        match direction[i] * PARTICLE_DIRECTION_WRITE_FACTOR {
-                            d if d > ::std::i8::MAX as f32 => ::std::i8::MAX,
-                            d if d < ::std::i8::MIN as f32 => ::std::i8::MIN,
-                            d => d as i8,
-                        },
-                    )?;
+                    writer.write_i8(match direction[i] * PARTICLE_DIRECTION_WRITE_FACTOR {
+                        d if d > ::std::i8::MAX as f32 => ::std::i8::MAX,
+                        d if d < ::std::i8::MIN as f32 => ::std::i8::MIN,
+                        d => d as i8,
+                    })?;
                 }
 
                 writer.write_u8(count)?;
@@ -1919,9 +1974,7 @@ impl Cmd for ClientCmdMove {
     where
         W: WriteBytesExt,
     {
-        writer.write_f32::<LittleEndian>(
-            engine::duration_to_f32(self.send_time),
-        )?;
+        writer.write_f32::<LittleEndian>(engine::duration_to_f32(self.send_time))?;
         for i in 0..3 {
             write_angle(writer, self.angles[i])?;
         }
@@ -1991,9 +2044,10 @@ impl ClientCmd {
         let code = match ClientCmdCode::from_u8(code_val) {
             Some(c) => c,
             None => {
-                return Err(NetError::InvalidData(
-                    format!("Invalid client command code: {}", code_val),
-                ))
+                return Err(NetError::InvalidData(format!(
+                    "Invalid client command code: {}",
+                    code_val
+                )))
             }
         };
 
@@ -2002,9 +2056,9 @@ impl ClientCmd {
             ClientCmdCode::NoOp => ClientCmd::NoOp,
             ClientCmdCode::Disconnect => ClientCmd::Disconnect,
             ClientCmdCode::Move => ClientCmd::Move(ClientCmdMove::deserialize(reader)?),
-            ClientCmdCode::StringCmd => ClientCmd::StringCmd(
-                ClientCmdStringCmd::deserialize(reader)?,
-            ),
+            ClientCmdCode::StringCmd => {
+                ClientCmd::StringCmd(ClientCmdStringCmd::deserialize(reader)?)
+            }
         };
 
         Ok(cmd)
@@ -2103,9 +2157,8 @@ impl QSocket {
 
         // split the message into chunks and enqueue them
         for chunk in msg.chunks(MAX_DATAGRAM) {
-            self.send_queue.push_back(
-                chunk.to_owned().into_boxed_slice(),
-            );
+            self.send_queue
+                .push_back(chunk.to_owned().into_boxed_slice());
         }
 
         // send the first chunk
@@ -2129,9 +2182,9 @@ impl QSocket {
     /// Send the next segment of a reliable message.
     pub fn send_msg_next(&mut self) -> Result<(), NetError> {
         // grab the first chunk in the queue
-        let content = self.send_queue.pop_front().expect(
-            "Send queue is empty (this is a bug)",
-        );
+        let content = self.send_queue
+            .pop_front()
+            .expect("Send queue is empty (this is a bug)");
 
         // if this was the last chunk, set the EOM flag
         let msg_kind = match self.send_queue.is_empty() {
@@ -2142,9 +2195,7 @@ impl QSocket {
         // compose the packet
         let mut compose = Vec::with_capacity(MAX_PACKET);
         compose.write_u16::<NetworkEndian>(msg_kind as u16)?;
-        compose.write_u16::<NetworkEndian>(
-            (HEADER_SIZE + content.len()) as u16,
-        )?;
+        compose.write_u16::<NetworkEndian>((HEADER_SIZE + content.len()) as u16)?;
         compose.write_u32::<NetworkEndian>(self.send_sequence)?;
         compose.write_all(&content);
 
@@ -2182,13 +2233,9 @@ impl QSocket {
 
         // compose the packet
         let mut packet = Vec::with_capacity(MAX_PACKET);
-        packet.write_u16::<NetworkEndian>(
-            MsgKind::Unreliable as u16,
-        )?;
+        packet.write_u16::<NetworkEndian>(MsgKind::Unreliable as u16)?;
         packet.write_u16::<NetworkEndian>(packet_len as u16)?;
-        packet.write_u32::<NetworkEndian>(
-            self.unreliable_send_sequence,
-        )?;
+        packet.write_u32::<NetworkEndian>(self.unreliable_send_sequence)?;
         packet.write_all(content)?;
 
         // increment unreliable send sequence
@@ -2242,8 +2289,7 @@ impl QSocket {
                 // this packet didn't come from remote, drop it
                 debug!(
                     "forged packet (src_addr was {}, should be {})",
-                    src_addr,
-                    self.remote
+                    src_addr, self.remote
                 );
                 continue;
             }
@@ -2254,9 +2300,10 @@ impl QSocket {
             let msg_kind = match MsgKind::from_u16(msg_kind_code) {
                 Some(f) => f,
                 None => {
-                    return Err(NetError::InvalidData(
-                        format!("Invalid message kind: {}", msg_kind_code),
-                    ))
+                    return Err(NetError::InvalidData(format!(
+                        "Invalid message kind: {}",
+                        msg_kind_code
+                    )))
                 }
             };
 
@@ -2270,8 +2317,7 @@ impl QSocket {
             if field_len as usize != packet_len {
                 return Err(NetError::InvalidData(format!(
                     "Length field and actual length differ ({} != {})",
-                    field_len,
-                    packet_len
+                    field_len, packet_len
                 )));
             }
 
@@ -2298,9 +2344,7 @@ impl QSocket {
                         let drop_count = sequence - self.unreliable_recv_sequence;
                         println!(
                             "Dropped {} packet(s) ({} -> {})",
-                            drop_count,
-                            sequence,
-                            self.unreliable_recv_sequence
+                            drop_count, sequence, self.unreliable_recv_sequence
                         );
                     }
 
@@ -2458,7 +2502,9 @@ mod test {
 
     #[test]
     fn test_server_cmd_print_read_write_eq() {
-        let src = ServerCmd::Print { text: String::from("print test") };
+        let src = ServerCmd::Print {
+            text: String::from("print test"),
+        };
 
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
@@ -2470,7 +2516,9 @@ mod test {
 
     #[test]
     fn test_server_cmd_stuff_text_read_write_eq() {
-        let src = ServerCmd::StuffText { text: String::from("stufftext test") };
+        let src = ServerCmd::StuffText {
+            text: String::from("stufftext test"),
+        };
 
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
@@ -2587,7 +2635,9 @@ mod test {
 
     #[test]
     fn test_server_cmd_sign_on_stage_read_write_eq() {
-        let src = ServerCmd::SignOnStage { stage: SignOnStage::Begin };
+        let src = ServerCmd::SignOnStage {
+            stage: SignOnStage::Begin,
+        };
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
@@ -2598,7 +2648,9 @@ mod test {
 
     #[test]
     fn test_server_cmd_center_print_read_write_eq() {
-        let src = ServerCmd::CenterPrint { text: String::from("Center print test") };
+        let src = ServerCmd::CenterPrint {
+            text: String::from("Center print test"),
+        };
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
@@ -2609,7 +2661,9 @@ mod test {
 
     #[test]
     fn test_server_cmd_finale_read_write_eq() {
-        let src = ServerCmd::Finale { text: String::from("Finale test") };
+        let src = ServerCmd::Finale {
+            text: String::from("Finale test"),
+        };
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
@@ -2631,7 +2685,9 @@ mod test {
 
     #[test]
     fn test_server_cmd_cutscene_read_write_eq() {
-        let src = ServerCmd::Cutscene { text: String::from("Cutscene test") };
+        let src = ServerCmd::Cutscene {
+            text: String::from("Cutscene test"),
+        };
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());

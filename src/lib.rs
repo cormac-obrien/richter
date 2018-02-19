@@ -24,6 +24,9 @@ extern crate byteorder;
 extern crate cgmath;
 extern crate chrono;
 extern crate env_logger;
+#[macro_use]
+extern crate gfx;
+extern crate gfx_window_glutin;
 extern crate glutin;
 #[macro_use]
 extern crate lazy_static;

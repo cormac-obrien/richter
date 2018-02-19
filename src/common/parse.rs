@@ -21,38 +21,23 @@ use cgmath::Vector3;
 
 // Parse quoted strings
 named!(
-    quoted <&str>,
+    quoted<&str>,
     map_res!(
-        delimited!(
-            tag!("\""),
-            take_until_s!("\""),
-            tag!("\"")
-        ),
+        delimited!(tag!("\""), take_until_s!("\""), tag!("\"")),
         ::std::str::from_utf8
     )
 );
 
 // Parse a pair of quoted strings separated by a space and followed by a newline
 named!(
-    key_val <(&str, &str)>,
-    terminated!(
-        separated_pair!(
-            quoted,
-            tag!(" "),
-            quoted
-        ),
-        tag!("\n")
-    )
+    key_val<(&str, &str)>,
+    terminated!(separated_pair!(quoted, tag!(" "), quoted), tag!("\n"))
 );
 
 named!(
-    entity_map <HashMap<&str, &str>>,
+    entity_map<HashMap<&str, &str>>,
     map!(
-        delimited!(
-            tag!("{\n"),
-            many0!(key_val),
-            tag!("}\n")
-        ),
+        delimited!(tag!("{\n"), many0!(key_val), tag!("}\n")),
         |tuples| {
             let mut map = HashMap::new();
             for (k, v) in tuples {

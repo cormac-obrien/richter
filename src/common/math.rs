@@ -216,10 +216,7 @@ impl Hyperplane {
 
         debug!(
             "line_segment_intersection: alignment={:?} plane_dist={} start_dist={} end_dist={}",
-            self.alignment,
-            self.dist,
-            start_dist,
-            end_dist
+            self.alignment, self.dist, start_dist, end_dist
         );
 
         let start_side = HyperplaneSide::from_dist(start_dist);

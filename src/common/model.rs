@@ -31,8 +31,8 @@ pub enum SyncType {
 }
 
 pub struct Model {
-    name: String,
-    kind: ModelKind,
+    pub name: String,
+    pub kind: ModelKind,
 }
 
 pub enum ModelKind {

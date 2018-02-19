@@ -155,11 +155,7 @@ impl AreaNode {
                 AreaNodeKind::Branch(ref b) => {
                     debug!(
                         "area node {}: axis = {:?} dist = {} front = {} back = {}",
-                        i,
-                        b.axis,
-                        b.dist,
-                        b.front,
-                        b.back
+                        i, b.axis, b.dist, b.front, b.back
                     );
                 }
                 AreaNodeKind::Leaf => debug!("area node {}: leaf", i),
@@ -267,14 +263,8 @@ impl World {
             string_table.find(models[1].name()).unwrap(),
             FieldAddrStringId::ModelName as i16,
         )?;
-        world_entity.put_float(
-            1.0,
-            FieldAddrFloat::ModelIndex as i16,
-        )?;
-        world_entity.put_float(
-            EntitySolid::Bsp as u32 as f32,
-            FieldAddrFloat::Solid as i16,
-        )?;
+        world_entity.put_float(1.0, FieldAddrFloat::ModelIndex as i16)?;
+        world_entity.put_float(EntitySolid::Bsp as u32 as f32, FieldAddrFloat::Solid as i16)?;
         world_entity.put_float(
             MoveKind::Push as u32 as f32,
             FieldAddrFloat::MoveKind as i16,
@@ -314,21 +304,20 @@ impl World {
         } else if name.ends_with(".mdl") {
             let data = pak.open(&name).unwrap();
             let alias_model = mdl::load(data).unwrap();
-            self.models.push(
-                Model::from_alias_model(&name, alias_model),
-            );
+            self.models
+                .push(Model::from_alias_model(&name, alias_model));
             Ok(())
         } else if name.ends_with(".spr") {
             let data = pak.open(&name).unwrap();
             let sprite_model = sprite::load(data);
-            self.models.push(
-                Model::from_sprite_model(&name, sprite_model),
-            );
+            self.models
+                .push(Model::from_sprite_model(&name, sprite_model));
             Ok(())
         } else {
-            return Err(ProgsError::with_msg(
-                format!("Unrecognized model type: {}", name),
-            ));
+            return Err(ProgsError::with_msg(format!(
+                "Unrecognized model type: {}",
+                name
+            )));
         }
     }
 
@@ -338,9 +327,11 @@ impl World {
     {
         let name = name.as_ref();
 
-        match self.type_def.field_defs().iter().find(|def| {
-            self.string_table.get(def.name_id).unwrap() == name
-        }) {
+        match self.type_def
+            .field_defs()
+            .iter()
+            .find(|def| self.string_table.get(def.name_id).unwrap() == name)
+        {
             Some(d) => Ok(d),
             None => Err(ProgsError::with_msg(format!("no field with name {}", name))),
         }
@@ -350,8 +341,8 @@ impl World {
     ///
     /// This representation should be compatible with the one used by the original Quake.
     pub fn ent_fld_addr_to_i32(&self, ent_fld_addr: EntityFieldAddr) -> i32 {
-        let total_addr = (ent_fld_addr.entity_id.0 * self.type_def.addr_count() +
-                              ent_fld_addr.field_addr.0) * 4;
+        let total_addr =
+            (ent_fld_addr.entity_id.0 * self.type_def.addr_count() + ent_fld_addr.field_addr.0) * 4;
 
         if total_addr > ::std::i32::MAX as usize {
             panic!("ent_fld_addr_to_i32: total_addr overflow");
@@ -425,10 +416,7 @@ impl World {
                     // only the yaw (Y) value is given. see
                     // https://github.com/id-Software/Quake/blob/master/WinQuake/pr_edict.c#L826-L834
                     let def = self.find_def("angles")?.clone();
-                    ent.put_vector(
-                        [0.0, val.parse().unwrap(), 0.0],
-                        def.offset as i16,
-                    )?;
+                    ent.put_vector([0.0, val.parse().unwrap(), 0.0], def.offset as i16)?;
                 }
 
                 "light" => {
@@ -453,12 +441,10 @@ impl World {
                         }
 
                         Type::QFloat => ent.put_float(val.parse().unwrap(), def.offset as i16)?,
-                        Type::QVector => {
-                            ent.put_vector(
-                                parse::vector3_components(val).unwrap(),
-                                def.offset as i16,
-                            )?
-                        }
+                        Type::QVector => ent.put_vector(
+                            parse::vector3_components(val).unwrap(),
+                            def.offset as i16,
+                        )?,
                         Type::QEntity => {
                             let id: usize = val.parse().unwrap();
 
@@ -496,9 +482,10 @@ impl World {
         // TODO: unlink entity from world
 
         if entity_id.0 as usize > self.slots.len() {
-            return Err(ProgsError::with_msg(
-                format!("Invalid entity ID ({:?})", entity_id),
-            ));
+            return Err(ProgsError::with_msg(format!(
+                "Invalid entity ID ({:?})",
+                entity_id
+            )));
         }
 
         if let AreaEntitySlot::Vacant = self.slots[entity_id.0 as usize] {
@@ -511,45 +498,51 @@ impl World {
 
     pub fn try_get_entity(&self, entity_id: EntityId) -> Result<&Entity, ProgsError> {
         if entity_id.0 as usize > self.slots.len() {
-            return Err(ProgsError::with_msg(
-                format!("Invalid entity ID ({})", entity_id.0 as usize),
-            ));
+            return Err(ProgsError::with_msg(format!(
+                "Invalid entity ID ({})",
+                entity_id.0 as usize
+            )));
         }
 
         match self.slots[entity_id.0 as usize] {
-            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(
-                format!("No entity at list entry {}", entity_id.0 as usize),
-            )),
+            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
+                "No entity at list entry {}",
+                entity_id.0 as usize
+            ))),
             AreaEntitySlot::Occupied(ref e) => Ok(&e.entity),
         }
     }
 
     pub fn try_get_entity_mut(&mut self, entity_id: EntityId) -> Result<&mut Entity, ProgsError> {
         if entity_id.0 as usize > self.slots.len() {
-            return Err(ProgsError::with_msg(
-                format!("Invalid entity ID ({})", entity_id.0 as usize),
-            ));
+            return Err(ProgsError::with_msg(format!(
+                "Invalid entity ID ({})",
+                entity_id.0 as usize
+            )));
         }
 
         match self.slots[entity_id.0 as usize] {
-            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(
-                format!("No entity at list entry {}", entity_id.0 as usize),
-            )),
+            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
+                "No entity at list entry {}",
+                entity_id.0 as usize
+            ))),
             AreaEntitySlot::Occupied(ref mut e) => Ok(&mut e.entity),
         }
     }
 
     fn try_get_area_entity(&self, entity_id: EntityId) -> Result<&AreaEntity, ProgsError> {
         if entity_id.0 as usize > self.slots.len() {
-            return Err(ProgsError::with_msg(
-                format!("Invalid entity ID ({})", entity_id.0 as usize),
-            ));
+            return Err(ProgsError::with_msg(format!(
+                "Invalid entity ID ({})",
+                entity_id.0 as usize
+            )));
         }
 
         match self.slots[entity_id.0 as usize] {
-            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(
-                format!("No entity at list entry {}", entity_id.0 as usize),
-            )),
+            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
+                "No entity at list entry {}",
+                entity_id.0 as usize
+            ))),
             AreaEntitySlot::Occupied(ref e) => Ok(e),
         }
     }
@@ -559,15 +552,17 @@ impl World {
         entity_id: EntityId,
     ) -> Result<&mut AreaEntity, ProgsError> {
         if entity_id.0 as usize > self.slots.len() {
-            return Err(ProgsError::with_msg(
-                format!("Invalid entity ID ({})", entity_id.0 as usize),
-            ));
+            return Err(ProgsError::with_msg(format!(
+                "Invalid entity ID ({})",
+                entity_id.0 as usize
+            )));
         }
 
         match self.slots[entity_id.0 as usize] {
-            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(
-                format!("No entity at list entry {}", entity_id.0 as usize),
-            )),
+            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
+                "No entity at list entry {}",
+                entity_id.0 as usize
+            ))),
             AreaEntitySlot::Occupied(ref mut e) => Ok(e),
         }
     }
@@ -599,14 +594,7 @@ impl World {
         // set `self` before calling spawn function
         globals.put_entity_id(e_id, GlobalAddrEntity::Self_ as i16)?;
 
-        execution_context.execute_program_by_name(
-            globals,
-            self,
-            cvars,
-            server,
-            pak,
-            classname,
-        )?;
+        execution_context.execute_program_by_name(globals, self, cvars, server, pak, classname)?;
 
         // TODO: should touch triggers?
         self.link_entity(e_id, false)?;
@@ -680,14 +668,8 @@ impl World {
                 abs_max.z += 1.0;
             }
 
-            ent.put_vector(
-                abs_min.into(),
-                FieldAddrVector::AbsMin as i16,
-            )?;
-            ent.put_vector(
-                abs_max.into(),
-                FieldAddrVector::AbsMax as i16,
-            )?;
+            ent.put_vector(abs_min.into(), FieldAddrVector::AbsMin as i16)?;
+            ent.put_vector(abs_max.into(), FieldAddrVector::AbsMax as i16)?;
 
             ent.leaf_count = 0;
             let model_index = ent.get_float(FieldAddrFloat::ModelIndex as i16)?;
@@ -709,9 +691,7 @@ impl World {
                 AreaNodeKind::Branch(ref b) => {
                     debug!(
                         "abs_min = {:?} | abs_max = {:?} | dist = {}",
-                        abs_min,
-                        abs_max,
-                        b.dist
+                        abs_min, abs_max, b.dist
                     );
                     if abs_min[b.axis as usize] > b.dist {
                         node_id = b.front;
@@ -752,10 +732,7 @@ impl World {
     ) -> Result<(), ProgsError> {
         {
             let ent = self.try_get_entity_mut(e_id)?;
-            ent.put_vector(
-                origin.into(),
-                FieldAddrVector::Origin as i16,
-            )?;
+            ent.put_vector(origin.into(), FieldAddrVector::Origin as i16)?;
         }
 
         self.link_entity(e_id, false)?;
@@ -772,10 +749,7 @@ impl World {
         {
             let ent = self.try_get_entity_mut(e_id)?;
 
-            ent.put_string_id(
-                model_name_id,
-                FieldAddrStringId::ModelName as i16,
-            )?;
+            ent.put_string_id(model_name_id, FieldAddrStringId::ModelName as i16)?;
 
             // TODO: change this to `?` syntax once `server` has a proper error type
             model_index = match server.model_precache_lookup(model_name_id) {
@@ -783,10 +757,7 @@ impl World {
                 Err(_) => return Err(ProgsError::with_msg("model not precached")),
             };
 
-            ent.put_float(
-                model_index as f32,
-                FieldAddrFloat::ModelIndex as i16,
-            )?;
+            ent.put_float(model_index as f32, FieldAddrFloat::ModelIndex as i16)?;
         }
 
         if model_index == 0 {
@@ -834,14 +805,8 @@ impl World {
         let min = self.try_get_entity(e_id)?.min()?;
         let max = self.try_get_entity(e_id)?.max()?;
 
-        let (trace, collide_entity) = self.move_entity(
-            e_id,
-            origin,
-            min,
-            max,
-            end,
-            CollideKind::Normal,
-        )?;
+        let (trace, collide_entity) =
+            self.move_entity(e_id, origin, min, max, end, CollideKind::Normal)?;
         debug!("End position after drop: {:?}", trace.end_point());
 
         let drop_dist = 256.0;
@@ -852,19 +817,13 @@ impl World {
             Ok((false))
         } else {
             // entity hit the floor. update origin, relink and set ON_GROUND flag.
-            self.try_get_entity_mut(e_id)?.put_vector(
-                trace.end_point().into(),
-                FieldAddrVector::Origin as i16,
-            )?;
+            self.try_get_entity_mut(e_id)?
+                .put_vector(trace.end_point().into(), FieldAddrVector::Origin as i16)?;
             self.link_entity(e_id, false)?;
-            self.try_get_entity_mut(e_id)?.add_flags(
-                EntityFlags::ON_GROUND,
-            )?;
-            self.try_get_entity_mut(e_id)?.put_entity_id(
-                collide_entity,
-                FieldAddrEntityId::Ground as
-                    i16,
-            )?;
+            self.try_get_entity_mut(e_id)?
+                .add_flags(EntityFlags::ON_GROUND)?;
+            self.try_get_entity_mut(e_id)?
+                .put_entity_id(collide_entity, FieldAddrEntityId::Ground as i16)?;
 
             Ok((true))
         }
@@ -912,11 +871,9 @@ impl World {
 
                         Ok((hull, offset))
                     }
-                    _ => {
-                        Err(ProgsError::with_msg(
-                            format!("Non-brush entities may not have MoveKind::Push"),
-                        ))
-                    }
+                    _ => Err(ProgsError::with_msg(format!(
+                        "Non-brush entities may not have MoveKind::Push"
+                    ))),
                 }
             }
 
@@ -941,29 +898,14 @@ impl World {
         pak: &Pak,
         sv_time: Duration,
     ) -> Result<(), ProgsError> {
-        globals.put_entity_id(
-            EntityId(0),
-            GlobalAddrEntity::Self_ as i16,
-        )?;
-        globals.put_entity_id(
-            EntityId(0),
-            GlobalAddrEntity::Other as i16,
-        )?;
+        globals.put_entity_id(EntityId(0), GlobalAddrEntity::Self_ as i16)?;
+        globals.put_entity_id(EntityId(0), GlobalAddrEntity::Other as i16)?;
         globals.put_float(
             engine::duration_to_f32(sv_time),
             GlobalAddrFloat::Time as i16,
         )?;
-        let start_frame = globals.get_function_id(
-            GlobalAddrFunction::StartFrame as i16,
-        )?;
-        execution_context.execute_program(
-            globals,
-            self,
-            cvars,
-            server,
-            pak,
-            start_frame,
-        )?;
+        let start_frame = globals.get_function_id(GlobalAddrFunction::StartFrame as i16)?;
+        execution_context.execute_program(globals, self, cvars, server, pak, start_frame)?;
 
         for i in 0..self.slots.len() {
             if let AreaEntitySlot::Vacant = self.slots[i] {
@@ -990,12 +932,7 @@ impl World {
             }
 
             match globals.get_float(GlobalAddrFloat::ForceRetouch as i16)? {
-                f if f > 0.0 => {
-                    globals.put_float(
-                        f - 1.0,
-                        GlobalAddrFloat::ForceRetouch as i16,
-                    )?
-                }
+                f if f > 0.0 => globals.put_float(f - 1.0, GlobalAddrFloat::ForceRetouch as i16)?,
                 _ => (),
             }
         }
@@ -1025,20 +962,11 @@ impl World {
     ) -> Result<(Trace, EntityId), ProgsError> {
         debug!(
             "start={:?} min={:?} max={:?} end={:?}",
-            start,
-            min,
-            max,
-            end
+            start, min, max, end
         );
 
         debug!("Collision test: Entity {} with world entity", e_id.0);
-        let trace = self.collide_move_with_entity(
-            EntityId(0),
-            start,
-            min,
-            max,
-            end,
-        )?;
+        let trace = self.collide_move_with_entity(EntityId(0), start, min, max, end)?;
 
         debug!(
             "End position after collision test with world hull: {:?}",
@@ -1109,9 +1037,10 @@ impl World {
 
                 // triggers should not appear in the solids list
                 EntitySolid::Trigger => {
-                    return Err(ProgsError::with_msg(
-                        format!("Trigger in solids list with ID ({})", touch.0),
-                    ))
+                    return Err(ProgsError::with_msg(format!(
+                        "Trigger in solids list with ID ({})",
+                        touch.0
+                    )))
                 }
 
                 // don't collide with monsters if the collide specifies not to do so
@@ -1124,16 +1053,16 @@ impl World {
 
             // if bounding boxes never intersect, skip this entity
             for i in 0..3 {
-                if collide.move_min[i] > self.try_get_entity(*touch)?.abs_max()?[i] ||
-                    collide.move_max[i] < self.try_get_entity(*touch)?.abs_min()?[i]
+                if collide.move_min[i] > self.try_get_entity(*touch)?.abs_max()?[i]
+                    || collide.move_max[i] < self.try_get_entity(*touch)?.abs_min()?[i]
                 {
                     continue;
                 }
             }
 
             if let Some(e) = collide.e_id {
-                if self.try_get_entity(e)?.size()?[0] != 0.0 &&
-                    self.try_get_entity(*touch)?.size()?[0] == 0.0
+                if self.try_get_entity(e)?.size()?[0] != 0.0
+                    && self.try_get_entity(*touch)?.size()?[0] == 0.0
                 {
                     continue;
                 }
@@ -1145,8 +1074,8 @@ impl World {
 
             if let Some(e) = collide.e_id {
                 // don't collide against owner or owned entities
-                if self.try_get_entity(*touch)?.owner()? == e ||
-                    self.try_get_entity(e)?.owner()? == *touch
+                if self.try_get_entity(*touch)?.owner()? == e
+                    || self.try_get_entity(e)?.owner()? == *touch
                 {
                     continue;
                 }
@@ -1154,9 +1083,9 @@ impl World {
 
             // select bounding boxes based on whether or not candidate is a monster
             let tmp_trace;
-            if self.try_get_entity(*touch)?.flags()?.contains(
-                EntityFlags::MONSTER,
-            )
+            if self.try_get_entity(*touch)?
+                .flags()?
+                .contains(EntityFlags::MONSTER)
             {
                 tmp_trace = self.collide_move_with_entity(
                     *touch,
@@ -1217,8 +1146,8 @@ impl World {
             hull.contents_at_point(start).unwrap()
         );
 
-        Ok(hull.trace(start - offset, end - offset).unwrap().adjust(
-            offset,
-        ))
+        Ok(hull.trace(start - offset, end - offset)
+            .unwrap()
+            .adjust(offset))
     }
 }

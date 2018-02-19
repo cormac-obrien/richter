@@ -100,9 +100,10 @@ impl AudioSource {
         let data = match pak.open(&full_path) {
             Some(d) => d.to_owned(),
             None => {
-                return Err(SoundError::with_msg(
-                    format!("File not found in pak archive: {}", full_path),
-                ))
+                return Err(SoundError::with_msg(format!(
+                    "File not found in pak archive: {}",
+                    full_path
+                )))
             }
         };
 
@@ -151,7 +152,9 @@ pub struct Channel {
 
 impl Channel {
     pub fn new(endpoint: &Endpoint) -> Channel {
-        Channel { sink: Sink::new(endpoint) }
+        Channel {
+            sink: Sink::new(endpoint),
+        }
     }
 
     pub fn play(&self, src: AudioSource) {
