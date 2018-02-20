@@ -295,14 +295,6 @@ void main() {
         encoder.clear_depth(&data.out_depth, 1.0);
 
         for f in bsp_renderer.faces().iter() {
-            let slice = gfx::Slice {
-                start: 0,
-                end: f.vertex_count as u32,
-                base_vertex: f.vertex_id as u32,
-                instances: None,
-                buffer: gfx::IndexBuffer::Auto,
-            };
-
             let frame = worldmodel
                 .bsp_data()
                 .texture_frame_for_time(f.tex_id, frame_time);
@@ -310,7 +302,7 @@ void main() {
             data.transform = (perspective * Matrix4::from(rotation)
                 * Matrix4::from_translation(camera_pos))
                 .into();
-            encoder.draw(&slice, &pso, &data);
+            encoder.draw(&f.slice, &pso, &data);
         }
         encoder.flush(&mut device);
         window.swap_buffers().unwrap();

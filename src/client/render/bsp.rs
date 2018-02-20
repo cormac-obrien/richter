@@ -24,17 +24,21 @@ use common::bsp::BspTextureMipmap;
 
 use cgmath::InnerSpace;
 use cgmath::Vector3;
+use gfx::IndexBuffer;
 use gfx::Factory;
 use gfx::Resources;
+use gfx::Slice;
 use gfx::format::Srgba8 as ColorFormat;
 use gfx::handle::Buffer;
 use gfx::handle::ShaderResourceView;
 use gfx::texture;
 use gfx::traits::FactoryExt;
 
-pub struct BspRenderFace {
-    pub vertex_id: usize,
-    pub vertex_count: usize,
+pub struct BspRenderFace<R>
+where
+    R: Resources,
+{
+    pub slice: Slice<R>,
     pub tex_id: usize,
 }
 
@@ -44,7 +48,7 @@ where
 {
     bsp_data: Rc<BspData>,
     vertex_buffer: Buffer<R, Vertex>,
-    faces: Box<[BspRenderFace]>,
+    faces: Box<[BspRenderFace<R>]>,
     texture_views: Box<[ShaderResourceView<R, [f32; 4]>]>,
 }
 
@@ -101,8 +105,13 @@ where
 
             let face_vertex_count = vertices.len() - face_vertex_id;
             faces.push(BspRenderFace {
-                vertex_id: face_vertex_id,
-                vertex_count: face_vertex_count,
+                slice: Slice {
+                    start: 0,
+                    end: face_vertex_count as u32,
+                    base_vertex: face_vertex_id as u32,
+                    instances: None,
+                    buffer: IndexBuffer::Auto,
+                },
                 tex_id: bsp_data.texinfo()[face.texinfo_id].tex_id,
             });
         }
@@ -137,11 +146,11 @@ where
         self.vertex_buffer.clone()
     }
 
-    pub fn faces(&self) -> &[BspRenderFace] {
+    pub fn faces(&self) -> &[BspRenderFace<R>] {
         &self.faces
     }
 
-    pub fn get_face(&self, face_id: usize) -> &BspRenderFace {
+    pub fn get_face(&self, face_id: usize) -> &BspRenderFace<R> {
         &self.faces[face_id]
     }
 

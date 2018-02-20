@@ -826,20 +826,7 @@ impl BspModel {
             maxs: main_hull.maxs,
         })
     }
-}
 
-#[derive(Debug)]
-pub struct WorldModel(BspModel);
-
-impl Deref for WorldModel {
-    type Target = BspModel;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl WorldModel {
     /// Locates the leaf containing the given position vector and returns its index.
     pub fn find_leaf<V>(&self, pos: V) -> usize
     where
@@ -889,6 +876,36 @@ impl BspData {
                 Some(decompressed)
             }
             None => None,
+        }
+    }
+
+    pub fn get_pvs(&self, leaf_id: usize) -> Vec<usize> {
+        match self.leaves[leaf_id].vis_offset {
+            Some(o) => {
+                let mut visleaf = 0;
+                let mut visleaf_list = Vec::new();
+                let mut it = (&self.visibility[o..]).iter();
+
+                while visleaf < self.leaves.len() {
+                    let byte = it.next().unwrap();
+                    match *byte {
+                        // a zero byte signals the start of an RLE sequence
+                        0 => visleaf += 8 * *it.next().unwrap() as usize,
+
+                        bits => for shift in 0..8 {
+                            visleaf += 1;
+
+                            if bits & 1 << shift != 0 {
+                                visleaf_list.push(visleaf);
+                            }
+                        },
+                    }
+                }
+
+                visleaf_list
+            }
+
+            None => Vec::new(),
         }
     }
 
