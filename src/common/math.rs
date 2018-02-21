@@ -256,6 +256,45 @@ mod test {
     }
 
     #[test]
+    fn test_hyperplane_side_x() {
+        let plane = Hyperplane::axis_x(1.0);
+        assert_eq!(
+            plane.point_side(Vector3::unit_x() * 2.0),
+            HyperplaneSide::Positive
+        );
+        assert_eq!(
+            plane.point_side(Vector3::unit_x() * -2.0),
+            HyperplaneSide::Negative
+        );
+    }
+
+    #[test]
+    fn test_hyperplane_side_y() {
+        let plane = Hyperplane::axis_y(1.0);
+        assert_eq!(
+            plane.point_side(Vector3::unit_y() * 2.0),
+            HyperplaneSide::Positive
+        );
+        assert_eq!(
+            plane.point_side(Vector3::unit_y() * -2.0),
+            HyperplaneSide::Negative
+        );
+    }
+
+    #[test]
+    fn test_hyperplane_side_z() {
+        let plane = Hyperplane::axis_z(1.0);
+        assert_eq!(
+            plane.point_side(Vector3::unit_z() * 2.0),
+            HyperplaneSide::Positive
+        );
+        assert_eq!(
+            plane.point_side(Vector3::unit_z() * -2.0),
+            HyperplaneSide::Negative
+        );
+    }
+
+    #[test]
     fn test_hyperplane_point_dist_y() {
         let plane = Hyperplane::axis_y(1.0);
         assert_eq!(plane.point_dist(Vector3::unit_y() * 2.0), 1.0);

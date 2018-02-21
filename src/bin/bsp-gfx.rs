@@ -39,6 +39,8 @@ use gfx::traits::FactoryExt;
 use glutin::GlContext;
 use glutin::GlRequest;
 use glutin::Api::OpenGl;
+use richter::client::render::bsp::BSP_FRAGMENT_SHADER_GLSL;
+use richter::client::render::bsp::BSP_VERTEX_SHADER_GLSL;
 use richter::client::render::Palette;
 use richter::client::render::Vertex;
 use richter::client::render::bsp::BspRenderer;
@@ -48,20 +50,6 @@ use richter::common::model::ModelKind;
 
 type ColorFormat = gfx::format::Srgba8;
 type DepthFormat = gfx::format::DepthStencil;
-
-gfx_defines!{
-    constant Locals {
-        transform: [[f32; 4]; 4] = "u_transform",
-    }
-
-    pipeline pipe {
-        vertex_buffer: gfx::VertexBuffer<Vertex> = (),
-        transform: gfx::Global<[[f32; 4]; 4]> = "u_transform",
-        sampler: gfx::TextureSampler<[f32; 4]> = "u_texture",
-        out_color: gfx::RenderTarget<ColorFormat> = "Target0",
-        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
-    }
-}
 
 fn main() {
     env_logger::init();
@@ -83,35 +71,7 @@ fn main() {
         factory.create_command_buffer().into();
 
     let shader_set = factory
-        .create_shader_set(
-            r#"
-#version 430
-
-layout (location = 0) in vec3 a_Pos;
-layout (location = 1) in vec2 a_Texcoord;
-
-out vec2 f_texcoord;
-
-uniform mat4 u_transform;
-
-void main() {
-    f_texcoord = a_Texcoord;
-    gl_Position = u_transform * vec4(-a_Pos.y, a_Pos.z, -a_Pos.x, 1.0);
-}
-"#.as_bytes(),
-            r#"
-#version 430
-
-in vec2 f_texcoord;
-
-uniform sampler2D u_texture;
-
-out vec4 Target0;
-
-void main() {
-    Target0 = texture(u_texture, f_texcoord);
-}"#.as_bytes(),
-        )
+        .create_shader_set(BSP_VERTEX_SHADER_GLSL, BSP_FRAGMENT_SHADER_GLSL)
         .unwrap();
 
     let rasterizer = gfx::state::Rasterizer {
@@ -127,7 +87,7 @@ void main() {
             &shader_set,
             gfx::Primitive::TriangleList,
             rasterizer,
-            pipe::new(),
+            richter::client::render::bsp::pipe::new(),
         )
         .unwrap();
 
@@ -162,7 +122,7 @@ void main() {
         65536.0,
     );
 
-    let mut data = pipe::Data {
+    let mut data = richter::client::render::bsp::pipe::Data {
         vertex_buffer: bsp_renderer.vertex_buffer(),
         transform: perspective.into(),
         sampler: (bsp_renderer.get_texture_view(0), sampler),
@@ -293,17 +253,15 @@ void main() {
 
         encoder.clear(&data.out_color, [0.0, 0.0, 0.0, 1.0]);
         encoder.clear_depth(&data.out_depth, 1.0);
-
-        for f in bsp_renderer.faces().iter() {
-            let frame = worldmodel
-                .bsp_data()
-                .texture_frame_for_time(f.tex_id, frame_time);
-            data.sampler.0 = bsp_renderer.get_texture_view(frame);
-            data.transform = (perspective * Matrix4::from(rotation)
-                * Matrix4::from_translation(camera_pos))
-                .into();
-            encoder.draw(&f.slice, &pso, &data);
-        }
+        bsp_renderer.render(
+            &mut encoder,
+            &pso,
+            &mut data,
+            frame_time,
+            perspective,
+            camera_pos,
+            camera_angles,
+        );
         encoder.flush(&mut device);
         window.swap_buffers().unwrap();
         device.cleanup();

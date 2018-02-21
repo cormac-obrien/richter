@@ -22,17 +22,70 @@ use client::render::Vertex;
 use common::bsp::BspData;
 use common::bsp::BspTextureMipmap;
 
+use cgmath::Euler;
 use cgmath::InnerSpace;
+use cgmath::Rad;
 use cgmath::Vector3;
+use cgmath::Matrix4;
+use chrono::Duration;
+use gfx;
+use gfx::CommandBuffer;
 use gfx::IndexBuffer;
+use gfx::Encoder;
 use gfx::Factory;
 use gfx::Resources;
 use gfx::Slice;
 use gfx::format::Srgba8 as ColorFormat;
+use gfx::format::DepthStencil as DepthFormat;
 use gfx::handle::Buffer;
 use gfx::handle::ShaderResourceView;
+use gfx::pso::PipelineData;
+use gfx::pso::PipelineState;
 use gfx::texture;
 use gfx::traits::FactoryExt;
+
+pub static BSP_VERTEX_SHADER_GLSL: &[u8] = br#"
+#version 430
+
+layout (location = 0) in vec3 a_Pos;
+layout (location = 1) in vec2 a_Texcoord;
+
+out vec2 f_texcoord;
+
+uniform mat4 u_Transform;
+
+void main() {
+    f_texcoord = a_Texcoord;
+    gl_Position = u_Transform * vec4(-a_Pos.y, a_Pos.z, -a_Pos.x, 1.0);
+}
+"#;
+
+pub static BSP_FRAGMENT_SHADER_GLSL: &[u8] = br#"
+#version 430
+
+in vec2 f_texcoord;
+
+uniform sampler2D u_Texture;
+
+out vec4 Target0;
+
+void main() {
+    Target0 = texture(u_Texture, f_texcoord);
+}"#;
+
+gfx_defines! {
+    constant Locals {
+        transform: [[f32; 4]; 4] = "u_Transform",
+    }
+
+    pipeline pipe {
+        vertex_buffer: gfx::VertexBuffer<Vertex> = (),
+        transform: gfx::Global<[[f32; 4]; 4]> = "u_Transform",
+        sampler: gfx::TextureSampler<[f32; 4]> = "u_Texture",
+        out_color: gfx::RenderTarget<ColorFormat> = "Target0",
+        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
+    }
+}
 
 pub struct BspRenderFace<R>
 where
@@ -156,5 +209,63 @@ where
 
     pub fn get_texture_view(&self, tex_id: usize) -> ShaderResourceView<R, [f32; 4]> {
         self.texture_views[tex_id].clone()
+    }
+
+    pub fn render<C>(
+        &self,
+        encoder: &mut Encoder<R, C>,
+        pso: &PipelineState<R, <pipe::Data<R> as PipelineData<R>>::Meta>,
+        user_data: &mut pipe::Data<R>,
+        time: Duration,
+        perspective: Matrix4<f32>,
+        camera_pos: Vector3<f32>,
+        camera_angles: Euler<Rad<f32>>,
+    ) where
+        C: CommandBuffer<R>,
+    {
+        let containing_leaf_id = self.bsp_data.find_leaf(camera_pos);
+        debug!("Containing leaf: {}", containing_leaf_id);
+        let pvs = self.bsp_data.get_pvs(containing_leaf_id);
+
+        if pvs.is_empty() {
+            // No visibility data for this leaf, render all leaves
+            for leaf in self.bsp_data.leaves().iter() {
+                for facelist_id in leaf.facelist_id..leaf.facelist_id + leaf.facelist_count {
+                    let face_id = self.bsp_data.facelist()[facelist_id];
+                    if face_id >= self.faces.len() {
+                        debug!("face id {} is out of range!", face_id);
+                        continue;
+                    }
+                    let face = &self.faces[face_id];
+                    let frame = self.bsp_data.texture_frame_for_time(face.tex_id, time);
+                    user_data.transform = (perspective * Matrix4::from(camera_angles)
+                        * Matrix4::from_translation(camera_pos))
+                        .into();
+
+                    user_data.sampler.0 = self.get_texture_view(frame);
+                    encoder.draw(&face.slice, pso, user_data);
+                }
+            }
+        } else {
+            for visible_leaf_id in pvs.iter() {
+                let leaf = &self.bsp_data.leaves()[*visible_leaf_id];
+
+                for facelist_id in leaf.facelist_id..leaf.facelist_id + leaf.facelist_count {
+                    let face_id = self.bsp_data.facelist()[facelist_id];
+                    if face_id >= self.faces.len() {
+                        debug!("face id {} is out of range!", face_id);
+                        continue;
+                    }
+                    let face = &self.faces[face_id];
+                    let frame = self.bsp_data.texture_frame_for_time(face.tex_id, time);
+                    user_data.transform = (perspective * Matrix4::from(camera_angles)
+                        * Matrix4::from_translation(camera_pos))
+                        .into();
+
+                    user_data.sampler.0 = self.get_texture_view(frame);
+                    encoder.draw(&face.slice, pso, user_data);
+                }
+            }
+        }
     }
 }

@@ -814,18 +814,18 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             reader.read_i16::<LittleEndian>()?,
         ];
 
-        let face_id = reader.read_u16::<LittleEndian>()? as usize;
-        let face_count = reader.read_u16::<LittleEndian>()? as usize;
+        let facelist_id = reader.read_u16::<LittleEndian>()? as usize;
+        let facelist_count = reader.read_u16::<LittleEndian>()? as usize;
         let mut sounds = [0u8; NUM_AMBIENTS];
         reader.read(&mut sounds)?;
         leaves.push(BspLeaf {
-            contents: contents,
-            vis_offset: vis_offset,
-            min: min,
-            max: max,
-            face_id: face_id,
-            face_count: face_count,
-            sounds: sounds,
+            contents,
+            vis_offset,
+            min,
+            max,
+            facelist_id,
+            facelist_count,
+            sounds,
         });
     }
     if reader.seek(SeekFrom::Current(0))?

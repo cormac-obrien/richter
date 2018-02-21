@@ -641,13 +641,13 @@ impl BspCollisionHull {
 
 #[derive(Debug)]
 pub struct BspLeaf {
-    contents: BspLeafContents,
-    vis_offset: Option<usize>,
-    min: [i16; 3],
-    max: [i16; 3],
-    face_id: usize,
-    face_count: usize,
-    sounds: [u8; MAX_SOUNDS],
+    pub contents: BspLeafContents,
+    pub vis_offset: Option<usize>,
+    pub min: [i16; 3],
+    pub max: [i16; 3],
+    pub facelist_id: usize,
+    pub facelist_count: usize,
+    pub sounds: [u8; MAX_SOUNDS],
 }
 
 #[derive(Debug)]
@@ -768,6 +768,62 @@ impl BspData {
             }
         }
     }
+
+    /// Locates the leaf containing the given position vector and returns its index.
+    pub fn find_leaf<V>(&self, pos: V) -> usize
+    where
+        V: Into<Vector3<f32>>,
+    {
+        let pos_vec = pos.into();
+
+        let mut node = &self.render_nodes[0];
+        loop {
+            let plane = &self.planes[node.plane_id];
+
+            let child = &node.children[plane.point_side(pos_vec) as usize];
+
+            match child {
+                &BspRenderNodeChild::Node(i) => node = &self.render_nodes[i],
+                &BspRenderNodeChild::Leaf(i) => return i,
+            }
+        }
+    }
+
+    pub fn get_pvs(&self, leaf_id: usize) -> Vec<usize> {
+        // leaf 0 is outside the map, everything is visible
+        if leaf_id == 0 {
+            return Vec::new();
+        }
+
+        match self.leaves[leaf_id].vis_offset {
+            Some(o) => {
+                let mut visleaf = 0;
+                let mut visleaf_list = Vec::new();
+                let mut it = (&self.visibility[o..]).iter();
+
+                while visleaf < self.leaves.len() {
+                    let byte = it.next().unwrap();
+                    match *byte {
+                        // a zero byte signals the start of an RLE sequence
+                        0 => visleaf += 8 * *it.next().unwrap() as usize,
+
+                        bits => for shift in 0..8 {
+                            // increment visleaf beforehand since we skip leaf 0
+                            visleaf += 1;
+
+                            if bits & 1 << shift != 0 {
+                                visleaf_list.push(visleaf);
+                            }
+                        },
+                    }
+                }
+
+                visleaf_list
+            }
+
+            None => Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -826,100 +882,9 @@ impl BspModel {
             maxs: main_hull.maxs,
         })
     }
-
-    /// Locates the leaf containing the given position vector and returns its index.
-    pub fn find_leaf<V>(&self, pos: V) -> usize
-    where
-        V: Into<Vector3<f32>>,
-    {
-        let pos_vec = pos.into();
-
-        let mut node = &self.bsp_data.render_nodes[0];
-        loop {
-            let plane = &self.bsp_data.planes[node.plane_id];
-
-            let child = &node.children[plane.point_side(pos_vec) as usize];
-
-            match child {
-                &BspRenderNodeChild::Node(i) => node = &self.bsp_data.render_nodes[i],
-                &BspRenderNodeChild::Leaf(i) => return i,
-            }
-        }
-    }
 }
 
-impl BspData {
-    /// Decompresses the PVS for the leaf with the given ID
-    pub fn decompress_visibility(&self, leaf_id: usize) -> Option<Vec<u8>> {
-        // Calculate length of vis data in bytes, rounding up
-        let decompressed_len = (self.leaves.len() + 7) / 8;
-
-        match self.leaves[leaf_id].vis_offset {
-            Some(o) => {
-                let mut decompressed = Vec::new();
-
-                let mut i = 0;
-                while decompressed.len() < decompressed_len {
-                    match self.visibility[o + i] {
-                        0 => {
-                            let count = self.visibility[o + i + 1];
-                            for _ in 0..count {
-                                decompressed.push(0);
-                            }
-                        }
-                        x => decompressed.push(x),
-                    }
-                }
-
-                assert_eq!(decompressed.len(), decompressed_len);
-
-                Some(decompressed)
-            }
-            None => None,
-        }
-    }
-
-    pub fn get_pvs(&self, leaf_id: usize) -> Vec<usize> {
-        match self.leaves[leaf_id].vis_offset {
-            Some(o) => {
-                let mut visleaf = 0;
-                let mut visleaf_list = Vec::new();
-                let mut it = (&self.visibility[o..]).iter();
-
-                while visleaf < self.leaves.len() {
-                    let byte = it.next().unwrap();
-                    match *byte {
-                        // a zero byte signals the start of an RLE sequence
-                        0 => visleaf += 8 * *it.next().unwrap() as usize,
-
-                        bits => for shift in 0..8 {
-                            visleaf += 1;
-
-                            if bits & 1 << shift != 0 {
-                                visleaf_list.push(visleaf);
-                            }
-                        },
-                    }
-                }
-
-                visleaf_list
-            }
-
-            None => Vec::new(),
-        }
-    }
-
-    /// Maps a function over the BSP textures and returns a vector of the results.
-    ///
-    /// This is meant to be used to provide a straightforward method of generating texture objects
-    /// for graphics APIs like OpenGL.
-    pub fn gen_textures<F, T>(&self, mut func: F) -> Vec<T>
-    where
-        F: FnMut(&BspTexture) -> T,
-    {
-        self.textures.iter().map(|tex| func(tex)).collect()
-    }
-}
+impl BspData {}
 
 #[cfg(test)]
 mod test {
