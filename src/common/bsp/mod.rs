@@ -725,6 +725,10 @@ impl BspData {
         &self.edgelist
     }
 
+    pub fn hulls(&self) -> &[BspCollisionHull] {
+        &self.hulls
+    }
+
     /// Find the index of the appropriate frame of the texture with index `first`.
     ///
     /// If the texture is not animated, immediately returns `first`.
@@ -780,11 +784,12 @@ impl BspData {
         loop {
             let plane = &self.planes[node.plane_id];
 
-            let child = &node.children[plane.point_side(pos_vec) as usize];
-
-            match child {
-                &BspRenderNodeChild::Node(i) => node = &self.render_nodes[i],
-                &BspRenderNodeChild::Leaf(i) => return i,
+            match node.children[plane.point_side(pos_vec) as usize] {
+                BspRenderNodeChild::Node(node_id) => {
+                    debug!("find_leaf: node id = {}", node_id);
+                    node = &self.render_nodes[node_id];
+                }
+                BspRenderNodeChild::Leaf(leaf_id) => return leaf_id,
             }
         }
     }
@@ -823,6 +828,75 @@ impl BspData {
 
             None => Vec::new(),
         }
+    }
+
+    pub fn gen_dot_graph(&self) -> String {
+        let mut dot = String::new();
+        dot += "digraph render {\n";
+        dot += "    rankdir=LR\n";
+
+        let mut rank_lists = Vec::new();
+        let mut leaf_names = Vec::new();
+
+        dot += &self.gen_dot_graph_recursive(0, &mut rank_lists, &mut leaf_names, 0);
+
+        for rank in rank_lists {
+            dot += "    {rank=same;";
+            for node_id in rank {
+                dot += &format!("n{},", node_id);
+            }
+            // discard trailing comma
+            dot.pop().unwrap();
+            dot += "}\n"
+        }
+
+        dot += "    {rank=same;";
+        for leaf_id in 1..self.leaves().len() {
+            dot += &format!("l{},", leaf_id);
+        }
+        // discard trailing comma
+        dot.pop().unwrap();
+        dot += "}\n";
+
+        dot += "}";
+
+        dot
+    }
+
+    fn gen_dot_graph_recursive(
+        &self,
+        rank: usize,
+        rank_lists: &mut Vec<HashSet<usize>>,
+        leaf_names: &mut Vec<String>,
+        node_id: usize,
+    ) -> String {
+        let mut result = String::new();
+
+        if rank >= rank_lists.len() {
+            rank_lists.push(HashSet::new());
+        }
+
+        rank_lists[rank].insert(node_id);
+
+        for child in self.render_nodes[node_id].children.iter() {
+            match *child {
+                BspRenderNodeChild::Node(n) => {
+                    result += &format!("    n{} -> n{}\n", node_id, n);
+                    result += &self.gen_dot_graph_recursive(rank + 1, rank_lists, leaf_names, n);
+                }
+                BspRenderNodeChild::Leaf(leaf_id) => match leaf_id {
+                    0 => {
+                        result += &format!(
+                            "    l0_{0} [shape=point label=\"\"]\n    n{0} -> l0_{0}\n",
+                            node_id
+                        );
+                    }
+                    _ => result += &format!("    n{} -> l{}\n", node_id, leaf_id),
+                },
+            }
+        }
+
+        result
     }
 }
 
