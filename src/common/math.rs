@@ -137,7 +137,7 @@ impl Hyperplane {
             n if n == Vector3::unit_x() => Self::axis_x(dist),
             n if n == Vector3::unit_y() => Self::axis_y(dist),
             n if n == Vector3::unit_z() => Self::axis_z(dist),
-            _ => Self::normal(normal, dist),
+            _ => Self::normal(normal.normalize(), dist),
         }
     }
 
@@ -177,7 +177,7 @@ impl Hyperplane {
     /// is aligned along an axis.
     pub fn normal(normal: Vector3<f32>, dist: f32) -> Hyperplane {
         Hyperplane {
-            alignment: Alignment::Normal(normal),
+            alignment: Alignment::Normal(normal.normalize()),
             dist,
         }
     }
@@ -250,12 +250,6 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_hyperplane_point_dist_x() {
-        let plane = Hyperplane::axis_x(1.0);
-        assert_eq!(plane.point_dist(Vector3::unit_x() * 2.0), 1.0);
-    }
-
-    #[test]
     fn test_hyperplane_side_x() {
         let plane = Hyperplane::axis_x(1.0);
         assert_eq!(
@@ -295,33 +289,76 @@ mod test {
     }
 
     #[test]
+    fn test_hyperplane_side_arbitrary() {
+        // test 16 hyperplanes around the origin
+        for x_comp in [1.0, -1.0].into_iter() {
+            for y_comp in [1.0, -1.0].into_iter() {
+                for z_comp in [1.0, -1.0].into_iter() {
+                    for dist in [1, -1].into_iter() {
+                        let base_vector = Vector3::new(*x_comp, *y_comp, *z_comp);
+                        let plane = Hyperplane::new(base_vector, *dist as f32);
+                        assert_eq!(
+                            plane.point_side(Vector3::zero()),
+                            match *dist {
+                                1 => HyperplaneSide::Negative,
+                                -1 => HyperplaneSide::Positive,
+                                _ => unreachable!(),
+                            }
+                        );
+                        assert_eq!(
+                            plane.point_side(base_vector * 2.0 * *dist as f32),
+                            match *dist {
+                                1 => HyperplaneSide::Positive,
+                                -1 => HyperplaneSide::Negative,
+                                _ => unreachable!(),
+                            }
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_hyperplane_point_dist_x() {
+        let plane = Hyperplane::axis_x(1.0);
+        assert_eq!(plane.point_dist(Vector3::unit_x() * 2.0), 1.0);
+        assert_eq!(plane.point_dist(Vector3::zero()), -1.0);
+    }
+
+    #[test]
     fn test_hyperplane_point_dist_y() {
         let plane = Hyperplane::axis_y(1.0);
         assert_eq!(plane.point_dist(Vector3::unit_y() * 2.0), 1.0);
+        assert_eq!(plane.point_dist(Vector3::zero()), -1.0);
     }
 
     #[test]
     fn test_hyperplane_point_dist_z() {
         let plane = Hyperplane::axis_z(1.0);
-        assert_eq!(plane.point_dist(Vector3::unit_z() * 2.0), 1.0)
+        assert_eq!(plane.point_dist(Vector3::unit_z() * 2.0), 1.0);
+        assert_eq!(plane.point_dist(Vector3::zero()), -1.0);
     }
 
     #[test]
     fn test_hyperplane_point_dist_x_no_axis() {
         let plane = Hyperplane::normal(Vector3::unit_x(), 1.0);
         assert_eq!(plane.point_dist(Vector3::unit_x() * 2.0), 1.0);
+        assert_eq!(plane.point_dist(Vector3::zero()), -1.0);
     }
 
     #[test]
     fn test_hyperplane_point_dist_y_no_axis() {
         let plane = Hyperplane::normal(Vector3::unit_y(), 1.0);
         assert_eq!(plane.point_dist(Vector3::unit_y() * 2.0), 1.0);
+        assert_eq!(plane.point_dist(Vector3::zero()), -1.0);
     }
 
     #[test]
     fn test_hyperplane_point_dist_z_no_axis() {
         let plane = Hyperplane::normal(Vector3::unit_z(), 1.0);
-        assert_eq!(plane.point_dist(Vector3::unit_z() * 2.0), 1.0)
+        assert_eq!(plane.point_dist(Vector3::unit_z() * 2.0), 1.0);
+        assert_eq!(plane.point_dist(Vector3::zero()), -1.0);
     }
 
     #[test]
