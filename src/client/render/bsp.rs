@@ -211,6 +211,29 @@ where
         self.texture_views[tex_id].clone()
     }
 
+    pub fn render_face<C>(
+        &self,
+        encoder: &mut Encoder<R, C>,
+        pso: &PipelineState<R, <pipe::Data<R> as PipelineData<R>>::Meta>,
+        user_data: &mut pipe::Data<R>,
+        time: Duration,
+        perspective: Matrix4<f32>,
+        camera_pos: Vector3<f32>,
+        camera_angles: Euler<Rad<f32>>,
+        face_id: usize,
+    ) where
+        C: CommandBuffer<R>,
+    {
+        let face = &self.faces[face_id];
+        let frame = self.bsp_data.texture_frame_for_time(face.tex_id, time);
+        user_data.transform = (perspective * Matrix4::from(camera_angles)
+            * Matrix4::from_translation(camera_pos))
+            .into();
+
+        user_data.sampler.0 = self.get_texture_view(frame);
+        encoder.draw(&face.slice, pso, user_data);
+    }
+
     pub fn render<C>(
         &self,
         encoder: &mut Encoder<R, C>,
@@ -232,18 +255,16 @@ where
             for leaf in self.bsp_data.leaves().iter() {
                 for facelist_id in leaf.facelist_id..leaf.facelist_id + leaf.facelist_count {
                     let face_id = self.bsp_data.facelist()[facelist_id];
-                    if face_id >= self.faces.len() {
-                        debug!("face id {} is out of range!", face_id);
-                        continue;
-                    }
-                    let face = &self.faces[face_id];
-                    let frame = self.bsp_data.texture_frame_for_time(face.tex_id, time);
-                    user_data.transform = (perspective * Matrix4::from(camera_angles)
-                        * Matrix4::from_translation(camera_pos))
-                        .into();
-
-                    user_data.sampler.0 = self.get_texture_view(frame);
-                    encoder.draw(&face.slice, pso, user_data);
+                    self.render_face(
+                        encoder,
+                        pso,
+                        user_data,
+                        time,
+                        perspective,
+                        camera_pos,
+                        camera_angles,
+                        face_id,
+                    );
                 }
             }
         } else {
@@ -252,18 +273,16 @@ where
 
                 for facelist_id in leaf.facelist_id..leaf.facelist_id + leaf.facelist_count {
                     let face_id = self.bsp_data.facelist()[facelist_id];
-                    if face_id >= self.faces.len() {
-                        debug!("face id {} is out of range!", face_id);
-                        continue;
-                    }
-                    let face = &self.faces[face_id];
-                    let frame = self.bsp_data.texture_frame_for_time(face.tex_id, time);
-                    user_data.transform = (perspective * Matrix4::from(camera_angles)
-                        * Matrix4::from_translation(camera_pos))
-                        .into();
-
-                    user_data.sampler.0 = self.get_texture_view(frame);
-                    encoder.draw(&face.slice, pso, user_data);
+                    self.render_face(
+                        encoder,
+                        pso,
+                        user_data,
+                        time,
+                        perspective,
+                        camera_pos,
+                        camera_angles,
+                        face_id,
+                    );
                 }
             }
         }
