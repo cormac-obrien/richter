@@ -1919,110 +1919,23 @@ pub enum ClientCmdCode {
     StringCmd = 4,
 }
 
-pub struct ClientCmdMove {
-    send_time: Duration,
-    angles: Vector3<Deg<f32>>,
-    fwd_move: u16,
-    side_move: u16,
-    up_move: u16,
-    button_flags: ButtonFlags,
-    impulse: u8,
-}
-
-impl Cmd for ClientCmdMove {
-    fn code(&self) -> u8 {
-        ClientCmdCode::Move as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ClientCmdMove, NetError>
-    where
-        R: ReadBytesExt + BufRead,
-    {
-        let send_time = engine::duration_from_f32(reader.read_f32::<LittleEndian>()?);
-        let angles = Vector3::new(
-            read_angle(reader)?,
-            read_angle(reader)?,
-            read_angle(reader)?,
-        );
-        let fwd_move = reader.read_u16::<LittleEndian>()?;
-        let side_move = reader.read_u16::<LittleEndian>()?;
-        let up_move = reader.read_u16::<LittleEndian>()?;
-        let button_flags_val = reader.read_u8()?;
-        let button_flags = match ButtonFlags::from_bits(button_flags_val) {
-            Some(bf) => bf,
-            None => {
-                return Err(NetError::InvalidData(format!(
-                    "Invalid value for button flags: {}",
-                    button_flags_val
-                )))
-            }
-        };
-        let impulse = reader.read_u8()?;
-
-        Ok(ClientCmdMove {
-            send_time,
-            angles,
-            fwd_move,
-            side_move,
-            up_move,
-            button_flags,
-            impulse,
-        })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write_f32::<LittleEndian>(engine::duration_to_f32(self.send_time))?;
-        for i in 0..3 {
-            write_angle(writer, self.angles[i])?;
-        }
-        writer.write_u16::<LittleEndian>(self.fwd_move)?;
-        writer.write_u16::<LittleEndian>(self.side_move)?;
-        writer.write_u16::<LittleEndian>(self.up_move)?;
-        writer.write_u8(self.button_flags.bits())?;
-        writer.write_u8(self.impulse)?;
-
-        Ok(())
-    }
-}
-
-pub struct ClientCmdStringCmd {
-    pub cmd: String,
-}
-
-impl Cmd for ClientCmdStringCmd {
-    fn code(&self) -> u8 {
-        ClientCmdCode::StringCmd as u8
-    }
-
-    fn deserialize<R>(reader: &mut R) -> Result<ClientCmdStringCmd, NetError>
-    where
-        R: ReadBytesExt + BufRead,
-    {
-        let cmd = util::read_cstring(reader).unwrap();
-
-        Ok(ClientCmdStringCmd { cmd })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        writer.write(self.cmd.as_bytes())?;
-        writer.write_u8(0)?;
-
-        Ok(())
-    }
-}
-
+#[derive(Debug, PartialEq)]
 pub enum ClientCmd {
     Bad,
     NoOp,
     Disconnect,
-    Move(ClientCmdMove),
-    StringCmd(ClientCmdStringCmd),
+    Move {
+        send_time: Duration,
+        angles: Vector3<Deg<f32>>,
+        fwd_move: u16,
+        side_move: u16,
+        up_move: u16,
+        button_flags: ButtonFlags,
+        impulse: u8,
+    },
+    StringCmd {
+        cmd: String,
+    },
 }
 
 impl ClientCmd {
@@ -2031,8 +1944,8 @@ impl ClientCmd {
             ClientCmd::Bad => ClientCmdCode::Bad as u8,
             ClientCmd::NoOp => ClientCmdCode::NoOp as u8,
             ClientCmd::Disconnect => ClientCmdCode::Disconnect as u8,
-            ClientCmd::Move(_) => ClientCmdCode::Move as u8,
-            ClientCmd::StringCmd(_) => ClientCmdCode::StringCmd as u8,
+            ClientCmd::Move { .. } => ClientCmdCode::Move as u8,
+            ClientCmd::StringCmd { .. } => ClientCmdCode::StringCmd as u8,
         }
     }
 
@@ -2055,9 +1968,40 @@ impl ClientCmd {
             ClientCmdCode::Bad => ClientCmd::Bad,
             ClientCmdCode::NoOp => ClientCmd::NoOp,
             ClientCmdCode::Disconnect => ClientCmd::Disconnect,
-            ClientCmdCode::Move => ClientCmd::Move(ClientCmdMove::deserialize(reader)?),
+            ClientCmdCode::Move => {
+                let send_time = engine::duration_from_f32(reader.read_f32::<LittleEndian>()?);
+                let angles = Vector3::new(
+                    read_angle(reader)?,
+                    read_angle(reader)?,
+                    read_angle(reader)?,
+                );
+                let fwd_move = reader.read_u16::<LittleEndian>()?;
+                let side_move = reader.read_u16::<LittleEndian>()?;
+                let up_move = reader.read_u16::<LittleEndian>()?;
+                let button_flags_val = reader.read_u8()?;
+                let button_flags = match ButtonFlags::from_bits(button_flags_val) {
+                    Some(bf) => bf,
+                    None => {
+                        return Err(NetError::InvalidData(format!(
+                            "Invalid value for button flags: {}",
+                            button_flags_val
+                        )))
+                    }
+                };
+                let impulse = reader.read_u8()?;
+                ClientCmd::Move {
+                    send_time,
+                    angles,
+                    fwd_move,
+                    side_move,
+                    up_move,
+                    button_flags,
+                    impulse,
+                }
+            }
             ClientCmdCode::StringCmd => {
-                ClientCmd::StringCmd(ClientCmdStringCmd::deserialize(reader)?)
+                let cmd = util::read_cstring(reader).unwrap();
+                ClientCmd::StringCmd { cmd }
             }
         };
 
@@ -2074,8 +2018,29 @@ impl ClientCmd {
             ClientCmd::Bad => (),
             ClientCmd::NoOp => (),
             ClientCmd::Disconnect => (),
-            ClientCmd::Move(ref move_cmd) => move_cmd.serialize(writer)?,
-            ClientCmd::StringCmd(ref string_cmd) => string_cmd.serialize(writer)?,
+            ClientCmd::Move {
+                send_time,
+                angles,
+                fwd_move,
+                side_move,
+                up_move,
+                button_flags,
+                impulse,
+            } => {
+                writer.write_f32::<LittleEndian>(engine::duration_to_f32(send_time))?;
+                for i in 0..3 {
+                    write_angle(writer, angles[i])?;
+                }
+                writer.write_u16::<LittleEndian>(fwd_move)?;
+                writer.write_u16::<LittleEndian>(side_move)?;
+                writer.write_u16::<LittleEndian>(up_move)?;
+                writer.write_u8(button_flags.bits())?;
+                writer.write_u8(impulse)?;
+            }
+            ClientCmd::StringCmd { ref cmd } => {
+                writer.write(cmd.as_bytes())?;
+                writer.write_u8(0)?;
+            }
         }
 
         Ok(())
@@ -2692,6 +2657,40 @@ mod test {
         src.serialize(&mut packet).unwrap();
         let mut reader = BufReader::new(packet.as_slice());
         let dst = ServerCmd::deserialize(&mut reader).unwrap().unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_client_cmd_string_cmd_read_write_eq() {
+        let src = ClientCmd::StringCmd {
+            cmd: String::from("StringCmd test"),
+        };
+        let mut packet = Vec::new();
+        src.serialize(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ClientCmd::deserialize(&mut reader).unwrap();
+
+        assert_eq!(src, dst);
+    }
+
+    #[test]
+    fn test_client_cmd_move_read_write_eq() {
+        let src = ClientCmd::Move {
+            send_time: Duration::milliseconds(1234),
+            // have to use angles that won't lose precision from write_angle
+            angles: Vector3::new(Deg(90.0), Deg(-90.0), Deg(0.0)),
+            fwd_move: 27,
+            side_move: 85,
+            up_move: 76,
+            button_flags: ButtonFlags::empty(),
+            impulse: 121,
+        };
+
+        let mut packet = Vec::new();
+        src.serialize(&mut packet).unwrap();
+        let mut reader = BufReader::new(packet.as_slice());
+        let dst = ClientCmd::deserialize(&mut reader).unwrap();
 
         assert_eq!(src, dst);
     }

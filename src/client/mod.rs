@@ -38,7 +38,6 @@ use common::model::SyncType;
 use common::net;
 use common::net::BlockingMode;
 use common::net::ClientCmd;
-use common::net::ClientCmdStringCmd;
 use common::net::ClientStat;
 use common::net::EntityEffects;
 use common::net::EntityState;
@@ -1006,27 +1005,27 @@ impl Client {
         match stage {
             SignOnStage::Not => (), // TODO this is an error (invalid value)
             SignOnStage::Prespawn => {
-                self.add_cmd(ClientCmd::StringCmd(ClientCmdStringCmd {
+                self.add_cmd(ClientCmd::StringCmd {
                     cmd: String::from("prespawn"),
-                }))?;
+                })?;
             }
             SignOnStage::ClientInfo => {
                 // TODO: fill in client info here
-                self.add_cmd(ClientCmd::StringCmd(ClientCmdStringCmd {
+                self.add_cmd(ClientCmd::StringCmd {
                     cmd: format!("name \"{}\"\n", "UNNAMED"),
-                }))?;
-                self.add_cmd(ClientCmd::StringCmd(ClientCmdStringCmd {
+                })?;
+                self.add_cmd(ClientCmd::StringCmd {
                     cmd: format!("color {} {}", 0, 0),
-                }))?;
+                })?;
                 // TODO: need default spawn parameters?
-                self.add_cmd(ClientCmd::StringCmd(ClientCmdStringCmd {
+                self.add_cmd(ClientCmd::StringCmd {
                     cmd: format!("spawn {}", ""),
-                }))?;
+                })?;
             }
             SignOnStage::Begin => {
-                self.add_cmd(ClientCmd::StringCmd(ClientCmdStringCmd {
+                self.add_cmd(ClientCmd::StringCmd {
                     cmd: String::from("begin"),
-                }))?;
+                })?;
             }
             SignOnStage::Done => {
                 debug!("Signon complete");
