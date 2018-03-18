@@ -1091,7 +1091,7 @@ impl Client {
         for ref snd_name in sound_precache {
             debug!("Loading sound {}", snd_name);
 
-            // TODO: waiting on ruuda/hound#20 (some WAV files don't load under rodio)
+            // TODO: waiting on tomaka/rodio#157
             new_client_state
                 .sounds
                 .push(match AudioSource::load(pak, snd_name) {
