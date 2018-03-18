@@ -856,7 +856,11 @@ impl Client {
                         return Err(ClientError::with_msg("Server set view entity to NULL"));
                     }
 
-                    if new_view_ent_id >= self.state.entities.len() {
+                    // we have to allow the server to SetView on the player entity ID, which will
+                    // be uninitialized at first.
+                    if new_view_ent_id >= self.state.max_players
+                        && new_view_ent_id >= self.state.entities.len()
+                    {
                         return Err(ClientError::with_msg(format!(
                             "View entity ID is out of range: {}",
                             new_view_ent_id
@@ -1047,6 +1051,7 @@ impl Client {
     ) -> Result<(), ClientError> {
         let mut new_client_state = ClientState::new(pak);
 
+        // check protocol version
         if protocol_version != net::PROTOCOL_VERSION as i32 {
             return Err(ClientError::with_msg(format!(
                 "Incompatible protocol version (got {}, should be {})",
@@ -1058,6 +1063,7 @@ impl Client {
         // TODO: print sign-on message to in-game console
         println!("{}", message);
 
+        // parse model precache
         // TODO: validate submodel names
         for mod_name in model_precache {
             if mod_name.ends_with(".bsp") {
@@ -1081,6 +1087,7 @@ impl Client {
             // TODO: send keepalive message?
         }
 
+        // parse sound precache
         for ref snd_name in sound_precache {
             debug!("Loading sound {}", snd_name);
 
