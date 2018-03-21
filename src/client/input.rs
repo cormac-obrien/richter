@@ -208,7 +208,7 @@ impl ::std::convert::From<MouseScrollDelta> for MouseWheel {
 }
 
 /// A physical input that can be bound to a command.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum BindInput {
     Key(Key),
     MouseButton(MouseButton),
