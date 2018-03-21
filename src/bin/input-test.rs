@@ -26,6 +26,11 @@ extern crate richter;
 extern crate winit;
 
 use richter::client::input::BindInput;
+use richter::client::input::BindTarget;
+use richter::client::input::DEFAULT_BINDINGS;
+use richter::client::input::GameInput;
+use richter::client::input::MouseWheel;
+use winit::ElementState;
 use winit::Event;
 use winit::EventsLoop;
 use winit::KeyboardInput;
@@ -34,6 +39,9 @@ use winit::WindowEvent;
 
 fn main() {
     env_logger::init();
+
+    let bindings = DEFAULT_BINDINGS.clone();
+    let mut game_input = GameInput::new();
 
     let mut events_loop = EventsLoop::new();
 
@@ -45,6 +53,8 @@ fn main() {
 
     let mut quit = false;
     loop {
+        // TODO: release scroll wheel every frame
+
         events_loop.poll_events(|event| match event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::Closed => quit = true,
@@ -58,8 +68,26 @@ fn main() {
                         },
                     ..
                 } => {
-                    let input = BindInput::from(key);
-                    println!("{:?}: {:?}", input, state);
+                    if let Some(target) = bindings.get(key) {
+                        match *target {
+                            BindTarget::Action { active_state, action } => {
+                                let action_state = match state {
+                                    ElementState::Pressed => active_state,
+                                    ElementState::Released => !active_state,
+                                };
+
+                                if action_state {
+                                    print!("+");
+                                } else {
+                                    print!("-");
+                                }
+
+                                println!("{:?}", action);
+                            }
+
+                            _ => println!("{:?}: {:?}", key, state),
+                        }
+                    }
                 }
 
                 WindowEvent::MouseInput { state, button, .. } => {
