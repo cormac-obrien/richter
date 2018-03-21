@@ -30,18 +30,23 @@ use richter::client::input::BindTarget;
 use richter::client::input::DEFAULT_BINDINGS;
 use richter::client::input::GameInput;
 use richter::client::input::MouseWheel;
+use richter::common::console::CmdRegistry;
+use richter::common::console::CvarRegistry;
 use winit::ElementState;
 use winit::Event;
 use winit::EventsLoop;
 use winit::KeyboardInput;
 use winit::WindowBuilder;
 use winit::WindowEvent;
+use winit::VirtualKeyCode;
 
 fn main() {
     env_logger::init();
 
     let bindings = DEFAULT_BINDINGS.clone();
     let mut game_input = GameInput::new();
+    let mut cmd_registry = CmdRegistry::new();
+    let mut cvar_registry = CvarRegistry::new();
 
     let mut events_loop = EventsLoop::new();
 
@@ -53,7 +58,10 @@ fn main() {
 
     let mut quit = false;
     loop {
-        // TODO: release scroll wheel every frame
+        // there's no release event for the mousewheel, so send a release for both scroll directions
+        // at the beginning of every frame
+        bindings.handle(&mut game_input, &mut cmd_registry, &mut cvar_registry, MouseWheel::Up, ElementState::Released);
+        bindings.handle(&mut game_input, &mut cmd_registry, &mut cvar_registry, MouseWheel::Down, ElementState::Released);
 
         events_loop.poll_events(|event| match event {
             Event::WindowEvent { event, .. } => match event {
@@ -68,36 +76,15 @@ fn main() {
                         },
                     ..
                 } => {
-                    if let Some(target) = bindings.get(key) {
-                        match *target {
-                            BindTarget::Action { active_state, action } => {
-                                let action_state = match state {
-                                    ElementState::Pressed => active_state,
-                                    ElementState::Released => !active_state,
-                                };
-
-                                if action_state {
-                                    print!("+");
-                                } else {
-                                    print!("-");
-                                }
-
-                                println!("{:?}", action);
-                            }
-
-                            _ => println!("{:?}: {:?}", key, state),
-                        }
-                    }
+                    bindings.handle(&mut game_input, &mut cmd_registry, &mut cvar_registry, key, state);
                 }
 
                 WindowEvent::MouseInput { state, button, .. } => {
-                    let input = BindInput::from(button);
-                    println!("{:?}: {:?}", input, state);
+                    bindings.handle(&mut game_input, &mut cmd_registry, &mut cvar_registry, button, state);
                 }
 
                 WindowEvent::MouseWheel { delta, .. } => {
-                    let input = BindInput::from(delta);
-                    println!("{:?}", input);
+                    bindings.handle(&mut game_input, &mut cmd_registry, &mut cvar_registry, delta, ElementState::Pressed);
                 }
 
                 _ => (),

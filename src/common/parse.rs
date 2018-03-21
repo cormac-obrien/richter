@@ -19,6 +19,7 @@ use std::collections::HashMap;
 
 use cgmath::Vector3;
 use nom::is_alphabetic;
+use winit::ElementState;
 
 // Parse quoted strings
 named!(
@@ -55,13 +56,13 @@ named!(
 );
 
 named!(
-    pub action<(bool, &str)>,
+    pub action<(ElementState, &str)>,
     complete!(do_parse!(
-        active_state: one_of!("+-") >>
+        trigger: one_of!("+-") >>
         action_str: map_res!(take_while!(is_alphabetic), ::std::str::from_utf8) >>
-        (match active_state {
-            '+' => true,
-            '-' => false,
+        (match trigger {
+            '+' => ElementState::Pressed,
+            '-' => ElementState::Released,
             _ => unreachable!(),
         },
         action_str)

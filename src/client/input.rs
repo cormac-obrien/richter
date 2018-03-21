@@ -15,12 +15,16 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use common::console::CmdRegistry;
+use common::console::CvarRegistry;
 use common::parse;
 
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::string::ToString;
 
 use nom::IResult;
+use winit::ElementState;
 use winit::VirtualKeyCode as Key;
 use winit::MouseButton;
 use winit::MouseScrollDelta;
@@ -36,6 +40,7 @@ lazy_static! {
         binds.bind(Key::Up, BindTarget::from_str("+lookup").unwrap());
         binds.bind(Key::Left, BindTarget::from_str("+left").unwrap());
         binds.bind(Key::Down, BindTarget::from_str("+lookdown").unwrap());
+        binds.bind(Key::Right, BindTarget::from_str("+right").unwrap());
         binds.bind(Key::LControl, BindTarget::from_str("+attack").unwrap());
         binds.bind(Key::E, BindTarget::from_str("+use").unwrap());
         binds
@@ -102,32 +107,67 @@ impl FromStr for Action {
     }
 }
 
+impl ToString for Action {
+    fn to_string(&self) -> String {
+        String::from(match *self {
+            Action::Forward => "forward",
+            Action::Back => "back",
+            Action::MoveLeft => "moveleft",
+            Action::MoveRight => "moveright",
+            Action::MoveUp => "moveup",
+            Action::MoveDown => "movedown",
+            Action::LookUp => "lookup",
+            Action::LookDown => "lookdown",
+            Action::Left => "left",
+            Action::Right => "right",
+            Action::Speed => "speed",
+            Action::Jump => "jump",
+            Action::Strafe => "strafe",
+            Action::Attack => "attack",
+            Action::Use => "use",
+            Action::KLook => "klook",
+            Action::MLook => "mlook",
+            Action::ShowScores => "showscores",
+            Action::ShowTeamScores => "showteamscores",
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum BindTarget {
     Action {
         // + is true, - is false
-        // so "+forward" maps to active_state: true, action: Action::Forward
-        active_state: bool,
+        // so "+forward" maps to trigger: true, action: Action::Forward
+        trigger: ElementState,
         action: Action,
     },
 
-    Other(String),
+    Command {
+        name: String,
+        args: Vec<String>,
+    },
+
+    Cvar {
+        name: String,
+        val: String,
+    },
 }
 
+// TODO: commands/cvars/toggles will not be differentiable without CvarRegistry and CmdRegistry provided
 impl FromStr for BindTarget {
     // TODO: implement an error type
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (active_state, action_str) = match parse::action(s.as_bytes()) {
+        let (trigger, action_str) = match parse::action(s.as_bytes()) {
             IResult::Done(_remaining, output) => output,
             IResult::Incomplete(_) => {
                 error!("\"{}\" is not a valid action", s);
-                return Err(())
+                return Err(());
             }
             IResult::Error(e) => {
                 error!("\"{}\" is not a valid action: {}", s, e);
-                return Err(())
+                return Err(());
             }
         };
 
@@ -136,14 +176,34 @@ impl FromStr for BindTarget {
             Err(err) => {
                 // TODO: update when we have a real error type
                 error!("Invalid action string");
-                return Err(())
+                return Err(());
             }
         };
 
-        Ok(BindTarget::Action {
-            active_state,
-            action,
-        })
+        Ok(BindTarget::Action { trigger, action })
+    }
+}
+
+impl ToString for BindTarget {
+    fn to_string(&self) -> String {
+        match *self {
+            BindTarget::Action { trigger, action } => {
+                String::new() + match trigger {
+                    ElementState::Pressed => "+",
+                    ElementState::Released => "-",
+                } + &action.to_string()
+            }
+
+            BindTarget::Command { ref name, ref args } => {
+                let mut s = name.to_owned();
+                for arg in args {
+                    s += &format!(" \"{}\"", arg);
+                }
+                s
+            }
+
+            BindTarget::Cvar { ref name, ref val } => name.to_owned() + &format!(" \"{}\"", val),
+        }
     }
 }
 
@@ -168,6 +228,35 @@ impl Bindings {
         I: Into<BindInput>,
     {
         self.0.get(&input.into())
+    }
+
+    pub fn handle<I>(
+        &self,
+        game_input: &mut GameInput,
+        cmd_registry: &mut CmdRegistry,
+        cvar_registry: &mut CvarRegistry,
+        input: I,
+        input_state: ElementState,
+    ) where
+        I: Into<BindInput>,
+    {
+        if let Some(target) = self.get(input) {
+
+            match *target {
+                BindTarget::Action { trigger, action } => {
+                    game_input.handle_action(action, input_state == trigger);
+                    debug!("{}{}", if input_state == trigger { '+' } else { '-' }, action.to_string());
+                }
+                BindTarget::Command { ref name, ref args } => {
+                    cmd_registry.exec_cmd(name, args.iter().map(|s| s.as_str()).collect()).unwrap();
+                    debug!("{:?}", target);
+                }
+                BindTarget::Cvar { ref name, ref val } => {
+                    cvar_registry.set(name, val).unwrap();
+                    debug!("{:?}", target);
+                }
+            }
+        }
     }
 }
 
@@ -224,6 +313,12 @@ impl ::std::convert::From<Key> for BindInput {
 impl ::std::convert::From<MouseButton> for BindInput {
     fn from(src: MouseButton) -> BindInput {
         BindInput::MouseButton(src)
+    }
+}
+
+impl ::std::convert::From<MouseWheel> for BindInput{
+    fn from(src: MouseWheel) -> BindInput {
+        BindInput::MouseWheel(src)
     }
 }
 
@@ -398,5 +493,46 @@ where
         "Y" => Some(BindInput::Key(Key::Y)),
         "Z" => Some(BindInput::Key(Key::Z)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_action_to_string() {
+        let act = Action::Forward;
+        assert_eq!(act.to_string(), "forward");
+    }
+
+    #[test]
+    fn test_bind_target_action_to_string() {
+        let target = BindTarget::Action {
+            trigger: ElementState::Pressed,
+            action: Action::Forward,
+        };
+
+        assert_eq!(target.to_string(), "+forward");
+    }
+
+    #[test]
+    fn test_bind_target_command_to_string() {
+        let target = BindTarget::Command {
+            name: String::from("give"),
+            args: vec![String::from("R"), String::from("255")],
+        };
+
+        assert_eq!(target.to_string(), "give \"R\" \"255\"");
+    }
+
+    #[test]
+    fn test_bind_target_cvar_to_string() {
+        let target = BindTarget::Cvar {
+            name: String::from("sv_gravity"),
+            val: String::from("800"),
+        };
+
+        assert_eq!(target.to_string(), "sv_gravity \"800\"");
     }
 }
