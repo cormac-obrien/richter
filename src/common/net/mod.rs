@@ -314,11 +314,7 @@ impl TempEntityPoint {
     where
         R: BufRead + ReadBytesExt,
     {
-        let mut origin = Vector3::zero();
-        for i in 0..3 {
-            origin[i] = read_coord(reader)?;
-        }
-
+        let origin = read_coord_vector3(reader)?;
         Ok(TempEntityPoint { origin })
     }
 
@@ -326,10 +322,7 @@ impl TempEntityPoint {
     where
         W: WriteBytesExt,
     {
-        for i in 0..3 {
-            write_coord(writer, self.origin[i])?;
-        }
-
+        write_coord_vector3(writer, self.origin)?;
         Ok(())
     }
 }
@@ -349,15 +342,8 @@ impl TempEntityBeam {
     {
         let entity_id = reader.read_u16::<LittleEndian>()?;
 
-        let mut start = Vector3::zero();
-        for i in 0..3 {
-            start[i] = read_coord(reader)?;
-        }
-
-        let mut end = Vector3::zero();
-        for i in 0..3 {
-            end[i] = read_coord(reader)?;
-        }
+        let start = read_coord_vector3(reader)?;
+        let end = read_coord_vector3(reader)?;
 
         Ok(TempEntityBeam {
             entity_id,
@@ -370,13 +356,8 @@ impl TempEntityBeam {
     where
         W: WriteBytesExt,
     {
-        for i in 0..3 {
-            write_coord(writer, self.start[i])?;
-        }
-
-        for i in 0..3 {
-            write_coord(writer, self.end[i])?;
-        }
+        write_coord_vector3(writer, self.start)?;
+        write_coord_vector3(writer, self.end)?;
 
         Ok(())
     }
@@ -395,10 +376,7 @@ impl TempEntityColorExplosion {
     where
         R: BufRead + ReadBytesExt,
     {
-        let mut origin = Vector3::zero();
-        for i in 0..3 {
-            origin[i] = read_coord(reader)?;
-        }
+        let origin = read_coord_vector3(reader)?;
 
         let color_start = reader.read_u8()?;
         let color_len = reader.read_u8()?;
@@ -414,9 +392,7 @@ impl TempEntityColorExplosion {
     where
         W: WriteBytesExt,
     {
-        for i in 0..3 {
-            write_coord(writer, self.origin[i])?;
-        }
+        write_coord_vector3(writer, self.origin)?;
 
         writer.write_u8(self.color_start)?;
         writer.write_u8(self.color_len)?;
@@ -1337,10 +1313,7 @@ impl ServerCmd {
             }
 
             ServerCmdCode::Particle => {
-                let mut origin = Vector3::zero();
-                for i in 0..3 {
-                    origin[i] = read_coord(reader)?;
-                }
+                let origin = read_coord_vector3(reader)?;
 
                 let mut direction = Vector3::zero();
                 for i in 0..3 {
@@ -1361,11 +1334,7 @@ impl ServerCmd {
             ServerCmdCode::Damage => {
                 let armor = reader.read_u8()?;
                 let blood = reader.read_u8()?;
-                let mut source = Vector3::zero();
-
-                for i in 0..3 {
-                    source[i] = read_coord(reader)?;
-                }
+                let source = read_coord_vector3(reader)?;
 
                 ServerCmd::Damage {
                     armor,
@@ -1466,11 +1435,7 @@ impl ServerCmd {
             ServerCmdCode::FoundSecret => ServerCmd::FoundSecret,
 
             ServerCmdCode::SpawnStaticSound => {
-                let mut origin = Vector3::zero();
-                for i in 0..3 {
-                    origin[i] = read_coord(reader)?;
-                }
-
+                let origin = read_coord_vector3(reader)?;
                 let sound_id = reader.read_u8()?;
                 let volume = reader.read_u8()?;
                 let attenuation = reader.read_u8()?;
@@ -1590,9 +1555,7 @@ impl ServerCmd {
                 writer.write_u8(0)?;
             }
 
-            ServerCmd::SetAngle { angles } => for i in 0..3 {
-                write_angle(writer, angles[i])?;
-            },
+            ServerCmd::SetAngle { angles } => write_angle_vector3(writer, angles)?,
 
             ServerCmd::ServerInfo {
                 protocol_version,
@@ -1778,9 +1741,7 @@ impl ServerCmd {
                 count,
                 color,
             } => {
-                for i in 0..3 {
-                    write_coord(writer, origin[i])?;
-                }
+                write_coord_vector3(writer, origin)?;
 
                 for i in 0..3 {
                     writer.write_i8(match direction[i] * PARTICLE_DIRECTION_WRITE_FACTOR {
@@ -1801,9 +1762,7 @@ impl ServerCmd {
             } => {
                 writer.write_u8(armor)?;
                 writer.write_u8(blood)?;
-                for i in 0..3 {
-                    write_coord(writer, source[i])?;
-                }
+                write_coord_vector3(writer, source)?;
             }
 
             ServerCmd::SpawnStatic {
@@ -1874,10 +1833,7 @@ impl ServerCmd {
                 volume,
                 attenuation,
             } => {
-                for i in 0..3 {
-                    write_coord(writer, origin[i]);
-                }
-
+                write_coord_vector3(writer, origin);
                 writer.write_u8(sound_id)?;
                 writer.write_u8(volume)?;
                 writer.write_u8(attenuation)?;
@@ -2028,9 +1984,7 @@ impl ClientCmd {
                 impulse,
             } => {
                 writer.write_f32::<LittleEndian>(engine::duration_to_f32(send_time))?;
-                for i in 0..3 {
-                    write_angle(writer, angles[i])?;
-                }
+                write_angle_vector3(writer, angles)?;
                 writer.write_u16::<LittleEndian>(fwd_move)?;
                 writer.write_u16::<LittleEndian>(side_move)?;
                 writer.write_u16::<LittleEndian>(up_move)?;
@@ -2106,18 +2060,18 @@ impl QSocket {
         // make sure all reliable messages have been ACKed in their entirety
         if !self.send_queue.is_empty() {
             return Err(NetError::with_msg(
-                "Called begin_send_msg() with previous message unacknowledged",
+                "begin_send_msg: previous message unacknowledged",
             ));
         }
 
         // empty messages are an error
         if msg.len() == 0 {
-            return Err(NetError::with_msg("Input data has zero length"));
+            return Err(NetError::with_msg("begin_send_msg: Input data has zero length"));
         }
 
         // check upper message length bound
         if msg.len() > MAX_MESSAGE {
-            return Err(NetError::with_msg("Input data exceeds MAX_MESSAGE"));
+            return Err(NetError::with_msg("begin_send_msg: Input data exceeds MAX_MESSAGE"));
         }
 
         // split the message into chunks and enqueue them
@@ -2162,7 +2116,7 @@ impl QSocket {
         compose.write_u16::<NetworkEndian>(msg_kind as u16)?;
         compose.write_u16::<NetworkEndian>((HEADER_SIZE + content.len()) as u16)?;
         compose.write_u32::<NetworkEndian>(self.send_sequence)?;
-        compose.write_all(&content);
+        compose.write_all(&content)?;
 
         // store packet to send cache
         self.send_cache = compose.into_boxed_slice();
@@ -2385,11 +2339,33 @@ where
     Ok(reader.read_i16::<LittleEndian>()? as f32 / 8.0)
 }
 
+fn read_coord_vector3<R>(reader: &mut R) -> Result<Vector3<f32>, NetError>
+where
+    R: BufRead + ReadBytesExt,
+{
+    Ok(Vector3::new(
+        read_coord(reader)?,
+        read_coord(reader)?,
+        read_coord(reader)?,
+    ))
+}
+
 fn write_coord<W>(writer: &mut W, coord: f32) -> Result<(), NetError>
 where
     W: WriteBytesExt,
 {
     writer.write_i16::<LittleEndian>((coord * 8.0) as i16)?;
+    Ok(())
+}
+
+fn write_coord_vector3<W>(writer: &mut W, coords: Vector3<f32>) -> Result<(), NetError>
+where
+    W: WriteBytesExt,
+{
+    for coord in &coords[..] {
+        write_coord(writer, *coord)?;
+    }
+
     Ok(())
 }
 
@@ -2400,11 +2376,33 @@ where
     Ok(Deg(reader.read_i8()? as f32 * (360.0 / 256.0)))
 }
 
+fn read_angle_vector3<R>(reader: &mut R) -> Result<Vector3<Deg<f32>>, NetError>
+where
+    R: BufRead + ReadBytesExt,
+{
+    Ok(Vector3::new(
+        read_angle(reader)?,
+        read_angle(reader)?,
+        read_angle(reader)?,
+    ))
+}
+
 fn write_angle<W>(writer: &mut W, angle: Deg<f32>) -> Result<(), NetError>
 where
     W: WriteBytesExt,
 {
     writer.write_u8(((angle.0 as i32 * 256 / 360) & 0xFF) as u8)?;
+    Ok(())
+}
+
+fn write_angle_vector3<W>(writer: &mut W, angles: Vector3<Deg<f32>>) -> Result<(), NetError>
+where
+    W: WriteBytesExt,
+{
+    for angle in &angles[..] {
+        write_angle(writer, *angle)?;
+    }
+
     Ok(())
 }
 
