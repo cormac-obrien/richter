@@ -1833,7 +1833,7 @@ impl ServerCmd {
                 volume,
                 attenuation,
             } => {
-                write_coord_vector3(writer, origin);
+                write_coord_vector3(writer, origin)?;
                 writer.write_u8(sound_id)?;
                 writer.write_u8(volume)?;
                 writer.write_u8(attenuation)?;
@@ -2186,7 +2186,7 @@ impl QSocket {
             }
 
             BlockingMode::Timeout(d) => {
-                self.socket.set_nonblocking(false);
+                self.socket.set_nonblocking(false)?;
                 self.socket.set_read_timeout(Some(d.to_std().unwrap()))?;
             }
         }

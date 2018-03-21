@@ -701,7 +701,7 @@ impl Client {
                     if self.signon == SignOnStage::Begin {
                         self.signon = SignOnStage::Done;
                         let signon = self.signon;
-                        self.handle_signon(signon);
+                        self.handle_signon(signon)?;
                     }
 
                     let mut force_link = false;
