@@ -15,9 +15,161 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use common::parse;
+
+use std::collections::HashMap;
+use std::str::FromStr;
+
+use nom::IResult;
 use winit::VirtualKeyCode as Key;
 use winit::MouseButton;
 use winit::MouseScrollDelta;
+
+lazy_static! {
+    pub static ref DEFAULT_BINDINGS: Bindings = {
+        let mut binds = Bindings::new();
+        binds.bind(Key::W, BindTarget::from_str("+forward").unwrap());
+        binds.bind(Key::A, BindTarget::from_str("+moveleft").unwrap());
+        binds.bind(Key::S, BindTarget::from_str("+back").unwrap());
+        binds.bind(Key::D, BindTarget::from_str("+moveright").unwrap());
+        binds.bind(Key::Space, BindTarget::from_str("+jump").unwrap());
+        binds.bind(Key::Up, BindTarget::from_str("+lookup").unwrap());
+        binds.bind(Key::Left, BindTarget::from_str("+left").unwrap());
+        binds.bind(Key::Down, BindTarget::from_str("+lookdown").unwrap());
+        binds.bind(Key::LControl, BindTarget::from_str("+attack").unwrap());
+        binds.bind(Key::E, BindTarget::from_str("+use").unwrap());
+        binds
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Action {
+    Forward,
+    Back,
+    MoveLeft,
+    MoveRight,
+
+    MoveUp,
+    MoveDown,
+
+    LookUp,
+    LookDown,
+    Left,
+    Right,
+
+    Speed,
+    Jump,
+    Strafe,
+    Attack,
+    Use,
+
+    KLook,
+    MLook,
+
+    ShowScores,
+    ShowTeamScores,
+}
+
+impl FromStr for Action {
+    // TODO: implement an error type
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let action = match s.to_lowercase().as_str() {
+            "forward" => Action::Forward,
+            "back" => Action::Back,
+            "moveleft" => Action::MoveLeft,
+            "moveright" => Action::MoveRight,
+            "moveup" => Action::MoveUp,
+            "movedown" => Action::MoveDown,
+            "lookup" => Action::LookUp,
+            "lookdown" => Action::LookDown,
+            "left" => Action::Left,
+            "right" => Action::Right,
+            "speed" => Action::Speed,
+            "jump" => Action::Jump,
+            "strafe" => Action::Strafe,
+            "attack" => Action::Attack,
+            "use" => Action::Use,
+            "klook" => Action::KLook,
+            "mlook" => Action::MLook,
+            "showscores" => Action::ShowScores,
+            "showteamscores" => Action::ShowTeamScores,
+            _ => return Err(()),
+        };
+
+        Ok(action)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum BindTarget {
+    Action {
+        // + is true, - is false
+        // so "+forward" maps to active_state: true, action: Action::Forward
+        active_state: bool,
+        action: Action,
+    },
+
+    Other(String),
+}
+
+impl FromStr for BindTarget {
+    // TODO: implement an error type
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (active_state, action_str) = match parse::action(s.as_bytes()) {
+            IResult::Done(_remaining, output) => output,
+            IResult::Incomplete(_) => {
+                error!("\"{}\" is not a valid action", s);
+                return Err(())
+            }
+            IResult::Error(e) => {
+                error!("\"{}\" is not a valid action: {}", s, e);
+                return Err(())
+            }
+        };
+
+        let action = match Action::from_str(action_str) {
+            Ok(a) => a,
+            Err(err) => {
+                // TODO: update when we have a real error type
+                error!("Invalid action string");
+                return Err(())
+            }
+        };
+
+        Ok(BindTarget::Action {
+            active_state,
+            action,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct Bindings(HashMap<BindInput, BindTarget>);
+
+impl Bindings {
+    pub fn new() -> Bindings {
+        Bindings(HashMap::new())
+    }
+
+    pub fn bind<I, T>(&mut self, input: I, target: T) -> Option<BindTarget>
+    where
+        I: Into<BindInput>,
+        T: Into<BindTarget>,
+    {
+        self.0.insert(input.into(), target.into())
+    }
+
+    pub fn get<I>(&self, input: I) -> Option<&BindTarget>
+    where
+        I: Into<BindInput>,
+    {
+        self.0.get(&input.into())
+    }
+}
 
 pub enum InputFocus {
     Game,
@@ -26,7 +178,7 @@ pub enum InputFocus {
 }
 
 // we only care about the direction the mouse wheel moved, not how far it went in one event
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum MouseWheel {
     Up,
     Down,
@@ -56,7 +208,7 @@ impl ::std::convert::From<MouseScrollDelta> for MouseWheel {
 }
 
 /// A physical input that can be bound to a command.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum BindInput {
     Key(Key),
     MouseButton(MouseButton),
@@ -135,6 +287,35 @@ impl GameInput {
 
             showscores: false,
             showteamscores: false,
+        }
+    }
+
+    pub fn handle_action(&mut self, action: Action, state: bool) {
+        match action {
+            Action::Forward => self.forward = state,
+            Action::Back => self.back = state,
+            Action::MoveLeft => self.moveleft = state,
+            Action::MoveRight => self.moveright = state,
+
+            Action::MoveUp => self.moveup = state,
+            Action::MoveDown => self.movedown = state,
+
+            Action::LookUp => self.lookup = state,
+            Action::LookDown => self.lookdown = state,
+            Action::Left => self.left = state,
+            Action::Right => self.right = state,
+
+            Action::Speed => self.speed = state,
+            Action::Jump => self.jump = state,
+            Action::Strafe => self.strafe = state,
+            Action::Attack => self.attack = state,
+            Action::Use => self.use_ = state,
+
+            Action::KLook => self.klook = state,
+            Action::MLook => self.mlook = state,
+
+            Action::ShowScores => self.showscores = state,
+            Action::ShowTeamScores => self.showteamscores = state,
         }
     }
 }

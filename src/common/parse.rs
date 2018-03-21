@@ -18,6 +18,7 @@
 use std::collections::HashMap;
 
 use cgmath::Vector3;
+use nom::is_alphabetic;
 
 // Parse quoted strings
 named!(
@@ -51,6 +52,20 @@ named!(
 named!(
     pub entity_maps <Vec<HashMap<&str, &str>>>,
     many0!(entity_map)
+);
+
+named!(
+    pub action<(bool, &str)>,
+    complete!(do_parse!(
+        active_state: one_of!("+-") >>
+        action_str: map_res!(take_while!(is_alphabetic), ::std::str::from_utf8) >>
+        (match active_state {
+            '+' => true,
+            '-' => false,
+            _ => unreachable!(),
+        },
+        action_str)
+    ))
 );
 
 pub fn vector3_components<S>(src: S) -> Option<[f32; 3]>
