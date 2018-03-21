@@ -2714,7 +2714,7 @@ mod test {
 
         let message = String::from("test message").into_bytes();
         src.begin_send_msg(&message).unwrap();
-        let received = dst.recv_msg(BlockingMode::Timeout(Duration::seconds(1)))
+        let received = dst.recv_msg(BlockingMode::Blocking)
             .unwrap();
         assert_eq!(message, received);
 
@@ -2727,7 +2727,7 @@ mod test {
 
         let message = String::from("test message").into_bytes();
         src.send_msg_unreliable(&message).unwrap();
-        let received = dst.recv_msg(BlockingMode::Timeout(Duration::seconds(1)))
+        let received = dst.recv_msg(BlockingMode::Blocking)
             .unwrap();
         assert_eq!(message, received);
     }
