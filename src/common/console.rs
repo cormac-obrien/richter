@@ -17,6 +17,7 @@
 
 // TODO: implement proper Error types
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::collections::HashMap;
 use std::iter::FromIterator;
@@ -93,34 +94,34 @@ struct Cvar {
 }
 
 pub struct CvarRegistry {
-    cvars: HashMap<String, Cvar>,
+    cvars: RefCell<HashMap<String, Cvar>>,
 }
 
 impl CvarRegistry {
     /// Construct a new empty `CvarRegistry`.
     pub fn new() -> CvarRegistry {
         CvarRegistry {
-            cvars: HashMap::new(),
+            cvars: RefCell::new(HashMap::new()),
         }
     }
 
-    /// Register a new `Cvar` with the given name.
-    pub fn register<S>(&mut self, name: S, default: S) -> Result<(), ()>
+    fn register_impl<S>(&self, name: S, default: S, archive: bool, info: bool) -> Result<(), ()>
     where
         S: AsRef<str>,
     {
         let name = name.as_ref();
         let default = default.as_ref();
 
-        match self.cvars.get(name) {
+        let mut cvars = self.cvars.borrow_mut();
+        match cvars.get(name) {
             Some(_) => return Err(()),
             None => {
-                self.cvars.insert(
+                cvars.insert(
                     name.to_owned(),
                     Cvar {
                         val: default.to_owned(),
-                        archive: false,
-                        info: false,
+                        archive,
+                        info,
                         default: default.to_owned(),
                     },
                 );
@@ -128,64 +129,36 @@ impl CvarRegistry {
         }
 
         Ok(())
+    }
+
+    /// Register a new `Cvar` with the given name.
+    pub fn register<S>(&self, name: S, default: S) -> Result<(), ()>
+    where
+        S: AsRef<str>,
+    {
+        self.register_impl(name, default, false, false)
     }
 
     /// Register a new archived `Cvar` with the given name.
     ///
     /// The value of this `Cvar` should be written to `vars.rc` whenever the game is closed or
     /// `host_writeconfig` is issued.
-    pub fn register_archive<S>(&mut self, name: S, default: S) -> Result<(), ()>
+    pub fn register_archive<S>(&self, name: S, default: S) -> Result<(), ()>
     where
         S: AsRef<str>,
     {
-        let name = name.as_ref();
-        let default = default.as_ref();
-
-        match self.cvars.get(name) {
-            Some(_) => return Err(()),
-            None => {
-                self.cvars.insert(
-                    name.to_owned(),
-                    Cvar {
-                        val: default.to_owned(),
-                        archive: true,
-                        info: false,
-                        default: default.to_owned(),
-                    },
-                );
-            }
-        }
-
-        Ok(())
+        self.register_impl(name, default, true, false)
     }
 
     /// Register a new info `Cvar` with the given name.
     ///
     /// When this `Cvar` is set, the serverinfo or userinfo string should be update to reflect its
     /// new value.
-    pub fn register_updateinfo<S>(&mut self, name: S, default: S) -> Result<(), ()>
+    pub fn register_updateinfo<S>(&self, name: S, default: S) -> Result<(), ()>
     where
         S: AsRef<str>,
     {
-        let name = name.as_ref();
-        let default = default.as_ref();
-
-        match self.cvars.get(name) {
-            Some(_) => return Err(()),
-            None => {
-                self.cvars.insert(
-                    name.to_owned(),
-                    Cvar {
-                        val: default.to_owned(),
-                        archive: false,
-                        info: true,
-                        default: default.to_owned(),
-                    },
-                );
-            }
-        }
-
-        Ok(())
+        self.register_impl(name, default, false, true)
     }
 
     /// Register a new info + archived `Cvar` with the given name.
@@ -197,44 +170,26 @@ impl CvarRegistry {
     where
         S: AsRef<str>,
     {
-        let name = name.as_ref();
-        let default = default.as_ref();
-
-        match self.cvars.get(name) {
-            Some(_) => return Err(()),
-            None => {
-                self.cvars.insert(
-                    name.to_owned(),
-                    Cvar {
-                        val: default.to_owned(),
-                        archive: true,
-                        info: true,
-                        default: default.to_owned(),
-                    },
-                );
-            }
-        }
-
-        Ok(())
+        self.register_impl(name, default, true, true)
     }
 
-    pub fn get<S>(&mut self, name: S) -> Result<&str, ()>
+    pub fn get<S>(&self, name: S) -> Result<String, ()>
     where
         S: AsRef<str>,
     {
         debug!("cvar lookup: {}", name.as_ref());
-        match self.cvars.get(name.as_ref()) {
-            Some(s) => Ok(&s.val),
+        match self.cvars.borrow().get(name.as_ref()) {
+            Some(s) => Ok(s.val.to_owned()),
             None => Err(()),
         }
     }
 
-    pub fn get_value<S>(&mut self, name: S) -> Result<f32, ()>
+    pub fn get_value<S>(&self, name: S) -> Result<f32, ()>
     where
         S: AsRef<str>,
     {
         debug!("cvar value lookup: {}", name.as_ref());
-        match self.cvars.get(name.as_ref()) {
+        match self.cvars.borrow().get(name.as_ref()) {
             Some(s) => match s.val.parse() {
                 Ok(f) => Ok(f),
                 Err(_) => Err(()),
@@ -243,14 +198,18 @@ impl CvarRegistry {
         }
     }
 
-    pub fn set<S>(&mut self, name: S, value: S) -> Result<(), ()>
+    pub fn set<S>(&self, name: S, value: S) -> Result<(), ()>
     where
         S: AsRef<str>,
     {
         debug!("cvar assignment: {} {}", name.as_ref(), value.as_ref());
-        match self.cvars.get_mut(name.as_ref()) {
+        match self.cvars.borrow_mut().get_mut(name.as_ref()) {
             Some(s) => {
                 s.val = value.as_ref().to_owned();
+                if s.info {
+                    // TODO: update userinfo/serverinfo
+                    unimplemented!();
+                }
                 Ok(())
             }
             None => Err(()),
