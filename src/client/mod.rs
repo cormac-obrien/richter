@@ -28,6 +28,7 @@ use std::fmt;
 use std::io::BufReader;
 use std::net::ToSocketAddrs;
 
+use client::input::GameInput;
 use client::sound::AudioSource;
 use client::sound::StaticSound;
 use common::bsp;
@@ -37,6 +38,7 @@ use common::model::ModelKind;
 use common::model::SyncType;
 use common::net;
 use common::net::BlockingMode;
+use common::net::ButtonFlags;
 use common::net::ClientCmd;
 use common::net::ClientStat;
 use common::net::EntityEffects;
@@ -66,6 +68,10 @@ use rodio::Endpoint;
 const MAX_CONNECT_ATTEMPTS: usize = 3;
 
 const MAX_STATS: usize = 32;
+
+// TODO: replace these with cvar lookups
+const CL_ANGLESPEEDKEY_PLACEHOLDER: f32 = 1.5; // turn rate factor
+const CL_YAWSPEED_PLACEHOLDER: f32 = 140.0; // degrees/second
 
 #[derive(Debug)]
 pub enum ClientError {
@@ -379,6 +385,7 @@ impl Client {
                 Err(err) => {
                     match err {
                         // if the message is invalid, log it but don't quit
+                        // TODO: this should probably disconnect
                         NetError::InvalidData(msg) => error!("{}", msg),
 
                         // other errors are fatal
@@ -450,6 +457,22 @@ impl Client {
         cmd.serialize(&mut self.compose)?;
 
         Ok(())
+    }
+
+    pub fn handle_input(&mut self, game_input: GameInput) -> Result<(), ClientError> {
+        // TODO: CL_AdjustAngles
+
+        let mut buttons = ButtonFlags::empty();
+
+        if game_input.attack {
+            buttons |= ButtonFlags::ATTACK;
+        }
+
+        if game_input.jump {
+            buttons |= ButtonFlags::JUMP;
+        }
+
+        unimplemented!();
     }
 
     pub fn send(&mut self) -> Result<(), ClientError> {
@@ -552,8 +575,15 @@ impl Client {
         Ok(&mut self.state.entities[id])
     }
 
-    pub fn parse_server_msg(&mut self, block: BlockingMode, pak: &Pak) -> Result<(), ClientError> {
-        let msg = self.qsock.recv_msg(block)?;
+    pub fn parse_server_msg(&mut self, pak: &Pak) -> Result<(), ClientError> {
+        let msg = self.qsock.recv_msg(match self.signon {
+            // if we're in the game, don't block waiting for messages
+            SignOnStage::Done => BlockingMode::NonBlocking,
+
+            // otherwise, give the server some time to respond
+            // TODO: might make sense to make this a future or something
+            _ => BlockingMode::Timeout(Duration::seconds(5)),
+        })?;
 
         // no data available at this time
         if msg.is_empty() {
@@ -1115,5 +1145,9 @@ impl Client {
 
         self.state = new_client_state;
         Ok(())
+    }
+
+    pub fn get_signon_stage(&self) -> SignOnStage {
+        self.signon
     }
 }
