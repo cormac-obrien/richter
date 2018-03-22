@@ -20,6 +20,7 @@ use common::console::CvarRegistry;
 use common::parse;
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::str::FromStr;
 use std::string::ToString;
 
@@ -28,24 +29,6 @@ use winit::ElementState;
 use winit::VirtualKeyCode as Key;
 use winit::MouseButton;
 use winit::MouseScrollDelta;
-
-lazy_static! {
-    pub static ref DEFAULT_BINDINGS: Bindings = {
-        let mut binds = Bindings::new();
-        binds.bind(Key::W, BindTarget::from_str("+forward").unwrap());
-        binds.bind(Key::A, BindTarget::from_str("+moveleft").unwrap());
-        binds.bind(Key::S, BindTarget::from_str("+back").unwrap());
-        binds.bind(Key::D, BindTarget::from_str("+moveright").unwrap());
-        binds.bind(Key::Space, BindTarget::from_str("+jump").unwrap());
-        binds.bind(Key::Up, BindTarget::from_str("+lookup").unwrap());
-        binds.bind(Key::Left, BindTarget::from_str("+left").unwrap());
-        binds.bind(Key::Down, BindTarget::from_str("+lookdown").unwrap());
-        binds.bind(Key::Right, BindTarget::from_str("+right").unwrap());
-        binds.bind(Key::LControl, BindTarget::from_str("+attack").unwrap());
-        binds.bind(Key::E, BindTarget::from_str("+use").unwrap());
-        binds
-    };
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Action {
@@ -208,11 +191,31 @@ impl ToString for BindTarget {
 }
 
 #[derive(Clone)]
-pub struct Bindings(HashMap<BindInput, BindTarget>);
+pub struct Bindings {
+    bindings: HashMap<BindInput, BindTarget>,
+    cvars: Rc<CvarRegistry>,
+}
 
 impl Bindings {
-    pub fn new() -> Bindings {
-        Bindings(HashMap::new())
+    pub fn new(cvars: Rc<CvarRegistry>) -> Bindings {
+        Bindings {
+            bindings: HashMap::new(),
+            cvars,
+        }
+    }
+
+    pub fn assign_defaults(&mut self) {
+        self.bind(Key::W, BindTarget::from_str("+forward").unwrap());
+        self.bind(Key::A, BindTarget::from_str("+moveleft").unwrap());
+        self.bind(Key::S, BindTarget::from_str("+back").unwrap());
+        self.bind(Key::D, BindTarget::from_str("+moveright").unwrap());
+        self.bind(Key::Space, BindTarget::from_str("+jump").unwrap());
+        self.bind(Key::Up, BindTarget::from_str("+lookup").unwrap());
+        self.bind(Key::Left, BindTarget::from_str("+left").unwrap());
+        self.bind(Key::Down, BindTarget::from_str("+lookdown").unwrap());
+        self.bind(Key::Right, BindTarget::from_str("+right").unwrap());
+        self.bind(Key::LControl, BindTarget::from_str("+attack").unwrap());
+        self.bind(Key::E, BindTarget::from_str("+use").unwrap());
     }
 
     pub fn bind<I, T>(&mut self, input: I, target: T) -> Option<BindTarget>
@@ -220,21 +223,20 @@ impl Bindings {
         I: Into<BindInput>,
         T: Into<BindTarget>,
     {
-        self.0.insert(input.into(), target.into())
+        self.bindings.insert(input.into(), target.into())
     }
 
     pub fn get<I>(&self, input: I) -> Option<&BindTarget>
     where
         I: Into<BindInput>,
     {
-        self.0.get(&input.into())
+        self.bindings.get(&input.into())
     }
 
     pub fn handle<I>(
         &self,
         game_input: &mut GameInput,
         cmd_registry: &mut CmdRegistry,
-        cvar_registry: &mut CvarRegistry,
         input: I,
         input_state: ElementState,
     ) where
@@ -252,7 +254,7 @@ impl Bindings {
                     debug!("{:?}", target);
                 }
                 BindTarget::Cvar { ref name, ref val } => {
-                    cvar_registry.set(name, val).unwrap();
+                    self.cvars.set(name, val).unwrap();
                     debug!("{:?}", target);
                 }
             }

@@ -25,9 +25,11 @@ extern crate log;
 extern crate richter;
 extern crate winit;
 
+use std::rc::Rc;
+
+use richter::client::input::Bindings;
 use richter::client::input::BindInput;
 use richter::client::input::BindTarget;
-use richter::client::input::DEFAULT_BINDINGS;
 use richter::client::input::GameInput;
 use richter::client::input::MouseWheel;
 use richter::common::console::CmdRegistry;
@@ -43,10 +45,12 @@ use winit::VirtualKeyCode;
 fn main() {
     env_logger::init();
 
-    let bindings = DEFAULT_BINDINGS.clone();
     let mut game_input = GameInput::new();
     let mut cmd_registry = CmdRegistry::new();
-    let mut cvar_registry = CvarRegistry::new();
+    let mut cvar_registry = Rc::new(CvarRegistry::new());
+
+    let mut bindings = Bindings::new(cvar_registry);
+    bindings.assign_defaults();
 
     let mut events_loop = EventsLoop::new();
 
@@ -60,8 +64,8 @@ fn main() {
     loop {
         // there's no release event for the mousewheel, so send a release for both scroll directions
         // at the beginning of every frame
-        bindings.handle(&mut game_input, &mut cmd_registry, &mut cvar_registry, MouseWheel::Up, ElementState::Released);
-        bindings.handle(&mut game_input, &mut cmd_registry, &mut cvar_registry, MouseWheel::Down, ElementState::Released);
+        bindings.handle(&mut game_input, &mut cmd_registry, MouseWheel::Up, ElementState::Released);
+        bindings.handle(&mut game_input, &mut cmd_registry, MouseWheel::Down, ElementState::Released);
 
         events_loop.poll_events(|event| match event {
             Event::WindowEvent { event, .. } => match event {
@@ -76,15 +80,15 @@ fn main() {
                         },
                     ..
                 } => {
-                    bindings.handle(&mut game_input, &mut cmd_registry, &mut cvar_registry, key, state);
+                    bindings.handle(&mut game_input, &mut cmd_registry, key, state);
                 }
 
                 WindowEvent::MouseInput { state, button, .. } => {
-                    bindings.handle(&mut game_input, &mut cmd_registry, &mut cvar_registry, button, state);
+                    bindings.handle(&mut game_input, &mut cmd_registry, button, state);
                 }
 
                 WindowEvent::MouseWheel { delta, .. } => {
-                    bindings.handle(&mut game_input, &mut cmd_registry, &mut cvar_registry, delta, ElementState::Pressed);
+                    bindings.handle(&mut game_input, &mut cmd_registry, delta, ElementState::Pressed);
                 }
 
                 _ => (),
