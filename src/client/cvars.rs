@@ -18,23 +18,26 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod bsp;
-pub mod console;
-pub mod engine;
-pub mod host;
-pub mod math;
-pub mod mdl;
-pub mod model;
-pub mod net;
-pub mod pak;
-pub mod parse;
-pub mod sprite;
-pub mod util;
+use common::console::CvarRegistry;
 
-pub static DEFAULT_BASEDIR: &'static str = "id1";
-pub const MAX_LIGHTSTYLES: usize = 64;
-
-/// The maximum number of `.pak` files that should be loaded at runtime.
-///
-/// The original engine does not make this restriction, and this limit can be increased if need be.
-pub const MAX_PAKFILES: usize = 32;
+pub fn register_cvars(cvars: &CvarRegistry) {
+    cvars.register("cl_anglespeedkey", "1.5").unwrap();
+    cvars.register_archive("cl_backspeed", "200").unwrap();
+    cvars.register("cl_bob", "0.02").unwrap();
+    cvars.register("cl_bobcycle","0.6").unwrap();
+    cvars.register("cl_bobup","0.5").unwrap();
+    cvars.register_archive("_cl_color", "0").unwrap();
+    cvars.register("cl_crossx", "0").unwrap();
+    cvars.register("cl_crossy", "0").unwrap();
+    cvars.register_archive("cl_forwardspeed","200").unwrap();
+    cvars.register("cl_movespeedkey","2.0").unwrap();
+    cvars.register_archive("_cl_name", "player").unwrap();
+    cvars.register("cl_nolerp","0").unwrap();
+    cvars.register("cl_pitchspeed","150").unwrap();
+    cvars.register("cl_rollangle", "2.0").unwrap();
+    cvars.register("cl_rollspeed", "200").unwrap();
+    cvars.register("cl_shownet","0").unwrap();
+    cvars.register("cl_sidespeed","350").unwrap();
+    cvars.register("cl_upspeed","200").unwrap();
+    cvars.register("cl_yawspeed","140").unwrap();
+}

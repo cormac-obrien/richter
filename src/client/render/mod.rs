@@ -26,8 +26,8 @@ use common::bsp::BspData;
 use common::pak::Pak;
 
 use gfx;
-use gfx::format::Srgba8 as ColorFormat;
-use gfx::format::DepthStencil as DepthFormat;
+pub use gfx::format::Srgba8 as ColorFormat;
+pub use gfx::format::DepthStencil as DepthFormat;
 
 const PALETTE_SIZE: usize = 768;
 

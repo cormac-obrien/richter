@@ -22,16 +22,22 @@ pub mod input;
 pub mod render;
 pub mod sound;
 
+mod cvars;
+pub use self::cvars::register_cvars;
+
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::io::BufReader;
 use std::net::ToSocketAddrs;
+use std::rc::Rc;
 
 use client::input::GameInput;
 use client::sound::AudioSource;
 use client::sound::StaticSound;
 use common::bsp;
+use common::console::CvarRegistry;
 use common::engine;
 use common::model::Model;
 use common::model::ModelKind;
@@ -56,6 +62,7 @@ use common::net::connect::Request;
 use common::net::connect::Response;
 use common::pak::Pak;
 
+use cgmath::Angle;
 use cgmath::Deg;
 use cgmath::Vector3;
 use cgmath::Zero;
@@ -228,6 +235,8 @@ impl ClientEntity {
 
 // client information regarding the current level
 struct ClientState {
+    pak: Rc<Pak>,
+
     // model precache
     models: Vec<Model>,
 
@@ -288,10 +297,11 @@ struct ClientState {
 
 impl ClientState {
     // TODO: add parameter for number of player slots and reserve them in entity list
-    pub fn new(pak: &Pak) -> ClientState {
+    pub fn new(pak: Rc<Pak>) -> ClientState {
         ClientState {
+            pak: pak.clone(),
             models: vec![Model::none()],
-            sounds: vec![AudioSource::load(pak, "misc/null.wav").unwrap()],
+            sounds: vec![AudioSource::load(&pak, "misc/null.wav").unwrap()],
             static_sounds: Vec::new(),
             entities: Vec::new(),
             light_styles: HashMap::new(),
@@ -351,6 +361,9 @@ impl ClientState {
 }
 
 pub struct Client {
+    pak: Rc<Pak>,
+    cvars: Rc<RefCell<CvarRegistry>>,
+
     qsock: QSocket,
     compose: Vec<u8>,
     signon: SignOnStage,
@@ -360,7 +373,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn connect<A>(server_addrs: A, pak: &Pak) -> Result<Client, ClientError>
+    pub fn connect<A>(server_addrs: A, pak: Rc<Pak>, cvars: Rc<RefCell<CvarRegistry>>) -> Result<Client, ClientError>
     where
         A: ToSocketAddrs,
     {
@@ -444,12 +457,14 @@ impl Client {
         let qsock = con_sock.into_qsocket(new_addr);
 
         Ok(Client {
+            pak: pak.clone(),
+            cvars,
             qsock,
             compose: Vec::new(),
             signon: SignOnStage::Not,
             // TODO: inherit endpoint from host
             audio_endpoint: rodio::default_endpoint().unwrap(),
-            state: ClientState::new(pak),
+            state: ClientState::new(pak.clone()),
         })
     }
 
@@ -459,20 +474,118 @@ impl Client {
         Ok(())
     }
 
-    pub fn handle_input(&mut self, game_input: GameInput) -> Result<(), ClientError> {
-        // TODO: CL_AdjustAngles
+    fn adjust_angles(&mut self, game_input: &GameInput, frame_time: Duration) {
+        let frame_time_f32 = engine::duration_to_f32(frame_time);
+        let cl_anglespeedkey = self.cvars.borrow().get_value("cl_anglespeedkey").unwrap();
 
-        let mut buttons = ButtonFlags::empty();
+        let speed = if game_input.speed { frame_time_f32 * cl_anglespeedkey } else { frame_time_f32 };
+
+        if !game_input.strafe {
+            let right_factor = game_input.right as i32 as f32;
+            let left_factor = game_input.left as i32 as f32;
+            let cl_yawspeed = self.cvars.borrow().get_value("cl_yawspeed").unwrap();
+
+            self.state.view.view_angles.y -= Deg(speed * cl_yawspeed * right_factor);
+            self.state.view.view_angles.y += Deg(speed * cl_yawspeed * left_factor);
+            self.state.view.view_angles.y.normalize();
+        }
+
+        let cl_pitchspeed = self.cvars.borrow().get_value("cl_pitchspeed").unwrap();
+        if game_input.klook {
+            let forward_factor = game_input.forward as i32 as f32;
+            let back_factor = game_input.back as i32 as f32;
+
+            // TODO: V_StopPitchDrift
+            self.state.view.view_angles.x -= Deg(speed * cl_pitchspeed * forward_factor);
+            self.state.view.view_angles.x += Deg(speed * cl_pitchspeed * back_factor);
+        }
+
+        let lookup_factor = game_input.lookup as i32 as f32;
+        let lookdown_factor = game_input.lookdown as i32 as f32;
+
+        self.state.view.view_angles.x -= Deg(speed * cl_pitchspeed * lookup_factor);
+        self.state.view.view_angles.x += Deg(speed * cl_pitchspeed * lookdown_factor);
+
+        if lookup_factor != 0.0 || lookdown_factor != 0.0 {
+            // TODO: V_StopPitchDrift
+        }
+
+        // clamp pitch to [-70, 80]
+        if self.state.view.view_angles.x > Deg(80.0) {
+            self.state.view.view_angles.x = Deg(80.0);
+        }
+        if self.state.view.view_angles.x < Deg(-70.0) {
+            self.state.view.view_angles.x = Deg(-70.0);
+        }
+
+        // clamp roll to [-50, 50]
+        if self.state.view.view_angles.z > Deg(50.0) {
+            self.state.view.view_angles.z = Deg(50.0);
+        }
+        if self.state.view.view_angles.z < Deg(-50.0) {
+            self.state.view.view_angles.z = Deg(-50.0);
+        }
+    }
+
+    pub fn handle_input(&mut self, game_input: &GameInput, frame_time: Duration, impulse: u8) -> Result<(), ClientError> {
+        self.adjust_angles(game_input, frame_time);
+
+        let cl_sidespeed = self.cvars.borrow().get_value("cl_sidespeed").unwrap();
+        let cl_upspeed = self.cvars.borrow().get_value("cl_upspeed").unwrap();
+
+        let mut sidemove = 0.0;
+        if game_input.strafe {
+            sidemove += cl_sidespeed * game_input.right as i32 as f32;
+            sidemove -= cl_sidespeed * game_input.left as i32 as f32;
+        }
+
+        sidemove += cl_sidespeed * game_input.moveright as i32 as f32;
+        sidemove -= cl_sidespeed * game_input.moveleft as i32 as f32;
+
+        let mut upmove = 0.0;
+        upmove += cl_upspeed * game_input.moveup as i32 as f32;
+        upmove -= cl_upspeed * game_input.movedown as i32 as f32;
+
+        let mut forwardmove = 0.0;
+        if game_input.klook {
+            let cl_forwardspeed = self.cvars.borrow().get_value("cl_forwardspeed").unwrap();
+            let cl_backspeed = self.cvars.borrow().get_value("cl_backspeed").unwrap();
+            forwardmove += cl_forwardspeed * game_input.forward as i32 as f32;
+            forwardmove -= cl_backspeed * game_input.back as i32 as f32;
+        }
+
+        if game_input.speed {
+            let cl_movespeedkey = self.cvars.borrow().get_value("cl_movespeedkey").unwrap();
+            sidemove *= cl_movespeedkey;
+            upmove *= cl_movespeedkey;
+            forwardmove *= cl_movespeedkey;
+        }
+
+        let mut button_flags = ButtonFlags::empty();
 
         if game_input.attack {
-            buttons |= ButtonFlags::ATTACK;
+            button_flags |= ButtonFlags::ATTACK;
         }
 
         if game_input.jump {
-            buttons |= ButtonFlags::JUMP;
+            button_flags |= ButtonFlags::JUMP;
         }
 
-        unimplemented!();
+        // TODO: IN_Move (mouse / joystick / gamepad)
+
+        let send_time = self.state.msg_times[0];
+        let angles = self.state.view.view_angles;
+        self.add_cmd(ClientCmd::Move {
+            send_time,
+            angles,
+            fwd_move: forwardmove as u16,
+            side_move: sidemove as u16,
+            up_move: upmove as u16,
+            button_flags,
+            impulse,
+        })?;
+
+        Ok(())
     }
 
     pub fn send(&mut self) -> Result<(), ClientError> {
@@ -575,7 +688,7 @@ impl Client {
         Ok(&mut self.state.entities[id])
     }
 
-    pub fn parse_server_msg(&mut self, pak: &Pak) -> Result<(), ClientError> {
+    pub fn parse_server_msg(&mut self) -> Result<(), ClientError> {
         let msg = self.qsock.recv_msg(match self.signon {
             // if we're in the game, don't block waiting for messages
             SignOnStage::Done => BlockingMode::NonBlocking,
@@ -869,7 +982,6 @@ impl Client {
                         message,
                         model_precache,
                         sound_precache,
-                        pak,
                     )?;
                 }
 
@@ -1076,9 +1188,8 @@ impl Client {
         message: String,
         model_precache: Vec<String>,
         sound_precache: Vec<String>,
-        pak: &Pak,
     ) -> Result<(), ClientError> {
-        let mut new_client_state = ClientState::new(pak);
+        let mut new_client_state = ClientState::new(self.pak.clone());
 
         // check protocol version
         if protocol_version != net::PROTOCOL_VERSION as i32 {
@@ -1096,7 +1207,7 @@ impl Client {
         // TODO: validate submodel names
         for mod_name in model_precache {
             if mod_name.ends_with(".bsp") {
-                let bsp_data = match pak.open(&mod_name) {
+                let bsp_data = match self.pak.open(&mod_name) {
                     Some(b) => b,
                     None => {
                         return Err(ClientError::with_msg(format!(
@@ -1110,7 +1221,7 @@ impl Client {
                 new_client_state.models.append(&mut brush_models);
             } else if !mod_name.starts_with("*") {
                 debug!("Loading model {}", mod_name);
-                new_client_state.models.push(Model::load(pak, mod_name));
+                new_client_state.models.push(Model::load(&self.pak, mod_name));
             }
 
             // TODO: send keepalive message?
@@ -1123,11 +1234,11 @@ impl Client {
             // TODO: waiting on tomaka/rodio#157
             new_client_state
                 .sounds
-                .push(match AudioSource::load(pak, snd_name) {
+                .push(match AudioSource::load(&self.pak, snd_name) {
                     Ok(a) => a,
                     Err(e) => {
                         warn!("Loading {} failed: {}", snd_name, e);
-                        AudioSource::load(pak, "misc/null.wav").unwrap()
+                        AudioSource::load(&self.pak, "misc/null.wav").unwrap()
                     }
                 });
 

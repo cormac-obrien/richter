@@ -49,7 +49,7 @@ fn main() {
     let mut cmd_registry = CmdRegistry::new();
     let mut cvar_registry = Rc::new(CvarRegistry::new());
 
-    let mut bindings = Bindings::new(cvar_registry);
+    let mut bindings = Bindings::new(cvar_registry.clone());
     bindings.assign_defaults();
 
     let mut events_loop = EventsLoop::new();

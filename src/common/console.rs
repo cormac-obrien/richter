@@ -25,12 +25,12 @@ use std::iter::FromIterator;
 use winit::VirtualKeyCode as Key;
 
 /// Stores console commands.
-pub struct CmdRegistry<'a> {
-    cmds: HashMap<String, Box<Fn(Vec<&str>) + 'a>>,
+pub struct CmdRegistry {
+    cmds: HashMap<String, Box<Fn(Vec<&str>)>>,
 }
 
-impl<'a> CmdRegistry<'a> {
-    pub fn new() -> CmdRegistry<'a> {
+impl CmdRegistry {
+    pub fn new() -> CmdRegistry {
         CmdRegistry {
             cmds: HashMap::new(),
         }
@@ -39,7 +39,7 @@ impl<'a> CmdRegistry<'a> {
     /// Registers a new command.
     ///
     /// Returns an error if a command with the specified name already exists.
-    pub fn add_cmd<S>(&mut self, name: S, cmd: Box<Fn(Vec<&str>) + 'a>) -> Result<(), ()>
+    pub fn add_cmd<S>(&mut self, name: S, cmd: Box<Fn(Vec<&str>)>) -> Result<(), ()>
     where
         S: AsRef<str>,
     {
@@ -152,9 +152,10 @@ impl CvarRegistry {
 
     /// Register a new info `Cvar` with the given name.
     ///
-    /// When this `Cvar` is set, the serverinfo or userinfo string should be update to reflect its
-    /// new value.
-    pub fn register_updateinfo<S>(&self, name: S, default: S) -> Result<(), ()>
+    /// When this `Cvar` is set:
+    /// - If the host is a server, broadcast that the variable has been changed to all clients.
+    /// - If the host is a client, update the clientinfo string.
+    pub fn register_notify<S>(&self, name: S, default: S) -> Result<(), ()>
     where
         S: AsRef<str>,
     {
@@ -164,9 +165,12 @@ impl CvarRegistry {
     /// Register a new info + archived `Cvar` with the given name.
     ///
     /// The value of this `Cvar` should be written to `vars.rc` whenever the game is closed or
-    /// `host_writeconfig` is issued. Additionally, when this `Cvar` is set, the serverinfo or
-    /// userinfo string should be updated to reflect its new value.
-    pub fn register_archive_updateinfo<S>(&mut self, name: S, default: S) -> Result<(), ()>
+    /// `host_writeconfig` is issued.
+    ///
+    /// Additionally, when this `Cvar` is set:
+    /// - If the host is a server, broadcast that the variable has been changed to all clients.
+    /// - If the host is a client, update the clientinfo string.
+    pub fn register_archive_notify<S>(&mut self, name: S, default: S) -> Result<(), ()>
     where
         S: AsRef<str>,
     {

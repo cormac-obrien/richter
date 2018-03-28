@@ -15,14 +15,15 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use common::console::CmdRegistry;
-use common::console::CvarRegistry;
-use common::parse;
-
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::string::ToString;
+
+use common::console::CmdRegistry;
+use common::console::CvarRegistry;
+use common::parse;
 
 use nom::IResult;
 use winit::ElementState;
@@ -192,15 +193,17 @@ impl ToString for BindTarget {
 
 #[derive(Clone)]
 pub struct Bindings {
+    cvars: Rc<RefCell<CvarRegistry>>,
+    cmds: Rc<RefCell<CmdRegistry>>,
     bindings: HashMap<BindInput, BindTarget>,
-    cvars: Rc<CvarRegistry>,
 }
 
 impl Bindings {
-    pub fn new(cvars: Rc<CvarRegistry>) -> Bindings {
+    pub fn new(cvars: Rc<RefCell<CvarRegistry>>, cmds: Rc<RefCell<CmdRegistry>>) -> Bindings {
         Bindings {
-            bindings: HashMap::new(),
             cvars,
+            cmds,
+            bindings: HashMap::new(),
         }
     }
 
@@ -236,7 +239,6 @@ impl Bindings {
     pub fn handle<I>(
         &self,
         game_input: &mut GameInput,
-        cmd_registry: &mut CmdRegistry,
         input: I,
         input_state: ElementState,
     ) where
@@ -250,11 +252,13 @@ impl Bindings {
                     debug!("{}{}", if input_state == trigger { '+' } else { '-' }, action.to_string());
                 }
                 BindTarget::Command { ref name, ref args } => {
-                    cmd_registry.exec_cmd(name, args.iter().map(|s| s.as_str()).collect()).unwrap();
+                    // TODO
+                    unimplemented!();
+                    // self.cmds.exec_cmd(name, args.iter().map(|s| s.as_str()).collect()).unwrap();
                     debug!("{:?}", target);
                 }
                 BindTarget::Cvar { ref name, ref val } => {
-                    self.cvars.set(name, val).unwrap();
+                    self.cvars.borrow_mut().set(name, val).unwrap();
                     debug!("{:?}", target);
                 }
             }
