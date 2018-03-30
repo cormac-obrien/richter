@@ -18,10 +18,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
 use std::io::BufReader;
 use std::io::Cursor;
+use std::rc::Rc;
 
 use common::pak::Pak;
 
@@ -146,25 +148,51 @@ impl StaticSound {
     }
 }
 
+/// Represents a single audio channel, capable of playing one sound at a time.
 pub struct Channel {
-    sink: Sink,
+    endpoint: Rc<Endpoint>,
+    sink: RefCell<Option<Sink>>,
 }
 
 impl Channel {
-    pub fn new(endpoint: &Endpoint) -> Channel {
-        Channel {
-            sink: Sink::new(endpoint),
-        }
+    /// Create a new `Channel` backed by the given `Endpoint`.
+    pub fn new(endpoint: Rc<Endpoint>) -> Channel {
+        Channel { endpoint, sink: RefCell::new(None) }
     }
 
+    /// Play a new sound on this channel, cutting off any sound that was previously playing.
     pub fn play(&self, src: AudioSource) {
-        // stop and remove the previous sound
-        self.sink.stop();
+        // stop the old sound
+        self.sink.replace(None);
 
-        // add the new sound
-        self.sink.append(src.0);
+        // start the new sound
+        let mut new_sink = Sink::new(&self.endpoint);
+        new_sink.append(src.0);
+        new_sink.set_volume(8.0);
 
-        // play the new sound
-        self.sink.play();
+        self.sink.replace(Some(new_sink));
+    }
+
+    /// Stop the sound currently playing on this channel, if there is one.
+    pub fn stop(&self) {
+        self.sink.replace(None);
+    }
+
+    /// Returns whether or not this `Channel` is currently in use.
+    pub fn in_use(&self) -> bool {
+        let replace_sink;
+        match *self.sink.borrow() {
+            Some(ref sink) => replace_sink = sink.empty(),
+            None => return false,
+        }
+
+        // if the sink isn't in use, free it
+        if replace_sink {
+            self.sink.replace(None);
+            false
+        } else {
+            true
+        }
+
     }
 }

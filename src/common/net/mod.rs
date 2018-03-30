@@ -63,6 +63,9 @@ const VELOCITY_WRITE_FACTOR: f32 = 1.0 / VELOCITY_READ_FACTOR;
 const PARTICLE_DIRECTION_READ_FACTOR: f32 = 1.0 / 16.0;
 const PARTICLE_DIRECTION_WRITE_FACTOR: f32 = 1.0 / PARTICLE_DIRECTION_READ_FACTOR;
 
+const SOUND_ATTENUATION_WRITE_FACTOR: u8 = 64;
+const SOUND_ATTENUATION_READ_FACTOR: f32 = 1.0 / SOUND_ATTENUATION_WRITE_FACTOR as f32;
+
 pub static GAME_NAME: &'static str = "QUAKE";
 pub const MAX_CLIENTS: usize = 16;
 pub const MAX_ITEMS: usize = 32;
@@ -661,9 +664,9 @@ pub enum ServerCmd {
     },
     Sound {
         volume: Option<u8>,
-        attenuation: Option<u8>,
+        attenuation: Option<f32>,
         entity_id: u16,
-        channel: u8,
+        channel: i8,
         sound_id: u8,
         position: Vector3<f32>,
     },
@@ -1053,13 +1056,13 @@ impl ServerCmd {
                 };
 
                 let attenuation = match flags.contains(SoundFlags::ATTENUATION) {
-                    true => Some(reader.read_u8()?),
+                    true => Some(reader.read_u8()? as f32 * SOUND_ATTENUATION_READ_FACTOR),
                     false => None,
                 };
 
                 let entity_channel = reader.read_i16::<LittleEndian>()?;
                 let entity_id = (entity_channel >> 3) as u16;
-                let channel = (entity_channel & 0b111) as u8;
+                let channel = (entity_channel & 0b111) as i8;
                 let sound_id = reader.read_u8()?;
                 let position = Vector3::new(
                     read_coord(reader)?,
@@ -1527,7 +1530,7 @@ impl ServerCmd {
                 }
 
                 if let Some(a) = attenuation {
-                    writer.write_u8(a)?;
+                    writer.write_u8(a as u8 * SOUND_ATTENUATION_WRITE_FACTOR)?;
                 }
 
                 // TODO: document this better. The entity and channel fields are combined in Sound commands.
@@ -1541,9 +1544,7 @@ impl ServerCmd {
                 }
             }
 
-            ServerCmd::Time { time } => {
-                writer.write_f32::<LittleEndian>(time)?;
-            }
+            ServerCmd::Time { time } => writer.write_f32::<LittleEndian>(time)?,
 
             ServerCmd::Print { ref text } => {
                 writer.write(text.as_bytes())?;

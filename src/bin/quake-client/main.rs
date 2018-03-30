@@ -25,6 +25,7 @@ extern crate gfx_device_gl;
 extern crate gfx_window_glutin;
 extern crate glutin;
 extern crate richter;
+extern crate rodio;
 
 use std::cell::RefCell;
 use std::env;
@@ -54,6 +55,7 @@ use glutin::EventsLoop;
 use glutin::GlWindow;
 use glutin::KeyboardInput;
 use glutin::WindowEvent;
+use rodio::Endpoint;
 
 struct ClientProgram {
     pak: Rc<Pak>,
@@ -63,6 +65,7 @@ struct ClientProgram {
     events_loop: RefCell<EventsLoop>,
     window: RefCell<GlWindow>,
     bindings: Rc<RefCell<Bindings>>,
+    endpoint: Rc<Endpoint>,
 
     client: Option<RefCell<Client>>,
 }
@@ -108,6 +111,8 @@ impl ClientProgram {
                 &events_loop,
             );
 
+        let endpoint = Rc::new(rodio::get_endpoints_list().next().unwrap());
+
         ClientProgram {
             pak: Rc::new(pak),
             cvars,
@@ -115,13 +120,14 @@ impl ClientProgram {
             events_loop: RefCell::new(events_loop),
             window: RefCell::new(window),
             bindings,
+            endpoint,
             client: None,
         }
     }
 
     fn connect<A>(&mut self, server_addrs: A) where A: ToSocketAddrs {
         self.client = Some(RefCell::new(
-            Client::connect(server_addrs, self.pak.clone(), self.cvars.clone()).unwrap()));
+            Client::connect(server_addrs, self.pak.clone(), self.cvars.clone(), self.endpoint.clone()).unwrap()));
     }
 }
 

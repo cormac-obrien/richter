@@ -20,23 +20,41 @@ extern crate rodio;
 
 use std::io::BufReader;
 use std::io::Cursor;
+use std::rc::Rc;
+use std::time::Duration;
 
+use richter::client::sound::AudioSource;
+use richter::client::sound::Channel;
 use richter::common::pak;
+use rodio::Endpoint;
+use rodio::Sink;
 use rodio::Source;
 
 fn main() {
+    println!("endpoint size: {}", std::mem::size_of::<Endpoint>());
     let mut pak = richter::common::pak::Pak::new();
-    pak.add("pak0.pak").unwrap();
+    pak.add("id1/pak0.pak").unwrap();
     let comp1 = pak.open("sound/knight/sword1.wav").unwrap().to_owned();
 
-    let endpoint = rodio::get_endpoints_list().next().unwrap();
+    let endpoint = Rc::new(rodio::get_endpoints_list().next().unwrap());
     println!("Using endpoint {}", endpoint.get_name());
 
-    let source = rodio::Decoder::new(BufReader::new(Cursor::new(comp1))).unwrap();
+    let source = rodio::Decoder::new(BufReader::new(Cursor::new(comp1))).unwrap().buffered();
     println!("Source duration: {:?}", source.total_duration().unwrap());
     println!("Source sample rate: {:?}Hz", source.samples_rate());
 
-    rodio::play_raw(&endpoint, source.convert_samples().amplify(64.0));
+    let sword1_wav = AudioSource::load(&pak, "knight/sword1.wav").unwrap();
 
-    std::thread::sleep_ms(10000);
+    let mut channels = Vec::new();
+    for i in 0..3 {
+        channels.push(Channel::new(endpoint.clone()));
+    }
+
+    channels[0].play(sword1_wav.clone());
+    std::thread::sleep(Duration::from_millis(200));
+    channels[1].play(sword1_wav.clone());
+    std::thread::sleep(Duration::from_millis(200));
+    channels[2].play(sword1_wav.clone());
+
+    std::thread::sleep_ms(5000);
 }

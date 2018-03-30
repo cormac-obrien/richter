@@ -35,6 +35,7 @@ use std::rc::Rc;
 
 use client::input::GameInput;
 use client::sound::AudioSource;
+use client::sound::Channel;
 use client::sound::StaticSound;
 use common::bsp;
 use common::console::CvarRegistry;
@@ -79,6 +80,11 @@ const MAX_STATS: usize = 32;
 // TODO: replace these with cvar lookups
 const CL_ANGLESPEEDKEY_PLACEHOLDER: f32 = 1.5; // turn rate factor
 const CL_YAWSPEED_PLACEHOLDER: f32 = 140.0; // degrees/second
+
+const DEFAULT_SOUND_PACKET_VOLUME: u8 = 255;
+const DEFAULT_SOUND_PACKET_ATTENUATION: f32 = 1.0;
+
+const MAX_CHANNELS: usize = 128;
 
 #[derive(Debug)]
 pub enum ClientError {
@@ -233,6 +239,89 @@ impl ClientEntity {
     }
 }
 
+struct ClientChannel {
+    start_time: Duration,
+    ent_id: usize,
+    ent_channel: i8,
+    channel: Channel,
+}
+
+struct Mixer {
+    endpoint: Rc<Endpoint>,
+    // TODO: replace with an array once const type parameters are implemented
+    channels: Box<[Option<ClientChannel>]>,
+}
+
+impl Mixer {
+    pub fn new(endpoint: Rc<Endpoint>) -> Mixer {
+        let mut channel_vec = Vec::new();
+
+        for i in 0..MAX_CHANNELS {
+            channel_vec.push(None);
+        }
+
+        Mixer {
+            endpoint,
+            channels: channel_vec.into_boxed_slice(),
+        }
+    }
+
+    fn find_free_channel(&self, ent_id: usize, ent_channel: i8) -> usize {
+        let mut oldest = 0;
+
+        for (i, channel) in self.channels.iter().enumerate() {
+            match *channel {
+                Some(ref chan) => {
+                    // if this channel is free, return it right away
+                    if !chan.channel.in_use() {
+                        return i;
+                    }
+
+                    // replace sounds on the same entity channel
+                    if ent_channel != 0 && chan.ent_id == ent_id
+                        && (chan.ent_channel == ent_channel || ent_channel == -1)
+                    {
+                        return i;
+                    }
+
+                    // TODO: don't clobber player sounds with monster sounds
+
+                    // keep track of which sound started the earliest
+                    if chan.start_time < match self.channels[oldest] {
+                        Some(ref o) => o.start_time,
+                        None => Duration::zero(),
+                    } {
+                        oldest = i;
+                    }
+                }
+
+                None => return i,
+            }
+        }
+
+        // if there are no good channels, just replace the one that's been running the longest
+        oldest
+    }
+
+    pub fn start_sound(
+        &mut self,
+        src: AudioSource,
+        time: Duration,
+        ent_id: usize,
+        ent_channel: i8,
+    ) {
+        let chan_id = self.find_free_channel(ent_id, ent_channel);
+        let new_channel = Channel::new(self.endpoint.clone());
+        new_channel.play(src.clone());
+        self.channels[chan_id] = Some(ClientChannel {
+            start_time: time,
+            ent_id,
+            ent_channel,
+            channel: Channel::new(self.endpoint.clone()),
+        })
+    }
+}
+
 // client information regarding the current level
 struct ClientState {
     pak: Rc<Pak>,
@@ -293,11 +382,12 @@ struct ClientState {
     // server_info: ServerInfo,
 
     // worldmodel: Model,
+    mixer: Mixer,
 }
 
 impl ClientState {
     // TODO: add parameter for number of player slots and reserve them in entity list
-    pub fn new(pak: Rc<Pak>) -> ClientState {
+    pub fn new(pak: Rc<Pak>, endpoint: Rc<Endpoint>) -> ClientState {
         ClientState {
             pak: pak.clone(),
             models: vec![Model::none()],
@@ -356,6 +446,7 @@ impl ClientState {
             velocity: Vector3::zero(),
             on_ground: false,
             in_water: false,
+            mixer: Mixer::new(endpoint.clone()),
         }
     }
 }
@@ -363,17 +454,22 @@ impl ClientState {
 pub struct Client {
     pak: Rc<Pak>,
     cvars: Rc<RefCell<CvarRegistry>>,
+    endpoint: Rc<Endpoint>,
 
     qsock: QSocket,
     compose: Vec<u8>,
     signon: SignOnStage,
 
-    audio_endpoint: Endpoint,
     state: ClientState,
 }
 
 impl Client {
-    pub fn connect<A>(server_addrs: A, pak: Rc<Pak>, cvars: Rc<RefCell<CvarRegistry>>) -> Result<Client, ClientError>
+    pub fn connect<A>(
+        server_addrs: A,
+        pak: Rc<Pak>,
+        cvars: Rc<RefCell<CvarRegistry>>,
+        endpoint: Rc<Endpoint>,
+    ) -> Result<Client, ClientError>
     where
         A: ToSocketAddrs,
     {
@@ -459,12 +555,11 @@ impl Client {
         Ok(Client {
             pak: pak.clone(),
             cvars,
+            endpoint: endpoint.clone(),
             qsock,
             compose: Vec::new(),
             signon: SignOnStage::Not,
-            // TODO: inherit endpoint from host
-            audio_endpoint: rodio::default_endpoint().unwrap(),
-            state: ClientState::new(pak.clone()),
+            state: ClientState::new(pak.clone(), endpoint.clone()),
         })
     }
 
@@ -478,7 +573,11 @@ impl Client {
         let frame_time_f32 = engine::duration_to_f32(frame_time);
         let cl_anglespeedkey = self.cvars.borrow().get_value("cl_anglespeedkey").unwrap();
 
-        let speed = if game_input.speed { frame_time_f32 * cl_anglespeedkey } else { frame_time_f32 };
+        let speed = if game_input.speed {
+            frame_time_f32 * cl_anglespeedkey
+        } else {
+            frame_time_f32
+        };
 
         if !game_input.strafe {
             let right_factor = game_input.right as i32 as f32;
@@ -527,7 +626,12 @@ impl Client {
         }
     }
 
-    pub fn handle_input(&mut self, game_input: &GameInput, frame_time: Duration, impulse: u8) -> Result<(), ClientError> {
+    pub fn handle_input(
+        &mut self,
+        game_input: &GameInput,
+        frame_time: Duration,
+        impulse: u8,
+    ) -> Result<(), ClientError> {
         self.adjust_angles(game_input, frame_time);
 
         let cl_sidespeed = self.cvars.borrow().get_value("cl_sidespeed").unwrap();
@@ -1014,6 +1118,26 @@ impl Client {
 
                 ServerCmd::SignOnStage { stage } => self.handle_signon(stage)?,
 
+                ServerCmd::Sound {
+                    volume,
+                    attenuation,
+                    entity_id,
+                    channel,
+                    sound_id,
+                    position,
+                } => {
+                    println!("starting sound with id {} on entity {} channel {}", sound_id, entity_id, channel);
+                    let volume = volume.unwrap_or(DEFAULT_SOUND_PACKET_VOLUME);
+                    let attenuation = attenuation.unwrap_or(DEFAULT_SOUND_PACKET_ATTENUATION);
+                    // TODO: apply volume, attenuation, spatialization
+                    self.state.mixer.start_sound(
+                        self.state.sounds[sound_id as usize].clone(),
+                        self.state.msg_times[0],
+                        entity_id as usize,
+                        channel,
+                    );
+                }
+
                 ServerCmd::SpawnBaseline {
                     ent_id,
                     model_id,
@@ -1041,7 +1165,7 @@ impl Client {
                     attenuation,
                 } => {
                     self.state.static_sounds.push(StaticSound::new(
-                        &self.audio_endpoint,
+                        &self.endpoint,
                         origin,
                         self.state.sounds[sound_id as usize].clone(),
                         volume,
@@ -1189,7 +1313,7 @@ impl Client {
         model_precache: Vec<String>,
         sound_precache: Vec<String>,
     ) -> Result<(), ClientError> {
-        let mut new_client_state = ClientState::new(self.pak.clone());
+        let mut new_client_state = ClientState::new(self.pak.clone(), self.endpoint.clone());
 
         // check protocol version
         if protocol_version != net::PROTOCOL_VERSION as i32 {
@@ -1221,7 +1345,9 @@ impl Client {
                 new_client_state.models.append(&mut brush_models);
             } else if !mod_name.starts_with("*") {
                 debug!("Loading model {}", mod_name);
-                new_client_state.models.push(Model::load(&self.pak, mod_name));
+                new_client_state
+                    .models
+                    .push(Model::load(&self.pak, mod_name));
             }
 
             // TODO: send keepalive message?
