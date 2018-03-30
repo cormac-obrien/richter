@@ -133,10 +133,14 @@ impl StaticSound {
         volume: u8,
         attenuation: u8,
     ) -> StaticSound {
+        let mut sink = Sink::new(endpoint);
+        let infinite = src.0.clone().repeat_infinite();
+        sink.append(infinite);
+
         StaticSound {
             origin,
             src,
-            sink: Sink::new(endpoint),
+            sink,
             volume,
             attenuation,
         }
