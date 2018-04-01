@@ -20,14 +20,19 @@
 
 pub mod bsp;
 
-use std::rc::Rc;
-
-use common::bsp::BspData;
 use common::pak::Pak;
 
+use cgmath::Deg;
+use cgmath::Euler;
+use cgmath::Matrix4;
+use cgmath::Vector3;
+use chrono::Duration;
 use gfx;
+
 pub use gfx::format::Srgba8 as ColorFormat;
 pub use gfx::format::DepthStencil as DepthFormat;
+
+use self::bsp::BspRenderer;
 
 const PALETTE_SIZE: usize = 768;
 
@@ -47,6 +52,40 @@ gfx_defines! {
         sampler: gfx::TextureSampler<[f32; 4]> = "u_Texture",
         out_color: gfx::RenderTarget<ColorFormat> = "Target0",
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
+    }
+}
+
+pub struct Camera {
+    origin: Vector3<f32>,
+    angles: Euler<Deg<f32>>,
+    projection: Matrix4<f32>,
+
+    transform: Matrix4<f32>,
+}
+
+impl Camera {
+    pub fn new(
+        origin: Vector3<f32>,
+        angles: Euler<Deg<f32>>,
+        projection: Matrix4<f32>,
+    ) -> Camera {
+        Camera {
+            origin,
+            angles,
+            projection,
+            // negate the camera origin and angles
+            // TODO: the OpenGL coordinate conversion is hardcoded here!
+            transform: projection * Matrix4::from(Euler::new(-angles.x, -angles.y, -angles.z))
+                * Matrix4::from_translation(-Vector3::new(-origin.y, origin.z, -origin.x)),
+        }
+    }
+
+    pub fn get_origin(&self) -> Vector3<f32> {
+        self.origin
+    }
+
+    pub fn get_transform(&self) -> Matrix4<f32> {
+        self.transform
     }
 }
 

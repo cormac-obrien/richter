@@ -786,7 +786,6 @@ impl BspData {
 
             match node.children[plane.point_side(pos_vec) as usize] {
                 BspRenderNodeChild::Node(node_id) => {
-                    debug!("find_leaf: node id = {}", node_id);
                     node = &self.render_nodes[node_id];
                 }
                 BspRenderNodeChild::Leaf(leaf_id) => return leaf_id,

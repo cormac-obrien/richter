@@ -39,8 +39,7 @@ impl Neg for HyperplaneSide {
 }
 
 impl HyperplaneSide {
-    // TODO: check this against the original game logic. Note that the current implementation will
-    // treat both 0.0 and -0.0 as Positive.
+    // TODO: check this against the original game logic.
     pub fn from_dist(dist: f32) -> HyperplaneSide {
         if dist >= 0.0 {
             HyperplaneSide::Positive

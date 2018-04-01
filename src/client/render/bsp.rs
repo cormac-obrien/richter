@@ -17,7 +17,9 @@
 
 use std::rc::Rc;
 
+use client::render::Camera;
 use client::render::Palette;
+use client::render::pipe;
 use client::render::Vertex;
 use common::bsp::BspData;
 use common::bsp::BspTextureMipmap;
@@ -28,7 +30,6 @@ use cgmath::Rad;
 use cgmath::Vector3;
 use cgmath::Matrix4;
 use chrono::Duration;
-use gfx;
 use gfx::CommandBuffer;
 use gfx::IndexBuffer;
 use gfx::Encoder;
@@ -36,7 +37,6 @@ use gfx::Factory;
 use gfx::Resources;
 use gfx::Slice;
 use gfx::format::Srgba8 as ColorFormat;
-use gfx::format::DepthStencil as DepthFormat;
 use gfx::handle::Buffer;
 use gfx::handle::ShaderResourceView;
 use gfx::pso::PipelineData;
@@ -72,20 +72,6 @@ out vec4 Target0;
 void main() {
     Target0 = texture(u_Texture, f_texcoord);
 }"#;
-
-gfx_defines! {
-    constant Locals {
-        transform: [[f32; 4]; 4] = "u_Transform",
-    }
-
-    pipeline pipe {
-        vertex_buffer: gfx::VertexBuffer<Vertex> = (),
-        transform: gfx::Global<[[f32; 4]; 4]> = "u_Transform",
-        sampler: gfx::TextureSampler<[f32; 4]> = "u_Texture",
-        out_color: gfx::RenderTarget<ColorFormat> = "Target0",
-        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
-    }
-}
 
 pub struct BspRenderFace<R>
 where
@@ -217,18 +203,14 @@ where
         pso: &PipelineState<R, <pipe::Data<R> as PipelineData<R>>::Meta>,
         user_data: &mut pipe::Data<R>,
         time: Duration,
-        perspective: Matrix4<f32>,
-        camera_pos: Vector3<f32>,
-        camera_angles: Euler<Rad<f32>>,
+        camera: &Camera,
         face_id: usize,
     ) where
         C: CommandBuffer<R>,
     {
         let face = &self.faces[face_id];
         let frame = self.bsp_data.texture_frame_for_time(face.tex_id, time);
-        user_data.transform = (perspective * Matrix4::from(camera_angles)
-            * Matrix4::from_translation(camera_pos))
-            .into();
+        user_data.transform = camera.get_transform().into();
 
         user_data.sampler.0 = self.get_texture_view(frame);
         encoder.draw(&face.slice, pso, user_data);
@@ -240,14 +222,11 @@ where
         pso: &PipelineState<R, <pipe::Data<R> as PipelineData<R>>::Meta>,
         user_data: &mut pipe::Data<R>,
         time: Duration,
-        perspective: Matrix4<f32>,
-        camera_pos: Vector3<f32>,
-        camera_angles: Euler<Rad<f32>>,
+        camera: &Camera,
     ) where
         C: CommandBuffer<R>,
     {
-        let containing_leaf_id = self.bsp_data.find_leaf(camera_pos);
-        debug!("Containing leaf: {}", containing_leaf_id);
+        let containing_leaf_id = self.bsp_data.find_leaf(camera.get_origin());
         let pvs = self.bsp_data.get_pvs(containing_leaf_id);
 
         if pvs.is_empty() {
@@ -260,15 +239,15 @@ where
                         pso,
                         user_data,
                         time,
-                        perspective,
-                        camera_pos,
-                        camera_angles,
+                        camera,
                         face_id,
                     );
                 }
             }
         } else {
+            let mut leaf_count = 0;
             for visible_leaf_id in pvs.iter() {
+                leaf_count += 1;
                 let leaf = &self.bsp_data.leaves()[*visible_leaf_id];
 
                 for facelist_id in leaf.facelist_id..leaf.facelist_id + leaf.facelist_count {
@@ -278,9 +257,7 @@ where
                         pso,
                         user_data,
                         time,
-                        perspective,
-                        camera_pos,
-                        camera_angles,
+                        camera,
                         face_id,
                     );
                 }

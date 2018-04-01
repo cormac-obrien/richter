@@ -41,6 +41,7 @@ use glutin::GlRequest;
 use glutin::Api::OpenGl;
 use richter::client::render::bsp::BSP_FRAGMENT_SHADER_GLSL;
 use richter::client::render::bsp::BSP_VERTEX_SHADER_GLSL;
+use richter::client::render::Camera;
 use richter::client::render::Palette;
 use richter::client::render::Vertex;
 use richter::client::render::bsp::BspRenderer;
@@ -87,12 +88,12 @@ fn main() {
             &shader_set,
             gfx::Primitive::TriangleList,
             rasterizer,
-            richter::client::render::bsp::pipe::new(),
+            richter::client::render::pipe::new(),
         )
         .unwrap();
 
     let mut pak = richter::common::pak::Pak::new();
-    pak.add("pak0.pak").unwrap();
+    pak.add("id1/pak0.pak").unwrap();
     let (mut brush_models, _) =
         richter::common::bsp::load(pak.open("maps/e1m1.bsp").unwrap()).unwrap();
 
@@ -116,13 +117,13 @@ fn main() {
     let (fb_width, fb_height) = window.window().get_inner_size_pixels().unwrap();
 
     let perspective = cgmath::perspective(
-        cgmath::Rad::from(Deg(75.0)),
+        cgmath::Deg(75.0),
         fb_width as f32 / fb_height as f32,
         1.0,
         65536.0,
     );
 
-    let mut data = richter::client::render::bsp::pipe::Data {
+    let mut data = richter::client::render::pipe::Data {
         vertex_buffer: bsp_renderer.vertex_buffer(),
         transform: perspective.into(),
         sampler: (bsp_renderer.get_texture_view(0), sampler),
@@ -147,7 +148,7 @@ fn main() {
     let mut look_down = false;
 
     let mut camera_pos = Vector3::new(0.0, 0.0, 0.0);
-    let mut camera_angles = Euler::new(Rad(0.0), Rad(0.0), Rad(0.0));
+    let mut camera_angles = Euler::new(Deg(0.0), Deg(0.0), Deg(0.0));
 
     let start_time = Utc::now();
     let mut prev_frame_time = Utc::now().signed_duration_since(start_time);
@@ -191,30 +192,30 @@ fn main() {
             break;
         }
 
-        // turn rate of Pi radians per second
+        // turn rate of 180 degrees per second
         let turn_rate =
-            Rad(::std::f32::consts::PI) * frame_duration.num_milliseconds() as f32 / 1000.0;
+            Deg(180.0) * frame_duration.num_milliseconds() as f32 / 1000.0;
 
         if look_up {
-            camera_angles.x -= turn_rate;
-            if camera_angles.x < Rad::from(Deg(-90.0)) {
-                camera_angles.x = Rad::from(Deg(-90.0));
+            camera_angles.x += turn_rate;
+            if camera_angles.x < Deg(-90.0) {
+                camera_angles.x = Deg(-90.0);
             }
         }
 
         if look_down {
-            camera_angles.x += turn_rate;
-            if camera_angles.x > Rad::from(Deg(90.0)) {
-                camera_angles.x = Rad::from(Deg(90.0));
+            camera_angles.x -= turn_rate;
+            if camera_angles.x > Deg(90.0) {
+                camera_angles.x = Deg(90.0);
             }
         }
 
         if look_right {
-            camera_angles.y += turn_rate;
+            camera_angles.y -= turn_rate;
         }
 
         if look_left {
-            camera_angles.y -= turn_rate;
+            camera_angles.y += turn_rate;
         }
 
         let rotation = Matrix3::from(camera_angles);
@@ -222,34 +223,35 @@ fn main() {
         let mut move_vector = Vector3::new(0.0, 0.0, 0.0);
 
         if move_forward {
-            move_vector.x -= camera_angles.y.sin();
-            move_vector.z += camera_angles.y.cos();
+            move_vector.x += camera_angles.y.cos();
+            move_vector.y += camera_angles.y.sin();
         }
 
         if move_back {
-            move_vector.x += camera_angles.y.sin();
-            move_vector.z -= camera_angles.y.cos();
+            move_vector.x -= camera_angles.y.cos();
+            move_vector.y -= camera_angles.y.sin();
         }
 
         if move_left {
-            move_vector.x += camera_angles.y.cos();
-            move_vector.z += camera_angles.y.sin();
+            move_vector.x -= camera_angles.y.sin();
+            move_vector.y += camera_angles.y.cos();
         }
 
         if move_right {
-            move_vector.x -= camera_angles.y.cos();
-            move_vector.z -= camera_angles.y.sin();
+            move_vector.x += camera_angles.y.sin();
+            move_vector.y -= camera_angles.y.cos();
         }
 
         if move_up {
-            move_vector.y -= 1.0;
+            move_vector.z += 1.0;
         }
 
         if move_down {
-            move_vector.y += 1.0;
+            move_vector.z -= 1.0;
         }
 
         camera_pos += move_vector;
+        let camera = Camera::new(camera_pos, camera_angles, perspective);
 
         encoder.clear(&data.out_color, [0.0, 0.0, 0.0, 1.0]);
         encoder.clear_depth(&data.out_depth, 1.0);
@@ -258,9 +260,7 @@ fn main() {
             &pso,
             &mut data,
             frame_time,
-            perspective,
-            camera_pos,
-            camera_angles,
+            &camera,
         );
         encoder.flush(&mut device);
         window.swap_buffers().unwrap();

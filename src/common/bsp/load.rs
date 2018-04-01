@@ -513,17 +513,16 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             return Err(BspError::with_msg("Invalid plane id"));
         }
 
-        // If the child ID is positive, it points to another internal node. If it is negative, it
-        // points to a leaf node, but we have to negate it *and subtract 1* because ID -1
-        // corresponds to leaf 0.
+        // If the child ID is positive, it points to another internal node. If it is negative, its
+        // bitwise negation points to a leaf node.
 
         let front = match reader.read_i16::<LittleEndian>()? {
-            f if f < 0 => BspRenderNodeChild::Leaf(-f as usize - 1),
+            f if f < 0 => BspRenderNodeChild::Leaf((!f) as usize),
             f => BspRenderNodeChild::Node(f as usize),
         };
 
         let back = match reader.read_i16::<LittleEndian>()? {
-            b if b < 0 => BspRenderNodeChild::Leaf(-b as usize - 1),
+            b if b < 0 => BspRenderNodeChild::Leaf((!b) as usize),
             b => BspRenderNodeChild::Node(b as usize),
         };
 
