@@ -40,4 +40,5 @@ pub fn register_cvars(cvars: &CvarRegistry) {
     cvars.register("cl_sidespeed","350").unwrap();
     cvars.register("cl_upspeed","200").unwrap();
     cvars.register("cl_yawspeed","140").unwrap();
+    cvars.register("fov", "90").unwrap();
 }
