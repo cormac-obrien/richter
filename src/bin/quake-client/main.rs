@@ -50,6 +50,8 @@ use richter::common::host::Program;
 use richter::common::net::SignOnStage;
 use richter::common::pak::Pak;
 
+use cgmath::Deg;
+use cgmath::Vector3;
 use chrono::Duration;
 use gfx::Encoder;
 use gfx::handle::DepthStencilView;
@@ -247,11 +249,21 @@ impl Program for ClientProgram  {
                 let fov_x = self.cvars.borrow().get_value("fov").unwrap();
                 let (win_w, win_h) = self.window.borrow().get_inner_size().unwrap();
                 let aspect = win_w as f32 / win_h as f32;
+                let fov_y = common::math::fov_x_to_fov_y(cgmath::Deg(fov_x), aspect).unwrap();
+
+                println!("X FOV: {:?} | Y FOV: {:?}", fov_x, fov_y);
+
+                let perspective = cgmath::perspective(
+                    fov_y,
+                    aspect,
+                    1.0,
+                    65536.0
+                );
 
                 let camera = render::Camera::new(
                     cl.get_view_origin(),
                     cl.get_view_angles(),
-                    cgmath::perspective(common::math::fov_x_to_fov_y(cgmath::Deg(fov_x), aspect).unwrap(), aspect, 1.0, 1024.0),
+                    perspective,
                 );
 
                 use gfx::Factory;

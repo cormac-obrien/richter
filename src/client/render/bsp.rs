@@ -231,6 +231,7 @@ impl BspRenderer {
 
             let model_transform = Matrix4::from(Euler::new(angles.x, angles.y, angles.z))
                 * Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x));
+            user_data.vertex_buffer = self.vertex_buffer.clone();
             user_data.transform = (camera.get_transform() * model_transform).into();
 
             user_data.sampler.0 = self.get_texture_view(frame);
