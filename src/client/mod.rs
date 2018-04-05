@@ -34,6 +34,7 @@ use std::net::ToSocketAddrs;
 use std::rc::Rc;
 
 use client::input::GameInput;
+use client::render::Camera;
 use client::sound::AudioSource;
 use client::sound::Channel;
 use client::sound::StaticSound;
@@ -237,6 +238,26 @@ impl ClientEntity {
             effects: EntityEffects::empty(),
         }
     }
+
+    pub fn get_origin(&self) -> Vector3<f32> {
+        self.origin
+    }
+
+    pub fn get_angles(&self) -> Vector3<Deg<f32>> {
+        self.angles
+    }
+
+    pub fn get_model_id(&self) -> usize {
+        self.model_id
+    }
+
+    pub fn get_frame_id(&self) -> usize {
+        self.frame_id
+    }
+
+    pub fn get_skin_id(&self) -> usize {
+        self.skin_id
+    }
 }
 
 struct ClientChannel {
@@ -320,6 +341,19 @@ impl Mixer {
             channel: Channel::new(self.endpoint.clone()),
         })
     }
+}
+
+pub struct Scene {
+    brush_entities: Vec<usize>,
+    view_origin: Vector3<f32>,
+    view_angles: Vector3<Deg<f32>>,
+}
+
+impl Scene {
+    pub fn brush_entities(&self) -> &[usize] {
+        &self.brush_entities
+    }
+
 }
 
 // client information regarding the current level
@@ -1386,5 +1420,32 @@ impl Client {
 
     pub fn get_signon_stage(&self) -> SignOnStage {
         self.signon
+    }
+
+    pub fn get_entities(&self) -> Option<&[ClientEntity]> {
+        match self.signon {
+            SignOnStage::Done => Some(&self.state.entities),
+            _ => None,
+        }
+    }
+
+    pub fn get_models(&self) -> Option<&[Model]> {
+        match self.signon {
+            SignOnStage::Done => Some(&self.state.models),
+            _ => None,
+        }
+    }
+
+    pub fn get_view_origin(&self) -> Vector3<f32> {
+        self.state.entities[self.state.view.ent_id].origin
+    }
+
+    pub fn get_view_angles(&self) -> Vector3<Deg<f32>> {
+        self.state.view.view_angles
+    }
+
+    pub fn get_time(&self) -> Duration {
+        // TODO: this doesn't lerp at all (FIXME)
+        self.state.msg_times[0]
     }
 }

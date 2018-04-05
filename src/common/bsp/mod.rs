@@ -937,6 +937,10 @@ impl BspModel {
         self.origin
     }
 
+    pub fn face_list(&self) -> &[usize] {
+        &self.bsp_data.facelist[self.face_id..self.face_id + self.face_count]
+    }
+
     pub fn hull(&self, index: usize) -> Result<BspCollisionHull, BspError> {
         if index > MAX_HULLS {
             return Err(BspError::with_msg(format!(

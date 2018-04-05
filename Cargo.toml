@@ -25,6 +25,3 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 
 # binaries only
 "docopt" = "0.8"
-"serde" = "1.0"
-"serde_derive" = "1.0"
-"pnet" = "0.20.0"

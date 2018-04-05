@@ -136,6 +136,7 @@ impl StaticSound {
         let mut sink = Sink::new(endpoint);
         let infinite = src.0.clone().repeat_infinite();
         sink.append(infinite);
+        // TODO: set volume, attenuation and spatialize
 
         StaticSound {
             origin,
@@ -144,11 +145,6 @@ impl StaticSound {
             volume,
             attenuation,
         }
-    }
-
-    pub fn play(&self) {
-        self.sink.append(self.src.0.clone().repeat_infinite());
-        self.sink.play();
     }
 }
 

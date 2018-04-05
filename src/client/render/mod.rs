@@ -20,14 +20,24 @@
 
 pub mod bsp;
 
+use std::collections::HashMap;
+
+use client::ClientEntity;
+use common::model::Model;
+use common::model::ModelKind;
 use common::pak::Pak;
 
 use cgmath::Deg;
 use cgmath::Euler;
+use cgmath::Matrix3;
 use cgmath::Matrix4;
 use cgmath::Vector3;
 use chrono::Duration;
 use gfx;
+use gfx::pso::PipelineData;
+use gfx::pso::PipelineState;
+use gfx_device_gl::Factory;
+use gfx_device_gl::Resources;
 
 pub use gfx::format::Srgba8 as ColorFormat;
 pub use gfx::format::DepthStencil as DepthFormat;
@@ -57,7 +67,7 @@ gfx_defines! {
 
 pub struct Camera {
     origin: Vector3<f32>,
-    angles: Euler<Deg<f32>>,
+    angles: Vector3<Deg<f32>>,
     projection: Matrix4<f32>,
 
     transform: Matrix4<f32>,
@@ -66,17 +76,20 @@ pub struct Camera {
 impl Camera {
     pub fn new(
         origin: Vector3<f32>,
-        angles: Euler<Deg<f32>>,
+        angles: Vector3<Deg<f32>>,
         projection: Matrix4<f32>,
     ) -> Camera {
+        // negate the camera origin and angles
+        // TODO: the OpenGL coordinate conversion is hardcoded here! XXX
+        let converted_origin = Vector3::new(-origin.y, origin.z, -origin.x);
+        let translation = Matrix4::from_translation(-converted_origin);
+        let rotation = Matrix4::from(Euler::new(-angles.x, -angles.y, -angles.z));
+
         Camera {
             origin,
             angles,
             projection,
-            // negate the camera origin and angles
-            // TODO: the OpenGL coordinate conversion is hardcoded here!
-            transform: projection * Matrix4::from(Euler::new(-angles.x, -angles.y, -angles.z))
-                * Matrix4::from_translation(-Vector3::new(-origin.y, origin.z, -origin.x)),
+            transform: projection * rotation * translation,
         }
     }
 
@@ -86,6 +99,72 @@ impl Camera {
 
     pub fn get_transform(&self) -> Matrix4<f32> {
         self.transform
+    }
+}
+
+pub struct SceneRenderer {
+    bsp_pipeline: PipelineState<Resources, <pipe::Data<Resources> as PipelineData<Resources>>::Meta>,
+    bsp_renderers: HashMap<usize, BspRenderer>,
+    // mdl_renderers: ...,
+    // spr_renderers: ...,
+}
+
+impl SceneRenderer {
+    pub fn new(models: &[Model], palette: &Palette, factory: &mut Factory) -> SceneRenderer
+    {
+        use gfx::traits::FactoryExt;
+        let bsp_shader_set = factory.create_shader_set(bsp::BSP_VERTEX_SHADER_GLSL, bsp::BSP_FRAGMENT_SHADER_GLSL).unwrap();
+
+        let rasterizer = gfx::state::Rasterizer {
+            front_face: gfx::state::FrontFace::Clockwise,
+            cull_face: gfx::state::CullFace::Back,
+            method: gfx::state::RasterMethod::Fill,
+            offset: None,
+            samples: Some(gfx::state::MultiSample),
+        };
+
+        let bsp_pipeline = factory.create_pipeline_state(
+            &bsp_shader_set,
+            gfx::Primitive::TriangleList,
+            rasterizer,
+            pipe::new(),
+        ).unwrap();
+
+        let mut bsp_renderers = HashMap::new();
+        for (i, model) in models.iter().enumerate() {
+            match *model.kind() {
+                ModelKind::Brush(ref bmodel) => {
+                    bsp_renderers.insert(i, BspRenderer::new(model.name(), &bmodel, palette, factory));
+                }
+
+                // TODO: handle other models here
+                _ => (),
+            }
+        }
+
+        SceneRenderer {
+            bsp_pipeline,
+            bsp_renderers
+        }
+    }
+
+    pub fn render<C>(
+        &self,
+        encoder: &mut gfx::Encoder<Resources, C>,
+        user_data: &mut pipe::Data<Resources>,
+        entities: &[ClientEntity],
+        time: Duration,
+        camera: &Camera,
+    ) where
+        C: gfx::CommandBuffer<Resources>,
+    {
+        for (i, ent) in entities.iter().enumerate() {
+            if let Some(ref bsp_renderer) = self.bsp_renderers.get(&i) {
+                debug!("Rendering entity {: >4}", i);
+                bsp_renderer.render(encoder, &self.bsp_pipeline, user_data, time, camera, ent.get_origin(), ent.get_angles());
+            }
+        }
+        println!("");
     }
 }
 

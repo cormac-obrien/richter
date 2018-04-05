@@ -780,6 +780,16 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     }
 
     let mut leaves = Vec::with_capacity(leaf_count);
+    leaves.push(BspLeaf {
+        contents: BspLeafContents::Solid,
+        vis_offset: None,
+        min: [0, 0, 0],
+        max: [0, 0, 0],
+        facelist_id: 0,
+        facelist_count: 0,
+        sounds: [0, 0, 0, 0],
+    });
+
     for _ in 0..leaf_count {
         // note the negation here (the constants are negative in the original engine to differentiate
         // them from plane IDs)

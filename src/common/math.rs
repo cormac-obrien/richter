@@ -17,6 +17,8 @@
 
 use std::ops::Neg;
 
+use cgmath::Angle;
+use cgmath::Deg;
 use cgmath::InnerSpace;
 use cgmath::Vector3;
 use cgmath::Zero;
@@ -241,6 +243,19 @@ impl Hyperplane {
             point,
             plane,
         })
+    }
+}
+
+pub fn fov_x_to_fov_y(fov_x: Deg<f32>, aspect: f32) -> Option<Deg<f32>> {
+    // aspect = tan(fov_x / 2) / tan(fov_y / 2)
+    // tan(fov_y / 2) = tan(fov_x / 2) / aspect
+    // fov_y / 2 = atan(tan(fov_x / 2) / aspect)
+    // fov_y = 2 * atan(tan(fov_x / 2) / aspect)
+    match fov_x {
+        // TODO: genericize over cgmath::Angle
+        f if f < Deg(0.0) => None,
+        f if f > Deg(360.0) => None,
+        f => Some(Deg::atan((f / 2.0).tan() / aspect) * 2.0)
     }
 }
 

@@ -18,6 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+extern crate cgmath;
 extern crate chrono;
 extern crate env_logger;
 extern crate gfx;
@@ -40,6 +41,7 @@ use richter::client::input::Bindings;
 use richter::client::input::GameInput;
 use richter::client::input::MouseWheel;
 use richter::client::render;
+use richter::client::render::SceneRenderer;
 use richter::common;
 use richter::common::console::CmdRegistry;
 use richter::common::console::CvarRegistry;
@@ -49,9 +51,17 @@ use richter::common::net::SignOnStage;
 use richter::common::pak::Pak;
 
 use chrono::Duration;
+use gfx::Encoder;
+use gfx::handle::DepthStencilView;
+use gfx::handle::RenderTargetView;
+use gfx_device_gl::CommandBuffer;
+use gfx_device_gl::Device;
+use gfx_device_gl::Factory as GlFactory;
+use gfx_device_gl::Resources;
 use glutin::ElementState;
 use glutin::Event;
 use glutin::EventsLoop;
+use glutin::GlContext;
 use glutin::GlWindow;
 use glutin::KeyboardInput;
 use glutin::WindowEvent;
@@ -64,13 +74,23 @@ struct ClientProgram {
 
     events_loop: RefCell<EventsLoop>,
     window: RefCell<GlWindow>,
+
+    device: RefCell<Device>,
+    factory: RefCell<GlFactory>,
+    encoder: RefCell<Encoder<Resources, CommandBuffer>>,
+    color: RenderTargetView<Resources, render::ColorFormat>,
+    depth: DepthStencilView<Resources, render::DepthFormat>,
+
     bindings: Rc<RefCell<Bindings>>,
     endpoint: Rc<Endpoint>,
 
+    palette: render::Palette,
+
     client: Option<RefCell<Client>>,
+    renderer: Option<RefCell<SceneRenderer>>,
 }
 
-impl ClientProgram {
+impl ClientProgram  {
     pub fn new() -> ClientProgram {
         let mut pak = Pak::new();
         for pak_id in 0..common::MAX_PAKFILES {
@@ -111,7 +131,11 @@ impl ClientProgram {
                 &events_loop,
             );
 
+        let encoder = factory.create_command_buffer().into();
+
         let endpoint = Rc::new(rodio::get_endpoints_list().next().unwrap());
+
+        let palette = render::Palette::load(&pak, "gfx/palette.lmp");
 
         ClientProgram {
             pak: Rc::new(pak),
@@ -119,69 +143,96 @@ impl ClientProgram {
             cmds,
             events_loop: RefCell::new(events_loop),
             window: RefCell::new(window),
+            device: RefCell::new(device),
+            factory: RefCell::new(factory),
+            encoder: RefCell::new(encoder),
+            color: color,
+            depth: depth,
             bindings,
             endpoint,
+            palette,
             client: None,
+            renderer: None,
         }
     }
 
-    fn connect<A>(&mut self, server_addrs: A) where A: ToSocketAddrs {
+    fn connect<A>(&mut self, server_addrs: A)
+    where
+        A: ToSocketAddrs,
+    {
         self.client = Some(RefCell::new(
-            Client::connect(server_addrs, self.pak.clone(), self.cvars.clone(), self.endpoint.clone()).unwrap()));
+            Client::connect(
+                server_addrs,
+                self.pak.clone(),
+                self.cvars.clone(),
+                self.endpoint.clone(),
+            ).unwrap(),
+        ));
     }
 }
 
-impl Program for ClientProgram {
+impl Program for ClientProgram  {
     fn frame(&mut self, frame_duration: Duration) {
-        // may have to take ownership of the client here
         if let Some(ref client) = self.client {
             client.borrow_mut().parse_server_msg().unwrap();
 
             if client.borrow().get_signon_stage() == SignOnStage::Done {
+                if self.renderer.is_none() {
+                    self.renderer = Some(RefCell::new(SceneRenderer::new(
+                        client.borrow().get_models().unwrap(),
+                        &self.palette,
+                        &mut self.factory.borrow_mut(),
+                    )));
+                }
+
                 let mut actions = GameInput::new();
-                self.bindings.borrow().handle(
-                    &mut actions,
-                    MouseWheel::Up,
-                    ElementState::Released,
-                );
+                self.bindings
+                    .borrow()
+                    .handle(&mut actions, MouseWheel::Up, ElementState::Released);
                 self.bindings.borrow().handle(
                     &mut actions,
                     MouseWheel::Down,
                     ElementState::Released,
                 );
 
-                self.events_loop.borrow_mut().poll_events(|event| match event {
-                    Event::WindowEvent { event, .. } => match event {
-                        WindowEvent::Closed => {
-                            // TODO: handle quit properly
-                            unimplemented!();
-                        }
+                self.events_loop
+                    .borrow_mut()
+                    .poll_events(|event| match event {
+                        Event::WindowEvent { event, .. } => match event {
+                            WindowEvent::Closed => {
+                                // TODO: handle quit properly
+                                unimplemented!();
+                            }
 
-                        WindowEvent::KeyboardInput {
-                            input:
-                                KeyboardInput {
-                                    state,
-                                    virtual_keycode: Some(key),
-                                    ..
-                                },
-                            ..
-                        } => {
-                            self.bindings.borrow().handle(&mut actions, key, state);
-                        }
+                            WindowEvent::KeyboardInput {
+                                input:
+                                    KeyboardInput {
+                                        state,
+                                        virtual_keycode: Some(key),
+                                        ..
+                                    },
+                                ..
+                            } => {
+                                self.bindings.borrow().handle(&mut actions, key, state);
+                            }
 
-                        WindowEvent::MouseInput { state, button, .. } => {
-                            self.bindings.borrow().handle(&mut actions, button, state);
-                        }
+                            WindowEvent::MouseInput { state, button, .. } => {
+                                self.bindings.borrow().handle(&mut actions, button, state);
+                            }
 
-                        WindowEvent::MouseWheel { delta, .. } => {
-                            self.bindings.borrow().handle(&mut actions, delta, ElementState::Pressed);
-                        }
+                            WindowEvent::MouseWheel { delta, .. } => {
+                                self.bindings.borrow().handle(
+                                    &mut actions,
+                                    delta,
+                                    ElementState::Pressed,
+                                );
+                            }
+
+                            _ => (),
+                        },
 
                         _ => (),
-                    },
-
-                    _ => (),
-                });
+                    });
                 client
                     .borrow_mut()
                     .handle_input(&actions, frame_duration, 0)
@@ -189,6 +240,60 @@ impl Program for ClientProgram {
             }
 
             client.borrow_mut().send().unwrap();
+
+            if let Some(ref renderer) = self.renderer {
+                let cl = client.borrow();
+
+                let fov_x = self.cvars.borrow().get_value("fov").unwrap();
+                let (win_w, win_h) = self.window.borrow().get_inner_size().unwrap();
+                let aspect = win_w as f32 / win_h as f32;
+
+                let camera = render::Camera::new(
+                    cl.get_view_origin(),
+                    cl.get_view_angles(),
+                    cgmath::perspective(common::math::fov_x_to_fov_y(cgmath::Deg(fov_x), aspect).unwrap(), aspect, 1.0, 1024.0),
+                );
+
+                use gfx::Factory;
+                use gfx::traits::FactoryExt;
+                let (_, dummy_texture) = self.factory.borrow_mut().create_texture_immutable_u8::<render::ColorFormat>(
+                    gfx::texture::Kind::D2(0, 0, gfx::texture::AaMode::Single),
+                    gfx::texture::Mipmap::Allocated,
+                    &[&[]]
+                ).expect("dummy texture generation failed");
+
+                let sampler = self.factory.borrow_mut().create_sampler(gfx::texture::SamplerInfo::new(
+                    gfx::texture::FilterMethod::Scale,
+                    gfx::texture::WrapMode::Tile,
+                ));
+
+                let mut data = render::pipe::Data {
+                    vertex_buffer: self.factory.borrow_mut().create_vertex_buffer(&[]),
+                    transform: camera.get_transform().into(),
+                    sampler: (dummy_texture, sampler),
+                    out_color: self.color.clone(),
+                    out_depth: self.depth.clone(),
+                };
+
+                println!("Beginning render pass.");
+
+                self.encoder.borrow_mut().clear(&data.out_color, [0.0, 0.0, 0.0, 1.0]);
+                self.encoder.borrow_mut().clear_depth(&data.out_depth, 1.0);
+                renderer.borrow_mut().render(
+                    &mut self.encoder.borrow_mut(),
+                    &mut data,
+                    client.borrow().get_entities().unwrap(),
+                    client.borrow().get_time(),
+                    &camera,
+                );
+
+                use std::ops::DerefMut;
+                self.encoder.borrow_mut().flush(self.device.borrow_mut().deref_mut());
+                self.window.borrow_mut().swap_buffers().unwrap();
+
+                use gfx::Device;
+                self.device.borrow_mut().cleanup();
+            }
         }
     }
 }

@@ -22,11 +22,12 @@ use client::render::Palette;
 use client::render::pipe;
 use client::render::Vertex;
 use common::bsp::BspData;
+use common::bsp::BspModel;
 use common::bsp::BspTextureMipmap;
 
+use cgmath::Deg;
 use cgmath::Euler;
 use cgmath::InnerSpace;
-use cgmath::Rad;
 use cgmath::Vector3;
 use cgmath::Matrix4;
 use chrono::Duration;
@@ -34,7 +35,6 @@ use gfx::CommandBuffer;
 use gfx::IndexBuffer;
 use gfx::Encoder;
 use gfx::Factory;
-use gfx::Resources;
 use gfx::Slice;
 use gfx::format::Srgba8 as ColorFormat;
 use gfx::handle::Buffer;
@@ -43,6 +43,7 @@ use gfx::pso::PipelineData;
 use gfx::pso::PipelineState;
 use gfx::texture;
 use gfx::traits::FactoryExt;
+use gfx_device_gl::Resources;
 
 pub static BSP_VERTEX_SHADER_GLSL: &[u8] = br#"
 #version 430
@@ -73,37 +74,33 @@ void main() {
     Target0 = texture(u_Texture, f_texcoord);
 }"#;
 
-pub struct BspRenderFace<R>
-where
-    R: Resources,
-{
-    pub slice: Slice<R>,
+pub struct BspRenderFace {
+    pub slice: Slice<Resources>,
     pub tex_id: usize,
 }
 
-pub struct BspRenderer<R>
-where
-    R: Resources,
-{
+pub struct BspRenderer {
+    model_name: String,
     bsp_data: Rc<BspData>,
-    vertex_buffer: Buffer<R, Vertex>,
-    faces: Box<[BspRenderFace<R>]>,
-    texture_views: Box<[ShaderResourceView<R, [f32; 4]>]>,
+    vertex_buffer: Buffer<Resources, Vertex>,
+    faces: Box<[BspRenderFace]>,
+    texture_views: Box<[ShaderResourceView<Resources, [f32; 4]>]>,
 }
 
-impl<R> BspRenderer<R>
-where
-    R: Resources,
+impl BspRenderer
 {
-    pub fn new<F>(bsp_data: Rc<BspData>, palette: &Palette, factory: &mut F) -> BspRenderer<R>
+    pub fn new<S, F>(model_name: S, bsp_model: &BspModel, palette: &Palette, factory: &mut F) -> BspRenderer
     where
-        F: Factory<R>,
+        S: AsRef<str>,
+        F: Factory<Resources>,
     {
         let mut faces = Vec::new();
         let mut vertices = Vec::new();
+        let bsp_data = bsp_model.bsp_data().clone();
 
         // BSP vertex data is stored in triangle fan layout so we have to convert to triangle list
-        for face in bsp_data.faces().iter() {
+        for face_id in bsp_model.face_list() {
+            let face = &bsp_data.faces()[*face_id];
             let face_vertex_id = vertices.len();
 
             let texinfo = &bsp_data.texinfo()[face.texinfo_id];
@@ -174,43 +171,49 @@ where
         }
 
         BspRenderer {
-            bsp_data,
+            model_name: model_name.as_ref().to_owned(),
+            bsp_data: bsp_data,
             vertex_buffer,
             faces: faces.into_boxed_slice(),
             texture_views: texture_views.into_boxed_slice(),
         }
     }
 
-    pub fn vertex_buffer(&self) -> Buffer<R, Vertex> {
+    pub fn vertex_buffer(&self) -> Buffer<Resources, Vertex> {
         self.vertex_buffer.clone()
     }
 
-    pub fn faces(&self) -> &[BspRenderFace<R>] {
+    pub fn faces(&self) -> &[BspRenderFace] {
         &self.faces
     }
 
-    pub fn get_face(&self, face_id: usize) -> &BspRenderFace<R> {
+    pub fn get_face(&self, face_id: usize) -> &BspRenderFace {
         &self.faces[face_id]
     }
 
-    pub fn get_texture_view(&self, tex_id: usize) -> ShaderResourceView<R, [f32; 4]> {
+    pub fn get_texture_view(&self, tex_id: usize) -> ShaderResourceView<Resources, [f32; 4]> {
         self.texture_views[tex_id].clone()
     }
 
     pub fn render_face<C>(
         &self,
-        encoder: &mut Encoder<R, C>,
-        pso: &PipelineState<R, <pipe::Data<R> as PipelineData<R>>::Meta>,
-        user_data: &mut pipe::Data<R>,
+        encoder: &mut Encoder<Resources, C>,
+        pso: &PipelineState<Resources, <pipe::Data<Resources> as PipelineData<Resources>>::Meta>,
+        user_data: &mut pipe::Data<Resources>,
         time: Duration,
         camera: &Camera,
+        origin: Vector3<f32>,
+        angles: Vector3<Deg<f32>>,
         face_id: usize,
     ) where
-        C: CommandBuffer<R>,
+        C: CommandBuffer<Resources>,
     {
         let face = &self.faces[face_id];
         let frame = self.bsp_data.texture_frame_for_time(face.tex_id, time);
-        user_data.transform = camera.get_transform().into();
+
+        let model_transform = Matrix4::from(Euler::new(angles.x, angles.y, angles.z))
+            * Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x));
+        user_data.transform = (camera.get_transform() * model_transform).into();
 
         user_data.sampler.0 = self.get_texture_view(frame);
         encoder.draw(&face.slice, pso, user_data);
@@ -218,36 +221,38 @@ where
 
     pub fn render<C>(
         &self,
-        encoder: &mut Encoder<R, C>,
-        pso: &PipelineState<R, <pipe::Data<R> as PipelineData<R>>::Meta>,
-        user_data: &mut pipe::Data<R>,
+        encoder: &mut Encoder<Resources, C>,
+        pso: &PipelineState<Resources, <pipe::Data<Resources> as PipelineData<Resources>>::Meta>,
+        user_data: &mut pipe::Data<Resources>,
         time: Duration,
         camera: &Camera,
+        origin: Vector3<f32>,
+        angles: Vector3<Deg<f32>>,
     ) where
-        C: CommandBuffer<R>,
+        C: CommandBuffer<Resources>,
     {
         let containing_leaf_id = self.bsp_data.find_leaf(camera.get_origin());
         let pvs = self.bsp_data.get_pvs(containing_leaf_id);
 
+
         if pvs.is_empty() {
-            // No visibility data for this leaf, render all leaves
-            for leaf in self.bsp_data.leaves().iter() {
-                for facelist_id in leaf.facelist_id..leaf.facelist_id + leaf.facelist_count {
-                    let face_id = self.bsp_data.facelist()[facelist_id];
-                    self.render_face(
-                        encoder,
-                        pso,
-                        user_data,
-                        time,
-                        camera,
-                        face_id,
-                    );
-                }
+            debug!("Rendering {} from leaf {} (no visdata)", self.model_name, containing_leaf_id);
+            // No visibility data for this leaf, render all faces
+            for face_id in 0..self.faces.len() {
+                self.render_face(
+                    encoder,
+                    pso,
+                    user_data,
+                    time,
+                    camera,
+                    origin,
+                    angles,
+                    face_id,
+                );
             }
         } else {
-            let mut leaf_count = 0;
+            debug!("Rendering {} from leaf {} ({} visible leaves)", self.model_name, containing_leaf_id, pvs.len());
             for visible_leaf_id in pvs.iter() {
-                leaf_count += 1;
                 let leaf = &self.bsp_data.leaves()[*visible_leaf_id];
 
                 for facelist_id in leaf.facelist_id..leaf.facelist_id + leaf.facelist_count {
@@ -258,6 +263,8 @@ where
                         user_data,
                         time,
                         camera,
+                        origin,
+                        angles,
                         face_id,
                     );
                 }

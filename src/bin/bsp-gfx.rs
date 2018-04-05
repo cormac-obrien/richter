@@ -23,11 +23,14 @@ extern crate gfx;
 extern crate gfx_device_gl;
 extern crate gfx_window_glutin;
 extern crate glutin;
+#[macro_use]
+extern crate log;
 extern crate richter;
 
 use cgmath::Angle;
 use cgmath::Deg;
 use cgmath::Euler;
+use cgmath::InnerSpace;
 use cgmath::Matrix3;
 use cgmath::Matrix4;
 use cgmath::Rad;
@@ -46,6 +49,7 @@ use richter::client::render::Palette;
 use richter::client::render::Vertex;
 use richter::client::render::bsp::BspRenderer;
 use richter::client::render::bsp::BspRenderFace;
+use richter::common::engine;
 use richter::common::model::Model;
 use richter::common::model::ModelKind;
 
@@ -107,7 +111,7 @@ fn main() {
 
     let palette = Palette::load(&pak, "gfx/palette.lmp");
 
-    let bsp_renderer = BspRenderer::new(worldmodel.bsp_data(), &palette, &mut factory);
+    let bsp_renderer = BspRenderer::new("e1m1", &worldmodel, &palette, &mut factory);
 
     let sampler = factory.create_sampler(gfx::texture::SamplerInfo::new(
         gfx::texture::FilterMethod::Scale,
@@ -148,7 +152,7 @@ fn main() {
     let mut look_down = false;
 
     let mut camera_pos = Vector3::new(0.0, 0.0, 0.0);
-    let mut camera_angles = Euler::new(Deg(0.0), Deg(0.0), Deg(0.0));
+    let mut camera_angles = Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0));
 
     let start_time = Utc::now();
     let mut prev_frame_time = Utc::now().signed_duration_since(start_time);
@@ -218,7 +222,7 @@ fn main() {
             camera_angles.y += turn_rate;
         }
 
-        let rotation = Matrix3::from(camera_angles);
+        let rotation = Matrix3::from(Euler::new(camera_angles.x, camera_angles.y, camera_angles.z));
 
         let mut move_vector = Vector3::new(0.0, 0.0, 0.0);
 
@@ -250,7 +254,12 @@ fn main() {
             move_vector.z -= 1.0;
         }
 
-        camera_pos += move_vector;
+        println!("move_vector: {:?}", move_vector);
+
+        // move at 300 units per second
+        let delta_v = 300.0 * engine::duration_to_f32(frame_duration) * move_vector;
+
+        camera_pos += delta_v;
         let camera = Camera::new(camera_pos, camera_angles, perspective);
 
         encoder.clear(&data.out_color, [0.0, 0.0, 0.0, 1.0]);
@@ -261,6 +270,8 @@ fn main() {
             &mut data,
             frame_time,
             &camera,
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
         );
         encoder.flush(&mut device);
         window.swap_buffers().unwrap();
