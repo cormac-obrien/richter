@@ -97,12 +97,17 @@ impl BspRenderer {
         S: AsRef<str>,
         F: Factory<Resources>,
     {
+        // initialize with the null leaf
         let mut leaves = Vec::new();
+        leaves.push(BspRenderLeaf {
+            faces: vec![].into_boxed_slice(),
+        });
+
         let mut vertices = Vec::new();
         let bsp_data = bsp_model.bsp_data().clone();
 
         // BSP vertex data is stored in triangle fan layout so we have to convert to triangle list
-        for leaf_id in bsp_model.leaf_id..bsp_model.leaf_id + bsp_model.leaf_count {
+        for leaf_id in bsp_model.leaf_id + 1..bsp_model.leaf_id + bsp_model.leaf_count + 1 {
             let mut faces = Vec::new();
             let leaf = &bsp_data.leaves()[leaf_id];
             for facelist_id in leaf.facelist_id..leaf.facelist_id + leaf.facelist_count {
@@ -215,6 +220,12 @@ impl BspRenderer {
     {
         // FIXME: face selection is wrong. the provided face id indexes correctly in the BspData but
         // not the renderer.
+
+        if leaf_id >= self.leaves.len() {
+            error!("leaf ID is out of bounds: the len is {} but the leaf ID is {}", self.leaves.len(), leaf_id);
+            return;
+        }
+
         for face in self.leaves[leaf_id].faces.iter() {
             let frame = self.bsp_data.texture_frame_for_time(face.tex_id, time);
 
@@ -240,11 +251,11 @@ impl BspRenderer {
         C: CommandBuffer<Resources>,
     {
         let containing_leaf_id = self.bsp_data.find_leaf(camera.get_origin());
-        let pvs = self.bsp_data.get_pvs(containing_leaf_id);
+        let pvs = self.bsp_data.get_pvs(containing_leaf_id, self.leaves.len());
 
         if pvs.is_empty() {
             // No visibility data for this leaf, render all faces
-            for leaf_id in 0..self.leaves.len() {
+            for leaf_id in 1..self.leaves.len() {
                 self.render_leaf(
                     encoder,
                     pso,

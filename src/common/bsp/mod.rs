@@ -793,7 +793,7 @@ impl BspData {
         }
     }
 
-    pub fn get_pvs(&self, leaf_id: usize) -> Vec<usize> {
+    pub fn get_pvs(&self, leaf_id: usize, leaf_count: usize) -> Vec<usize> {
         // leaf 0 is outside the map, everything is visible
         if leaf_id == 0 {
             return Vec::new();
@@ -805,7 +805,7 @@ impl BspData {
                 let mut visleaf_list = Vec::new();
                 let mut it = (&self.visibility[o..]).iter();
 
-                while visleaf < self.leaves.len() {
+                while visleaf < leaf_count {
                     let byte = it.next().unwrap();
                     match *byte {
                         // a zero byte signals the start of an RLE sequence
