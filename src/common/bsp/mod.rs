@@ -901,15 +901,16 @@ impl BspData {
 
 #[derive(Debug)]
 pub struct BspModel {
-    bsp_data: Rc<BspData>,
-    min: Vector3<f32>,
-    max: Vector3<f32>,
-    origin: Vector3<f32>,
-    collision_node_ids: [usize; MAX_HULLS],
-    collision_node_counts: [usize; MAX_HULLS],
-    leaf_count: usize,
-    face_id: usize,
-    face_count: usize,
+    pub bsp_data: Rc<BspData>,
+    pub min: Vector3<f32>,
+    pub max: Vector3<f32>,
+    pub origin: Vector3<f32>,
+    pub collision_node_ids: [usize; MAX_HULLS],
+    pub collision_node_counts: [usize; MAX_HULLS],
+    pub leaf_id: usize,
+    pub leaf_count: usize,
+    pub face_id: usize,
+    pub face_count: usize,
 }
 
 impl BspModel {

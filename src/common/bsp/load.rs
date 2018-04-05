@@ -780,15 +780,6 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     }
 
     let mut leaves = Vec::with_capacity(leaf_count);
-    leaves.push(BspLeaf {
-        contents: BspLeafContents::Solid,
-        vis_offset: None,
-        min: [0, 0, 0],
-        max: [0, 0, 0],
-        facelist_id: 0,
-        facelist_count: 0,
-        sounds: [0, 0, 0, 0],
-    });
 
     for _ in 0..leaf_count {
         // note the negation here (the constants are negative in the original engine to differentiate
@@ -992,6 +983,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         return Err(BspError::with_msg("Model count exceeds MAX_MODELS"));
     }
 
+    let mut total_leaf_count = 0;
     let mut brush_models = Vec::with_capacity(model_count);
     for i in 0..model_count {
         // we spread the bounds out by 1 unit in all directions. not sure why, but the original
@@ -1035,10 +1027,15 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
 
         debug!("model[{}].headnodes = {:?}", i, collision_node_ids);
 
+        let leaf_id = total_leaf_count;
+        debug!("model[{}].leaf_id = {:?}", i, leaf_id);
+
         let leaf_count = match reader.read_i32::<LittleEndian>()? {
             x if x < 0 => return Err(BspError::with_msg("Invalid leaf count")),
             x => x as usize,
         };
+
+        total_leaf_count += leaf_count;
 
         debug!("model[{}].leaf_count = {:?}", i, leaf_count);
 
@@ -1064,6 +1061,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             origin,
             collision_node_ids,
             collision_node_counts,
+            leaf_id,
             leaf_count,
             face_id,
             face_count,

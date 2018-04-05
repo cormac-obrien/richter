@@ -79,76 +79,89 @@ pub struct BspRenderFace {
     pub tex_id: usize,
 }
 
+pub struct BspRenderLeaf {
+    pub faces: Box<[BspRenderFace]>,
+}
+
 pub struct BspRenderer {
     model_name: String,
     bsp_data: Rc<BspData>,
     vertex_buffer: Buffer<Resources, Vertex>,
-    faces: Box<[BspRenderFace]>,
+    leaves: Box<[BspRenderLeaf]>,
     texture_views: Box<[ShaderResourceView<Resources, [f32; 4]>]>,
 }
 
-impl BspRenderer
-{
+impl BspRenderer {
     pub fn new<S, F>(model_name: S, bsp_model: &BspModel, palette: &Palette, factory: &mut F) -> BspRenderer
     where
         S: AsRef<str>,
         F: Factory<Resources>,
     {
-        let mut faces = Vec::new();
+        let mut leaves = Vec::new();
         let mut vertices = Vec::new();
         let bsp_data = bsp_model.bsp_data().clone();
 
         // BSP vertex data is stored in triangle fan layout so we have to convert to triangle list
-        for face_id in bsp_model.face_list() {
-            let face = &bsp_data.faces()[*face_id];
-            let face_vertex_id = vertices.len();
+        for leaf_id in bsp_model.leaf_id..bsp_model.leaf_id + bsp_model.leaf_count {
+            let mut faces = Vec::new();
+            let leaf = &bsp_data.leaves()[leaf_id];
+            for facelist_id in leaf.facelist_id..leaf.facelist_id + leaf.facelist_count {
+                let face_id = bsp_data.facelist()[facelist_id];
+                let face = &bsp_data.faces()[face_id];
 
-            let texinfo = &bsp_data.texinfo()[face.texinfo_id];
-            let tex = &bsp_data.textures()[texinfo.tex_id];
+                let face_vertex_id = vertices.len();
 
-            let face_edge_ids = &bsp_data.edgelist()[face.edge_id..face.edge_id + face.edge_count];
+                let texinfo = &bsp_data.texinfo()[face.texinfo_id];
+                let tex = &bsp_data.textures()[texinfo.tex_id];
 
-            let base_edge_id = &face_edge_ids[0];
-            let base_vertex_id =
-                bsp_data.edges()[base_edge_id.index].vertex_ids[base_edge_id.direction as usize];
-            let base_position = bsp_data.vertices()[base_vertex_id as usize];
-            let base_s =
-                (base_position.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32;
-            let base_t =
-                (base_position.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32;
+                let face_edge_ids = &bsp_data.edgelist()[face.edge_id..face.edge_id + face.edge_count];
 
-            for i in 1..face_edge_ids.len() - 1 {
-                vertices.push(Vertex {
-                    pos: base_position.into(),
-                    texcoord: [base_s, base_t],
-                });
+                let base_edge_id = &face_edge_ids[0];
+                let base_vertex_id =
+                    bsp_data.edges()[base_edge_id.index].vertex_ids[base_edge_id.direction as usize];
+                let base_position = bsp_data.vertices()[base_vertex_id as usize];
+                let base_s =
+                    (base_position.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32;
+                let base_t =
+                    (base_position.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32;
 
-                for v in 0..2 {
-                    let edge_id = &face_edge_ids[i + v];
-                    let vertex_id =
-                        bsp_data.edges()[edge_id.index].vertex_ids[edge_id.direction as usize];
-                    let position = bsp_data.vertices()[vertex_id as usize];
-                    let s =
-                        (position.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32;
-                    let t =
-                        (position.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32;
+                for i in 1..face_edge_ids.len() - 1 {
                     vertices.push(Vertex {
-                        pos: position.into(),
-                        texcoord: [s, t],
+                        pos: base_position.into(),
+                        texcoord: [base_s, base_t],
                     });
+
+                    for v in 0..2 {
+                        let edge_id = &face_edge_ids[i + v];
+                        let vertex_id =
+                            bsp_data.edges()[edge_id.index].vertex_ids[edge_id.direction as usize];
+                        let position = bsp_data.vertices()[vertex_id as usize];
+                        let s =
+                            (position.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32;
+                        let t =
+                            (position.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32;
+                        vertices.push(Vertex {
+                            pos: position.into(),
+                            texcoord: [s, t],
+                        });
+                    }
                 }
+
+                let face_vertex_count = vertices.len() - face_vertex_id;
+                faces.push(BspRenderFace {
+                    slice: Slice {
+                        start: 0,
+                        end: face_vertex_count as u32,
+                        base_vertex: face_vertex_id as u32,
+                        instances: None,
+                        buffer: IndexBuffer::Auto,
+                    },
+                    tex_id: bsp_data.texinfo()[face.texinfo_id].tex_id,
+                });
             }
 
-            let face_vertex_count = vertices.len() - face_vertex_id;
-            faces.push(BspRenderFace {
-                slice: Slice {
-                    start: 0,
-                    end: face_vertex_count as u32,
-                    base_vertex: face_vertex_id as u32,
-                    instances: None,
-                    buffer: IndexBuffer::Auto,
-                },
-                tex_id: bsp_data.texinfo()[face.texinfo_id].tex_id,
+            leaves.push(BspRenderLeaf {
+                faces: faces.into_boxed_slice(),
             });
         }
 
@@ -174,7 +187,7 @@ impl BspRenderer
             model_name: model_name.as_ref().to_owned(),
             bsp_data: bsp_data,
             vertex_buffer,
-            faces: faces.into_boxed_slice(),
+            leaves: leaves.into_boxed_slice(),
             texture_views: texture_views.into_boxed_slice(),
         }
     }
@@ -183,19 +196,11 @@ impl BspRenderer
         self.vertex_buffer.clone()
     }
 
-    pub fn faces(&self) -> &[BspRenderFace] {
-        &self.faces
-    }
-
-    pub fn get_face(&self, face_id: usize) -> &BspRenderFace {
-        &self.faces[face_id]
-    }
-
     pub fn get_texture_view(&self, tex_id: usize) -> ShaderResourceView<Resources, [f32; 4]> {
         self.texture_views[tex_id].clone()
     }
 
-    pub fn render_face<C>(
+    pub fn render_leaf<C>(
         &self,
         encoder: &mut Encoder<Resources, C>,
         pso: &PipelineState<Resources, <pipe::Data<Resources> as PipelineData<Resources>>::Meta>,
@@ -204,19 +209,22 @@ impl BspRenderer
         camera: &Camera,
         origin: Vector3<f32>,
         angles: Vector3<Deg<f32>>,
-        face_id: usize,
+        leaf_id: usize,
     ) where
         C: CommandBuffer<Resources>,
     {
-        let face = &self.faces[face_id];
-        let frame = self.bsp_data.texture_frame_for_time(face.tex_id, time);
+        // FIXME: face selection is wrong. the provided face id indexes correctly in the BspData but
+        // not the renderer.
+        for face in self.leaves[leaf_id].faces.iter() {
+            let frame = self.bsp_data.texture_frame_for_time(face.tex_id, time);
 
-        let model_transform = Matrix4::from(Euler::new(angles.x, angles.y, angles.z))
-            * Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x));
-        user_data.transform = (camera.get_transform() * model_transform).into();
+            let model_transform = Matrix4::from(Euler::new(angles.x, angles.y, angles.z))
+                * Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x));
+            user_data.transform = (camera.get_transform() * model_transform).into();
 
-        user_data.sampler.0 = self.get_texture_view(frame);
-        encoder.draw(&face.slice, pso, user_data);
+            user_data.sampler.0 = self.get_texture_view(frame);
+            encoder.draw(&face.slice, pso, user_data);
+        }
     }
 
     pub fn render<C>(
@@ -234,12 +242,10 @@ impl BspRenderer
         let containing_leaf_id = self.bsp_data.find_leaf(camera.get_origin());
         let pvs = self.bsp_data.get_pvs(containing_leaf_id);
 
-
         if pvs.is_empty() {
-            debug!("Rendering {} from leaf {} (no visdata)", self.model_name, containing_leaf_id);
             // No visibility data for this leaf, render all faces
-            for face_id in 0..self.faces.len() {
-                self.render_face(
+            for leaf_id in 0..self.leaves.len() {
+                self.render_leaf(
                     encoder,
                     pso,
                     user_data,
@@ -247,27 +253,21 @@ impl BspRenderer
                     camera,
                     origin,
                     angles,
-                    face_id,
+                    leaf_id,
                 );
             }
         } else {
-            debug!("Rendering {} from leaf {} ({} visible leaves)", self.model_name, containing_leaf_id, pvs.len());
-            for visible_leaf_id in pvs.iter() {
-                let leaf = &self.bsp_data.leaves()[*visible_leaf_id];
-
-                for facelist_id in leaf.facelist_id..leaf.facelist_id + leaf.facelist_count {
-                    let face_id = self.bsp_data.facelist()[facelist_id];
-                    self.render_face(
-                        encoder,
-                        pso,
-                        user_data,
-                        time,
-                        camera,
-                        origin,
-                        angles,
-                        face_id,
-                    );
-                }
+            for leaf_id in pvs.iter() {
+                self.render_leaf(
+                    encoder,
+                    pso,
+                    user_data,
+                    time,
+                    camera,
+                    origin,
+                    angles,
+                    *leaf_id,
+                );
             }
         }
     }
