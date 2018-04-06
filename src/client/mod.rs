@@ -1436,6 +1436,7 @@ impl Client {
 
     pub fn get_view_origin(&self) -> Vector3<f32> {
         self.state.entities[self.state.view.ent_id].origin
+            + Vector3::new(0.0, 0.0, self.state.view.view_height)
     }
 
     pub fn get_view_angles(&self) -> Vector3<Deg<f32>> {
