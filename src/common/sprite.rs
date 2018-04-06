@@ -30,6 +30,7 @@ use num::FromPrimitive;
 const MAGIC: u32 = ('I' as u32) << 0 | ('D' as u32) << 8 | ('S' as u32) << 16 | ('P' as u32) << 24;
 const VERSION: u32 = 1;
 
+#[derive(Debug)]
 pub struct SpriteModel {
     kind: i32,
     max_width: usize,
@@ -60,11 +61,13 @@ impl SpriteModel {
     }
 }
 
+#[derive(Debug)]
 pub enum SpriteFrameKind {
     Single(SpriteFrame),
     Group(SpriteGroup),
 }
 
+#[derive(Debug)]
 pub struct SpriteFrame {
     width: u32,
     height: u32,
@@ -75,6 +78,7 @@ pub struct SpriteFrame {
     rgba: Box<[u8]>,
 }
 
+#[derive(Debug)]
 pub struct SpriteGroup {
     intervals: Vec<Duration>,
     frames: Vec<SpriteFrame>,

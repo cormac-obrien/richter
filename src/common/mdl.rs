@@ -37,20 +37,24 @@ pub const VERSION: i32 = 6;
 
 const HEADER_SIZE: u64 = 84;
 
+#[derive(Debug)]
 pub struct SkinSingle {
     rgba: Box<[u8]>,
 }
 
+#[derive(Debug)]
 pub struct SkinGroup {
     intervals: Box<[Duration]>,
     skins: Box<[SkinSingle]>,
 }
 
+#[derive(Debug)]
 pub enum Skin {
     Single(SkinSingle),
     Group(SkinGroup),
 }
 
+#[derive(Debug)]
 pub struct FrameSingle {
     pub name: String,
     pub min: Vector3<f32>,
@@ -58,6 +62,7 @@ pub struct FrameSingle {
     pub vertices: Box<[Vector3<f32>]>,
 }
 
+#[derive(Debug)]
 pub struct FrameGroup {
     pub min: Vector3<f32>,
     pub max: Vector3<f32>,
@@ -65,11 +70,13 @@ pub struct FrameGroup {
     pub frames: Vec<FrameSingle>,
 }
 
+#[derive(Debug)]
 pub enum Frame {
     Single(FrameSingle),
     Group(FrameGroup),
 }
 
+#[derive(Debug)]
 pub struct AliasModel {
     pub origin: Vector3<f32>,
     pub radius: f32,

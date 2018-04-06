@@ -27,17 +27,19 @@ use common::sprite::SpriteModel;
 use cgmath::Vector3;
 use gfx;
 
-#[derive(FromPrimitive)]
+#[derive(Debug, FromPrimitive)]
 pub enum SyncType {
     Sync = 0,
     Rand = 1,
 }
 
+#[derive(Debug)]
 pub struct Model {
     pub name: String,
     pub kind: ModelKind,
 }
 
+#[derive(Debug)]
 pub enum ModelKind {
     // TODO: find a more elegant way to express the null model
     None,
