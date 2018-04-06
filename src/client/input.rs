@@ -242,8 +242,9 @@ impl Bindings {
         input: I,
         input_state: ElementState,
     ) where
-        I: Into<BindInput>,
+        I: Into<BindInput> + ::std::fmt::Debug,
     {
+        debug!("Bindings: handle input {:?}", &input);
         if let Some(target) = self.get(input) {
 
             match *target {
@@ -334,6 +335,7 @@ impl ::std::convert::From<MouseScrollDelta> for BindInput {
     }
 }
 
+#[derive(Debug)]
 pub struct GameInput {
     pub forward: bool,
     pub back: bool,

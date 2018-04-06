@@ -148,6 +148,7 @@ impl SceneRenderer {
         }
     }
 
+    #[flame]
     pub fn render<C>(
         &self,
         encoder: &mut gfx::Encoder<Resources, C>,
@@ -160,11 +161,9 @@ impl SceneRenderer {
     {
         for (i, ent) in entities.iter().enumerate() {
             if let Some(ref bsp_renderer) = self.bsp_renderers.get(&i) {
-                debug!("Rendering entity {: >4}", i);
                 bsp_renderer.render(encoder, &self.bsp_pipeline, user_data, time, camera, ent.get_origin(), ent.get_angles());
             }
         }
-        println!("");
     }
 }
 

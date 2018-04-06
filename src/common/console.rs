@@ -181,7 +181,6 @@ impl CvarRegistry {
     where
         S: AsRef<str>,
     {
-        debug!("cvar lookup: {}", name.as_ref());
         match self.cvars.borrow().get(name.as_ref()) {
             Some(s) => Ok(s.val.to_owned()),
             None => Err(()),

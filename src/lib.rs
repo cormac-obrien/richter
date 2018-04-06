@@ -16,8 +16,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #![deny(unused_must_use)]
-#![feature(custom_derive)]
-#![feature(try_from)]
+#![feature(custom_attribute, custom_derive, plugin, try_from)]
+#![plugin(flamer)]
 
 #[macro_use]
 extern crate bitflags;
@@ -25,6 +25,7 @@ extern crate byteorder;
 extern crate cgmath;
 extern crate chrono;
 extern crate env_logger;
+extern crate flame;
 #[macro_use]
 extern crate gfx;
 extern crate gfx_device_gl;

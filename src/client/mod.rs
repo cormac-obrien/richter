@@ -713,7 +713,7 @@ impl Client {
 
         let send_time = self.state.msg_times[0];
         let angles = self.state.view.view_angles;
-        self.add_cmd(ClientCmd::Move {
+        let move_cmd = ClientCmd::Move {
             send_time,
             angles,
             fwd_move: forwardmove as u16,
@@ -721,11 +721,14 @@ impl Client {
             up_move: upmove as u16,
             button_flags,
             impulse,
-        })?;
+        };
+        debug!("Sending move command: {:?}", move_cmd);
+        self.add_cmd(move_cmd)?;
 
         Ok(())
     }
 
+    #[flame]
     pub fn send(&mut self) -> Result<(), ClientError> {
         // TODO: check can_send on qsock
         self.qsock.begin_send_msg(&self.compose)?;
@@ -826,6 +829,7 @@ impl Client {
         Ok(&mut self.state.entities[id])
     }
 
+    #[flame]
     pub fn parse_server_msg(&mut self) -> Result<(), ClientError> {
         let msg = self.qsock.recv_msg(match self.signon {
             // if we're in the game, don't block waiting for messages
@@ -1229,10 +1233,7 @@ impl Client {
                         }
 
                         None => {
-                            return Err(ClientError::with_msg(format!(
-                                "No player with ID {}",
-                                player_id
-                            )));
+                            error!("Attempted to set colors on nonexistant player with ID {}", player_id);
                         }
                     }
                 }
@@ -1253,10 +1254,7 @@ impl Client {
                             info.frags = new_frags as i32;
                         }
                         None => {
-                            return Err(ClientError::with_msg(format!(
-                                "No player with ID {}",
-                                player_id
-                            )));
+                            error!("Attempted to set frags on nonexistant player with ID {}", player_id);
                         }
                     }
                 }

@@ -18,9 +18,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#![feature(custom_attribute, plugin)]
+#![plugin(flamer)]
+
 extern crate cgmath;
 extern crate chrono;
 extern crate env_logger;
+extern crate flame;
 extern crate gfx;
 extern crate gfx_device_gl;
 extern crate gfx_window_glutin;
@@ -50,8 +54,8 @@ use richter::common::host::Program;
 use richter::common::net::SignOnStage;
 use richter::common::pak::Pak;
 
-use cgmath::Deg;
-use cgmath::Vector3;
+use cgmath::Matrix4;
+use cgmath::SquareMatrix;
 use chrono::Duration;
 use gfx::Encoder;
 use gfx::handle::DepthStencilView;
@@ -89,6 +93,7 @@ struct ClientProgram {
     palette: render::Palette,
 
     client: Option<RefCell<Client>>,
+    actions: RefCell<GameInput>,
     renderer: Option<RefCell<SceneRenderer>>,
 }
 
@@ -109,16 +114,16 @@ impl ClientProgram  {
             pak.add(path).unwrap();
         }
 
-        let mut cvars = Rc::new(RefCell::new(CvarRegistry::new()));
+        let cvars = Rc::new(RefCell::new(CvarRegistry::new()));
         client::register_cvars(&cvars.borrow_mut());
 
-        let mut cmds = Rc::new(RefCell::new(CmdRegistry::new()));
+        let cmds = Rc::new(RefCell::new(CmdRegistry::new()));
         // TODO: register commands as other subsystems come online
 
-        let mut bindings = Rc::new(RefCell::new(Bindings::new(cvars.clone(), cmds.clone())));
+        let bindings = Rc::new(RefCell::new(Bindings::new(cvars.clone(), cmds.clone())));
         bindings.borrow_mut().assign_defaults();
 
-        let mut events_loop = glutin::EventsLoop::new();
+        let events_loop = glutin::EventsLoop::new();
         let window_builder = glutin::WindowBuilder::new()
             .with_title("Richter client")
             .with_dimensions(1366, 768);
@@ -126,7 +131,7 @@ impl ClientProgram  {
             .with_gl(glutin::GlRequest::Specific(glutin::Api::OpenGl, (3, 3)))
             .with_vsync(true);
 
-        let (window, mut device, mut factory, color, depth) =
+        let (window, device, mut factory, color, depth) =
             gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(
                 window_builder,
                 context_builder,
@@ -154,6 +159,7 @@ impl ClientProgram  {
             endpoint,
             palette,
             client: None,
+            actions: RefCell::new(GameInput::new()),
             renderer: None,
         }
     }
@@ -174,6 +180,7 @@ impl ClientProgram  {
 }
 
 impl Program for ClientProgram  {
+    #[flame]
     fn frame(&mut self, frame_duration: Duration) {
         if let Some(ref client) = self.client {
             client.borrow_mut().parse_server_msg().unwrap();
@@ -187,12 +194,11 @@ impl Program for ClientProgram  {
                     )));
                 }
 
-                let mut actions = GameInput::new();
                 self.bindings
                     .borrow()
-                    .handle(&mut actions, MouseWheel::Up, ElementState::Released);
+                    .handle(&mut self.actions.borrow_mut(), MouseWheel::Up, ElementState::Released);
                 self.bindings.borrow().handle(
-                    &mut actions,
+                    &mut self.actions.borrow_mut(),
                     MouseWheel::Down,
                     ElementState::Released,
                 );
@@ -203,7 +209,8 @@ impl Program for ClientProgram  {
                         Event::WindowEvent { event, .. } => match event {
                             WindowEvent::Closed => {
                                 // TODO: handle quit properly
-                                unimplemented!();
+                                flame::dump_html(&mut std::fs::File::create("./flame.html").unwrap()).unwrap();
+                                std::process::exit(0);
                             }
 
                             WindowEvent::KeyboardInput {
@@ -215,16 +222,16 @@ impl Program for ClientProgram  {
                                     },
                                 ..
                             } => {
-                                self.bindings.borrow().handle(&mut actions, key, state);
+                                self.bindings.borrow().handle(&mut self.actions.borrow_mut(), key, state);
                             }
 
                             WindowEvent::MouseInput { state, button, .. } => {
-                                self.bindings.borrow().handle(&mut actions, button, state);
+                                self.bindings.borrow().handle(&mut self.actions.borrow_mut(), button, state);
                             }
 
                             WindowEvent::MouseWheel { delta, .. } => {
                                 self.bindings.borrow().handle(
-                                    &mut actions,
+                                    &mut self.actions.borrow_mut(),
                                     delta,
                                     ElementState::Pressed,
                                 );
@@ -235,9 +242,10 @@ impl Program for ClientProgram  {
 
                         _ => (),
                     });
+                println!("{:?}", &mut self.actions.borrow());
                 client
                     .borrow_mut()
-                    .handle_input(&actions, frame_duration, 0)
+                    .handle_input(&mut self.actions.borrow(), frame_duration, 0)
                     .unwrap();
             }
 
@@ -250,8 +258,6 @@ impl Program for ClientProgram  {
                 let (win_w, win_h) = self.window.borrow().get_inner_size().unwrap();
                 let aspect = win_w as f32 / win_h as f32;
                 let fov_y = common::math::fov_x_to_fov_y(cgmath::Deg(fov_x), aspect).unwrap();
-
-                println!("X FOV: {:?} | Y FOV: {:?}", fov_x, fov_y);
 
                 let perspective = cgmath::perspective(
                     fov_y,
@@ -266,6 +272,7 @@ impl Program for ClientProgram  {
                     perspective,
                 );
 
+                flame::start("dummy texture generation");
                 use gfx::Factory;
                 use gfx::traits::FactoryExt;
                 let (_, dummy_texture) = self.factory.borrow_mut().create_texture_immutable_u8::<render::ColorFormat>(
@@ -273,6 +280,7 @@ impl Program for ClientProgram  {
                     gfx::texture::Mipmap::Allocated,
                     &[&[]]
                 ).expect("dummy texture generation failed");
+                flame::end("dummy texture generation");
 
                 let sampler = self.factory.borrow_mut().create_sampler(gfx::texture::SamplerInfo::new(
                     gfx::texture::FilterMethod::Scale,
@@ -281,7 +289,7 @@ impl Program for ClientProgram  {
 
                 let mut data = render::pipe::Data {
                     vertex_buffer: self.factory.borrow_mut().create_vertex_buffer(&[]),
-                    transform: camera.get_transform().into(),
+                    transform: Matrix4::identity().into(),
                     sampler: (dummy_texture, sampler),
                     out_color: self.color.clone(),
                     out_depth: self.depth.clone(),

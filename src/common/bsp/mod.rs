@@ -793,6 +793,7 @@ impl BspData {
         }
     }
 
+    #[flame]
     pub fn get_pvs(&self, leaf_id: usize, leaf_count: usize) -> Vec<usize> {
         // leaf 0 is outside the map, everything is visible
         if leaf_id == 0 {
