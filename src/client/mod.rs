@@ -1447,4 +1447,47 @@ impl Client {
         // TODO: this doesn't lerp at all (FIXME)
         self.state.msg_times[0]
     }
+
+    pub fn get_lerp_factor(&mut self) -> f32 {
+        // TODO: don't lerp if cls.timedemo != 0 (???) or server is running on this host
+        if self.cvars.borrow().get_value("cl_nolerp").unwrap() != 0.0 {
+            self.state.time = self.state.msg_times[0];
+            return 1.0;
+        }
+
+        let delta = match self.state.msg_times[0] - self.state.msg_times[1] {
+            // if no time has passed, don't lerp anything
+            d if d == Duration::zero() => {
+                self.state.time = self.state.msg_times[0];
+                return 1.0;
+            }
+
+            d if d > Duration::milliseconds(100) => {
+                self.state.msg_times[1] = self.state.msg_times[0] - Duration::milliseconds(100);
+                Duration::milliseconds(100)
+            }
+
+            d => d,
+        };
+
+        match engine::duration_to_f32(self.state.time - self.state.msg_times[1]) / engine::duration_to_f32(delta) {
+            f if f < 0.0 => {
+                if f < -0.01 {
+                    self.state.time = self.state.msg_times[1];
+                }
+
+                0.0
+            }
+
+            f if f > 1.0 => {
+                if f > 1.01 {
+                    self.state.time = self.state.msg_times[0];
+                }
+
+                1.0
+            }
+
+            f => f,
+        }
+    }
 }
