@@ -30,7 +30,6 @@ use common::bsp::BspData;
 use common::bsp::BspEdge;
 use common::bsp::BspEdgeDirection;
 use common::bsp::BspEdgeIndex;
-use common::bsp::BspError;
 use common::bsp::BspFace;
 use common::bsp::BspFaceSide;
 use common::bsp::BspLeaf;
@@ -52,6 +51,8 @@ use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 use chrono::Duration;
 use cgmath::Vector3;
+use failure::Error;
+use failure::ResultExt;
 use num::FromPrimitive;
 
 const VERSION: i32 = 29;
@@ -127,14 +128,9 @@ struct BspLump {
 }
 
 impl BspLump {
-    fn from_i32s(offset: i32, size: i32) -> Result<BspLump, BspError> {
-        if offset < 0 {
-            return Err(BspError::with_msg("Lump offset less than zero"));
-        }
-
-        if size < 0 {
-            return Err(BspError::with_msg("Lump size less than zero"));
-        }
+    fn from_i32s(offset: i32, size: i32) -> Result<BspLump, Error> {
+        ensure!(offset >= 0, "Lump offset must not be negative (was {})", offset);
+        ensure!(size >= 0, "Lump size must not be negative (was {})", size);
 
         Ok(BspLump {
             offset: offset as u64,
@@ -143,27 +139,21 @@ impl BspLump {
     }
 }
 
-pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
+pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), Error> {
     let mut reader = BufReader::new(Cursor::new(data));
 
     let version = reader.read_i32::<LittleEndian>()?;
-    if version != VERSION {
-        error!(
-            "Bad version number (found {}, should be {})",
-            version, VERSION
-        );
-        return Err(BspError::with_msg("Bad version number"));
-    }
+    ensure!(version == VERSION, "Bad version number (found {}, should be {})", version, VERSION);
 
     let mut lumps = Vec::with_capacity(BspLumpId::Count as usize);
     for l in 0..(BspLumpId::Count as usize) {
         let offset = match reader.read_i32::<LittleEndian>()? {
-            o if o < 0 => return Err(BspError::Other(format!("Invalid lump offset of {}", o))),
+            o if o < 0 => bail!("Invalid lump offset of {}", o),
             o => o,
         };
 
         let size = match reader.read_i32::<LittleEndian>()? {
-            o if o < 0 => return Err(BspError::Other(format!("Invalid lump size of {}", o))),
+            o if o < 0 => bail!("Invalid lump size of {}", o),
             o => o,
         };
 
@@ -174,7 +164,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             size
         );
 
-        lumps.push(BspLump::from_i32s(offset, size).expect("Failed to read lump"));
+        lumps.push(BspLump::from_i32s(offset, size).context("Failed to read lump")?);
     }
 
     let ent_lump = &lumps[BspLumpId::Entities as usize];
@@ -182,26 +172,25 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     let mut ent_data = Vec::with_capacity(MAX_ENTSTRING);
     reader.read_until(0x00, &mut ent_data)?;
     if ent_data.len() > MAX_ENTSTRING {
-        return Err(BspError::with_msg("Entity data exceeds MAX_ENTSTRING"));
+        bail!("Entity data exceeds MAX_ENTSTRING");
     }
-    let ent_string = String::from_utf8(ent_data).expect("Failed to create string from entity data");
+    let ent_string =
+        String::from_utf8(ent_data).context("Failed to create string from entity data")?;
 
     if reader.seek(SeekFrom::Current(0))?
         != reader.seek(SeekFrom::Start(ent_lump.offset + ent_lump.size as u64))?
     {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     let plane_lump = &lumps[BspLumpId::Planes as usize];
     reader.seek(SeekFrom::Start(plane_lump.offset))?;
     if plane_lump.size % PLANE_SIZE != 0 {
-        return Err(BspError::with_msg(
-            "BSP plane lump size not a multiple of lump size",
-        ));
+        bail!("BSP plane lump size not a multiple of lump size");
     }
     let plane_count = plane_lump.size / PLANE_SIZE;
     if plane_count > MAX_PLANES {
-        return Err(BspError::with_msg("Plane count exceeds MAX_PLANES"));
+        bail!("Plane count exceeds MAX_PLANES");
     }
     let mut planes = Vec::with_capacity(plane_count);
     for _ in 0..plane_count {
@@ -227,14 +216,14 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     if reader.seek(SeekFrom::Current(0))?
         != reader.seek(SeekFrom::Start(plane_lump.offset + plane_lump.size as u64))?
     {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     let tex_lump = &lumps[BspLumpId::Textures as usize];
     reader.seek(SeekFrom::Start(tex_lump.offset))?;
     let tex_count = reader.read_i32::<LittleEndian>()?;
     if tex_count < 0 || tex_count as usize > MAX_TEXTURES {
-        return Err(BspError::with_msg("Invalid texture count"));
+        bail!("Invalid texture count");
     }
     let tex_count = tex_count as usize;
     let mut tex_offsets = Vec::with_capacity(tex_count);
@@ -242,12 +231,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         let ofs = reader.read_i32::<LittleEndian>()?;
 
         tex_offsets.push(match ofs {
-            o if o < -1 => {
-                return Err(BspError::with_msg(format!(
-                    "negative texture offset ({})",
-                    ofs
-                )))
-            }
+            o if o < -1 => bail!("negative texture offset ({})", ofs),
             -1 => None,
             o => Some(o as usize),
         });
@@ -320,7 +304,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     if reader.seek(SeekFrom::Current(0))?
         != reader.seek(SeekFrom::Start(tex_lump.offset + tex_lump.size as u64))?
     {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     debug!("Sequencing textures");
@@ -360,12 +344,10 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
                 anim2_len += 1;
             }
 
-            _ => {
-                return Err(BspError::with_msg(format!(
-                    "Invalid texture frame specifier: U+{:x}",
-                    frame_char
-                )))
-            }
+            _ => bail!(format!(
+                "Invalid texture frame specifier: U+{:x}",
+                frame_char
+            )),
         }
 
         for t2 in t + 1..textures.len() {
@@ -402,24 +384,17 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
                     }
                 }
 
-                _ => {
-                    return Err(BspError::with_msg(format!(
-                        "Invalid texture frame specifier: U+{:x}",
-                        frame_n_char
-                    )))
-                }
+                _ => bail!(format!(
+                    "Invalid texture frame specifier: U+{:x}",
+                    frame_n_char
+                )),
             }
         }
 
         for frame in 0..anim1_len {
             let mut tex2 = match anim1[frame] {
                 Some(t2) => t2,
-                None => {
-                    return Err(BspError::with_msg(format!(
-                        "Missing frame {} of {}",
-                        frame, textures[t].name
-                    )))
-                }
+                None => bail!("Missing frame {} of {}", frame, textures[t].name),
             };
 
             textures[tex2].animation = Some(BspTextureAnimation {
@@ -433,12 +408,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         for frame in 0..anim2_len {
             let mut tex2 = match anim2[frame] {
                 Some(t2) => t2,
-                None => {
-                    return Err(BspError::with_msg(format!(
-                        "Missing frame {} of {}",
-                        frame, textures[t].name
-                    )))
-                }
+                None => bail!(format!("Missing frame {} of {}", frame, textures[t].name)),
             };
 
             textures[tex2].animation = Some(BspTextureAnimation {
@@ -452,15 +422,9 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
 
     let vert_lump = &lumps[BspLumpId::Vertices as usize];
     reader.seek(SeekFrom::Start(vert_lump.offset))?;
-    if vert_lump.size % VERTEX_SIZE != 0 {
-        return Err(BspError::with_msg(
-            "BSP vertex lump size not a multiple of vertex size",
-        ));
-    }
+    ensure!(vert_lump.size % VERTEX_SIZE == 0, "BSP vertex lump size not a multiple of vertex size");
     let vert_count = vert_lump.size / VERTEX_SIZE;
-    if vert_count > MAX_VERTICES {
-        return Err(BspError::with_msg("Vertex count exceeds MAX_VERTICES"));
-    }
+    ensure!(vert_count <= MAX_VERTICES, "Vertex count exceeds MAX_VERTICES");
     let mut vertices = Vec::with_capacity(vert_count);
     for _ in 0..vert_count {
         vertices.push(Vector3::new(
@@ -472,15 +436,13 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     if reader.seek(SeekFrom::Current(0))?
         != reader.seek(SeekFrom::Start(vert_lump.offset + vert_lump.size as u64))?
     {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     let vis_lump = &lumps[BspLumpId::Visibility as usize];
     reader.seek(SeekFrom::Start(vis_lump.offset))?;
     if vis_lump.size > MAX_VISLIST {
-        return Err(BspError::with_msg(
-            "Visibility data size exceeds MAX_VISLIST",
-        ));
+        bail!("Visibility data size exceeds MAX_VISLIST");
     }
     let mut vis_data = Vec::with_capacity(vis_lump.size);
     (&mut reader)
@@ -489,28 +451,24 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     if reader.seek(SeekFrom::Current(0))?
         != reader.seek(SeekFrom::Start(vis_lump.offset + vis_lump.size as u64))?
     {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     let render_node_lump = &lumps[BspLumpId::RenderNodes as usize];
     reader.seek(SeekFrom::Start(render_node_lump.offset))?;
     if render_node_lump.size % RENDER_NODE_SIZE != 0 {
-        return Err(BspError::with_msg(
-            "BSP lump node size not a multiple of node size",
-        ));
+        bail!("BSP lump node size not a multiple of node size");
     }
     let render_node_count = render_node_lump.size / RENDER_NODE_SIZE;
     if render_node_count > MAX_RENDER_NODES {
-        return Err(BspError::with_msg(
-            "Render node count exceeds MAX_RENDER_NODES",
-        ));
+        bail!("Render node count exceeds MAX_RENDER_NODES");
     }
     debug!("Render node count = {}", render_node_count);
     let mut render_nodes = Vec::with_capacity(render_node_count);
     for _ in 0..render_node_count {
         let plane_id = reader.read_i32::<LittleEndian>()?;
         if plane_id < 0 {
-            return Err(BspError::with_msg("Invalid plane id"));
+            bail!("Invalid plane id");
         }
 
         // If the child ID is positive, it points to another internal node. If it is negative, its
@@ -540,12 +498,12 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
 
         let face_id = reader.read_i16::<LittleEndian>()?;
         if face_id < 0 {
-            return Err(BspError::with_msg("Invalid face id"));
+            bail!("Invalid face id");
         }
 
         let face_count = reader.read_u16::<LittleEndian>()?;
         if face_count as usize > MAX_FACES {
-            return Err(BspError::with_msg("Invalid face count"));
+            bail!("Invalid face count");
         }
 
         render_nodes.push(BspRenderNode {
@@ -561,15 +519,13 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         != reader.seek(SeekFrom::Start(
             render_node_lump.offset + render_node_lump.size as u64,
         ))? {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     let texinfo_lump = &lumps[BspLumpId::TextureInfo as usize];
     reader.seek(SeekFrom::Start(texinfo_lump.offset))?;
     if texinfo_lump.size % TEXINFO_SIZE != 0 {
-        return Err(BspError::with_msg(
-            "BSP texinfo lump size not a multiple of texinfo size",
-        ));
+        bail!("BSP texinfo lump size not a multiple of texinfo size");
     }
     let texinfo_count = texinfo_lump.size / TEXINFO_SIZE;
     let mut texinfo = Vec::with_capacity(texinfo_count);
@@ -589,15 +545,13 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
             t_offset: reader.read_f32::<LittleEndian>()?,
 
             tex_id: match reader.read_i32::<LittleEndian>()? {
-                t if t < 0 || t as usize > tex_count => {
-                    return Err(BspError::with_msg("Invalid texture ID"))
-                }
+                t if t < 0 || t as usize > tex_count => bail!("Invalid texture ID"),
                 t => t as usize,
             },
             animated: match reader.read_i32::<LittleEndian>()? {
                 0 => false,
                 1 => true,
-                _ => return Err(BspError::with_msg("Invalid texture flags")),
+                _ => bail!("Invalid texture flags"),
             },
         });
     }
@@ -605,43 +559,41 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         != reader.seek(SeekFrom::Start(
             texinfo_lump.offset + texinfo_lump.size as u64,
         ))? {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     let face_lump = &lumps[BspLumpId::Faces as usize];
     reader.seek(SeekFrom::Start(face_lump.offset))?;
     if face_lump.size % FACE_SIZE != 0 {
-        return Err(BspError::with_msg(
-            "BSP face lump size not a multiple of face size",
-        ));
+        bail!("BSP face lump size not a multiple of face size");
     }
     let face_count = face_lump.size / FACE_SIZE;
     let mut faces = Vec::with_capacity(face_count);
     for _ in 0..face_count {
         let plane_id = reader.read_i16::<LittleEndian>()?;
         if plane_id < 0 || plane_id as usize > plane_count {
-            return Err(BspError::with_msg("Invalid plane count"));
+            bail!("Invalid plane count");
         }
 
         let side = match reader.read_i16::<LittleEndian>()? {
             0 => BspFaceSide::Front,
             1 => BspFaceSide::Back,
-            _ => return Err(BspError::with_msg("Invalid face side")),
+            _ => bail!("Invalid face side"),
         };
 
         let edge_id = reader.read_i32::<LittleEndian>()?;
         if edge_id < 0 {
-            return Err(BspError::with_msg("Invalid edge ID"));
+            bail!("Invalid edge ID");
         }
 
         let edge_count = reader.read_i16::<LittleEndian>()?;
         if edge_count < 3 {
-            return Err(BspError::with_msg("Invalid edge count"));
+            bail!("Invalid edge count");
         }
 
         let texinfo_id = reader.read_i16::<LittleEndian>()?;
         if texinfo_id < 0 || texinfo_id as usize > texinfo_count {
-            return Err(BspError::with_msg("Invalid texinfo ID"));
+            bail!("Invalid texinfo ID");
         }
 
         let mut light_styles = [0; MAX_LIGHTSTYLES];
@@ -650,7 +602,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         }
 
         let lightmap_id = match reader.read_i32::<LittleEndian>()? {
-            o if o < -1 => return Err(BspError::with_msg("Invalid lightmap offset")),
+            o if o < -1 => bail!("Invalid lightmap offset"),
             -1 => None,
             o => Some(o as usize),
         };
@@ -668,7 +620,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     if reader.seek(SeekFrom::Current(0))?
         != reader.seek(SeekFrom::Start(face_lump.offset + face_lump.size as u64))?
     {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     let lightmap_lump = &lumps[BspLumpId::Lightmaps as usize];
@@ -681,41 +633,35 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         != reader.seek(SeekFrom::Start(
             lightmap_lump.offset + lightmap_lump.size as u64,
         ))? {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     let collision_node_lump = &lumps[BspLumpId::CollisionNodes as usize];
     reader.seek(SeekFrom::Start(collision_node_lump.offset))?;
     if collision_node_lump.size % COLLISION_NODE_SIZE != 0 {
-        return Err(BspError::with_msg(
-            "BSP collision_node lump size not a multiple of collision_node size",
-        ));
+        bail!("BSP collision_node lump size not a multiple of collision_node size");
     }
 
     let collision_node_count = collision_node_lump.size / COLLISION_NODE_SIZE;
     if collision_node_count > MAX_COLLISION_NODES {
-        return Err(BspError::with_msg(format!(
+        bail!(
             "Collision node count ({}) exceeds MAX_COLLISION_NODES ({})",
-            collision_node_count, MAX_COLLISION_NODES
-        )));
+            collision_node_count,
+            MAX_COLLISION_NODES
+        );
     }
 
     let mut collision_nodes = Vec::with_capacity(collision_node_count);
     for _ in 0..collision_node_count {
         let plane_id = match reader.read_i32::<LittleEndian>()? {
-            x if x < 0 => return Err(BspError::with_msg("Invalid plane id")),
+            x if x < 0 => bail!("Invalid plane id"),
             x => x as usize,
         };
 
         let front = match reader.read_i16::<LittleEndian>()? {
             x if x < 0 => match BspLeafContents::from_i16(-x) {
                 Some(c) => BspCollisionNodeChild::Contents(c),
-                None => {
-                    return Err(BspError::with_msg(format!(
-                        "Invalid leaf contents ({})",
-                        -x
-                    )))
-                }
+                None => bail!("Invalid leaf contents ({})", -x),
             },
             x => BspCollisionNodeChild::Node(x as usize),
         };
@@ -723,12 +669,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         let back = match reader.read_i16::<LittleEndian>()? {
             x if x < 0 => match BspLeafContents::from_i16(-x) {
                 Some(c) => BspCollisionNodeChild::Contents(c),
-                None => {
-                    return Err(BspError::with_msg(format!(
-                        "Invalid leaf contents ({})",
-                        -x
-                    )))
-                }
+                None => bail!("Invalid leaf contents ({})", -x),
             },
             x => BspCollisionNodeChild::Node(x as usize),
         };
@@ -763,20 +704,18 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         != reader.seek(SeekFrom::Start(
             collision_node_lump.offset + collision_node_lump.size as u64,
         ))? {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     let leaf_lump = &lumps[BspLumpId::Leaves as usize];
     reader.seek(SeekFrom::Start(leaf_lump.offset))?;
     if leaf_lump.size % LEAF_SIZE != 0 {
-        return Err(BspError::with_msg(
-            "BSP leaf lump size not a multiple of leaf size",
-        ));
+        bail!("BSP leaf lump size not a multiple of leaf size");
     }
 
     let leaf_count = leaf_lump.size / LEAF_SIZE;
     if leaf_count > MAX_LEAVES {
-        return Err(BspError::with_msg("Leaf count exceeds MAX_LEAVES"));
+        bail!("Leaf count exceeds MAX_LEAVES");
     }
 
     let mut leaves = Vec::with_capacity(leaf_count);
@@ -788,16 +727,11 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
 
         let contents = match BspLeafContents::from_i32(contents_id) {
             Some(c) => c,
-            None => {
-                return Err(BspError::with_msg(format!(
-                    "Invalid leaf contents ({})",
-                    contents_id
-                )))
-            }
+            None => bail!("Invalid leaf contents ({})", contents_id),
         };
 
         let vis_offset = match reader.read_i32::<LittleEndian>()? {
-            x if x < -1 => return Err(BspError::with_msg("Invalid visibility data offset")),
+            x if x < -1 => bail!("Invalid visibility data offset"),
             -1 => None,
             x => Some(x as usize),
         };
@@ -831,15 +765,13 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     if reader.seek(SeekFrom::Current(0))?
         != reader.seek(SeekFrom::Start(leaf_lump.offset + leaf_lump.size as u64))?
     {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     let facelist_lump = &lumps[BspLumpId::FaceList as usize];
     reader.seek(SeekFrom::Start(facelist_lump.offset))?;
     if facelist_lump.size % FACELIST_SIZE != 0 {
-        return Err(BspError::with_msg(
-            "BSP facelist lump size not a multiple of facelist entry size",
-        ));
+        bail!("BSP facelist lump size not a multiple of facelist entry size");
     }
     let facelist_count = facelist_lump.size / FACELIST_SIZE;
     let mut facelist = Vec::with_capacity(facelist_count);
@@ -850,19 +782,17 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         != reader.seek(SeekFrom::Start(
             facelist_lump.offset + facelist_lump.size as u64,
         ))? {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     let edge_lump = &lumps[BspLumpId::Edges as usize];
     reader.seek(SeekFrom::Start(edge_lump.offset))?;
     if edge_lump.size % EDGE_SIZE != 0 {
-        return Err(BspError::with_msg(
-            "BSP edge lump size not a multiple of edge size",
-        ));
+        bail!("BSP edge lump size not a multiple of edge size");
     }
     let edge_count = edge_lump.size / EDGE_SIZE;
     if edge_count > MAX_EDGES {
-        return Err(BspError::with_msg("Edge count exceeds MAX_EDGES"));
+        bail!("Edge count exceeds MAX_EDGES");
     }
     let mut edges = Vec::with_capacity(edge_count);
     for _ in 0..edge_count {
@@ -876,19 +806,17 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     if reader.seek(SeekFrom::Current(0))?
         != reader.seek(SeekFrom::Start(edge_lump.offset + edge_lump.size as u64))?
     {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     let edgelist_lump = &lumps[BspLumpId::EdgeList as usize];
     reader.seek(SeekFrom::Start(edgelist_lump.offset))?;
     if edgelist_lump.size % EDGELIST_SIZE != 0 {
-        return Err(BspError::with_msg(
-            "BSP edgelist lump size not a multiple of edgelist entry size",
-        ));
+        bail!("BSP edgelist lump size not a multiple of edgelist entry size");
     }
     let edgelist_count = edgelist_lump.size / EDGELIST_SIZE;
     if edgelist_count > MAX_EDGELIST {
-        return Err(BspError::with_msg("Edge list count exceeds MAX_EDGELIST"));
+        bail!("Edge list count exceeds MAX_EDGELIST");
     }
     let mut edgelist = Vec::with_capacity(edgelist_count);
     for _ in 0..edgelist_count {
@@ -903,14 +831,14 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
                 index: -x as usize,
             },
 
-            x => return Err(BspError::with_msg(format!("Invalid edge index {}", x))),
+            x => bail!(format!("Invalid edge index {}", x)),
         });
     }
     if reader.seek(SeekFrom::Current(0))?
         != reader.seek(SeekFrom::Start(
             edgelist_lump.offset + edgelist_lump.size as u64,
         ))? {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     // see Mod_MakeHull0,
@@ -967,21 +895,17 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     let model_lump = &lumps[BspLumpId::Models as usize];
     reader.seek(SeekFrom::Start(model_lump.offset))?;
     if model_lump.size % MODEL_SIZE != 0 {
-        return Err(BspError::with_msg(
-            "BSP model lump size not a multiple of model size",
-        ));
+        bail!("BSP model lump size not a multiple of model size");
     }
     let model_count = model_lump.size / MODEL_SIZE;
 
-    if model_count < 1 {
-        return Err(BspError::with_msg(
-            "No brush models (need at least 1 for worldmodel)",
-        ));
-    }
-
-    if model_count > MAX_MODELS {
-        return Err(BspError::with_msg("Model count exceeds MAX_MODELS"));
-    }
+    ensure!(model_count > 0, "No brush models (need at least 1 for worldmodel)");
+    ensure!(
+        model_count <= MAX_MODELS,
+        "Model count ({}) exceeds MAX_MODELS ({})",
+        model_count,
+        MAX_MODELS
+    );
 
     let mut total_leaf_count = 0;
     let mut brush_models = Vec::with_capacity(model_count);
@@ -1016,7 +940,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         let mut collision_node_ids = [0; MAX_HULLS];
         for i in 0..collision_node_ids.len() {
             collision_node_ids[i] = match reader.read_i32::<LittleEndian>()? {
-                r if r < 0 => return Err(BspError::with_msg("Invalid collision tree root node")),
+                r if r < 0 => bail!("Invalid collision tree root node"),
                 r => r as usize,
             };
         }
@@ -1031,7 +955,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         debug!("model[{}].leaf_id = {:?}", i, leaf_id);
 
         let leaf_count = match reader.read_i32::<LittleEndian>()? {
-            x if x < 0 => return Err(BspError::with_msg("Invalid leaf count")),
+            x if x < 0 => bail!("Invalid leaf count"),
             x => x as usize,
         };
 
@@ -1040,12 +964,12 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
         debug!("model[{}].leaf_count = {:?}", i, leaf_count);
 
         let face_id = match reader.read_i32::<LittleEndian>()? {
-            x if x < 0 => return Err(BspError::with_msg("Invalid face id")),
+            x if x < 0 => bail!("Invalid face id"),
             x => x as usize,
         };
 
         let face_count = match reader.read_i32::<LittleEndian>()? {
-            x if x < 0 => return Err(BspError::with_msg("Invalid face count")),
+            x if x < 0 => bail!("Invalid face count"),
             x => x as usize,
         };
 
@@ -1071,7 +995,7 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), BspError> {
     if reader.seek(SeekFrom::Current(0))?
         != reader.seek(SeekFrom::Start(model_lump.offset + model_lump.size as u64))?
     {
-        return Err(BspError::with_msg("BSP read data misaligned"));
+        bail!("BSP read data misaligned");
     }
 
     let models = brush_models

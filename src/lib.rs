@@ -25,6 +25,8 @@ extern crate byteorder;
 extern crate cgmath;
 extern crate chrono;
 extern crate env_logger;
+#[macro_use]
+extern crate failure;
 extern crate flame;
 #[macro_use]
 extern crate gfx;

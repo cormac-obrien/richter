@@ -9,6 +9,7 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 "cgmath" = "0.16.0"
 "chrono" = "0.4.0"
 "env_logger" = "0.5.3"
+"failure" = "0.1.1"
 "flame" = "0.2.0"
 "flamer" = "^0.2.0"
 "gfx" = "0.17.1"
