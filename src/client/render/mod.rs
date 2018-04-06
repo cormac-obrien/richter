@@ -134,10 +134,13 @@ impl SceneRenderer {
         for (i, model) in models.iter().enumerate() {
             match *model.kind() {
                 ModelKind::Brush(ref bmodel) => {
+                    debug!("model {}: brush model", i);
                     bsp_renderers.insert(i, BspRenderer::new(model.name(), &bmodel, palette, factory));
                 }
 
                 // TODO: handle other models here
+                ModelKind::Alias(_) => debug!("model {}: alias model", i),
+                ModelKind::Sprite(_) => debug!("model {}: sprite model", i),
                 _ => (),
             }
         }
@@ -159,8 +162,8 @@ impl SceneRenderer {
     ) where
         C: gfx::CommandBuffer<Resources>,
     {
-        for (i, ent) in entities.iter().enumerate() {
-            if let Some(ref bsp_renderer) = self.bsp_renderers.get(&i) {
+        for ent in entities.iter() {
+            if let Some(ref bsp_renderer) = self.bsp_renderers.get(&ent.get_model_id()) {
                 bsp_renderer.render(encoder, &self.bsp_pipeline, user_data, time, camera, ent.get_origin(), ent.get_angles());
             }
         }

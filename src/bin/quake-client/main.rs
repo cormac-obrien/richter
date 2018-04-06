@@ -272,7 +272,6 @@ impl Program for ClientProgram  {
                     perspective,
                 );
 
-                flame::start("dummy texture generation");
                 use gfx::Factory;
                 use gfx::traits::FactoryExt;
                 let (_, dummy_texture) = self.factory.borrow_mut().create_texture_immutable_u8::<render::ColorFormat>(
@@ -280,7 +279,6 @@ impl Program for ClientProgram  {
                     gfx::texture::Mipmap::Allocated,
                     &[&[]]
                 ).expect("dummy texture generation failed");
-                flame::end("dummy texture generation");
 
                 let sampler = self.factory.borrow_mut().create_sampler(gfx::texture::SamplerInfo::new(
                     gfx::texture::FilterMethod::Scale,
