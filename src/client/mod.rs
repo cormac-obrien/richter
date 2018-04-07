@@ -38,6 +38,8 @@ use client::sound::AudioSource;
 use client::sound::Channel;
 use client::sound::StaticSound;
 use common::bsp;
+use common::console::CmdRegistry;
+use common::console::Console;
 use common::console::CvarRegistry;
 use common::engine;
 use common::model::Model;
@@ -49,6 +51,7 @@ use common::net::BlockingMode;
 use common::net::ButtonFlags;
 use common::net::ClientCmd;
 use common::net::ClientStat;
+use common::net::ColorShift;
 use common::net::EntityEffects;
 use common::net::EntityState;
 use common::net::GameType;
@@ -70,7 +73,6 @@ use cgmath::InnerSpace;
 use cgmath::Vector3;
 use cgmath::Zero;
 use chrono::Duration;
-use rodio;
 use rodio::Endpoint;
 
 // connections are tried 3 times, see
@@ -78,10 +80,6 @@ use rodio::Endpoint;
 const MAX_CONNECT_ATTEMPTS: usize = 3;
 
 const MAX_STATS: usize = 32;
-
-// TODO: replace these with cvar lookups
-const CL_ANGLESPEEDKEY_PLACEHOLDER: f32 = 1.5; // turn rate factor
-const CL_YAWSPEED_PLACEHOLDER: f32 = 140.0; // degrees/second
 
 const DEFAULT_SOUND_PACKET_VOLUME: u8 = 255;
 const DEFAULT_SOUND_PACKET_ATTENUATION: f32 = 1.0;
@@ -140,6 +138,14 @@ impl From<NetError> for ClientError {
     fn from(error: NetError) -> Self {
         ClientError::Net(error)
     }
+}
+
+#[derive(Debug, FromPrimitive)]
+enum ColorShiftCode {
+    Contents = 0,
+    Damage = 1,
+    Bonus = 2,
+    Powerup = 3,
 }
 
 struct ServerInfo {
@@ -278,7 +284,7 @@ impl Mixer {
     pub fn new(endpoint: Rc<Endpoint>) -> Mixer {
         let mut channel_vec = Vec::new();
 
-        for i in 0..MAX_CHANNELS {
+        for _ in 0..MAX_CHANNELS {
             channel_vec.push(None);
         }
 
@@ -339,22 +345,9 @@ impl Mixer {
             start_time: time,
             ent_id,
             ent_channel,
-            channel: Channel::new(self.endpoint.clone()),
+            channel: new_channel,
         })
     }
-}
-
-pub struct Scene {
-    brush_entities: Vec<usize>,
-    view_origin: Vector3<f32>,
-    view_angles: Vector3<Deg<f32>>,
-}
-
-impl Scene {
-    pub fn brush_entities(&self) -> &[usize] {
-        &self.brush_entities
-    }
-
 }
 
 // client information regarding the current level
@@ -390,7 +383,7 @@ struct ClientState {
     items: ItemFlags,
     item_get_time: [Duration; net::MAX_ITEMS],
     // face_anim_time: f32,
-    // color_shifts: [ColorShift; 4],
+    color_shifts: [Rc<RefCell<ColorShift>>; 4],
     // prev_color_shifts: [ColorShift; 4],
     view: ClientView,
 
@@ -476,6 +469,24 @@ impl ClientState {
                 Duration::zero(),
                 Duration::zero(),
             ],
+            color_shifts: [
+                Rc::new(RefCell::new(ColorShift {
+                    dest_color: [0; 3],
+                    percent: 0,
+                })),
+                Rc::new(RefCell::new(ColorShift {
+                    dest_color: [0; 3],
+                    percent: 0,
+                })),
+                Rc::new(RefCell::new(ColorShift {
+                    dest_color: [0; 3],
+                    percent: 0,
+                })),
+                Rc::new(RefCell::new(ColorShift {
+                    dest_color: [0; 3],
+                    percent: 0,
+                })),
+            ],
             view: ClientView::new(),
             msg_velocity: [Vector3::zero(), Vector3::zero()],
             velocity: Vector3::zero(),
@@ -489,6 +500,8 @@ impl ClientState {
 pub struct Client {
     pak: Rc<Pak>,
     cvars: Rc<RefCell<CvarRegistry>>,
+    cmds: Rc<RefCell<CmdRegistry>>,
+    console: Rc<RefCell<Console>>,
     endpoint: Rc<Endpoint>,
 
     qsock: QSocket,
@@ -503,6 +516,8 @@ impl Client {
         server_addrs: A,
         pak: Rc<Pak>,
         cvars: Rc<RefCell<CvarRegistry>>,
+        cmds: Rc<RefCell<CmdRegistry>>,
+        console: Rc<RefCell<Console>>,
         endpoint: Rc<Endpoint>,
     ) -> Result<Client, ClientError>
     where
@@ -590,6 +605,8 @@ impl Client {
         Ok(Client {
             pak: pak.clone(),
             cvars,
+            cmds,
+            console,
             endpoint: endpoint.clone(),
             qsock,
             compose: Vec::new(),
@@ -859,6 +876,12 @@ impl Client {
                     debug!("CD tracks not yet implemented");
                 }
 
+                ServerCmd::CenterPrint { text } => {
+                    // TODO: print to center of screen
+                    warn!("Center print not yet implemented!");
+                    println!("{}", text);
+                }
+
                 ServerCmd::ClientData {
                     view_height,
                     ideal_pitch,
@@ -1025,7 +1048,7 @@ impl Client {
                         self.state.entities[ent_id].model_id = new_model_id;
                         match self.state.models[new_model_id].kind() {
                             &ModelKind::None => force_link = true,
-                            m => {
+                            _ => {
                                 self.state.entities[ent_id].sync_base =
                                     match self.state.models[new_model_id].sync_type() {
                                         SyncType::Sync => Duration::zero(),
@@ -1214,6 +1237,8 @@ impl Client {
                         attenuation,
                     ));
                 }
+
+                ServerCmd::StuffText { text } => self.console.borrow_mut().stuff_text(text),
 
                 ServerCmd::Time { time } => {
                     self.state.msg_times[1] = self.state.msg_times[0];
@@ -1421,6 +1446,9 @@ impl Client {
         // TODO: set up rest of client state (R_NewMap)
 
         self.state = new_client_state;
+
+        // TODO: replace console commands holding `Rc`s to the old ClientState
+
         Ok(())
     }
 
@@ -1564,5 +1592,15 @@ impl Client {
             // TODO: apply various effects (lights, particles, trails...)
             // TODO: update visedicts
         }
+    }
+
+    pub fn register_cmds(&self, cmds: &mut CmdRegistry) {
+        let bonus_cshift = self.state.color_shifts[ColorShiftCode::Bonus as usize].clone();
+        cmds.insert_or_replace("bf", Box::new(move |_| {
+            bonus_cshift.replace(ColorShift {
+                dest_color: [215, 186, 69],
+                percent: 50,
+            });
+        })).unwrap();
     }
 }

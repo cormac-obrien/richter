@@ -17,10 +17,13 @@
 
 // TODO: implement proper Error types
 
+// TODO: have console commands take an IntoIter<AsRef<str>> instead of a Vec<String>
+
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::collections::HashMap;
 use std::iter::FromIterator;
+use std::rc::Rc;
 
 use winit::VirtualKeyCode as Key;
 
@@ -36,32 +39,39 @@ impl CmdRegistry {
         }
     }
 
-    /// Registers a new command.
+    /// Registers a new command with the given name.
     ///
     /// Returns an error if a command with the specified name already exists.
-    pub fn add_cmd<S>(&mut self, name: S, cmd: Box<Fn(Vec<&str>)>) -> Result<(), ()>
+    pub fn insert<S>(&mut self, name: S, cmd: Box<Fn(Vec<&str>)>) -> Result<(), ()>
     where
         S: AsRef<str>,
     {
-        let name = name.as_ref().to_owned();
-
-        match self.cmds.get(&name) {
+        match self.cmds.get(name.as_ref()) {
             Some(_) => {
-                error!("Command \"{}\" already registered.", name);
+                error!("Command \"{}\" already registered.", name.as_ref());
                 return Err(());
             }
             None => {
-                self.cmds.insert(name, cmd);
+                self.cmds.insert(name.as_ref().to_owned(), cmd);
             }
         }
 
         Ok(())
     }
 
+    /// Registers a new command with the given name, or replaces one if the name is in use.
+    pub fn insert_or_replace<S>(&mut self, name: S, cmd: Box<Fn(Vec<&str>)>) -> Result<(), ()>
+    where
+        S: AsRef<str>,
+    {
+        self.cmds.insert(name.as_ref().to_owned(), cmd);
+        Ok(())
+    }
+
     /// Executes a command.
     ///
     /// Returns an error if no command with the specified name exists.
-    pub fn exec_cmd<S>(&mut self, name: S, args: Vec<&str>) -> Result<(), ()>
+    pub fn exec<S>(&mut self, name: S, args: Vec<&str>) -> Result<(), ()>
     where
         S: AsRef<str>,
     {
@@ -73,6 +83,13 @@ impl CmdRegistry {
         }
 
         Ok(())
+    }
+
+    pub fn contains<S>(&self, name: S) -> bool
+    where
+        S: AsRef<str>,
+    {
+        self.cmds.contains_key(name.as_ref())
     }
 }
 
@@ -216,6 +233,13 @@ impl CvarRegistry {
             }
             None => Err(()),
         }
+    }
+
+    pub fn contains<S>(&self, name: S) -> bool
+    where
+        S: AsRef<str>,
+    {
+        self.cvars.borrow().contains_key(name.as_ref())
     }
 }
 
@@ -366,47 +390,45 @@ impl ConsoleOutput {
 }
 
 pub struct Console {
+    cmds: Rc<RefCell<CmdRegistry>>,
+    cvars: Rc<RefCell<CvarRegistry>>,
+
     input: ConsoleInput,
     hist: History,
+    buffer: String,
 }
 
 impl Console {
-    pub fn new() -> Console {
+    pub fn new(cmds: Rc<RefCell<CmdRegistry>>, cvars: Rc<RefCell<CvarRegistry>>) -> Console {
         Console {
+            cmds,
+            cvars,
             input: ConsoleInput::new(),
             hist: History::new(),
+            buffer: String::new(),
         }
     }
 
     pub fn send_char(&mut self, c: char) -> Result<(), ()> {
         match c {
             '\r' => {
+                // push this line to the execution buffer
                 let entered = self.get_string();
-                let mut parts = entered.split_whitespace();
+                self.buffer.push_str(&entered);
 
-                let cmd_name = match parts.next() {
-                    Some(c) => c,
-                    None => return Ok(()),
-                };
-
-                let args: Vec<&str> = parts.collect();
-
+                // add the current input to the history and clear it
                 self.hist.add_line(self.input.get_text());
                 self.input.clear();
             }
 
-            // backspace
             '\x08' => self.input.backspace(),
-
-            // delete
             '\x7f' => self.input.delete(),
 
-            '\t' => (), // TODO: tab completion
+            '\t' => warn!("Tab completion not implemented"), // TODO: tab completion
 
+            // TODO: we should probably restrict what characters are allowed
             c => self.input.insert(c),
         }
-
-        println!("{}", self.debug_string());
 
         Ok(())
     }
@@ -425,20 +447,44 @@ impl Console {
             Key::Left => self.input.cursor_left(),
             _ => return,
         }
+    }
 
-        println!("{}", self.debug_string());
+    pub fn execute(&mut self) {
+        for line in (&self.buffer).split(|c| c == '\n' || c == ';') {
+            let mut tok = Tokenizer::new(line);
+            if let Some(arg_0) = tok.next() {
+                // TODO: check aliases first
+
+                if self.cmds.borrow().contains(arg_0) {
+                    self.cmds.borrow_mut().exec(arg_0, tok.collect()).unwrap();
+                } else if self.cvars.borrow().contains(arg_0) {
+                    // TODO set cvar
+                    unimplemented!();
+                } else {
+                    // TODO print an error to the console -- for now just panic so we don't miss
+                    // real commands
+                    panic!("Unrecognized arg0 in console input: {}", arg_0);
+                }
+            }
+        }
+
+        self.buffer.clear();
     }
 
     fn get_string(&self) -> String {
         String::from_iter(self.input.text.clone().into_iter())
     }
 
-    fn debug_string(&self) -> String {
+    pub fn debug_string(&self) -> String {
         format!(
             "{}_{}",
             String::from_iter(self.input.text[..self.input.curs].to_owned().into_iter()),
             String::from_iter(self.input.text[self.input.curs..].to_owned().into_iter())
         )
+    }
+
+    pub fn stuff_text<S>(&mut self, text: S) where S: AsRef<str> {
+        self.buffer.push_str(text.as_ref());
     }
 }
 
@@ -495,6 +541,10 @@ impl<'a> Tokenizer<'a> {
 
         false
     }
+}
+
+impl<'a> ::std::iter::Iterator for Tokenizer<'a> {
+    type Item = &'a str;
 
     /// Returns the next token in the input stream.
     ///
@@ -524,7 +574,7 @@ impl<'a> Tokenizer<'a> {
     ///
     /// The function panics if the end of input is reached and there is an unmatched double-quote.
     /// This is not permanent behavior.
-    pub fn next(&mut self) -> Option<&'a str> {
+    fn next(&mut self) -> Option<&'a str> {
         loop {
             // Skip leading whitespace
             self.skip_spaces();

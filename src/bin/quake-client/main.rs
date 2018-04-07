@@ -48,6 +48,7 @@ use richter::client::render;
 use richter::client::render::SceneRenderer;
 use richter::common;
 use richter::common::console::CmdRegistry;
+use richter::common::console::Console;
 use richter::common::console::CvarRegistry;
 use richter::common::host::Host;
 use richter::common::host::Program;
@@ -77,6 +78,7 @@ struct ClientProgram {
     pak: Rc<Pak>,
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
+    console: Rc<RefCell<Console>>,
 
     events_loop: RefCell<EventsLoop>,
     window: RefCell<GlWindow>,
@@ -120,6 +122,8 @@ impl ClientProgram  {
         let cmds = Rc::new(RefCell::new(CmdRegistry::new()));
         // TODO: register commands as other subsystems come online
 
+        let console = Rc::new(RefCell::new(Console::new(cmds.clone(), cvars.clone())));
+
         let bindings = Rc::new(RefCell::new(Bindings::new(cvars.clone(), cmds.clone())));
         bindings.borrow_mut().assign_defaults();
 
@@ -148,6 +152,7 @@ impl ClientProgram  {
             pak: Rc::new(pak),
             cvars,
             cmds,
+            console,
             events_loop: RefCell::new(events_loop),
             window: RefCell::new(window),
             device: RefCell::new(device),
@@ -168,14 +173,20 @@ impl ClientProgram  {
     where
         A: ToSocketAddrs,
     {
-        self.client = Some(RefCell::new(
-            Client::connect(
+        self.client = Some(RefCell::new({
+            let cl = Client::connect(
                 server_addrs,
                 self.pak.clone(),
                 self.cvars.clone(),
+                self.cmds.clone(),
+                self.console.clone(),
                 self.endpoint.clone(),
-            ).unwrap(),
+            ).unwrap();
+            cl.register_cmds(&mut self.cmds.borrow_mut());
+            cl
+        }
         ));
+
     }
 }
 
@@ -248,6 +259,9 @@ impl Program for ClientProgram  {
                     .handle_input(&mut self.actions.borrow(), frame_duration, 0)
                     .unwrap();
             }
+
+            // run console commands
+            self.console.borrow_mut().execute();
 
             client.borrow_mut().send().unwrap();
 
@@ -330,7 +344,6 @@ fn main() {
     client_program.connect(&args[1]);
     let mut host = Host::new(client_program);
 
-    let mut quit = false;
     loop {
         host.frame();
     }
