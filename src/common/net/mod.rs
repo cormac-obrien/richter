@@ -1884,9 +1884,9 @@ pub enum ClientCmd {
     Move {
         send_time: Duration,
         angles: Vector3<Deg<f32>>,
-        fwd_move: u16,
-        side_move: u16,
-        up_move: u16,
+        fwd_move: i16,
+        side_move: i16,
+        up_move: i16,
         button_flags: ButtonFlags,
         impulse: u8,
     },
@@ -1932,9 +1932,9 @@ impl ClientCmd {
                     read_angle(reader)?,
                     read_angle(reader)?,
                 );
-                let fwd_move = reader.read_u16::<LittleEndian>()?;
-                let side_move = reader.read_u16::<LittleEndian>()?;
-                let up_move = reader.read_u16::<LittleEndian>()?;
+                let fwd_move = reader.read_i16::<LittleEndian>()?;
+                let side_move = reader.read_i16::<LittleEndian>()?;
+                let up_move = reader.read_i16::<LittleEndian>()?;
                 let button_flags_val = reader.read_u8()?;
                 let button_flags = match ButtonFlags::from_bits(button_flags_val) {
                     Some(bf) => bf,
@@ -1986,9 +1986,9 @@ impl ClientCmd {
             } => {
                 writer.write_f32::<LittleEndian>(engine::duration_to_f32(send_time))?;
                 write_angle_vector3(writer, angles)?;
-                writer.write_u16::<LittleEndian>(fwd_move)?;
-                writer.write_u16::<LittleEndian>(side_move)?;
-                writer.write_u16::<LittleEndian>(up_move)?;
+                writer.write_i16::<LittleEndian>(fwd_move)?;
+                writer.write_i16::<LittleEndian>(side_move)?;
+                writer.write_i16::<LittleEndian>(up_move)?;
                 writer.write_u8(button_flags.bits())?;
                 writer.write_u8(impulse)?;
             }

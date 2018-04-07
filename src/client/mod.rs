@@ -686,7 +686,7 @@ impl Client {
         upmove -= cl_upspeed * game_input.movedown as i32 as f32;
 
         let mut forwardmove = 0.0;
-        if game_input.klook {
+        if !game_input.klook {
             let cl_forwardspeed = self.cvars.borrow().get_value("cl_forwardspeed").unwrap();
             let cl_backspeed = self.cvars.borrow().get_value("cl_backspeed").unwrap();
             forwardmove += cl_forwardspeed * game_input.forward as i32 as f32;
@@ -717,9 +717,9 @@ impl Client {
         let move_cmd = ClientCmd::Move {
             send_time,
             angles,
-            fwd_move: forwardmove as u16,
-            side_move: sidemove as u16,
-            up_move: upmove as u16,
+            fwd_move: forwardmove as i16,
+            side_move: sidemove as i16,
+            up_move: upmove as i16,
             button_flags,
             impulse,
         };
@@ -849,6 +849,7 @@ impl Client {
         let mut reader = BufReader::new(msg.as_slice());
 
         while let Some(cmd) = ServerCmd::deserialize(&mut reader)? {
+            debug!("{:?}", cmd);
             match cmd {
                 ServerCmd::Bad => panic!("Invalid command from server"),
                 ServerCmd::NoOp => (),
