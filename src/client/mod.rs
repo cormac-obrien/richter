@@ -377,6 +377,7 @@ struct ClientState {
     msg_times: [Duration; 2],
     time: Duration,
     // old_time: Duration,
+    lerp_factor: f32,
 
     // move_msg_count: usize,
     // cmd: MoveCmd,
@@ -433,6 +434,7 @@ impl ClientState {
             ],
             msg_times: [Duration::zero(), Duration::zero()],
             time: Duration::zero(),
+            lerp_factor: 0.0,
             items: ItemFlags::empty(),
             // TODO: make this less horrific once const fn array initializers are available
             item_get_time: [
@@ -1325,10 +1327,6 @@ impl Client {
             }
         }
 
-        if self.signon == SignOnStage::Done {
-            self.relink_entities();
-        }
-
         Ok(())
     }
 
@@ -1484,18 +1482,21 @@ impl Client {
         self.state.msg_times[0]
     }
 
-    pub fn get_lerp_factor(&mut self) -> f32 {
+    #[flame]
+    pub fn update_time(&mut self) {
         // TODO: don't lerp if cls.timedemo != 0 (???) or server is running on this host
         if self.cvars.borrow().get_value("cl_nolerp").unwrap() != 0.0 {
             self.state.time = self.state.msg_times[0];
-            return 1.0;
+            self.state.lerp_factor = 1.0;
+            return;
         }
 
         let delta = match self.state.msg_times[0] - self.state.msg_times[1] {
             // if no time has passed, don't lerp anything
             d if d == Duration::zero() => {
                 self.state.time = self.state.msg_times[0];
-                return 1.0;
+                self.state.lerp_factor = 1.0;
+                return;
             }
 
             d if d > Duration::milliseconds(100) => {
@@ -1506,7 +1507,9 @@ impl Client {
             d => d,
         };
 
-        match engine::duration_to_f32(self.state.time - self.state.msg_times[1]) / engine::duration_to_f32(delta) {
+        self.state.lerp_factor = match engine::duration_to_f32(self.state.time - self.state.msg_times[1])
+            / engine::duration_to_f32(delta)
+        {
             f if f < 0.0 => {
                 if f < -0.01 {
                     self.state.time = self.state.msg_times[1];
@@ -1527,7 +1530,13 @@ impl Client {
         }
     }
 
-    fn relink_entities(&mut self) {
+    pub fn get_lerp_factor(&mut self) -> f32 {
+        debug!("lerp factor = {}", self.state.lerp_factor);
+        self.state.lerp_factor
+    }
+
+    #[flame]
+    pub fn relink_entities(&mut self) {
         let lerp_factor = self.get_lerp_factor();
 
         self.state.velocity = self.state.msg_velocity[1] + lerp_factor * self.state.msg_velocity[0];
@@ -1592,6 +1601,16 @@ impl Client {
             // TODO: apply various effects (lights, particles, trails...)
             // TODO: update visedicts
         }
+    }
+
+    pub fn frame(&mut self, frame_time: Duration) -> Result<(), ClientError> {
+        self.update_time();
+        self.state.time = self.state.time + frame_time;
+        self.parse_server_msg()?;
+        self.relink_entities();
+        // TODO: CL_UpdateTEnts
+
+        Ok(())
     }
 
     pub fn register_cmds(&self, cmds: &mut CmdRegistry) {

@@ -194,7 +194,7 @@ impl Program for ClientProgram  {
     #[flame]
     fn frame(&mut self, frame_duration: Duration) {
         if let Some(ref client) = self.client {
-            client.borrow_mut().parse_server_msg().unwrap();
+            client.borrow_mut().frame(frame_duration).unwrap();
 
             if client.borrow().get_signon_stage() == SignOnStage::Done {
                 if self.renderer.is_none() {
