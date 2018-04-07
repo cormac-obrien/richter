@@ -1076,6 +1076,8 @@ impl Client {
                     self.state.entities[ent_id].msg_origins[0].z =
                         origin_z.unwrap_or(self.state.entities[ent_id].baseline.origin.z);
 
+                    debug!("new entity {} origin: {:?}", ent_id, self.state.entities[ent_id].msg_origins);
+
                     // update angles
                     self.state.entities[ent_id].msg_angles[0][0] =
                         pitch.unwrap_or(self.state.entities[ent_id].baseline.angles[0]);
@@ -1514,7 +1516,7 @@ impl Client {
         }
 
         // NOTE that we start at entity 1 since we don't need to link the world entity
-        for ent in &mut self.state.entities[1..] {
+        for (ent_id, ent) in self.state.entities.iter_mut().enumerate().skip(1) {
             if ent.model_id == 0 {
                 // nothing in this entity slot
                 // TODO: R_RemoveEfrags
@@ -1522,7 +1524,7 @@ impl Client {
             }
 
             // if we didn't get an update this frame, remove the entity
-            if ent.msg_time == self.state.msg_times[0] {
+            if ent.msg_time != self.state.msg_times[0] {
                 ent.model_id = 0;
                 continue;
             }
@@ -1540,11 +1542,13 @@ impl Client {
                     //
                     // if the entity moved more than 100 units in one frame, assume it was teleported
                     // and don't lerp anything
+                    debug!("entity {} seems to have teleported", ent_id);
                     1.0
                 } else {
                     lerp_factor
                 };
 
+                debug!("Lerping entity {} origin | delta = {:?} | factor = {}", ent_id, origin_delta, ent_lerp_factor);
                 ent.origin = ent.msg_origins[1] + ent_lerp_factor * origin_delta;
 
                 for i in 0..3 {
