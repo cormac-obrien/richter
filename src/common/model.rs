@@ -33,10 +33,24 @@ pub enum SyncType {
     Rand = 1,
 }
 
+bitflags! {
+    pub struct ModelFlags: u8 {
+        const ROCKET  = 0b00000001;
+        const GRENADE = 0b00000010;
+        const GIB     = 0b00000100;
+        const ROTATE  = 0b00001000;
+        const TRACER  = 0b00010000;
+        const ZOMGIB  = 0b00100000;
+        const TRACER2 = 0b01000000;
+        const TRACER3 = 0b10000000;
+    }
+}
+
 #[derive(Debug)]
 pub struct Model {
     pub name: String,
     pub kind: ModelKind,
+    pub flags: ModelFlags,
 }
 
 #[derive(Debug)]
@@ -53,6 +67,7 @@ impl Model {
         Model {
             name: String::new(),
             kind: ModelKind::None,
+            flags: ModelFlags::empty(),
         }
     }
 
@@ -91,6 +106,7 @@ impl Model {
         Model {
             name: name.as_ref().to_owned(),
             kind: ModelKind::Brush(brush_model),
+            flags: ModelFlags::empty(),
         }
     }
 
@@ -102,6 +118,7 @@ impl Model {
         Model {
             name: name.as_ref().to_owned(),
             kind: ModelKind::Alias(alias_model),
+            flags: ModelFlags::empty(),
         }
     }
 
@@ -113,6 +130,7 @@ impl Model {
         Model {
             name: name.as_ref().to_owned(),
             kind: ModelKind::Sprite(sprite_model),
+            flags: ModelFlags::empty(),
         }
     }
 
@@ -158,5 +176,9 @@ impl Model {
             // TODO: expose sync_type in Mdl and reflect it here
             ModelKind::Alias(ref amodel) => SyncType::Sync,
         }
+    }
+
+    pub fn get_flags(&self) -> ModelFlags {
+        self.flags
     }
 }
