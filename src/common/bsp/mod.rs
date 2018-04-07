@@ -121,7 +121,6 @@ mod load;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
-use std::ops::Deref;
 use std::rc::Rc;
 
 use common::math::Hyperplane;
@@ -134,7 +133,6 @@ use server::world::TraceStart;
 use server::world::TraceEnd;
 
 use chrono::Duration;
-use cgmath::InnerSpace;
 use cgmath::Vector3;
 
 pub use self::load::load;

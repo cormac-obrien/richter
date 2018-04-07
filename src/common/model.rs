@@ -15,8 +15,6 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use client::render::Palette;
-use client::render::bsp::BspRenderer;
 use common::bsp::BspModel;
 use common::mdl;
 use common::mdl::AliasModel;
@@ -25,7 +23,6 @@ use common::sprite;
 use common::sprite::SpriteModel;
 
 use cgmath::Vector3;
-use gfx;
 
 #[derive(Debug, FromPrimitive)]
 pub enum SyncType {

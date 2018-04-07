@@ -814,7 +814,7 @@ impl World {
 
         if actual_dist == drop_dist || trace.all_solid() {
             // entity didn't hit the floor or is stuck
-            Ok((false))
+            Ok(false)
         } else {
             // entity hit the floor. update origin, relink and set ON_GROUND flag.
             self.try_get_entity_mut(e_id)?
@@ -825,7 +825,7 @@ impl World {
             self.try_get_entity_mut(e_id)?
                 .put_entity_id(collide_entity, FieldAddrEntityId::Ground as i16)?;
 
-            Ok((true))
+            Ok(true)
         }
     }
 

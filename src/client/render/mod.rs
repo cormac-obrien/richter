@@ -29,7 +29,6 @@ use common::pak::Pak;
 
 use cgmath::Deg;
 use cgmath::Euler;
-use cgmath::Matrix3;
 use cgmath::Matrix4;
 use cgmath::Vector3;
 use chrono::Duration;
