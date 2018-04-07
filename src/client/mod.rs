@@ -34,7 +34,6 @@ use std::net::ToSocketAddrs;
 use std::rc::Rc;
 
 use client::input::GameInput;
-use client::render::Camera;
 use client::sound::AudioSource;
 use client::sound::Channel;
 use client::sound::StaticSound;
@@ -42,6 +41,7 @@ use common::bsp;
 use common::console::CvarRegistry;
 use common::engine;
 use common::model::Model;
+use common::model::ModelFlags;
 use common::model::ModelKind;
 use common::model::SyncType;
 use common::net;
@@ -66,6 +66,7 @@ use common::pak::Pak;
 
 use cgmath::Angle;
 use cgmath::Deg;
+use cgmath::InnerSpace;
 use cgmath::Vector3;
 use cgmath::Zero;
 use chrono::Duration;
@@ -1296,6 +1297,10 @@ impl Client {
             }
         }
 
+        if self.signon == SignOnStage::Done {
+            self.relink_entities();
+        }
+
         Ok(())
     }
 
@@ -1488,6 +1493,71 @@ impl Client {
             }
 
             f => f,
+        }
+    }
+
+    fn relink_entities(&mut self) {
+        let lerp_factor = self.get_lerp_factor();
+
+        self.state.velocity = self.state.msg_velocity[1] + lerp_factor * self.state.msg_velocity[0];
+
+        // TODO: if we're in demo playback, interpolate the view angles
+
+        use cgmath::Angle;
+        let obj_rotate = Deg(100.0 * engine::duration_to_f32(self.state.time)).normalize();
+
+        // in the extremely unlikely event that there's only a world entity and nothing else, just
+        // return
+        if self.state.entities.len() <= 1 {
+            return;
+        }
+
+        // NOTE that we start at entity 1 since we don't need to link the world entity
+        for ent in &mut self.state.entities[1..] {
+            if ent.model_id == 0 {
+                // nothing in this entity slot
+                // TODO: R_RemoveEfrags
+                continue;
+            }
+
+            // if we didn't get an update this frame, remove the entity
+            if ent.msg_time == self.state.msg_times[0] {
+                ent.model_id = 0;
+                continue;
+            }
+
+            let old_origin = ent.origin;
+
+            if ent.force_link {
+                ent.origin = ent.msg_origins[0];
+                ent.angles = ent.msg_angles[0];
+            } else {
+                let origin_delta = ent.msg_origins[0] - ent.msg_origins[1];
+                let ent_lerp_factor = if origin_delta.magnitude2() > 10_000.0 {
+                    // NOTE: the original engine uses magnitude vs. 100 units, where we use magnitude^2
+                    // vs. 10000 sq. units
+                    //
+                    // if the entity moved more than 100 units in one frame, assume it was teleported
+                    // and don't lerp anything
+                    1.0
+                } else {
+                    lerp_factor
+                };
+
+                ent.origin = ent.msg_origins[1] + ent_lerp_factor * origin_delta;
+
+                for i in 0..3 {
+                    let angle_delta = ent.msg_angles[0][i] - ent.msg_angles[1][i];
+                    ent.angles[i] = (ent.msg_angles[1][i] + angle_delta * ent_lerp_factor).normalize();
+                }
+            }
+
+            if self.state.models[ent.model_id].get_flags().contains(ModelFlags::ROTATE) {
+                ent.angles[1] = obj_rotate;
+            }
+
+            // TODO: apply various effects (lights, particles, trails...)
+            // TODO: update visedicts
         }
     }
 }
