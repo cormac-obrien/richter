@@ -244,7 +244,6 @@ impl Bindings {
     ) where
         I: Into<BindInput> + ::std::fmt::Debug,
     {
-        debug!("Bindings: handle input {:?}", &input);
         if let Some(target) = self.get(input) {
 
             match *target {

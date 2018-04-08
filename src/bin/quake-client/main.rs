@@ -277,7 +277,7 @@ impl Program for ClientProgram  {
 
                         _ => (),
                     });
-                println!("{:?}", &mut self.actions.borrow());
+
                 client
                     .borrow_mut()
                     .handle_input(&mut self.actions.borrow(), frame_duration, 0)
