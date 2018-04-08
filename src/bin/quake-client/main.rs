@@ -88,6 +88,7 @@ struct ClientProgram {
     encoder: RefCell<Encoder<Resources, CommandBuffer>>,
     color: RenderTargetView<Resources, render::ColorFormat>,
     depth: DepthStencilView<Resources, render::DepthFormat>,
+    data: RefCell<render::pipe::Data<Resources>>,
 
     bindings: Rc<RefCell<Bindings>>,
     endpoint: Rc<Endpoint>,
@@ -133,7 +134,7 @@ impl ClientProgram  {
             .with_dimensions(1366, 768);
         let context_builder = glutin::ContextBuilder::new()
             .with_gl(glutin::GlRequest::Specific(glutin::Api::OpenGl, (3, 3)))
-            .with_vsync(true);
+            .with_vsync(false);
 
         let (window, device, mut factory, color, depth) =
             gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(
@@ -141,6 +142,27 @@ impl ClientProgram  {
                 context_builder,
                 &events_loop,
             );
+
+        use gfx::Factory;
+        use gfx::traits::FactoryExt;
+        let (_, dummy_texture) = factory.create_texture_immutable_u8::<render::ColorFormat>(
+            gfx::texture::Kind::D2(0, 0, gfx::texture::AaMode::Single),
+            gfx::texture::Mipmap::Allocated,
+            &[&[]]
+        ).expect("dummy texture generation failed");
+
+        let sampler = factory.create_sampler(gfx::texture::SamplerInfo::new(
+            gfx::texture::FilterMethod::Scale,
+            gfx::texture::WrapMode::Tile,
+        ));
+
+        let mut data = render::pipe::Data {
+            vertex_buffer: factory.create_vertex_buffer(&[]),
+            transform: Matrix4::identity().into(),
+            sampler: (dummy_texture, sampler),
+            out_color: color.clone(),
+            out_depth: depth.clone(),
+        };
 
         let encoder = factory.create_command_buffer().into();
 
@@ -158,6 +180,7 @@ impl ClientProgram  {
             device: RefCell::new(device),
             factory: RefCell::new(factory),
             encoder: RefCell::new(encoder),
+            data: RefCell::new(data),
             color: color,
             depth: depth,
             bindings,
@@ -193,6 +216,7 @@ impl ClientProgram  {
 impl Program for ClientProgram  {
     #[flame]
     fn frame(&mut self, frame_duration: Duration) {
+        println!("{}", frame_duration.num_milliseconds());
         if let Some(ref client) = self.client {
             client.borrow_mut().frame(frame_duration).unwrap();
 
@@ -286,34 +310,13 @@ impl Program for ClientProgram  {
                     perspective,
                 );
 
-                use gfx::Factory;
-                use gfx::traits::FactoryExt;
-                let (_, dummy_texture) = self.factory.borrow_mut().create_texture_immutable_u8::<render::ColorFormat>(
-                    gfx::texture::Kind::D2(0, 0, gfx::texture::AaMode::Single),
-                    gfx::texture::Mipmap::Allocated,
-                    &[&[]]
-                ).expect("dummy texture generation failed");
-
-                let sampler = self.factory.borrow_mut().create_sampler(gfx::texture::SamplerInfo::new(
-                    gfx::texture::FilterMethod::Scale,
-                    gfx::texture::WrapMode::Tile,
-                ));
-
-                let mut data = render::pipe::Data {
-                    vertex_buffer: self.factory.borrow_mut().create_vertex_buffer(&[]),
-                    transform: Matrix4::identity().into(),
-                    sampler: (dummy_texture, sampler),
-                    out_color: self.color.clone(),
-                    out_depth: self.depth.clone(),
-                };
-
                 println!("Beginning render pass.");
 
-                self.encoder.borrow_mut().clear(&data.out_color, [0.0, 0.0, 0.0, 1.0]);
-                self.encoder.borrow_mut().clear_depth(&data.out_depth, 1.0);
+                self.encoder.borrow_mut().clear(&self.data.borrow().out_color, [0.0, 0.0, 0.0, 1.0]);
+                self.encoder.borrow_mut().clear_depth(&self.data.borrow().out_depth, 1.0);
                 renderer.borrow_mut().render(
                     &mut self.encoder.borrow_mut(),
-                    &mut data,
+                    &mut self.data.borrow_mut(),
                     client.borrow().get_entities().unwrap(),
                     client.borrow().get_time(),
                     &camera,
