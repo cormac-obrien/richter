@@ -750,9 +750,11 @@ impl Client {
 
     #[flame]
     pub fn send(&mut self) -> Result<(), ClientError> {
-        // TODO: check can_send on qsock
-        self.qsock.begin_send_msg(&self.compose)?;
-        self.compose.clear();
+        // TODO: report !can_send as a failure?
+        if self.qsock.can_send() {
+            self.qsock.begin_send_msg(&self.compose)?;
+            self.compose.clear();
+        }
 
         Ok(())
     }
@@ -868,14 +870,13 @@ impl Client {
         let mut reader = BufReader::new(msg.as_slice());
 
         while let Some(cmd) = ServerCmd::deserialize(&mut reader)? {
-            debug!("{:?}", cmd);
             match cmd {
                 ServerCmd::Bad => panic!("Invalid command from server"),
                 ServerCmd::NoOp => (),
 
                 ServerCmd::CdTrack { .. } => {
                     // TODO: play CD track
-                    debug!("CD tracks not yet implemented");
+                    warn!("CD tracks not yet implemented");
                 }
 
                 ServerCmd::CenterPrint { text } => {
@@ -907,7 +908,6 @@ impl Client {
                     ammo_cells,
                     active_weapon,
                 } => {
-                    debug!("Updating local client data: {:?}", &cmd);
                     self.state.view.view_height = view_height.unwrap_or(net::DEFAULT_VIEWHEIGHT);
                     self.state.view.ideal_pitch = ideal_pitch.unwrap_or(Deg(0.0));
 
@@ -1100,8 +1100,6 @@ impl Client {
                         origin_y.unwrap_or(self.state.entities[ent_id].baseline.origin.y);
                     self.state.entities[ent_id].msg_origins[0].z =
                         origin_z.unwrap_or(self.state.entities[ent_id].baseline.origin.z);
-
-                    debug!("new entity {} origin: {:?}", ent_id, self.state.entities[ent_id].msg_origins);
 
                     // update angles
                     self.state.entities[ent_id].msg_angles[0][0] =
@@ -1531,7 +1529,6 @@ impl Client {
     }
 
     pub fn get_lerp_factor(&mut self) -> f32 {
-        debug!("lerp factor = {}", self.state.lerp_factor);
         self.state.lerp_factor
     }
 
@@ -1569,6 +1566,7 @@ impl Client {
             let old_origin = ent.origin;
 
             if ent.force_link {
+                debug!("force link on entity {}", ent_id);
                 ent.origin = ent.msg_origins[0];
                 ent.angles = ent.msg_angles[0];
             } else {
@@ -1585,7 +1583,6 @@ impl Client {
                     lerp_factor
                 };
 
-                debug!("Lerping entity {} origin | delta = {:?} | factor = {}", ent_id, origin_delta, ent_lerp_factor);
                 ent.origin = ent.msg_origins[1] + ent_lerp_factor * origin_delta;
 
                 for i in 0..3 {
@@ -1600,6 +1597,8 @@ impl Client {
 
             // TODO: apply various effects (lights, particles, trails...)
             // TODO: update visedicts
+
+            ent.force_link = false;
         }
     }
 
