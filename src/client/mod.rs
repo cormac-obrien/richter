@@ -27,7 +27,6 @@ pub use self::cvars::register_cvars;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::error::Error;
 use std::fmt;
 use std::io::BufReader;
 use std::net::ToSocketAddrs;
@@ -73,6 +72,7 @@ use cgmath::InnerSpace;
 use cgmath::Vector3;
 use cgmath::Zero;
 use chrono::Duration;
+use failure::Error;
 use rodio::Endpoint;
 
 // connections are tried 3 times, see
@@ -118,7 +118,7 @@ impl fmt::Display for ClientError {
     }
 }
 
-impl Error for ClientError {
+impl ::std::error::Error for ClientError {
     fn description(&self) -> &str {
         match *self {
             ClientError::Io(ref err) => err.description(),
@@ -685,7 +685,7 @@ impl Client {
         game_input: &GameInput,
         frame_time: Duration,
         impulse: u8,
-    ) -> Result<(), ClientError> {
+    ) -> Result<(), Error> {
         self.adjust_angles(game_input, frame_time);
 
         let cl_sidespeed = self.cvars.borrow().get_value("cl_sidespeed").unwrap();
@@ -743,7 +743,10 @@ impl Client {
             impulse,
         };
         debug!("Sending move command: {:?}", move_cmd);
-        self.add_cmd(move_cmd)?;
+
+        let mut msg = Vec::new();
+        move_cmd.serialize(&mut msg)?;
+        self.qsock.send_msg_unreliable(&msg)?;
 
         Ok(())
     }
@@ -751,7 +754,7 @@ impl Client {
     #[flame]
     pub fn send(&mut self) -> Result<(), ClientError> {
         // TODO: report !can_send as a failure?
-        if self.qsock.can_send() {
+        if self.qsock.can_send() && !self.compose.is_empty() {
             self.qsock.begin_send_msg(&self.compose)?;
             self.compose.clear();
         }
