@@ -18,6 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub mod alias;
 pub mod bsp;
 
 use std::collections::HashMap;
@@ -32,6 +33,7 @@ use cgmath::Euler;
 use cgmath::Matrix4;
 use cgmath::Vector3;
 use chrono::Duration;
+use failure::Error;
 use gfx;
 use gfx::pso::PipelineData;
 use gfx::pso::PipelineState;
@@ -41,9 +43,39 @@ use gfx_device_gl::Resources;
 pub use gfx::format::Srgba8 as ColorFormat;
 pub use gfx::format::DepthStencil as DepthFormat;
 
+use self::alias::AliasRenderer;
 use self::bsp::BspRenderer;
 
 const PALETTE_SIZE: usize = 768;
+
+pub static VERTEX_SHADER_GLSL: &[u8] = br#"
+#version 430
+
+layout (location = 0) in vec3 a_Pos;
+layout (location = 1) in vec2 a_Texcoord;
+
+out vec2 f_texcoord;
+
+uniform mat4 u_Transform;
+
+void main() {
+    f_texcoord = a_Texcoord;
+    gl_Position = u_Transform * vec4(-a_Pos.y, a_Pos.z, -a_Pos.x, 1.0);
+}
+"#;
+
+pub static FRAGMENT_SHADER_GLSL: &[u8] = br#"
+#version 430
+
+in vec2 f_texcoord;
+
+uniform sampler2D u_Texture;
+
+out vec4 Target0;
+
+void main() {
+    Target0 = texture(u_Texture, f_texcoord);
+}"#;
 
 gfx_defines! {
     vertex Vertex {
@@ -102,17 +134,17 @@ impl Camera {
 }
 
 pub struct SceneRenderer {
-    bsp_pipeline: PipelineState<Resources, <pipe::Data<Resources> as PipelineData<Resources>>::Meta>,
+    pipeline: PipelineState<Resources, <pipe::Data<Resources> as PipelineData<Resources>>::Meta>,
     bsp_renderers: HashMap<usize, BspRenderer>,
-    // mdl_renderers: ...,
+    alias_renderers: HashMap<usize, AliasRenderer>,
     // spr_renderers: ...,
 }
 
 impl SceneRenderer {
-    pub fn new(models: &[Model], palette: &Palette, factory: &mut Factory) -> SceneRenderer
+    pub fn new(models: &[Model], palette: &Palette, factory: &mut Factory) -> Result<SceneRenderer, Error>
     {
         use gfx::traits::FactoryExt;
-        let bsp_shader_set = factory.create_shader_set(bsp::BSP_VERTEX_SHADER_GLSL, bsp::BSP_FRAGMENT_SHADER_GLSL).unwrap();
+        let shader_set = factory.create_shader_set(VERTEX_SHADER_GLSL, FRAGMENT_SHADER_GLSL).unwrap();
 
         let rasterizer = gfx::state::Rasterizer {
             front_face: gfx::state::FrontFace::Clockwise,
@@ -122,14 +154,15 @@ impl SceneRenderer {
             samples: Some(gfx::state::MultiSample),
         };
 
-        let bsp_pipeline = factory.create_pipeline_state(
-            &bsp_shader_set,
+        let pipeline = factory.create_pipeline_state(
+            &shader_set,
             gfx::Primitive::TriangleList,
             rasterizer,
             pipe::new(),
         ).unwrap();
 
         let mut bsp_renderers = HashMap::new();
+        let mut alias_renderers = HashMap::new();
         for (i, model) in models.iter().enumerate() {
             match *model.kind() {
                 ModelKind::Brush(ref bmodel) => {
@@ -137,17 +170,22 @@ impl SceneRenderer {
                     bsp_renderers.insert(i, BspRenderer::new(model.name(), &bmodel, palette, factory));
                 }
 
-                // TODO: handle other models here
-                ModelKind::Alias(_) => debug!("model {}: alias model", i),
+                ModelKind::Alias(ref amodel) => {
+                    debug!("model {}: alias model", i);
+                    alias_renderers.insert(i, AliasRenderer::new(&amodel, palette, factory)?);
+                },
+
+                // TODO handle sprite and null models
                 ModelKind::Sprite(_) => debug!("model {}: sprite model", i),
                 _ => (),
             }
         }
 
-        SceneRenderer {
-            bsp_pipeline,
-            bsp_renderers
-        }
+        Ok(SceneRenderer {
+            pipeline,
+            bsp_renderers,
+            alias_renderers
+        })
     }
 
     #[flame]
@@ -158,14 +196,39 @@ impl SceneRenderer {
         entities: &[ClientEntity],
         time: Duration,
         camera: &Camera,
-    ) where
+    ) -> Result<(), Error>
+    where
         C: gfx::CommandBuffer<Resources>,
     {
         for ent in entities.iter() {
-            if let Some(ref bsp_renderer) = self.bsp_renderers.get(&ent.get_model_id()) {
-                bsp_renderer.render(encoder, &self.bsp_pipeline, user_data, time, camera, ent.get_origin(), ent.get_angles());
+            let model_id = ent.get_model_id();
+            if let Some(ref bsp_renderer) = self.bsp_renderers.get(&model_id) {
+                bsp_renderer.render(
+                    encoder,
+                    &self.pipeline,
+                    user_data,
+                    time,
+                    camera,
+                    ent.get_origin(),
+                    ent.get_angles()
+                );
+            } else if let Some(ref alias_renderer) = self.alias_renderers.get(&model_id) {
+                // TODO: pull keyframe and texture ID
+                alias_renderer.render(
+                    encoder,
+                    &self.pipeline,
+                    user_data,
+                    time,
+                    camera,
+                    ent.get_origin(),
+                    ent.get_angles(),
+                    0,
+                    0
+                )?;
             }
         }
+
+        Ok(())
     }
 }
 

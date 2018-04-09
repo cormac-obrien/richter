@@ -26,7 +26,6 @@ use common::model::SyncType;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
-use cgmath::Vector2;
 use cgmath::Vector3;
 use chrono::Duration;
 use failure::Error;
@@ -83,6 +82,43 @@ impl AnimatedTexture {
 pub enum Texture {
     Static(StaticTexture),
     Animated(AnimatedTexture),
+}
+
+#[derive(Clone, Debug)]
+pub struct Texcoord {
+    is_on_seam: bool,
+    s: u32,
+    t: u32,
+}
+
+impl Texcoord {
+    pub fn is_on_seam(&self) -> bool {
+        self.is_on_seam
+    }
+
+    pub fn s(&self) -> u32 {
+        self.s
+    }
+
+    pub fn t(&self) -> u32 {
+        self.t
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct IndexedPolygon {
+    faces_front: bool,
+    indices: [u32; 3],
+}
+
+impl IndexedPolygon {
+    pub fn faces_front(&self) -> bool {
+        self.faces_front
+    }
+
+    pub fn indices(&self) -> &[u32; 3] {
+        &self.indices
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -145,7 +181,7 @@ impl AnimatedKeyframeFrame {
         self.duration
     }
 
-    /// Returns the vertices definings this subframe.
+    /// Returns the vertices defining this subframe.
     pub fn vertices(&self) -> &[Vector3<f32>] {
         &self.vertices
     }
@@ -185,10 +221,46 @@ pub enum Keyframe {
 pub struct AliasModel {
     origin: Vector3<f32>,
     radius: f32,
+    texture_width: u32,
+    texture_height: u32,
     textures: Box<[Texture]>,
-    texcoords: Box<[Vector2<f32>]>,
-    indices: Box<[u32]>,
+    texcoords: Box<[Texcoord]>,
+    polygons: Box<[IndexedPolygon]>,
     keyframes: Box<[Keyframe]>,
+}
+
+impl AliasModel {
+    pub fn origin(&self) -> Vector3<f32> {
+        self.origin
+    }
+
+    pub fn radius(&self) -> f32 {
+        self.radius
+    }
+
+    pub fn texture_width(&self) -> u32 {
+        self.texture_width
+    }
+
+    pub fn texture_height(&self) -> u32 {
+        self.texture_height
+    }
+
+    pub fn textures(&self) -> &[Texture] {
+        &self.textures
+    }
+
+    pub fn texcoords(&self) -> &[Texcoord] {
+        &self.texcoords
+    }
+
+    pub fn polygons(&self) -> &[IndexedPolygon] {
+        &self.polygons
+    }
+
+    pub fn keyframes(&self) -> &[Keyframe] {
+        &self.keyframes
+    }
 }
 
 pub fn load(data: &[u8]) -> Result<AliasModel, Error> {
@@ -222,11 +294,11 @@ pub fn load(data: &[u8]) -> Result<AliasModel, Error> {
 
     let texture_count = reader.read_i32::<LittleEndian>()?;
 
-    let texture_w = reader.read_i32::<LittleEndian>()?;
-    ensure!(texture_w > 0, "Texture width must be positive (got {})", texture_w);
+    let texture_width = reader.read_i32::<LittleEndian>()?;
+    ensure!(texture_width > 0, "Texture width must be positive (got {})", texture_width);
 
-    let texture_h = reader.read_i32::<LittleEndian>()?;
-    ensure!(texture_h > 0, "Texture height must be positive (got {})", texture_h);
+    let texture_height = reader.read_i32::<LittleEndian>()?;
+    ensure!(texture_height > 0, "Texture height must be positive (got {})", texture_height);
 
     let vertex_count = reader.read_i32::<LittleEndian>()?;
     ensure!(vertex_count > 0, "Vertex count must be positive (got {})", vertex_count);
@@ -258,9 +330,9 @@ pub fn load(data: &[u8]) -> Result<AliasModel, Error> {
         let texture = match reader.read_i32::<LittleEndian>()? {
             // Static
             0 => {
-                let mut indices: Vec<u8> = Vec::with_capacity((texture_w * texture_h) as usize);
+                let mut indices: Vec<u8> = Vec::with_capacity((texture_width * texture_height) as usize);
                 (&mut reader)
-                    .take((texture_w * texture_h) as u64)
+                    .take((texture_width * texture_height) as u64)
                     .read_to_end(&mut indices)?;
                 Texture::Static(StaticTexture {
                     indices: indices.into_boxed_slice(),
@@ -281,9 +353,9 @@ pub fn load(data: &[u8]) -> Result<AliasModel, Error> {
 
                 let mut frames = Vec::with_capacity(texture_frame_count);
                 for frame_id in 0..texture_frame_count {
-                    let mut indices: Vec<u8> = Vec::with_capacity((texture_w * texture_h) as usize);
+                    let mut indices: Vec<u8> = Vec::with_capacity((texture_width * texture_height) as usize);
                     (&mut reader)
-                        .take((texture_w * texture_h) as u64)
+                        .take((texture_width * texture_height) as u64)
                         .read_to_end(&mut indices)?;
                     frames.push(AnimatedTextureFrame {
                         duration: durations[frame_id as usize],
@@ -309,38 +381,45 @@ pub fn load(data: &[u8]) -> Result<AliasModel, Error> {
     // is being ignored. This process is optimized in the MDL format for OpenGL immediate mode
     // and I haven't found an elegant way to implement it yet.
 
-    let mut texcoords: Vec<Vector2<f32>> = Vec::with_capacity(vertex_count as usize);
-    // let mut seams: Vec<bool> = Vec::with_capacity(vertex_count as usize);
+    let mut texcoords = Vec::with_capacity(vertex_count as usize);
     for _ in 0..vertex_count {
-        // seams.push(match reader.read_i32::<LittleEndian>()? {
-        //     0 => false,
-        //     0x20 => true,
-        //     _ => panic!("bad seam value"),
-        // });
-        reader.read_i32::<LittleEndian>()?;
+        let is_on_seam = match reader.read_i32::<LittleEndian>()? {
+            0 => false,
+            0x20 => true,
+            x => bail!("bad seam value: {}", x),
+        };
 
-        texcoords.push(Vector2::new(
-            reader.read_i32::<LittleEndian>()? as f32 / texture_w as f32,
-            reader.read_i32::<LittleEndian>()? as f32 / texture_h as f32,
-        ));
+        let s = reader.read_i32::<LittleEndian>()?;
+        let t = reader.read_i32::<LittleEndian>()?;
+        ensure!(s >= 0, "Negative s value: {}", s);
+        ensure!(t >= 0, "Negative t value: {}", t);
+
+        texcoords.push(Texcoord {
+            is_on_seam,
+            s: s as u32,
+            t: t as u32,
+        });
     }
 
     // let mut poly_facings: Vec<bool> = Vec::with_capacity(poly_count as usize);
-    let mut indices: Vec<u32> = Vec::with_capacity(3 * poly_count as usize);
+    let mut polygons = Vec::with_capacity(poly_count as usize);
     for _ in 0..poly_count {
-        // poly_facings.push(match reader.read_i32::<LittleEndian>()? {
-        //     0 => false,
-        //     1 => true,
-        //     _ => panic!("bad front value"),
-        // });
-        reader.read_i32::<LittleEndian>()?;
+        let faces_front = match reader.read_i32::<LittleEndian>()? {
+            0 => false,
+            1 => true,
+            x => bail!("bad faces_front value: {}", x),
+        };
 
-        for _ in 0..3 {
-            indices.push(reader.read_i32::<LittleEndian>()? as u32);
+        let mut indices = [0; 3];
+        for i in 0..3 {
+            indices[i] = reader.read_i32::<LittleEndian>()? as u32;
         }
-    }
 
-    debug!("loaded indices.");
+        polygons.push(IndexedPolygon {
+            faces_front,
+            indices,
+        });
+    }
 
     let mut keyframes: Vec<Keyframe> = Vec::with_capacity(keyframe_count as usize);
     for _ in 0..keyframe_count {
@@ -497,11 +576,13 @@ pub fn load(data: &[u8]) -> Result<AliasModel, Error> {
     }
 
     Ok(AliasModel {
-        origin: origin,
-        radius: radius,
+        origin,
+        radius,
+        texture_width: texture_width as u32,
+        texture_height: texture_height as u32,
         textures: textures.into_boxed_slice(),
         texcoords: texcoords.into_boxed_slice(),
-        indices: indices.into_boxed_slice(),
+        polygons: polygons.into_boxed_slice(),
         keyframes: keyframes.into_boxed_slice(),
     })
 }

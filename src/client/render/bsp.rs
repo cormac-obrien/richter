@@ -32,9 +32,9 @@ use cgmath::Vector3;
 use cgmath::Matrix4;
 use chrono::Duration;
 use gfx::CommandBuffer;
-use gfx::IndexBuffer;
 use gfx::Encoder;
 use gfx::Factory;
+use gfx::IndexBuffer;
 use gfx::Slice;
 use gfx::format::Srgba8 as ColorFormat;
 use gfx::handle::Buffer;
@@ -44,35 +44,6 @@ use gfx::pso::PipelineState;
 use gfx::texture;
 use gfx::traits::FactoryExt;
 use gfx_device_gl::Resources;
-
-pub static BSP_VERTEX_SHADER_GLSL: &[u8] = br#"
-#version 430
-
-layout (location = 0) in vec3 a_Pos;
-layout (location = 1) in vec2 a_Texcoord;
-
-out vec2 f_texcoord;
-
-uniform mat4 u_Transform;
-
-void main() {
-    f_texcoord = a_Texcoord;
-    gl_Position = u_Transform * vec4(-a_Pos.y, a_Pos.z, -a_Pos.x, 1.0);
-}
-"#;
-
-pub static BSP_FRAGMENT_SHADER_GLSL: &[u8] = br#"
-#version 430
-
-in vec2 f_texcoord;
-
-uniform sampler2D u_Texture;
-
-out vec4 Target0;
-
-void main() {
-    Target0 = texture(u_Texture, f_texcoord);
-}"#;
 
 pub struct BspRenderFace {
     pub slice: Slice<Resources>,
@@ -218,9 +189,6 @@ impl BspRenderer {
     ) where
         C: CommandBuffer<Resources>,
     {
-        // FIXME: face selection is wrong. the provided face id indexes correctly in the BspData but
-        // not the renderer.
-
         if leaf_id >= self.leaves.len() {
             error!("leaf ID is out of bounds: the len is {} but the leaf ID is {}", self.leaves.len(), leaf_id);
             return;

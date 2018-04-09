@@ -226,7 +226,7 @@ impl Program for ClientProgram  {
                         client.borrow().get_models().unwrap(),
                         &self.palette,
                         &mut self.factory.borrow_mut(),
-                    )));
+                    ).unwrap()));
                 }
 
                 self.bindings
