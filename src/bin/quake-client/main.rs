@@ -216,7 +216,6 @@ impl ClientProgram  {
 impl Program for ClientProgram  {
     #[flame]
     fn frame(&mut self, frame_duration: Duration) {
-        println!("{}", frame_duration.num_milliseconds());
         if let Some(ref client) = self.client {
             client.borrow_mut().frame(frame_duration).unwrap();
 
@@ -224,6 +223,7 @@ impl Program for ClientProgram  {
                 if self.renderer.is_none() {
                     self.renderer = Some(RefCell::new(SceneRenderer::new(
                         client.borrow().get_models().unwrap(),
+                        1,
                         &self.palette,
                         &mut self.factory.borrow_mut(),
                     ).unwrap()));
@@ -244,7 +244,6 @@ impl Program for ClientProgram  {
                         Event::WindowEvent { event, .. } => match event {
                             WindowEvent::Closed => {
                                 // TODO: handle quit properly
-                                flame::dump_html(&mut std::fs::File::create("./flame.html").unwrap()).unwrap();
                                 std::process::exit(0);
                             }
 
@@ -309,8 +308,6 @@ impl Program for ClientProgram  {
                     cl.get_view_angles(),
                     perspective,
                 );
-
-                println!("Beginning render pass.");
 
                 self.encoder.borrow_mut().clear(&self.data.borrow().out_color, [0.0, 0.0, 0.0, 1.0]);
                 self.encoder.borrow_mut().clear_depth(&self.data.borrow().out_depth, 1.0);

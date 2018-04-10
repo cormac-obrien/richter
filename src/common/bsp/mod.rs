@@ -800,7 +800,7 @@ impl BspData {
 
         match self.leaves[leaf_id].vis_offset {
             Some(o) => {
-                let mut visleaf = 0;
+                let mut visleaf = 1;
                 let mut visleaf_list = Vec::new();
                 let mut it = (&self.visibility[o..]).iter();
 
@@ -811,12 +811,14 @@ impl BspData {
                         0 => visleaf += 8 * *it.next().unwrap() as usize,
 
                         bits => for shift in 0..8 {
-                            // increment visleaf beforehand since we skip leaf 0
-                            visleaf += 1;
-
                             if bits & 1 << shift != 0 {
+                                if visleaf >= leaf_count {
+                                    error!("Impossible visleaf in PVS: the len is {} but the leaf ID is {}", leaf_count, visleaf);
+                                }
                                 visleaf_list.push(visleaf);
                             }
+
+                            visleaf += 1;
                         },
                     }
                 }

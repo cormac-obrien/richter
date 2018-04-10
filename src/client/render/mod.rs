@@ -19,7 +19,8 @@
 // SOFTWARE.
 
 pub mod alias;
-pub mod bsp;
+pub mod brush;
+pub mod world;
 
 use std::collections::HashMap;
 
@@ -32,6 +33,7 @@ use cgmath::Deg;
 use cgmath::Euler;
 use cgmath::Matrix4;
 use cgmath::Vector3;
+use cgmath::Zero;
 use chrono::Duration;
 use failure::Error;
 use gfx;
@@ -44,7 +46,8 @@ pub use gfx::format::Srgba8 as ColorFormat;
 pub use gfx::format::DepthStencil as DepthFormat;
 
 use self::alias::AliasRenderer;
-use self::bsp::BspRenderer;
+use self::brush::BrushRenderer;
+use self::world::WorldRenderer;
 
 const PALETTE_SIZE: usize = 768;
 
@@ -135,13 +138,14 @@ impl Camera {
 
 pub struct SceneRenderer {
     pipeline: PipelineState<Resources, <pipe::Data<Resources> as PipelineData<Resources>>::Meta>,
-    bsp_renderers: HashMap<usize, BspRenderer>,
+    world_renderer: WorldRenderer,
+    brush_renderers: HashMap<usize, BrushRenderer>,
     alias_renderers: HashMap<usize, AliasRenderer>,
     // spr_renderers: ...,
 }
 
 impl SceneRenderer {
-    pub fn new(models: &[Model], palette: &Palette, factory: &mut Factory) -> Result<SceneRenderer, Error>
+    pub fn new(models: &[Model], worldmodel_id: usize, palette: &Palette, factory: &mut Factory) -> Result<SceneRenderer, Error>
     {
         use gfx::traits::FactoryExt;
         let shader_set = factory.create_shader_set(VERTEX_SHADER_GLSL, FRAGMENT_SHADER_GLSL).unwrap();
@@ -161,29 +165,47 @@ impl SceneRenderer {
             pipe::new(),
         ).unwrap();
 
-        let mut bsp_renderers = HashMap::new();
+        let mut maybe_world_renderer = None;
+        let mut brush_renderers = HashMap::new();
         let mut alias_renderers = HashMap::new();
         for (i, model) in models.iter().enumerate() {
-            match *model.kind() {
-                ModelKind::Brush(ref bmodel) => {
-                    debug!("model {}: brush model", i);
-                    bsp_renderers.insert(i, BspRenderer::new(model.name(), &bmodel, palette, factory));
+            if i == worldmodel_id {
+                match *model.kind() {
+                    ModelKind::Brush(ref bmodel) => {
+                        debug!("model {}: world model", i);
+                        maybe_world_renderer = Some(WorldRenderer::new(model.name(), &bmodel, palette, factory));
+                    }
+
+                    _ => bail!("Invalid kind for worldmodel"),
                 }
+            } else {
+                match *model.kind() {
+                    ModelKind::Brush(ref bmodel) => {
+                        debug!("model {}: brush model", i);
+                        brush_renderers.insert(i, BrushRenderer::new(model.name(), &bmodel, palette, factory));
+                    }
 
-                ModelKind::Alias(ref amodel) => {
-                    debug!("model {}: alias model", i);
-                    alias_renderers.insert(i, AliasRenderer::new(&amodel, palette, factory)?);
-                },
+                    ModelKind::Alias(ref amodel) => {
+                        debug!("model {}: alias model", i);
+                        alias_renderers.insert(i, AliasRenderer::new(&amodel, palette, factory)?);
+                    },
 
-                // TODO handle sprite and null models
-                ModelKind::Sprite(_) => debug!("model {}: sprite model", i),
-                _ => (),
+                    // TODO handle sprite and null models
+                    ModelKind::Sprite(_) => debug!("model {}: sprite model", i),
+                    _ => (),
+                }
             }
         }
 
+        let world_renderer = match maybe_world_renderer {
+            Some(w) => w,
+            None => bail!("No worldmodel provided"),
+        };
+
         Ok(SceneRenderer {
             pipeline,
-            bsp_renderers,
+            world_renderer,
+            brush_renderers,
             alias_renderers
         })
     }
@@ -200,10 +222,20 @@ impl SceneRenderer {
     where
         C: gfx::CommandBuffer<Resources>,
     {
+        self.world_renderer.render(
+            encoder,
+            &self.pipeline,
+            user_data,
+            time,
+            camera,
+            Vector3::zero(),
+            Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+        );
+
         for ent in entities.iter() {
             let model_id = ent.get_model_id();
-            if let Some(ref bsp_renderer) = self.bsp_renderers.get(&model_id) {
-                bsp_renderer.render(
+            if let Some(ref brush_renderer) = self.brush_renderers.get(&model_id) {
+                brush_renderer.render(
                     encoder,
                     &self.pipeline,
                     user_data,

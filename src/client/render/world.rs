@@ -45,40 +45,36 @@ use gfx::texture;
 use gfx::traits::FactoryExt;
 use gfx_device_gl::Resources;
 
-pub struct BspRenderFace {
+pub struct WorldRenderFace {
     pub slice: Slice<Resources>,
     pub tex_id: usize,
 }
 
-pub struct BspRenderLeaf {
-    pub faces: Box<[BspRenderFace]>,
+pub struct WorldRenderLeaf {
+    pub faces: Box<[WorldRenderFace]>,
 }
 
-pub struct BspRenderer {
+pub struct WorldRenderer {
     model_name: String,
     bsp_data: Rc<BspData>,
     vertex_buffer: Buffer<Resources, Vertex>,
-    leaves: Box<[BspRenderLeaf]>,
+    leaves: Box<[WorldRenderLeaf]>,
     texture_views: Box<[ShaderResourceView<Resources, [f32; 4]>]>,
 }
 
-impl BspRenderer {
-    pub fn new<S, F>(model_name: S, bsp_model: &BspModel, palette: &Palette, factory: &mut F) -> BspRenderer
+impl WorldRenderer {
+    pub fn new<S, F>(model_name: S, bsp_model: &BspModel, palette: &Palette, factory: &mut F) -> WorldRenderer
     where
         S: AsRef<str>,
         F: Factory<Resources>,
     {
-        // initialize with the null leaf
         let mut leaves = Vec::new();
-        leaves.push(BspRenderLeaf {
-            faces: vec![].into_boxed_slice(),
-        });
 
         let mut vertices = Vec::new();
         let bsp_data = bsp_model.bsp_data().clone();
 
         // BSP vertex data is stored in triangle fan layout so we have to convert to triangle list
-        for leaf_id in bsp_model.leaf_id + 1..bsp_model.leaf_id + bsp_model.leaf_count + 1 {
+        for leaf_id in bsp_model.leaf_id..bsp_model.leaf_id + bsp_model.leaf_count + 1 {
             let mut faces = Vec::new();
             let leaf = &bsp_data.leaves()[leaf_id];
             for facelist_id in leaf.facelist_id..leaf.facelist_id + leaf.facelist_count {
@@ -124,7 +120,7 @@ impl BspRenderer {
                 }
 
                 let face_vertex_count = vertices.len() - face_vertex_id;
-                faces.push(BspRenderFace {
+                faces.push(WorldRenderFace {
                     slice: Slice {
                         start: 0,
                         end: face_vertex_count as u32,
@@ -136,7 +132,7 @@ impl BspRenderer {
                 });
             }
 
-            leaves.push(BspRenderLeaf {
+            leaves.push(WorldRenderLeaf {
                 faces: faces.into_boxed_slice(),
             });
         }
@@ -159,7 +155,7 @@ impl BspRenderer {
             texture_views.push(view);
         }
 
-        BspRenderer {
+        WorldRenderer {
             model_name: model_name.as_ref().to_owned(),
             bsp_data: bsp_data,
             vertex_buffer,
@@ -225,7 +221,7 @@ impl BspRenderer {
 
         if pvs.is_empty() {
             // No visibility data for this leaf, render all faces
-            for leaf_id in 1..self.leaves.len() {
+            for leaf_id in 0..self.leaves.len() {
                 self.render_leaf(
                     encoder,
                     pso,
