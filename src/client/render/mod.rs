@@ -19,7 +19,9 @@
 // SOFTWARE.
 
 pub mod alias;
+pub mod bitmap;
 pub mod brush;
+pub mod hud;
 pub mod world;
 
 use std::collections::HashMap;

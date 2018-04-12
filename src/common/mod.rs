@@ -30,6 +30,7 @@ pub mod pak;
 pub mod parse;
 pub mod sprite;
 pub mod util;
+pub mod wad;
 
 pub static DEFAULT_BASEDIR: &'static str = "id1";
 pub const MAX_LIGHTSTYLES: usize = 64;

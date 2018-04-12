@@ -317,7 +317,7 @@ impl Program for ClientProgram  {
                     client.borrow().get_entities().unwrap(),
                     client.borrow().get_time(),
                     &camera,
-                );
+                ).unwrap();
 
                 use std::ops::DerefMut;
                 self.encoder.borrow_mut().flush(self.device.borrow_mut().deref_mut());

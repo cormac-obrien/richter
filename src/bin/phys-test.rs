@@ -69,10 +69,10 @@ fn main() {
     };
 
     let mut cvars = CvarRegistry::new();
-    cvars.register_updateinfo("teamplay", "0").unwrap();
+    cvars.register_notify("teamplay", "0").unwrap();
     cvars.register("skill", "1").unwrap();
     cvars.register("deathmatch", "0").unwrap();
-    cvars.register_updateinfo("sv_gravity", "800").unwrap();
+    cvars.register_notify("sv_gravity", "800").unwrap();
 
     let mut world =
         world::World::create(brush_models, entity_type_def, string_table.clone()).unwrap();

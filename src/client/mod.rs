@@ -60,6 +60,7 @@ use common::net::PlayerColor;
 use common::net::QSocket;
 use common::net::ServerCmd;
 use common::net::SignOnStage;
+use common::net::TempEntity;
 use common::net::connect::CONNECT_PROTOCOL_VERSION;
 use common::net::connect::ConnectSocket;
 use common::net::connect::Request;
@@ -997,6 +998,8 @@ impl Client {
                     }
                 }
 
+                ServerCmd::Disconnect => self.disconnect(),
+
                 ServerCmd::FastUpdate {
                     ent_id,
                     model_id,
@@ -1241,6 +1244,8 @@ impl Client {
                     ));
                 }
 
+                ServerCmd::TempEntity { temp_entity } => self.spawn_temp_entity(&temp_entity),
+
                 ServerCmd::StuffText { text } => self.console.borrow_mut().stuff_text(text),
 
                 ServerCmd::Time { time } => {
@@ -1319,6 +1324,12 @@ impl Client {
                         stat, self.state.stats[stat as usize], value
                     );
                     self.state.stats[stat as usize] = value;
+                }
+
+                ServerCmd::Version { version } => {
+                    if version != net::PROTOCOL_VERSION as i32 {
+                        panic!("bad version number");
+                    }
                 }
 
                 x => {
@@ -1623,5 +1634,13 @@ impl Client {
                 percent: 50,
             });
         })).unwrap();
+    }
+
+    pub fn spawn_temp_entity(&self, temp_entity: &TempEntity) {
+        warn!("Temporary entities not yet implemented!");
+    }
+
+    pub fn disconnect(&self) {
+        unimplemented!();
     }
 }
