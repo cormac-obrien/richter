@@ -46,6 +46,7 @@ use richter::client::input::GameInput;
 use richter::client::input::MouseWheel;
 use richter::client::render;
 use richter::client::render::SceneRenderer;
+use richter::client::render::UiRenderer;
 use richter::common;
 use richter::common::console::CmdRegistry;
 use richter::common::console::Console;
@@ -54,6 +55,7 @@ use richter::common::host::Host;
 use richter::common::host::Program;
 use richter::common::net::SignOnStage;
 use richter::common::pak::Pak;
+use richter::common::wad::Wad;
 
 use cgmath::Matrix4;
 use cgmath::SquareMatrix;
@@ -97,7 +99,8 @@ struct ClientProgram {
 
     client: Option<RefCell<Client>>,
     actions: RefCell<GameInput>,
-    renderer: Option<RefCell<SceneRenderer>>,
+    scene_renderer: Option<RefCell<SceneRenderer>>,
+    ui_renderer: Option<RefCell<UiRenderer>>,
 }
 
 impl ClientProgram  {
@@ -188,7 +191,8 @@ impl ClientProgram  {
             palette,
             client: None,
             actions: RefCell::new(GameInput::new()),
-            renderer: None,
+            scene_renderer: None,
+            ui_renderer: None,
         }
     }
 
@@ -220,10 +224,22 @@ impl Program for ClientProgram  {
             client.borrow_mut().frame(frame_duration).unwrap();
 
             if client.borrow().get_signon_stage() == SignOnStage::Done {
-                if self.renderer.is_none() {
-                    self.renderer = Some(RefCell::new(SceneRenderer::new(
+                if self.scene_renderer.is_none() {
+                    self.scene_renderer = Some(RefCell::new(SceneRenderer::new(
                         client.borrow().get_models().unwrap(),
                         1,
+                        &self.palette,
+                        &mut self.factory.borrow_mut(),
+                    ).unwrap()));
+                }
+
+                if self.ui_renderer.is_none() {
+                    let gfx_wad = Wad::load(self.pak.open("gfx.wad").unwrap()).unwrap();
+                    let (w, h) = self.window.borrow().get_inner_size().unwrap();
+                    self.ui_renderer = Some(RefCell::new(UiRenderer::new(
+                        w,
+                        h,
+                        &gfx_wad,
                         &self.palette,
                         &mut self.factory.borrow_mut(),
                     ).unwrap()));
@@ -288,7 +304,8 @@ impl Program for ClientProgram  {
 
             client.borrow_mut().send().unwrap();
 
-            if let Some(ref renderer) = self.renderer {
+            self.encoder.borrow_mut().clear(&self.data.borrow().out_color, [0.0, 0.0, 0.0, 1.0]);
+            if let Some(ref scene_renderer) = self.scene_renderer {
                 let cl = client.borrow();
 
                 let fov_x = self.cvars.borrow().get_value("fov").unwrap();
@@ -309,23 +326,30 @@ impl Program for ClientProgram  {
                     perspective,
                 );
 
-                self.encoder.borrow_mut().clear(&self.data.borrow().out_color, [0.0, 0.0, 0.0, 1.0]);
                 self.encoder.borrow_mut().clear_depth(&self.data.borrow().out_depth, 1.0);
-                renderer.borrow_mut().render(
+                scene_renderer.borrow_mut().render(
                     &mut self.encoder.borrow_mut(),
                     &mut self.data.borrow_mut(),
                     client.borrow().get_entities().unwrap(),
                     client.borrow().get_time(),
                     &camera,
                 ).unwrap();
-
-                use std::ops::DerefMut;
-                self.encoder.borrow_mut().flush(self.device.borrow_mut().deref_mut());
-                self.window.borrow_mut().swap_buffers().unwrap();
-
-                use gfx::Device;
-                self.device.borrow_mut().cleanup();
             }
+
+            if let Some(ref ui_renderer) = self.ui_renderer {
+                ui_renderer.borrow_mut().render(
+                    &mut self.factory.borrow_mut(),
+                    &mut self.encoder.borrow_mut(),
+                    &mut self.data.borrow_mut(),
+                ).unwrap();
+            }
+
+            use std::ops::DerefMut;
+            self.encoder.borrow_mut().flush(self.device.borrow_mut().deref_mut());
+            self.window.borrow_mut().swap_buffers().unwrap();
+
+            use gfx::Device;
+            self.device.borrow_mut().cleanup();
         }
     }
 }

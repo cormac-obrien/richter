@@ -30,6 +30,7 @@ use client::ClientEntity;
 use common::model::Model;
 use common::model::ModelKind;
 use common::pak::Pak;
+use common::wad::Wad;
 
 use cgmath::Deg;
 use cgmath::Euler;
@@ -49,6 +50,7 @@ pub use gfx::format::DepthStencil as DepthFormat;
 
 use self::alias::AliasRenderer;
 use self::brush::BrushRenderer;
+use self::hud::HudRenderer;
 use self::world::WorldRenderer;
 
 const PALETTE_SIZE: usize = 768;
@@ -79,7 +81,12 @@ uniform sampler2D u_Texture;
 out vec4 Target0;
 
 void main() {
-    Target0 = texture(u_Texture, f_texcoord);
+    vec4 color = texture(u_Texture, f_texcoord);
+    if (color.a == 0) {
+        discard;
+    } else {
+        Target0 = color;
+    }
 }"#;
 
 gfx_defines! {
@@ -204,6 +211,7 @@ impl SceneRenderer {
             None => bail!("No worldmodel provided"),
         };
 
+
         Ok(SceneRenderer {
             pipeline,
             world_renderer,
@@ -261,6 +269,60 @@ impl SceneRenderer {
                 )?;
             }
         }
+
+        Ok(())
+    }
+}
+
+pub struct UiRenderer {
+    pipeline: PipelineState<Resources, <pipe::Data<Resources> as PipelineData<Resources>>::Meta>,
+    hud_renderer: HudRenderer,
+}
+
+impl UiRenderer {
+    pub fn new(
+        display_width: u32,
+        display_height: u32,
+        gfx_wad: &Wad,
+        palette: &Palette,
+        factory: &mut Factory,
+    ) -> Result<UiRenderer, Error> {
+        use gfx::traits::FactoryExt;
+        let shader_set = factory.create_shader_set(VERTEX_SHADER_GLSL, FRAGMENT_SHADER_GLSL).unwrap();
+
+        let rasterizer = gfx::state::Rasterizer {
+            front_face: gfx::state::FrontFace::Clockwise,
+            cull_face: gfx::state::CullFace::Back,
+            method: gfx::state::RasterMethod::Fill,
+            offset: None,
+            samples: Some(gfx::state::MultiSample),
+        };
+
+        let pipeline = factory.create_pipeline_state(
+            &shader_set,
+            gfx::Primitive::TriangleList,
+            rasterizer,
+            pipe::new(),
+        ).unwrap();
+
+        let hud_renderer = HudRenderer::new(display_width, display_height, gfx_wad, palette, factory)?;
+
+        Ok(UiRenderer {
+            pipeline,
+            hud_renderer,
+        })
+    }
+
+    pub fn render<C>(
+        &mut self,
+        factory: &mut Factory,
+        encoder: &mut gfx::Encoder<Resources, C>,
+        user_data: &mut pipe::Data<Resources>,
+    ) -> Result<(), Error>
+    where
+        C: gfx::CommandBuffer<Resources>,
+    {
+        self.hud_renderer.render(factory, encoder, &self.pipeline, user_data)?;
 
         Ok(())
     }

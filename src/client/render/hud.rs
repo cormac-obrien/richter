@@ -18,29 +18,49 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use std::mem;
+
 use client::render::ColorFormat;
 use client::render::Palette;
-use client::render::pipe;
 use client::render::Vertex;
-use common::wad::QPic;
+use client::render::bitmap::Bitmap;
+use client::render::pipe;
 use common::wad::Wad;
 
-use gfx;
+use cgmath::Matrix4;
+use cgmath::SquareMatrix;
 use gfx::CommandBuffer;
 use gfx::Encoder;
 use gfx::Factory;
+use gfx::IndexBuffer;
 use gfx::Slice;
+use gfx::format::R8_G8_B8_A8;
+use gfx::handle::Buffer;
 use gfx::handle::ShaderResourceView;
-use gfx::traits::FactoryExt;
+use gfx::handle::Texture;
+use gfx::pso::PipelineData;
+use gfx::pso::PipelineState;
 use gfx_device_gl::Resources;
 
 use failure::Error;
 
-struct Texture {
-    width: u32,
-    height: u32,
-    view: ShaderResourceView<Resources, [f32; 4]>,
-}
+// TODO: make a separate pipeline that doesn't need modified coordinates
+static FULLSCREEN_QUAD: [Vertex; 6] = [
+    Vertex { pos: [0.0, 1.0, 1.0], texcoord: [0.0, 0.0] },
+    Vertex { pos: [0.0, -1.0, 1.0], texcoord: [1.0, 0.0] },
+    Vertex { pos: [0.0, 1.0, -1.0], texcoord: [0.0, 1.0] },
+    Vertex { pos: [0.0, 1.0, -1.0], texcoord: [0.0, 1.0] },
+    Vertex { pos: [0.0, -1.0, 1.0], texcoord: [1.0, 0.0] },
+    Vertex { pos: [0.0, -1.0, -1.0], texcoord: [1.0, 1.0] },
+];
+
+static FULLSCREEN_SLICE: Slice<Resources> = Slice {
+    start: 0,
+    end: 6,
+    base_vertex: 0,
+    instances: None,
+    buffer: IndexBuffer::Auto,
+};
 
 enum WeaponSlots {
     Shotgun = 0,
@@ -60,31 +80,42 @@ enum AmmoSlots {
 }
 
 pub struct HudRenderer {
-    digits: Box<[Texture]>,
-    minus: Texture,
-    alt_digits: Box<[Texture]>,
-    alt_minus: Texture,
-    colon: Texture,
-    slash: Texture,
+    digits: Box<[Bitmap]>,
+    minus: Bitmap,
+    alt_digits: Box<[Bitmap]>,
+    alt_minus: Bitmap,
+    colon: Bitmap,
+    slash: Bitmap,
 
-    weapons: Box<[Box<[Texture]>]>,
-    ammo: Box<[Texture]>,
-    armor: Box<[Texture]>,
-    items: Box<[Texture]>,
-    faces: Box<[Texture]>,
-    pain_faces: Box<[Texture]>,
+    weapons: Box<[Box<[Bitmap]>]>,
+    ammo: Box<[Bitmap]>,
+    armor: Box<[Bitmap]>,
+    items: Box<[Bitmap]>,
+    faces: Box<[Bitmap]>,
+    pain_faces: Box<[Bitmap]>,
 
-    face_invis: Texture,
-    face_invuln: Texture,
-    face_invis_invuln: Texture,
-    face_quad: Texture,
-    sbar: Texture,
-    ibar: Texture,
-    scorebar: Texture,
+    face_invis: Bitmap,
+    face_invuln: Bitmap,
+    face_invis_invuln: Bitmap,
+    face_quad: Bitmap,
+    sbar: Bitmap,
+    ibar: Bitmap,
+    scorebar: Bitmap,
+
+    display_bitmap: Bitmap,
+    display_texture_handle: Texture<Resources, R8_G8_B8_A8>,
+    display_texture_view: ShaderResourceView<Resources, [f32; 4]>,
+    vertex_buffer: Buffer<Resources, Vertex>,
 }
 
 impl HudRenderer {
-    pub fn new<F>(gfx_wad: &Wad, palette: &Palette, factory: &mut F) -> Result<HudRenderer, Error>
+    pub fn new<F>(
+        display_width: u32,
+        display_height: u32,
+        gfx_wad: &Wad,
+        palette: &Palette,
+        factory: &mut F
+    ) -> Result<HudRenderer, Error>
     where
         F: Factory<Resources>
     {
@@ -92,44 +123,32 @@ impl HudRenderer {
         let mut alt_digits = Vec::new();
 
         // just to make the following code a bit less painful
-        let mut qpic_to_texture = |name: &str| -> Result<Texture, Error> {
+        let mut qpic_to_bitmap = |name: &str| -> Result<Bitmap, Error> {
             let qpic = gfx_wad.open_qpic(name)?;
-            let rgba = palette.indexed_to_rgba(qpic.indices());
-
-            let (_, view) = factory.create_texture_immutable_u8::<ColorFormat>(
-                gfx::texture::Kind::D2(qpic.width() as u16, qpic.height() as u16, gfx::texture::AaMode::Single),
-                gfx::texture::Mipmap::Allocated,
-                &[&rgba],
-            )?;
-
-            Ok(Texture {
-                width: qpic.width(),
-                height: qpic.height(),
-                view,
-            })
+            Bitmap::from_qpic(&qpic, palette)
         };
 
         for i in 0..10 {
-            digits.push(qpic_to_texture(&format!("num_{}", i))?);
-            alt_digits.push(qpic_to_texture(&format!("anum_{}", i))?);
+            digits.push(qpic_to_bitmap(&format!("NUM_{}", i))?);
+            alt_digits.push(qpic_to_bitmap(&format!("ANUM_{}", i))?);
         }
 
-        let minus = qpic_to_texture("num_minus")?;
-        let alt_minus = qpic_to_texture("anum_minus")?;
-        let colon = qpic_to_texture("num_colon")?;
-        let slash = qpic_to_texture("num_slash")?;
+        let minus = qpic_to_bitmap("NUM_MINUS")?;
+        let alt_minus = qpic_to_bitmap("ANUM_MINUS")?;
+        let colon = qpic_to_bitmap("NUM_COLON")?;
+        let slash = qpic_to_bitmap("NUM_SLASH")?;
 
         let weapon_names = vec![
-            "shotgun",
-            "sshotgun",
-            "nailgun",
-            "snailgun",
-            "rlaunch",
-            "srlaunch",
-            "lightng"
+            "SHOTGUN",
+            "SSHOTGUN",
+            "NAILGUN",
+            "SNAILGUN",
+            "RLAUNCH",
+            "SRLAUNCH",
+            "LIGHTNG"
         ];
 
-        let weapon_prefixes = vec!["", "2", "a1", "a2", "a3", "a4", "a5"];
+        let weapon_prefixes = vec!["", "2", "A1", "A2", "A3", "A4", "A5"];
 
         let mut weapons = Vec::new();
 
@@ -137,49 +156,54 @@ impl HudRenderer {
             let mut weapon_frames = Vec::new();
 
             for w_prefix in &weapon_prefixes {
-                weapon_frames.push(qpic_to_texture(&format!("inv{}_{}", w_prefix, w_name))?);
+                weapon_frames.push(qpic_to_bitmap(&format!("INV{}_{}", w_prefix, w_name))?);
             }
 
             weapons.push(weapon_frames.into_boxed_slice());
         }
 
-        let ammo_names = vec!["shells", "nails", "rockets", "cells"];
+        let ammo_names = vec!["SHELLS", "NAILS", "ROCKET", "CELLS"];
         let mut ammo = Vec::new();
         for ammo_name in &ammo_names {
-            ammo.push(qpic_to_texture(&format!("sb_{}", ammo_name))?);
+            ammo.push(qpic_to_bitmap(&format!("SB_{}", ammo_name))?);
         }
 
         let mut armor = Vec::new();
         for i in 1..4 {
-            armor.push(qpic_to_texture(&format!("sb_armor{}", i))?);
+            armor.push(qpic_to_bitmap(&format!("SB_ARMOR{}", i))?);
         }
 
-        let item_names = vec!["key1", "key2", "invis", "invuln", "suit", "quad"];
+        let item_names = vec!["KEY1", "KEY2", "INVIS", "INVULN", "SUIT", "QUAD"];
         let mut items = Vec::new();
         for item_name in &item_names {
-            items.push(qpic_to_texture(&format!("sb_{}", item_name))?);
+            items.push(qpic_to_bitmap(&format!("SB_{}", item_name))?);
         }
 
         let mut sigils = Vec::new();
         for i in 1..5 {
-            sigils.push(qpic_to_texture(&format!("sb_sigil{}", i))?);
+            sigils.push(qpic_to_bitmap(&format!("SB_SIGIL{}", i))?);
         }
 
         let mut faces = Vec::new();
         let mut pain_faces = Vec::new();
         for i in 1..6 {
-            faces.push(qpic_to_texture(&format!("face{}", i))?);
-            pain_faces.push(qpic_to_texture(&format!("face_p{}", i))?);
+            faces.push(qpic_to_bitmap(&format!("FACE{}", i))?);
+            pain_faces.push(qpic_to_bitmap(&format!("FACE_P{}", i))?);
         }
 
-        let face_invis = qpic_to_texture("face_invis")?;
-        let face_invuln = qpic_to_texture("face_invul2")?;
-        let face_invis_invuln = qpic_to_texture("face_inv2")?;
-        let face_quad = qpic_to_texture("face_quad")?;
+        let face_invis = qpic_to_bitmap("FACE_INVIS")?;
+        let face_invuln = qpic_to_bitmap("FACE_INVUL2")?;
+        let face_invis_invuln = qpic_to_bitmap("FACE_INV2")?;
+        let face_quad = qpic_to_bitmap("FACE_QUAD")?;
 
-        let sbar = qpic_to_texture("sbar")?;
-        let ibar = qpic_to_texture("ibar")?;
-        let scorebar = qpic_to_texture("scorebar")?;
+        let sbar = qpic_to_bitmap("SBAR")?;
+        let ibar = qpic_to_bitmap("IBAR")?;
+        let scorebar = qpic_to_bitmap("SCOREBAR")?;
+
+        let display_bitmap = Bitmap::transparent(display_width, display_height)?;
+        let (display_texture_handle, display_texture_view) = display_bitmap.create_texture(factory)?;
+        use gfx::traits::FactoryExt;
+        let vertex_buffer = factory.create_vertex_buffer(&FULLSCREEN_QUAD);
 
         Ok(HudRenderer {
             digits: digits.into_boxed_slice(),
@@ -203,6 +227,45 @@ impl HudRenderer {
             sbar,
             ibar,
             scorebar,
+
+            display_bitmap,
+            display_texture_handle,
+            display_texture_view,
+            vertex_buffer,
         })
+    }
+
+    pub fn render<F, C>(
+        &mut self,
+        factory: &mut F,
+        encoder: &mut Encoder<Resources, C>,
+        pso: &PipelineState<Resources, <pipe::Data<Resources> as PipelineData<Resources>>::Meta>,
+        user_data: &mut pipe::Data<Resources>,
+    ) -> Result<(), Error>
+    where
+        F: Factory<Resources>,
+        C: CommandBuffer<Resources>,
+    {
+        let mut display_bitmap = self.display_bitmap.clone();
+        let display_width = self.display_bitmap.width();
+        let display_height = self.display_bitmap.height();
+
+        display_bitmap.blit(
+            &self.sbar,
+            (display_width - self.sbar.width()) as i32 / 2,
+            (display_height - self.sbar.height()) as i32,
+        );
+
+        let (handle, view) = display_bitmap.create_texture(factory)?;
+        mem::replace(&mut self.display_texture_handle, handle);
+        mem::replace(&mut self.display_texture_view, view);
+
+        user_data.vertex_buffer = self.vertex_buffer.clone();
+        user_data.sampler.0 = self.display_texture_view.clone();
+        user_data.transform = Matrix4::identity().into();
+
+        encoder.draw(&FULLSCREEN_SLICE, pso, user_data);
+
+        Ok(())
     }
 }
