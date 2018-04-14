@@ -1132,6 +1132,9 @@ impl Client {
                     }
                 }
 
+                ServerCmd::FoundSecret => self.state.stats[ClientStat::FoundSecrets as usize] += 1,
+                ServerCmd::KilledMonster => self.state.stats[ClientStat::KilledMonsters as usize] += 1,
+
                 ServerCmd::LightStyle { id, value } => {
                     debug!("Inserting light style {} with value {}", id, &value);
                     let _ = self.state.light_styles.insert(id, value);
@@ -1638,6 +1641,10 @@ impl Client {
 
     pub fn spawn_temp_entity(&self, temp_entity: &TempEntity) {
         warn!("Temporary entities not yet implemented!");
+    }
+
+    pub fn items(&self) -> ItemFlags {
+        self.state.items
     }
 
     pub fn disconnect(&self) {

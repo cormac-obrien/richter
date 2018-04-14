@@ -34,6 +34,7 @@ extern crate rodio;
 
 use std::cell::RefCell;
 use std::env;
+use std::fs::File;
 use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::process::exit;
@@ -218,10 +219,12 @@ impl ClientProgram  {
 }
 
 impl Program for ClientProgram  {
-    #[flame]
     fn frame(&mut self, frame_duration: Duration) {
+        let _guard = flame::start_guard("ClientProgram::frame");
         if let Some(ref client) = self.client {
+            flame::start("Client::frame");
             client.borrow_mut().frame(frame_duration).unwrap();
+            flame::end("Client::frame");
 
             if client.borrow().get_signon_stage() == SignOnStage::Done {
                 if self.scene_renderer.is_none() {
@@ -260,6 +263,7 @@ impl Program for ClientProgram  {
                         Event::WindowEvent { event, .. } => match event {
                             WindowEvent::Closed => {
                                 // TODO: handle quit properly
+                                flame::dump_html(File::create("flame.html").unwrap()).unwrap();
                                 std::process::exit(0);
                             }
 
@@ -341,15 +345,24 @@ impl Program for ClientProgram  {
                     &mut self.factory.borrow_mut(),
                     &mut self.encoder.borrow_mut(),
                     &mut self.data.borrow_mut(),
+                    client.borrow().items(),
                 ).unwrap();
             }
 
             use std::ops::DerefMut;
+
+            flame::start("Encoder::flush");
             self.encoder.borrow_mut().flush(self.device.borrow_mut().deref_mut());
+            flame::end("Encoder::flush");
+
+            flame::start("Window::swap_buffers");
             self.window.borrow_mut().swap_buffers().unwrap();
+            flame::end("Window::swap_buffers");
 
             use gfx::Device;
+            flame::start("Device::cleanup");
             self.device.borrow_mut().cleanup();
+            flame::end("Device::cleanup");
         }
     }
 }

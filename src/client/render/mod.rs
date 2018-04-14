@@ -29,6 +29,7 @@ use std::collections::HashMap;
 use client::ClientEntity;
 use common::model::Model;
 use common::model::ModelKind;
+use common::net::ItemFlags;
 use common::pak::Pak;
 use common::wad::Wad;
 
@@ -39,6 +40,7 @@ use cgmath::Vector3;
 use cgmath::Zero;
 use chrono::Duration;
 use failure::Error;
+use flame;
 use gfx;
 use gfx::pso::PipelineData;
 use gfx::pso::PipelineState;
@@ -232,6 +234,7 @@ impl SceneRenderer {
     where
         C: gfx::CommandBuffer<Resources>,
     {
+        flame::start("render_world");
         self.world_renderer.render(
             encoder,
             &self.pipeline,
@@ -241,7 +244,9 @@ impl SceneRenderer {
             Vector3::zero(),
             Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
         );
+        flame::end("render_world");
 
+        flame::start("render_entities");
         for ent in entities.iter() {
             let model_id = ent.get_model_id();
             if let Some(ref brush_renderer) = self.brush_renderers.get(&model_id) {
@@ -269,6 +274,7 @@ impl SceneRenderer {
                 )?;
             }
         }
+        flame::end("render_entities");
 
         Ok(())
     }
@@ -318,11 +324,12 @@ impl UiRenderer {
         factory: &mut Factory,
         encoder: &mut gfx::Encoder<Resources, C>,
         user_data: &mut pipe::Data<Resources>,
+        items: ItemFlags,
     ) -> Result<(), Error>
     where
         C: gfx::CommandBuffer<Resources>,
     {
-        self.hud_renderer.render(factory, encoder, &self.pipeline, user_data)?;
+        self.hud_renderer.render(factory, encoder, &self.pipeline, user_data, items)?;
 
         Ok(())
     }

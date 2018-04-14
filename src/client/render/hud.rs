@@ -20,15 +20,16 @@
 
 use std::mem;
 
-use client::render::ColorFormat;
 use client::render::Palette;
 use client::render::Vertex;
 use client::render::bitmap::Bitmap;
 use client::render::pipe;
+use common::net::ItemFlags;
 use common::wad::Wad;
 
 use cgmath::Matrix4;
 use cgmath::SquareMatrix;
+use flame;
 use gfx::CommandBuffer;
 use gfx::Encoder;
 use gfx::Factory;
@@ -200,7 +201,8 @@ impl HudRenderer {
         let ibar = qpic_to_bitmap("IBAR")?;
         let scorebar = qpic_to_bitmap("SCOREBAR")?;
 
-        let display_bitmap = Bitmap::transparent(display_width, display_height)?;
+        // TODO: use a cvar to determine HUD scaling (for now, do 2:1)
+        let display_bitmap = Bitmap::transparent(display_width / 2, display_height / 2)?;
         let (display_texture_handle, display_texture_view) = display_bitmap.create_texture(factory)?;
         use gfx::traits::FactoryExt;
         let vertex_buffer = factory.create_vertex_buffer(&FULLSCREEN_QUAD);
@@ -241,20 +243,35 @@ impl HudRenderer {
         encoder: &mut Encoder<Resources, C>,
         pso: &PipelineState<Resources, <pipe::Data<Resources> as PipelineData<Resources>>::Meta>,
         user_data: &mut pipe::Data<Resources>,
+        items: ItemFlags,
     ) -> Result<(), Error>
     where
         F: Factory<Resources>,
         C: CommandBuffer<Resources>,
     {
+        let _guard = flame::start_guard("HudRenderer::render");
+
         let mut display_bitmap = self.display_bitmap.clone();
         let display_width = self.display_bitmap.width();
         let display_height = self.display_bitmap.height();
 
-        display_bitmap.blit(
-            &self.sbar,
-            (display_width - self.sbar.width()) as i32 / 2,
-            (display_height - self.sbar.height()) as i32,
-        );
+        let sbar_x = (display_width - self.sbar.width()) as i32 / 2;
+        let sbar_y = (display_height - self.sbar.height()) as i32;
+
+        display_bitmap.blit(&self.sbar, sbar_x, sbar_y);
+
+        // inventory
+        display_bitmap.blit(&self.ibar, sbar_x, sbar_y - self.ibar.height() as i32);
+
+        for i in 0..8 {
+            if items.contains(ItemFlags::from_bits(ItemFlags::SHOTGUN.bits() << i).unwrap()) {
+                display_bitmap.blit(
+                    &self.weapons[i][0],
+                    sbar_x + 24 * i as i32,
+                    sbar_y - self.weapons[0][0].height() as i32
+                );
+            }
+        }
 
         let (handle, view) = display_bitmap.create_texture(factory)?;
         mem::replace(&mut self.display_texture_handle, handle);
