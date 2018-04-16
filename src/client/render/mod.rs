@@ -26,10 +26,12 @@ pub mod world;
 
 use std::collections::HashMap;
 
+use client::Client;
 use client::ClientEntity;
 use common::model::Model;
 use common::model::ModelKind;
 use common::net::ItemFlags;
+use common::net::MAX_ITEMS;
 use common::pak::Pak;
 use common::wad::Wad;
 
@@ -42,6 +44,9 @@ use chrono::Duration;
 use failure::Error;
 use flame;
 use gfx;
+use gfx::handle::ShaderResourceView;
+use gfx::handle::Texture;
+use gfx::format::R8_G8_B8_A8;
 use gfx::pso::PipelineData;
 use gfx::pso::PipelineState;
 use gfx_device_gl::Factory;
@@ -57,6 +62,7 @@ use self::world::WorldRenderer;
 
 const PALETTE_SIZE: usize = 768;
 
+// TODO: per-API coordinate system conversions
 pub static VERTEX_SHADER_GLSL: &[u8] = br#"
 #version 430
 
@@ -91,6 +97,42 @@ void main() {
     }
 }"#;
 
+// TODO: per-API coordinate system conversions
+pub static VERTEX_SHADER_2D_GLSL: &[u8] = br#"
+#version 430
+
+layout (location = 0) in vec2 a_Pos;
+layout (location = 1) in vec2 a_Texcoord;
+
+out vec2 f_texcoord;
+
+uniform mat4 u_Transform;
+
+void main() {
+    f_texcoord = a_Texcoord;
+    gl_Position = u_Transform * vec4(a_Pos.x, a_Pos.y, 0.0, 1.0);
+}
+"#;
+
+pub static FRAGMENT_SHADER_2D_GLSL: &[u8] = br#"
+#version 430
+
+in vec2 f_texcoord;
+
+uniform sampler2D u_Texture;
+
+out vec4 Target0;
+
+void main() {
+    vec4 color = texture(u_Texture, f_texcoord);
+    if (color.a == 0) {
+        discard;
+    } else {
+        Target0 = color;
+    }
+}
+"#;
+
 gfx_defines! {
     vertex Vertex {
         pos: [f32; 3] = "a_Pos",
@@ -107,6 +149,25 @@ gfx_defines! {
         sampler: gfx::TextureSampler<[f32; 4]> = "u_Texture",
         out_color: gfx::RenderTarget<ColorFormat> = "Target0",
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
+    }
+}
+
+gfx_defines! {
+    vertex Vertex2d {
+        pos: [f32; 2] = "a_Pos",
+        texcoord: [f32; 2] = "a_Texcoord",
+    }
+
+    constant Locals2d {
+        transform: [[f32; 4]; 4] = "u_Transform",
+    }
+
+    pipeline pipeline2d {
+        vertex_buffer: gfx::VertexBuffer<Vertex2d> = (),
+        transform: gfx::Global<[[f32; 4]; 4]> = "u_Transform",
+        sampler: gfx::TextureSampler<[f32; 4]> = "u_Texture",
+        out_color: gfx::RenderTarget<ColorFormat> = "Target0",
+        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::PASS_TEST,
     }
 }
 
@@ -281,20 +342,18 @@ impl SceneRenderer {
 }
 
 pub struct UiRenderer {
-    pipeline: PipelineState<Resources, <pipe::Data<Resources> as PipelineData<Resources>>::Meta>,
+    pipeline: PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
     hud_renderer: HudRenderer,
 }
 
 impl UiRenderer {
     pub fn new(
-        display_width: u32,
-        display_height: u32,
         gfx_wad: &Wad,
         palette: &Palette,
         factory: &mut Factory,
     ) -> Result<UiRenderer, Error> {
         use gfx::traits::FactoryExt;
-        let shader_set = factory.create_shader_set(VERTEX_SHADER_GLSL, FRAGMENT_SHADER_GLSL).unwrap();
+        let shader_set = factory.create_shader_set(VERTEX_SHADER_2D_GLSL, FRAGMENT_SHADER_2D_GLSL).unwrap();
 
         let rasterizer = gfx::state::Rasterizer {
             front_face: gfx::state::FrontFace::Clockwise,
@@ -308,10 +367,10 @@ impl UiRenderer {
             &shader_set,
             gfx::Primitive::TriangleList,
             rasterizer,
-            pipe::new(),
+            pipeline2d::new(),
         ).unwrap();
 
-        let hud_renderer = HudRenderer::new(display_width, display_height, gfx_wad, palette, factory)?;
+        let hud_renderer = HudRenderer::new(gfx_wad, palette, factory)?;
 
         Ok(UiRenderer {
             pipeline,
@@ -323,13 +382,15 @@ impl UiRenderer {
         &mut self,
         factory: &mut Factory,
         encoder: &mut gfx::Encoder<Resources, C>,
-        user_data: &mut pipe::Data<Resources>,
-        items: ItemFlags,
+        user_data: &mut pipeline2d::Data<Resources>,
+        client: &Client,
+        display_width: u32,
+        display_height: u32,
     ) -> Result<(), Error>
     where
         C: gfx::CommandBuffer<Resources>,
     {
-        self.hud_renderer.render(factory, encoder, &self.pipeline, user_data, items)?;
+        self.hud_renderer.render(factory, encoder, &self.pipeline, user_data, client, display_width, display_height)?;
 
         Ok(())
     }
@@ -380,4 +441,23 @@ impl Palette {
 
         rgba
     }
+}
+
+pub fn create_texture<F>(
+    factory: &mut F,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<(Texture<Resources, R8_G8_B8_A8>, ShaderResourceView<Resources, [f32; 4]>), Error>
+where
+    F: gfx::Factory<Resources>
+{
+    ensure!((width * height * 4) as usize == rgba.len(), "Invalid dimensions for texture");
+    let ret = factory.create_texture_immutable_u8::<ColorFormat>(
+        gfx::texture::Kind::D2(width as u16, height as u16, gfx::texture::AaMode::Single),
+        gfx::texture::Mipmap::Allocated,
+        &[&rgba],
+    )?;
+
+    Ok(ret)
 }

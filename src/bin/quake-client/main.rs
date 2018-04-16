@@ -92,6 +92,7 @@ struct ClientProgram {
     color: RenderTargetView<Resources, render::ColorFormat>,
     depth: DepthStencilView<Resources, render::DepthFormat>,
     data: RefCell<render::pipe::Data<Resources>>,
+    data_2d: RefCell<render::pipeline2d::Data<Resources>>,
 
     bindings: Rc<RefCell<Bindings>>,
     endpoint: Rc<Endpoint>,
@@ -163,7 +164,15 @@ impl ClientProgram  {
         let mut data = render::pipe::Data {
             vertex_buffer: factory.create_vertex_buffer(&[]),
             transform: Matrix4::identity().into(),
-            sampler: (dummy_texture, sampler),
+            sampler: (dummy_texture.clone(), sampler.clone()),
+            out_color: color.clone(),
+            out_depth: depth.clone(),
+        };
+
+        let mut data_2d = render::pipeline2d::Data {
+            vertex_buffer: factory.create_vertex_buffer(&[]),
+            transform: Matrix4::identity().into(),
+            sampler: (dummy_texture.clone(), sampler.clone()),
             out_color: color.clone(),
             out_depth: depth.clone(),
         };
@@ -185,6 +194,7 @@ impl ClientProgram  {
             factory: RefCell::new(factory),
             encoder: RefCell::new(encoder),
             data: RefCell::new(data),
+            data_2d: RefCell::new(data_2d),
             color: color,
             depth: depth,
             bindings,
@@ -238,10 +248,7 @@ impl Program for ClientProgram  {
 
                 if self.ui_renderer.is_none() {
                     let gfx_wad = Wad::load(self.pak.open("gfx.wad").unwrap()).unwrap();
-                    let (w, h) = self.window.borrow().get_inner_size().unwrap();
                     self.ui_renderer = Some(RefCell::new(UiRenderer::new(
-                        w,
-                        h,
                         &gfx_wad,
                         &self.palette,
                         &mut self.factory.borrow_mut(),
@@ -257,6 +264,7 @@ impl Program for ClientProgram  {
                     ElementState::Released,
                 );
 
+                flame::start("EventsLoop::poll_events");
                 self.events_loop
                     .borrow_mut()
                     .poll_events(|event| match event {
@@ -296,6 +304,7 @@ impl Program for ClientProgram  {
 
                         _ => (),
                     });
+                flame::end("EventsLoop::poll_events");
 
                 client
                     .borrow_mut()
@@ -309,11 +318,11 @@ impl Program for ClientProgram  {
             client.borrow_mut().send().unwrap();
 
             self.encoder.borrow_mut().clear(&self.data.borrow().out_color, [0.0, 0.0, 0.0, 1.0]);
+            let (win_w, win_h) = self.window.borrow().get_inner_size().unwrap();
             if let Some(ref scene_renderer) = self.scene_renderer {
                 let cl = client.borrow();
 
                 let fov_x = self.cvars.borrow().get_value("fov").unwrap();
-                let (win_w, win_h) = self.window.borrow().get_inner_size().unwrap();
                 let aspect = win_w as f32 / win_h as f32;
                 let fov_y = common::math::fov_x_to_fov_y(cgmath::Deg(fov_x), aspect).unwrap();
 
@@ -344,8 +353,10 @@ impl Program for ClientProgram  {
                 ui_renderer.borrow_mut().render(
                     &mut self.factory.borrow_mut(),
                     &mut self.encoder.borrow_mut(),
-                    &mut self.data.borrow_mut(),
-                    client.borrow().items(),
+                    &mut self.data_2d.borrow_mut(),
+                    &client.borrow(),
+                    win_w,
+                    win_h,
                 ).unwrap();
             }
 

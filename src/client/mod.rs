@@ -1493,8 +1493,7 @@ impl Client {
     }
 
     pub fn get_time(&self) -> Duration {
-        // TODO: this doesn't lerp at all (FIXME)
-        self.state.msg_times[0]
+        self.state.time
     }
 
     #[flame]
@@ -1645,6 +1644,18 @@ impl Client {
 
     pub fn items(&self) -> ItemFlags {
         self.state.items
+    }
+
+    pub fn item_get_time(&self) -> &[Duration; net::MAX_ITEMS] {
+        &self.state.item_get_time
+    }
+
+    pub fn active_weapon(&self) -> i32 {
+        self.state.stats[ClientStat::ActiveWeapon as usize]
+    }
+
+    pub fn stats(&self) -> &[i32; MAX_STATS] {
+        &self.state.stats
     }
 
     pub fn disconnect(&self) {

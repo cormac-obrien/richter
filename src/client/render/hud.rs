@@ -20,15 +20,19 @@
 
 use std::mem;
 
+use client::Client;
 use client::render::Palette;
-use client::render::Vertex;
-use client::render::bitmap::Bitmap;
-use client::render::pipe;
+use client::render::Vertex2d;
+use client::render::bitmap::BitmapTexture;
+use client::render::pipeline2d;
+use common::net::ClientStat;
 use common::net::ItemFlags;
+use common::net::MAX_ITEMS;
 use common::wad::Wad;
 
 use cgmath::Matrix4;
 use cgmath::SquareMatrix;
+use chrono::Duration;
 use flame;
 use gfx::CommandBuffer;
 use gfx::Encoder;
@@ -45,14 +49,15 @@ use gfx_device_gl::Resources;
 
 use failure::Error;
 
-// TODO: make a separate pipeline that doesn't need modified coordinates
-static FULLSCREEN_QUAD: [Vertex; 6] = [
-    Vertex { pos: [0.0, 1.0, 1.0], texcoord: [0.0, 0.0] },
-    Vertex { pos: [0.0, -1.0, 1.0], texcoord: [1.0, 0.0] },
-    Vertex { pos: [0.0, 1.0, -1.0], texcoord: [0.0, 1.0] },
-    Vertex { pos: [0.0, 1.0, -1.0], texcoord: [0.0, 1.0] },
-    Vertex { pos: [0.0, -1.0, 1.0], texcoord: [1.0, 0.0] },
-    Vertex { pos: [0.0, -1.0, -1.0], texcoord: [1.0, 1.0] },
+// these have to be wound clockwise
+// t-texcoords are currently inverted because bitmaps are defined with t=0 at the top
+static FULLSCREEN_QUAD: [Vertex2d; 6] = [
+    Vertex2d { pos: [-1.0, -1.0], texcoord: [0.0, 1.0] }, // bottom left
+    Vertex2d { pos: [-1.0, 1.0], texcoord: [0.0, 0.0] }, // top left
+    Vertex2d { pos: [1.0, 1.0], texcoord: [1.0, 0.0] }, // top right
+    Vertex2d { pos: [-1.0, -1.0], texcoord: [0.0, 1.0] }, // bottom left
+    Vertex2d { pos: [1.0, 1.0], texcoord: [1.0, 0.0] }, // top right
+    Vertex2d { pos: [1.0, -1.0], texcoord: [1.0, 1.0] }, // bottom right
 ];
 
 static FULLSCREEN_SLICE: Slice<Resources> = Slice {
@@ -81,38 +86,33 @@ enum AmmoSlots {
 }
 
 pub struct HudRenderer {
-    digits: Box<[Bitmap]>,
-    minus: Bitmap,
-    alt_digits: Box<[Bitmap]>,
-    alt_minus: Bitmap,
-    colon: Bitmap,
-    slash: Bitmap,
+    digits: Box<[BitmapTexture]>,
+    minus: BitmapTexture,
+    alt_digits: Box<[BitmapTexture]>,
+    alt_minus: BitmapTexture,
+    colon: BitmapTexture,
+    slash: BitmapTexture,
 
-    weapons: Box<[Box<[Bitmap]>]>,
-    ammo: Box<[Bitmap]>,
-    armor: Box<[Bitmap]>,
-    items: Box<[Bitmap]>,
-    faces: Box<[Bitmap]>,
-    pain_faces: Box<[Bitmap]>,
+    weapons: Box<[Box<[BitmapTexture]>]>,
+    ammo: Box<[BitmapTexture]>,
+    armor: Box<[BitmapTexture]>,
+    items: Box<[BitmapTexture]>,
+    faces: Box<[BitmapTexture]>,
+    pain_faces: Box<[BitmapTexture]>,
 
-    face_invis: Bitmap,
-    face_invuln: Bitmap,
-    face_invis_invuln: Bitmap,
-    face_quad: Bitmap,
-    sbar: Bitmap,
-    ibar: Bitmap,
-    scorebar: Bitmap,
+    face_invis: BitmapTexture,
+    face_invuln: BitmapTexture,
+    face_invis_invuln: BitmapTexture,
+    face_quad: BitmapTexture,
+    sbar: BitmapTexture,
+    ibar: BitmapTexture,
+    scorebar: BitmapTexture,
 
-    display_bitmap: Bitmap,
-    display_texture_handle: Texture<Resources, R8_G8_B8_A8>,
-    display_texture_view: ShaderResourceView<Resources, [f32; 4]>,
-    vertex_buffer: Buffer<Resources, Vertex>,
+    vertex_buffer: Buffer<Resources, Vertex2d>,
 }
 
 impl HudRenderer {
     pub fn new<F>(
-        display_width: u32,
-        display_height: u32,
         gfx_wad: &Wad,
         palette: &Palette,
         factory: &mut F
@@ -120,13 +120,16 @@ impl HudRenderer {
     where
         F: Factory<Resources>
     {
+        use gfx::traits::FactoryExt;
+        let vertex_buffer = factory.create_vertex_buffer(&FULLSCREEN_QUAD);
+
         let mut digits = Vec::new();
         let mut alt_digits = Vec::new();
 
         // just to make the following code a bit less painful
-        let mut qpic_to_bitmap = |name: &str| -> Result<Bitmap, Error> {
+        let mut qpic_to_bitmap = |name: &str| -> Result<BitmapTexture, Error> {
             let qpic = gfx_wad.open_qpic(name)?;
-            Bitmap::from_qpic(&qpic, palette)
+            BitmapTexture::from_qpic(factory, &qpic, palette)
         };
 
         for i in 0..10 {
@@ -202,10 +205,6 @@ impl HudRenderer {
         let scorebar = qpic_to_bitmap("SCOREBAR")?;
 
         // TODO: use a cvar to determine HUD scaling (for now, do 2:1)
-        let display_bitmap = Bitmap::transparent(display_width / 2, display_height / 2)?;
-        let (display_texture_handle, display_texture_view) = display_bitmap.create_texture(factory)?;
-        use gfx::traits::FactoryExt;
-        let vertex_buffer = factory.create_vertex_buffer(&FULLSCREEN_QUAD);
 
         Ok(HudRenderer {
             digits: digits.into_boxed_slice(),
@@ -230,58 +229,93 @@ impl HudRenderer {
             ibar,
             scorebar,
 
-            display_bitmap,
-            display_texture_handle,
-            display_texture_view,
             vertex_buffer,
         })
+    }
+
+    pub fn render_bitmap<C>(
+        &self,
+        bitmap: &BitmapTexture,
+        encoder: &mut Encoder<Resources, C>,
+        pso: &PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
+        user_data: &mut pipeline2d::Data<Resources>,
+        display_width: u32,
+        display_height: u32,
+        position_x: i32,
+        position_y: i32,
+    )
+    where
+        C: CommandBuffer<Resources>,
+    {
+        user_data.vertex_buffer = self.vertex_buffer.clone();
+        user_data.transform = bitmap.transform(display_width, display_height, position_x, position_y).into();
+        user_data.sampler.0 = bitmap.view();
+        encoder.draw(&FULLSCREEN_SLICE, pso, user_data);
     }
 
     pub fn render<F, C>(
         &mut self,
         factory: &mut F,
         encoder: &mut Encoder<Resources, C>,
-        pso: &PipelineState<Resources, <pipe::Data<Resources> as PipelineData<Resources>>::Meta>,
-        user_data: &mut pipe::Data<Resources>,
-        items: ItemFlags,
+        pso: &PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
+        user_data: &mut pipeline2d::Data<Resources>,
+        client: &Client,
+        display_width: u32,
+        display_height: u32,
     ) -> Result<(), Error>
     where
         F: Factory<Resources>,
         C: CommandBuffer<Resources>,
     {
+        // TODO: scale using a cvar (`r_hudscale` or something)
+        let display_width = display_width / 2;
+        let display_height = display_height / 2;
+
         let _guard = flame::start_guard("HudRenderer::render");
 
-        let mut display_bitmap = self.display_bitmap.clone();
-        let display_width = self.display_bitmap.width();
-        let display_height = self.display_bitmap.height();
-
         let sbar_x = (display_width - self.sbar.width()) as i32 / 2;
-        let sbar_y = (display_height - self.sbar.height()) as i32;
+        let sbar_y = 0;
 
-        display_bitmap.blit(&self.sbar, sbar_x, sbar_y);
+        self.render_bitmap(&self.sbar, encoder, pso, user_data, display_width, display_height, sbar_x, sbar_y);
+        self.render_bitmap(&self.ibar, encoder, pso, user_data, display_width, display_height, sbar_x, sbar_y + self.ibar.height() as i32);
 
-        // inventory
-        display_bitmap.blit(&self.ibar, sbar_x, sbar_y - self.ibar.height() as i32);
-
+        // weapons
         for i in 0..8 {
-            if items.contains(ItemFlags::from_bits(ItemFlags::SHOTGUN.bits() << i).unwrap()) {
-                display_bitmap.blit(
-                    &self.weapons[i][0],
+            if client.items().contains(ItemFlags::from_bits(ItemFlags::SHOTGUN.bits() << i).unwrap()) {
+                let get_time = client.item_get_time()[i];
+                let delta = client.get_time() - get_time;
+                let flash_on = if delta >= Duration::milliseconds(100) {
+                    if client.active_weapon() as u32 == ItemFlags::SHOTGUN.bits() << i {
+                        1
+                    } else {
+                        0
+                    }
+                } else {
+                    (delta.num_milliseconds() * 100) as usize % 5 + 2
+                };
+
+                self.render_bitmap(
+                    &self.weapons[i][flash_on],
+                    encoder,
+                    pso,
+                    user_data,
+                    display_width,
+                    display_height,
                     sbar_x + 24 * i as i32,
-                    sbar_y - self.weapons[0][0].height() as i32
+                    sbar_y + self.sbar.height() as i32
                 );
             }
         }
 
-        let (handle, view) = display_bitmap.create_texture(factory)?;
-        mem::replace(&mut self.display_texture_handle, handle);
-        mem::replace(&mut self.display_texture_view, view);
-
-        user_data.vertex_buffer = self.vertex_buffer.clone();
-        user_data.sampler.0 = self.display_texture_view.clone();
-        user_data.transform = Matrix4::identity().into();
-
-        encoder.draw(&FULLSCREEN_SLICE, pso, user_data);
+        // ammo
+        for i in 0..4 {
+            let ammo_str = format!("{: >3}", client.stats()[ClientStat::Shells as usize + i]);
+            for (chr_id, chr) in ammo_str.chars().enumerate() {
+                if chr != ' ' {
+                    // TODO
+                }
+            }
+        }
 
         Ok(())
     }

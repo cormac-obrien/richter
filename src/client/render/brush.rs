@@ -17,6 +17,7 @@
 
 use std::rc::Rc;
 
+use client::render;
 use client::render::Camera;
 use client::render::Palette;
 use client::render::pipe;
@@ -130,15 +131,7 @@ impl BrushRenderer {
         for tex in bsp_data.textures().iter() {
             let mipmap_full = palette.indexed_to_rgba(tex.mipmap(BspTextureMipmap::Full));
             let (width, height) = tex.dimensions();
-
-            let (_, view) = factory
-                .create_texture_immutable_u8::<ColorFormat>(
-                    texture::Kind::D2(width as u16, height as u16, texture::AaMode::Single),
-                    texture::Mipmap::Provided,
-                    &[&mipmap_full],
-                )
-                .unwrap();
-
+            let (_, view) = render::create_texture(factory, width, height, &mipmap_full).unwrap();
             texture_views.push(view);
         }
 

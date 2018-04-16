@@ -18,10 +18,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use client::render;
 use client::render::ColorFormat;
 use client::render::Palette;
 use common::wad::QPic;
 
+use cgmath::Matrix4;
 use failure::Error;
 use gfx;
 use gfx::Factory;
@@ -36,31 +38,35 @@ const BLUE_CHANNEL: usize = 2;
 const ALPHA_CHANNEL: usize = 3;
 
 #[derive(Clone, Debug)]
-pub struct Bitmap {
+pub struct BitmapTexture {
     width: u32,
     height: u32,
-    rgba: Box<[u8]>
+    handle: Texture<Resources, R8_G8_B8_A8>,
+    view: ShaderResourceView<Resources, [f32; 4]>,
 }
 
-impl Bitmap {
-    pub fn new(width: u32, height: u32, rgba: Box<[u8]>) -> Result<Bitmap, Error> {
-        ensure!(4 * (width * height) as usize == rgba.len(), "Invalid dimensions for given color data");
+impl BitmapTexture {
+    pub fn new<F>(factory: &mut F, width: u32, height: u32, rgba: Box<[u8]>) -> Result<BitmapTexture, Error>
+    where
+        F: Factory<Resources>,
+    {
+        let (handle, view) = render::create_texture(factory, width, height, &rgba)?;
 
-        Ok(Bitmap {
+        Ok(BitmapTexture {
             width,
             height,
-            rgba,
+            handle,
+            view,
         })
     }
 
-    pub fn from_qpic(qpic: &QPic, palette: &Palette) -> Result<Bitmap, Error> {
+    pub fn from_qpic<F>(factory: &mut F, qpic: &QPic, palette: &Palette) -> Result<BitmapTexture, Error>
+    where
+        F: Factory<Resources>,
+    {
         let rgba = palette.indexed_to_rgba(qpic.indices());
 
-        Bitmap::new(qpic.width(), qpic.height(), rgba.into_boxed_slice())
-    }
-
-    pub fn transparent(width: u32, height: u32) -> Result<Bitmap, Error> {
-        Bitmap::new(width, height, vec![0; 4 * (width * height) as usize].into_boxed_slice())
+        BitmapTexture::new(factory, qpic.width(), qpic.height(), rgba.into_boxed_slice())
     }
 
     pub fn width(&self) -> u32 {
@@ -71,115 +77,31 @@ impl Bitmap {
         self.height
     }
 
-    fn xy_to_offset(&self, x: i32, y: i32) -> Option<usize> {
-        if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 {
-            Some(4 * (y * self.width as i32 + x) as usize)
-        } else {
-            None
-        }
+    pub fn view(&self) -> ShaderResourceView<Resources, [f32; 4]> {
+        self.view.clone()
     }
 
-    pub fn pixel(&self, x: i32, y: i32) -> Option<&[u8]> {
-        self.xy_to_offset(x, y).map(|ofs| &self.rgba[ofs..ofs + 4])
-    }
-
-    pub fn pixel_mut(&mut self, x: i32, y: i32) -> Option<&mut [u8]> {
-        match self.xy_to_offset(x, y) {
-            Some(ofs) => Some(&mut self.rgba[ofs..ofs + 4]),
-            None => None,
-        }
-    }
-
-    pub fn rgba(&self) -> &[u8] {
-        &self.rgba
-    }
-
-    pub fn blit(&mut self, src: &Bitmap, x: i32, y: i32) {
-        // TODO this is horribly unoptimized, calculate the intersection instead of testing every
-        // pixel
-        for src_y in 0..src.height() {
-            for src_x in 0..src.width() {
-                if let Some(pix) = self.pixel_mut(
-                    x + src_x as i32,
-                    y + src_y as i32
-                ) {
-                    let src_pix = src.pixel(src_x as i32, src_y as i32).unwrap();
-                    match src_pix[ALPHA_CHANNEL] {
-                        0xFF => pix.copy_from_slice(src_pix),
-                        0x00 => (),
-
-                        // rudimentary blending
-                        alpha => {
-                            let a1 = pix[ALPHA_CHANNEL] as f32;
-                            let a2 = alpha as f32;
-                            let result_alpha = a1 + a2;
-                            let f1 = a1 / result_alpha;
-                            let f2 = a2 / result_alpha;
-
-                            let result = [
-                                (f1 * pix[RED_CHANNEL] as f32 + f2 * src_pix[RED_CHANNEL] as f32) as u8,
-                                (f1 * pix[GREEN_CHANNEL] as f32 + f2 * src_pix[GREEN_CHANNEL] as f32) as u8,
-                                (f1 * pix[BLUE_CHANNEL] as f32 + f2 * src_pix[BLUE_CHANNEL] as f32) as u8,
-                                if result_alpha > 255.0 { 255 } else { result_alpha as u8 },
-                            ];
-
-                            pix.copy_from_slice(&result);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn create_texture<F>(
+    pub fn transform(
         &self,
-        factory: &mut F
-    ) -> Result<(Texture<Resources, R8_G8_B8_A8>, ShaderResourceView<Resources, [f32; 4]>), Error>
-    where
-        F: Factory<Resources>
-    {
-        let result = factory.create_texture_immutable_u8::<ColorFormat>(
-            gfx::texture::Kind::D2(
-                self.width as u16,
-                self.height as u16,
-                gfx::texture::AaMode::Single
-            ),
-            gfx::texture::Mipmap::Allocated,
-            &[&self.rgba],
-        )?;
+        display_width: u32,
+        display_height: u32,
+        position_x: i32,
+        position_y: i32,
+    ) -> Matrix4<f32> {
+        // find center
+        let center_x = position_x + self.width as i32 / 2;
+        let center_y = position_y + self.height as i32 / 2;
 
-        Ok(result)
-    }
-}
+        // rescale from [0, DISPLAY_*] to [-1, 1] (NDC)
+        // TODO: this may break on APIs other than OpenGL
+        let ndc_x = (center_x * 2 - display_width as i32) as f32 / display_width as f32;
+        let ndc_y = (center_y * 2 - display_height as i32) as f32 / display_height as f32;
+        debug!("ndc = [{}, {}]", ndc_x, ndc_y);
 
-#[cfg(test)]
-mod test {
-    use super::*;
+        let scale_x = self.width as f32 / display_width as f32;
+        let scale_y = self.height as f32 / display_height as f32;
 
-    const RED: [u8; 4] = [0xFF, 0x00, 0x00, 0xFF];
-    const GREEN: [u8; 4] = [0x00, 0xFF, 0x00, 0xFF];
-    const BLUE: [u8; 4] = [0x00, 0x00, 0xFF, 0xFF];
-
-    #[test]
-    fn test_blit() {
-        let mut b1_vec = Vec::new();
-        for _ in 0..9 { b1_vec.extend_from_slice(&RED); }
-        let mut b1 = Bitmap::new(3, 3, b1_vec.into_boxed_slice()).unwrap();
-
-        let mut b2_vec = Vec::new();
-        for _ in 0..9 { b2_vec.extend_from_slice(&BLUE); }
-        let b2 = Bitmap::new(3, 3, b2_vec.into_boxed_slice()).unwrap();
-
-        b1.blit(&b2, 1, 1);
-
-        assert_eq!(b1.pixel(0, 0).unwrap(), &RED);
-        assert_eq!(b1.pixel(1, 0).unwrap(), &RED);
-        assert_eq!(b1.pixel(2, 0).unwrap(), &RED);
-        assert_eq!(b1.pixel(0, 1).unwrap(), &RED);
-        assert_eq!(b1.pixel(1, 1).unwrap(), &BLUE);
-        assert_eq!(b1.pixel(2, 1).unwrap(), &BLUE);
-        assert_eq!(b1.pixel(0, 2).unwrap(), &RED);
-        assert_eq!(b1.pixel(1, 2).unwrap(), &BLUE);
-        assert_eq!(b1.pixel(2, 2).unwrap(), &BLUE);
+        Matrix4::from_translation([ndc_x, ndc_y, 0.0].into())
+            * Matrix4::from_nonuniform_scale(scale_x, scale_y, 1.0)
     }
 }
