@@ -19,23 +19,16 @@
 // SOFTWARE.
 
 use client::render;
-use client::render::ColorFormat;
 use client::render::Palette;
 use common::wad::QPic;
 
 use cgmath::Matrix4;
 use failure::Error;
-use gfx;
 use gfx::Factory;
 use gfx::format::R8_G8_B8_A8;
 use gfx::handle::ShaderResourceView;
 use gfx::handle::Texture;
 use gfx_device_gl::Resources;
-
-const RED_CHANNEL: usize = 0;
-const GREEN_CHANNEL: usize = 1;
-const BLUE_CHANNEL: usize = 2;
-const ALPHA_CHANNEL: usize = 3;
 
 #[derive(Clone, Debug)]
 pub struct BitmapTexture {
@@ -96,7 +89,6 @@ impl BitmapTexture {
         // TODO: this may break on APIs other than OpenGL
         let ndc_x = (center_x * 2 - display_width as i32) as f32 / display_width as f32;
         let ndc_y = (center_y * 2 - display_height as i32) as f32 / display_height as f32;
-        debug!("ndc = [{}, {}]", ndc_x, ndc_y);
 
         let scale_x = self.width as f32 / display_width as f32;
         let scale_y = self.height as f32 / display_height as f32;
