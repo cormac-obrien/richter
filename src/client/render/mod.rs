@@ -189,7 +189,7 @@ impl Camera {
         // TODO: the OpenGL coordinate conversion is hardcoded here! XXX
         let converted_origin = Vector3::new(-origin.y, origin.z, -origin.x);
         let translation = Matrix4::from_translation(-converted_origin);
-        let rotation = Matrix4::from(Euler::new(-angles.x, -angles.y, -angles.z));
+        let rotation = Matrix4::from(Euler::new(angles.x, -angles.y, -angles.z));
 
         Camera {
             origin,
