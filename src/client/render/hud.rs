@@ -95,6 +95,7 @@ pub struct HudRenderer {
 
     weapons: Box<[Box<[BitmapTexture]>]>,
     ammo: Box<[BitmapTexture]>,
+    sigils: Box<[BitmapTexture]>,
     armor: Box<[BitmapTexture]>,
     items: Box<[BitmapTexture]>,
     faces: Box<[BitmapTexture]>,
@@ -216,6 +217,7 @@ impl HudRenderer {
 
             weapons: weapons.into_boxed_slice(),
             ammo: ammo.into_boxed_slice(),
+            sigils: sigils.into_boxed_slice(),
             armor: armor.into_boxed_slice(),
             items: items.into_boxed_slice(),
             faces: faces.into_boxed_slice(),
@@ -314,6 +316,43 @@ impl HudRenderer {
                 if chr != ' ' {
                     // TODO
                 }
+            }
+        }
+
+        for i in 0..6 {
+            if client.items().contains(ItemFlags::from_bits(ItemFlags::KEY_1.bits() << i).unwrap()) {
+                let get_time = client.item_get_time()[17 + i];
+                let delta = client.get_time() - get_time;
+
+                // TODO: add !hipnotic as a condition
+                if i > 1 {
+                    self.render_bitmap(
+                        &self.items[i],
+                        encoder,
+                        pso,
+                        user_data,
+                        display_width,
+                        display_height,
+                        sbar_x + 192 + 16 * i as i32,
+                        sbar_y + self.sbar.height() as i32,
+                    );
+                }
+            }
+        }
+
+        for i in 0..4 {
+            if client.items().contains(ItemFlags::from_bits(ItemFlags::SIGIL_1.bits() << i).unwrap()) {
+                let get_time = client.item_get_time()[28 + i];
+                self.render_bitmap(
+                    &self.sigils[i],
+                    encoder,
+                    pso,
+                    user_data,
+                    display_width,
+                    display_height,
+                    sbar_x + 288 + 8 * i as i32,
+                    sbar_y + self.sbar.height() as i32,
+                );
             }
         }
 
