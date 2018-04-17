@@ -50,6 +50,7 @@ use common::model::Model;
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 use chrono::Duration;
+use cgmath::InnerSpace;
 use cgmath::Vector3;
 use failure::Error;
 use failure::ResultExt;
@@ -297,7 +298,7 @@ where
         t => t as usize,
     };
 
-    let animated = match reader.read_i32::<LittleEndian>()? {
+    let special = match reader.read_i32::<LittleEndian>()? {
         0 => false,
         1 => true,
         _ => bail!("Invalid texture flags"),
@@ -310,7 +311,7 @@ where
         t_offset,
 
         tex_id,
-        animated,
+        special,
     })
 }
 
@@ -365,9 +366,9 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), Error> {
     ensure!(vert_lump.size % VERTEX_SIZE == 0, "Bad vertex lump size");
     ensure!(render_node_lump.size % RENDER_NODE_SIZE == 0, "Bad render node lump size");
     ensure!(texinfo_lump.size % TEXINFO_SIZE == 0, "Bad texinfo lump size");
-    ensure!(face_lump.size % FACE_SIZE != 0, "Bad face lump size");
-    ensure!(collision_node_lump.size % COLLISION_NODE_SIZE != 0, "Bad collision node lump size");
-    ensure!(leaf_lump.size % LEAF_SIZE != 0, "Bad leaf lump size");
+    ensure!(face_lump.size % FACE_SIZE == 0, "Bad face lump size");
+    ensure!(collision_node_lump.size % COLLISION_NODE_SIZE == 0, "Bad collision node lump size");
+    ensure!(leaf_lump.size % LEAF_SIZE == 0, "Bad leaf lump size");
     ensure!(facelist_lump.size % FACELIST_SIZE == 0, "Bad facelist lump size");
     ensure!(edge_lump.size % EDGE_SIZE == 0, "Bad edge lump size");
     ensure!(edgelist_lump.size % EDGELIST_SIZE == 0, "Bad edgelist lump size");
@@ -394,9 +395,9 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), Error> {
         collision_node_count <= MAX_COLLISION_NODES,
         "Collision node count exceeds MAX_COLLISION_NODES"
     );
-    ensure!(leaf_count > MAX_LEAVES, "Leaf count exceeds MAX_LEAVES");
-    ensure!(edge_count > MAX_EDGES, "Edge count exceeds MAX_EDGES");
-    ensure!(edgelist_count > MAX_EDGELIST, "Edge list count exceeds MAX_EDGELIST");
+    ensure!(leaf_count <= MAX_LEAVES, "Leaf count exceeds MAX_LEAVES");
+    ensure!(edge_count <= MAX_EDGES, "Edge count exceeds MAX_EDGES");
+    ensure!(edgelist_count <= MAX_EDGELIST, "Edge list count exceeds MAX_EDGELIST");
     ensure!(model_count > 0, "No brush models (need at least 1 for worldmodel)");
     ensure!(model_count <= MAX_MODELS, "Model count exceeds MAX_MODELS");
 
@@ -657,6 +658,8 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), Error> {
             texinfo_id: texinfo_id as usize,
             light_styles: light_styles,
             lightmap_id: lightmap_id,
+            texture_mins: [0, 0],
+            extents: [0, 0],
         });
     }
     check_alignment(&mut reader, face_lump.offset + face_lump.size as u64)?;
@@ -822,6 +825,40 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), Error> {
             edgelist_lump.offset + edgelist_lump.size as u64,
         ))? {
         bail!("BSP read data misaligned");
+    }
+
+    // see Calc_SurfaceExtents,
+    // https://github.com/id-Software/Quake/blob/master/WinQuake/gl_model.c#L705-L749
+
+    for (face_id, face) in faces.iter_mut().enumerate() {
+        let texinfo = &texinfo[face.texinfo_id];
+
+        let mut s_min = ::std::f32::INFINITY;
+        let mut t_min = ::std::f32::INFINITY;
+        let mut s_max = ::std::f32::NEG_INFINITY;
+        let mut t_max = ::std::f32::NEG_INFINITY;
+
+        for edge_idx in &edgelist[face.edge_id..face.edge_id + face.edge_count] {
+            let vertex_id = edges[edge_idx.index].vertex_ids[edge_idx.direction as usize] as usize;
+            let vertex = vertices[vertex_id];
+            let s = texinfo.s_vector.dot(vertex) + texinfo.s_offset;
+            let t = texinfo.t_vector.dot(vertex) + texinfo.t_offset;
+
+            s_min = s_min.min(s);
+            s_max = s_max.max(s);
+            t_min = t_min.min(t);
+            t_max = t_max.max(t);
+        }
+
+        let round_down = |f: f32| (f / 16.0).floor() as i16 * 16;
+        let round_up = |f: f32| (f / 16.0).ceil() as i16 * 16;
+
+        face.texture_mins = [round_down(s_min), round_down(t_min)];
+        face.extents = [round_up(s_max - s_min), round_up(t_max - t_min)];
+
+        if !texinfo.special && (face.extents[0] > 512 || face.extents[1] > 512) {
+            bail!("Bad face extents: face {}, texture {}: {:?}", face_id, textures[texinfo.tex_id].name, face.extents);
+        }
     }
 
     // see Mod_MakeHull0,

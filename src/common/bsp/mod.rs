@@ -257,7 +257,7 @@ pub struct BspTexInfo {
     pub t_vector: Vector3<f32>,
     pub t_offset: f32,
     pub tex_id: usize,
-    pub animated: bool,
+    pub special: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -275,6 +275,9 @@ pub struct BspFace {
     pub texinfo_id: usize,
     pub light_styles: [u8; MAX_LIGHTSTYLES],
     pub lightmap_id: Option<usize>,
+
+    pub texture_mins: [i16; 2],
+    pub extents: [i16; 2],
 }
 
 /// The contents of a leaf in the BSP tree, specifying how it should look and behave.
