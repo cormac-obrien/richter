@@ -35,22 +35,15 @@ use common::net::MAX_ITEMS;
 use common::pak::Pak;
 use common::wad::Wad;
 
-use cgmath::Deg;
-use cgmath::Euler;
-use cgmath::Matrix4;
-use cgmath::Vector3;
-use cgmath::Zero;
+use cgmath::{Deg, Euler, Matrix4, Vector3, Zero};
 use chrono::Duration;
 use failure::Error;
 use flame;
 use gfx;
-use gfx::handle::ShaderResourceView;
-use gfx::handle::Texture;
+use gfx::handle::{DepthStencilView, RenderTargetView, ShaderResourceView, Texture};
 use gfx::format::R8_G8_B8_A8;
-use gfx::pso::PipelineData;
-use gfx::pso::PipelineState;
-use gfx_device_gl::Factory;
-use gfx_device_gl::Resources;
+use gfx::pso::{PipelineData, PipelineState};
+use gfx_device_gl::{Factory, Resources};
 
 pub use gfx::format::Srgba8 as ColorFormat;
 pub use gfx::format::DepthStencil as DepthFormat;
@@ -217,7 +210,14 @@ pub struct SceneRenderer {
 }
 
 impl SceneRenderer {
-    pub fn new(models: &[Model], worldmodel_id: usize, palette: &Palette, factory: &mut Factory) -> Result<SceneRenderer, Error>
+    pub fn new(
+        models: &[Model],
+        worldmodel_id: usize,
+        palette: &Palette,
+        factory: &mut Factory,
+        color_target: RenderTargetView<Resources, ColorFormat>,
+        depth_target: DepthStencilView<Resources, DepthFormat>,
+    ) -> Result<SceneRenderer, Error>
     {
         use gfx::traits::FactoryExt;
         let shader_set = factory.create_shader_set(VERTEX_SHADER_GLSL, FRAGMENT_SHADER_GLSL).unwrap();
@@ -245,7 +245,13 @@ impl SceneRenderer {
                 match *model.kind() {
                     ModelKind::Brush(ref bmodel) => {
                         debug!("model {}: world model", i);
-                        maybe_world_renderer = Some(WorldRenderer::new(model.name(), &bmodel, palette, factory));
+                        maybe_world_renderer = Some(WorldRenderer::new(
+                            &bmodel,
+                            palette,
+                            factory,
+                            color_target.clone(),
+                            depth_target.clone()
+                        )?);
                     }
 
                     _ => bail!("Invalid kind for worldmodel"),
@@ -298,13 +304,11 @@ impl SceneRenderer {
         flame::start("render_world");
         self.world_renderer.render(
             encoder,
-            &self.pipeline,
-            user_data,
             time,
             camera,
             Vector3::zero(),
             Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-        );
+        )?;
         flame::end("render_world");
 
         flame::start("render_entities");

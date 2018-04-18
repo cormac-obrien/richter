@@ -850,14 +850,16 @@ pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), Error> {
             t_max = t_max.max(t);
         }
 
-        let round_down = |f: f32| (f / 16.0).floor() as i16 * 16;
-        let round_up = |f: f32| (f / 16.0).ceil() as i16 * 16;
+        let b_mins = [(s_min / 16.0).floor(), (t_min / 16.0).floor()];
+        let b_maxs = [(s_max / 16.0).ceil(), (t_max / 16.0).ceil()];
 
-        face.texture_mins = [round_down(s_min), round_down(t_min)];
-        face.extents = [round_up(s_max - s_min), round_up(t_max - t_min)];
+        for i in 0..2 {
+            face.texture_mins[i] = b_mins[i] as i16 * 16;
+            face.extents[i] = (b_maxs[i] - b_mins[i]) as i16 * 16;
 
-        if !texinfo.special && (face.extents[0] > 512 || face.extents[1] > 512) {
-            bail!("Bad face extents: face {}, texture {}: {:?}", face_id, textures[texinfo.tex_id].name, face.extents);
+            if !texinfo.special && face.extents[i] > 2000 {
+                bail!("Bad face extents: face {}, texture {}: {:?}", face_id, textures[texinfo.tex_id].name, face.extents);
+            }
         }
     }
 

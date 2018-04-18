@@ -140,6 +140,7 @@ pub use self::load::load;
 // this is 4 in the original source, but the 4th hull is never used.
 const MAX_HULLS: usize = 3;
 
+pub const MAX_LIGHTMAPS: usize = 64;
 pub const MAX_LIGHTSTYLES: usize = 4;
 pub const MAX_SOUNDS: usize = 4;
 const MIPLEVELS: usize = 4;
@@ -708,6 +709,10 @@ impl BspData {
 
     pub fn faces(&self) -> &[BspFace] {
         &self.faces
+    }
+
+    pub fn lightmaps(&self) -> &[u8] {
+        &self.lightmaps
     }
 
     pub fn leaves(&self) -> &[BspLeaf] {

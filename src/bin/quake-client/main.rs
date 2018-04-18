@@ -243,6 +243,8 @@ impl Program for ClientProgram  {
                         1,
                         &self.palette,
                         &mut self.factory.borrow_mut(),
+                        self.color.clone(),
+                        self.depth.clone(),
                     ).unwrap()));
                 }
 
