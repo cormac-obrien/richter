@@ -260,7 +260,13 @@ impl SceneRenderer {
                 match *model.kind() {
                     ModelKind::Brush(ref bmodel) => {
                         debug!("model {}: brush model", i);
-                        brush_renderers.insert(i, BrushRenderer::new(model.name(), &bmodel, palette, factory));
+                        brush_renderers.insert(i, BrushRenderer::new(
+                            &bmodel,
+                            palette,
+                            factory,
+                            color_target.clone(),
+                            depth_target.clone(),
+                        )?);
                     }
 
                     ModelKind::Alias(ref amodel) => {
@@ -317,13 +323,11 @@ impl SceneRenderer {
             if let Some(ref brush_renderer) = self.brush_renderers.get(&model_id) {
                 brush_renderer.render(
                     encoder,
-                    &self.pipeline,
-                    user_data,
                     time,
                     camera,
                     ent.get_origin(),
                     ent.get_angles()
-                );
+                )?;
             } else if let Some(ref alias_renderer) = self.alias_renderers.get(&model_id) {
                 // TODO: pull keyframe and texture ID
                 alias_renderer.render(

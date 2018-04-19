@@ -146,10 +146,7 @@ where
     Ok(pipeline)
 }
 
-const BLOCK_WIDTH: f32 = 256.0;
-const BLOCK_HEIGHT: f32 = 256.0;
 // FIXME: this calculation is (very slightly) off. not sure why.
-// TODO: figure out what the `+ 8.0` is for (looks like magic right now)
 fn calculate_lightmap_texcoords(
     position: Vector3<f32>,
     face: &BspFace,
