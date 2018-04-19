@@ -1,12 +1,13 @@
 # Richter
 An open-source implementation of the Quake engine in Rust
 
-![alt tag](https://i.imgur.com/zTDrWzm.png)
+![alt tag](https://i.imgur.com/O0KUuBp.jpg)
 
 ## Status
 
 Richter is currently in pre-alpha development. This means that the engine architecture is still
-being designed. There is no working client or server yet.
+being designed. The most development time is currently being focused on the client. Neither the
+client nor the server is in a "working" state yet.
 
 ## Building
 
@@ -28,7 +29,7 @@ This software is released under the terms of the MIT License (see LICENSE.txt).
 
 This project is in no way affiliated with id Software LLC, Bethesda Softworks LLC, or ZeniMax Media
 Inc. Information regarding the Quake trademark can be found at Bethesda's [legal information
-page](https://bethesda.net/en/document/legal-information)
+page](https://bethesda.net/en/document/legal-information).
 
 Due to licensing restrictions, the data files necessary to run Quake cannot be distributed with this
 package. `pak0.pak`, which contains the files for the first episode ("shareware Quake"), can be
