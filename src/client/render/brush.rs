@@ -32,7 +32,7 @@ use gfx::traits::FactoryExt;
 use gfx_device_gl::Resources;
 
 // TODO: per-API coordinate system conversions
-static BRUSH_VERTEX_SHADER_GLSL: &[u8] = br#"
+pub static BRUSH_VERTEX_SHADER_GLSL: &[u8] = br#"
 #version 430
 
 layout (location = 0) in vec3 a_Position;
@@ -51,7 +51,7 @@ void main() {
 }
 "#;
 
-static BRUSH_FRAGMENT_SHADER_GLSL: &[u8] = br#"
+pub static BRUSH_FRAGMENT_SHADER_GLSL: &[u8] = br#"
 #version 430
 
 in vec2 f_diffuseTexcoord;
@@ -90,8 +90,8 @@ gfx_defines! {
     }
 }
 
-type BrushPipelineState = PipelineState<Resources, <pipe_brush::Data<Resources> as PipelineData<Resources>>::Meta>;
-type BrushPipelineData = pipe_brush::Data<Resources>;
+pub type BrushPipelineState = PipelineState<Resources, <pipe_brush::Data<Resources> as PipelineData<Resources>>::Meta>;
+pub type BrushPipelineData = pipe_brush::Data<Resources>;
 
 pub struct BrushRenderFace {
     pub slice: Slice<Resources>,
@@ -117,7 +117,7 @@ pub struct BrushRenderer {
     depth_target: DepthStencilView<Resources, DepthFormat>,
 }
 
-fn create_pipeline_state<F>(factory: &mut F) -> Result<BrushPipelineState, Error>
+pub fn create_pipeline_state<F>(factory: &mut F) -> Result<BrushPipelineState, Error>
 where
     F: Factory<Resources>
 {

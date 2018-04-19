@@ -18,7 +18,8 @@
 use std::rc::Rc;
 
 use client::render::{Camera, ColorFormat, DepthFormat, Palette};
-use common::bsp::{BspData, BspFace, BspModel, BspTexInfo, BspTexture, BspTextureMipmap};
+use client::render::brush::{self, BrushPipelineData, BrushPipelineState, BrushVertex, pipe_brush};
+use common::bsp::{BspData, BspFace, BspModel, BspTexInfo, BspTextureMipmap};
 
 use cgmath::{Deg, Euler, InnerSpace, Vector3, Matrix4, SquareMatrix};
 use chrono::Duration;
@@ -26,72 +27,9 @@ use failure::Error;
 use gfx::{self, CommandBuffer, Encoder, Factory, IndexBuffer, Slice};
 use gfx::format::{R8, Unorm};
 use gfx::handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView};
-use gfx::pso::{PipelineData, PipelineState};
 use gfx::texture;
 use gfx::traits::FactoryExt;
 use gfx_device_gl::Resources;
-
-// TODO: per-API coordinate system conversions
-static WORLD_VERTEX_SHADER_GLSL: &[u8] = br#"
-#version 430
-
-layout (location = 0) in vec3 a_Position;
-layout (location = 1) in vec2 a_DiffuseTexcoord;
-layout (location = 2) in vec2 a_LightmapTexcoord;
-
-out vec2 f_diffuseTexcoord;
-out vec2 f_lightmapTexcoord;
-
-uniform mat4 u_Transform;
-
-void main() {
-    f_diffuseTexcoord = a_DiffuseTexcoord;
-    f_lightmapTexcoord = a_LightmapTexcoord;
-    gl_Position = u_Transform * vec4(-a_Position.y, a_Position.z, -a_Position.x, 1.0);
-}
-"#;
-
-static WORLD_FRAGMENT_SHADER_GLSL: &[u8] = br#"
-#version 430
-
-in vec2 f_diffuseTexcoord;
-in vec2 f_lightmapTexcoord;
-
-uniform sampler2D u_Texture;
-uniform sampler2D u_Lightmap;
-
-out vec4 Target0;
-
-void main() {
-    vec4 color = texture(u_Texture, f_diffuseTexcoord);
-
-    if (color.a == 0) {
-        discard;
-    } else {
-        float light_level = texture(u_Lightmap, f_lightmapTexcoord).r;
-        Target0 = light_level * color;
-    }
-}"#;
-
-gfx_defines! {
-    vertex WorldVertex {
-        position: [f32; 3] = "a_Position",
-        diffuse_texcoord: [f32; 2] = "a_DiffuseTexcoord",
-        lightmap_texcoord: [f32; 2] = "a_LightmapTexcoord",
-    }
-
-    pipeline pipe_world {
-        vertex_buffer: gfx::VertexBuffer<WorldVertex> = (),
-        transform: gfx::Global<[[f32; 4]; 4]> = "u_Transform",
-        diffuse_sampler: gfx::TextureSampler<[f32; 4]> = "u_Texture",
-        lightmap_sampler: gfx::TextureSampler<f32> = "u_Lightmap",
-        out_color: gfx::RenderTarget<ColorFormat> = "Target0",
-        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
-    }
-}
-
-type WorldPipelineState = PipelineState<Resources, <pipe_world::Data<Resources> as PipelineData<Resources>>::Meta>;
-type WorldPipelineData = pipe_world::Data<Resources>;
 
 pub struct WorldRenderFace {
     pub slice: Slice<Resources>,
@@ -110,8 +48,8 @@ pub struct WorldRenderer {
     texture_views: Box<[ShaderResourceView<Resources, [f32; 4]>]>,
     lightmap_views: Box<[ShaderResourceView<Resources, f32>]>,
 
-    pipeline_state: WorldPipelineState,
-    vertex_buffer: Buffer<Resources, WorldVertex>,
+    pipeline_state: BrushPipelineState,
+    vertex_buffer: Buffer<Resources, BrushVertex>,
     dummy_texture: ShaderResourceView<Resources, [f32; 4]>,
     dummy_lightmap: ShaderResourceView<Resources, f32>,
 
@@ -121,37 +59,11 @@ pub struct WorldRenderer {
     depth_target: DepthStencilView<Resources, DepthFormat>,
 }
 
-fn create_pipeline_state<F>(factory: &mut F) -> Result<WorldPipelineState, Error>
-where
-    F: Factory<Resources>
-{
-    let shader_set = &factory.create_shader_set(
-        WORLD_VERTEX_SHADER_GLSL,
-        WORLD_FRAGMENT_SHADER_GLSL
-    )?;
-
-    let pipeline = factory.create_pipeline_state(
-        &shader_set,
-        gfx::Primitive::TriangleList,
-        gfx::state::Rasterizer {
-            front_face: gfx::state::FrontFace::Clockwise,
-            cull_face: gfx::state::CullFace::Back,
-            method: gfx::state::RasterMethod::Fill,
-            offset: None,
-            samples: Some(gfx::state::MultiSample),
-        },
-        pipe_world::new(),
-    )?;
-
-    Ok(pipeline)
-}
-
 // FIXME: this calculation is (very slightly) off. not sure why.
 fn calculate_lightmap_texcoords(
     position: Vector3<f32>,
     face: &BspFace,
     texinfo: &BspTexInfo,
-    texture: &BspTexture
 ) -> [f32; 2] {
     let mut s = texinfo.s_vector.dot(position) + texinfo.s_offset;
     s -= face.texture_mins[0] as f32;
@@ -178,7 +90,7 @@ impl WorldRenderer {
         let mut vertices = Vec::new();
         let mut lightmap_views = Vec::new();
 
-        let pipeline_state = create_pipeline_state(factory)?;
+        let pipeline_state = brush::create_pipeline_state(factory)?;
 
         let bsp_data = bsp_model.bsp_data().clone();
 
@@ -207,10 +119,10 @@ impl WorldRenderer {
                     (base_position.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32;
 
                 for i in 1..face_edge_ids.len() - 1 {
-                    vertices.push(WorldVertex {
+                    vertices.push(BrushVertex {
                         position: base_position.into(),
                         diffuse_texcoord: [base_diffuse_s, base_diffuse_t],
-                        lightmap_texcoord: calculate_lightmap_texcoords(base_position, face, texinfo, tex),
+                        lightmap_texcoord: calculate_lightmap_texcoords(base_position, face, texinfo),
                     });
 
                     for v in 0..2 {
@@ -222,10 +134,10 @@ impl WorldRenderer {
                             (position.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32;
                         let diffuse_t =
                             (position.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32;
-                        vertices.push(WorldVertex {
+                        vertices.push(BrushVertex {
                             position: position.into(),
                             diffuse_texcoord: [diffuse_s, diffuse_t],
-                            lightmap_texcoord: calculate_lightmap_texcoords(position, face, texinfo, tex),
+                            lightmap_texcoord: calculate_lightmap_texcoords(position, face, texinfo),
                         });
                     }
                 }
@@ -241,7 +153,7 @@ impl WorldRenderer {
                 let lightmap_id = if !texinfo.special {
                     if let Some(ofs) = face.lightmap_id {
                         let lightmap_data = &bsp_data.lightmaps()[ofs..ofs + lightmap_size as usize];
-                        let (lightmap_handle, lightmap_view) = factory.create_texture_immutable_u8::<(R8, Unorm)>(
+                        let (_lightmap_handle, lightmap_view) = factory.create_texture_immutable_u8::<(R8, Unorm)>(
                             texture::Kind::D2(lightmap_w as u16, lightmap_h as u16, texture::AaMode::Single),
                             texture::Mipmap::Allocated,
                             &[lightmap_data],
@@ -326,9 +238,9 @@ impl WorldRenderer {
         })
     }
 
-    fn create_pipeline_data(&self) -> Result<WorldPipelineData, Error>
+    fn create_pipeline_data(&self) -> Result<BrushPipelineData, Error>
     {
-        let pipeline_data = pipe_world::Data {
+        let pipeline_data = pipe_brush::Data {
             vertex_buffer: self.vertex_buffer.clone(),
             transform: Matrix4::identity().into(),
             diffuse_sampler: (self.dummy_texture.clone(), self.diffuse_sampler.clone()),
@@ -343,8 +255,8 @@ impl WorldRenderer {
     pub fn render_leaf<C>(
         &self,
         encoder: &mut Encoder<Resources, C>,
-        pipeline_state: &WorldPipelineState,
-        pipeline_data: &mut WorldPipelineData,
+        pipeline_state: &BrushPipelineState,
+        pipeline_data: &mut BrushPipelineData,
         time: Duration,
         camera: &Camera,
         origin: Vector3<f32>,
