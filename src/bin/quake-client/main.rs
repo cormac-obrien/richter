@@ -136,7 +136,7 @@ impl ClientProgram  {
         let events_loop = glutin::EventsLoop::new();
         let window_builder = glutin::WindowBuilder::new()
             .with_title("Richter client")
-            .with_dimensions(1366, 768);
+            .with_dimensions(1600, 900);
         let context_builder = glutin::ContextBuilder::new()
             .with_gl(glutin::GlRequest::Specific(glutin::Api::OpenGl, (3, 3)))
             .with_vsync(false);

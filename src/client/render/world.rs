@@ -69,8 +69,7 @@ void main() {
         discard;
     } else {
         float light_level = texture(u_Lightmap, f_lightmapTexcoord).r;
-        // Target0 = light_level * color;
-        Target0 = vec4(light_level, light_level, light_level, light_level);
+        Target0 = light_level * color;
     }
 }"#;
 
@@ -149,19 +148,21 @@ where
 
 const BLOCK_WIDTH: f32 = 256.0;
 const BLOCK_HEIGHT: f32 = 256.0;
+// FIXME: this calculation is (very slightly) off. not sure why.
+// TODO: figure out what the `+ 8.0` is for (looks like magic right now)
 fn calculate_lightmap_texcoords(
     position: Vector3<f32>,
     face: &BspFace,
     texinfo: &BspTexInfo,
     texture: &BspTexture
 ) -> [f32; 2] {
-    let mut s = texinfo.s_vector.dot(position) + texinfo.s_offset - 8.0;
+    let mut s = texinfo.s_vector.dot(position) + texinfo.s_offset;
+    s -= face.texture_mins[0] as f32;
     s /= face.extents[0] as f32;
 
-    let mut t = texinfo.t_vector.dot(position) + texinfo.t_offset - 8.0;
+    let mut t = texinfo.t_vector.dot(position) + texinfo.t_offset;
+    t -= face.texture_mins[1] as f32;
     t /= face.extents[1] as f32;
-    // let s = (position.dot(texinfo.s_vector) + texinfo.s_offset - face.texture_mins[0] as f32) / (texture.width() as f32);
-    // let t = (position.dot(texinfo.t_vector) + texinfo.t_offset - face.texture_mins[1] as f32) / (texture.height() as f32);
     [s, t]
 }
 
@@ -319,8 +320,8 @@ impl WorldRenderer {
                 gfx::texture::WrapMode::Tile,
             )),
             lightmap_sampler: factory.create_sampler(gfx::texture::SamplerInfo::new(
-                // gfx::texture::FilterMethod::Bilinear,
-                gfx::texture::FilterMethod::Scale,
+                gfx::texture::FilterMethod::Bilinear,
+                // gfx::texture::FilterMethod::Scale,
                 gfx::texture::WrapMode::Tile,
             )),
             color_target,
