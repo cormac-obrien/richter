@@ -59,6 +59,7 @@ in vec2 f_lightmapTexcoord;
 
 uniform sampler2D u_Texture;
 uniform sampler2D u_Lightmap;
+uniform float u_LightstyleValue;
 
 out vec4 Target0;
 
@@ -68,7 +69,7 @@ void main() {
     if (color.a == 0) {
         discard;
     } else {
-        float light_level = texture(u_Lightmap, f_lightmapTexcoord).r;
+        float light_level = texture(u_Lightmap, f_lightmapTexcoord).r * u_LightstyleValue;
         Target0 = light_level * color;
     }
 }"#;
@@ -85,6 +86,7 @@ gfx_defines! {
         transform: gfx::Global<[[f32; 4]; 4]> = "u_Transform",
         diffuse_sampler: gfx::TextureSampler<[f32; 4]> = "u_Texture",
         lightmap_sampler: gfx::TextureSampler<f32> = "u_Lightmap",
+        lightstyle_value: gfx::Global<f32> = "u_LightstyleValue",
         out_color: gfx::RenderTarget<ColorFormat> = "Target0",
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
     }
@@ -97,6 +99,7 @@ pub struct BrushRenderFace {
     pub slice: Slice<Resources>,
     pub tex_id: usize,
     pub lightmap_id: Option<usize>,
+    pub lightstyle_id: usize,
 }
 
 pub struct BrushRenderer {
@@ -258,6 +261,7 @@ impl BrushRenderer {
                 },
                 tex_id: texinfo.tex_id,
                 lightmap_id,
+                lightstyle_id: face.light_styles[0] as usize,
             });
         }
 
@@ -312,6 +316,7 @@ impl BrushRenderer {
             transform: Matrix4::identity().into(),
             diffuse_sampler: (self.dummy_texture.clone(), self.diffuse_sampler.clone()),
             lightmap_sampler: (self.dummy_lightmap.clone(), self.lightmap_sampler.clone()),
+            lightstyle_value: 0.0,
             out_color: self.color_target.clone(),
             out_depth: self.depth_target.clone(),
         };
@@ -327,6 +332,7 @@ impl BrushRenderer {
         camera: &Camera,
         origin: Vector3<f32>,
         angles: Vector3<Deg<f32>>,
+        lightstyle_values: &[f32],
     ) -> Result<(), Error>
     where
         C: CommandBuffer<Resources>,
@@ -346,6 +352,7 @@ impl BrushRenderer {
                 Some(l_id) => self.lightmap_views[l_id].clone(),
                 None => self.dummy_lightmap.clone(),
             };
+            pipeline_data.lightstyle_value = *lightstyle_values.get(face.lightstyle_id).unwrap_or(&1.0);
 
             encoder.draw(&face.slice, &self.pipeline_state, &pipeline_data);
         }

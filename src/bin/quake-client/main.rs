@@ -345,9 +345,10 @@ impl Program for ClientProgram  {
                 scene_renderer.borrow_mut().render(
                     &mut self.encoder.borrow_mut(),
                     &mut self.data.borrow_mut(),
-                    client.borrow().get_entities().unwrap(),
-                    client.borrow().get_time(),
+                    cl.get_entities().unwrap(),
+                    cl.get_time(),
                     &camera,
+                    &cl.lightstyle_values().unwrap(),
                 ).unwrap();
             }
 

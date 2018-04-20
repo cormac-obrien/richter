@@ -35,6 +35,7 @@ pub struct WorldRenderFace {
     pub slice: Slice<Resources>,
     pub tex_id: usize,
     pub lightmap_id: Option<usize>,
+    pub lightstyle_id: u8,
 }
 
 pub struct WorldRenderLeaf {
@@ -178,6 +179,7 @@ impl WorldRenderer {
                     },
                     tex_id: texinfo.tex_id,
                     lightmap_id,
+                    lightstyle_id: face.light_styles[0],
                 });
             }
 
@@ -245,6 +247,7 @@ impl WorldRenderer {
             transform: Matrix4::identity().into(),
             diffuse_sampler: (self.dummy_texture.clone(), self.diffuse_sampler.clone()),
             lightmap_sampler: (self.dummy_lightmap.clone(), self.lightmap_sampler.clone()),
+            lightstyle_value: 0.0,
             out_color: self.color_target.clone(),
             out_depth: self.depth_target.clone(),
         };
@@ -261,6 +264,7 @@ impl WorldRenderer {
         camera: &Camera,
         origin: Vector3<f32>,
         angles: Vector3<Deg<f32>>,
+        lightstyle_values: &[f32],
         leaf_id: usize,
     ) where
         C: CommandBuffer<Resources>,
@@ -283,6 +287,7 @@ impl WorldRenderer {
                 Some(l_id) => self.lightmap_views[l_id].clone(),
                 None => self.dummy_lightmap.clone(),
             };
+            pipeline_data.lightstyle_value = *lightstyle_values.get(face.lightstyle_id as usize).unwrap_or(&1.0);
 
             encoder.draw(&face.slice, pipeline_state, pipeline_data);
         }
@@ -296,6 +301,7 @@ impl WorldRenderer {
         camera: &Camera,
         origin: Vector3<f32>,
         angles: Vector3<Deg<f32>>,
+        lightstyle_values: &[f32],
     ) -> Result<(), Error>
     where
         C: CommandBuffer<Resources>,
@@ -316,6 +322,7 @@ impl WorldRenderer {
                     camera,
                     origin,
                     angles,
+                    lightstyle_values,
                     leaf_id,
                 );
             }
@@ -329,6 +336,7 @@ impl WorldRenderer {
                     camera,
                     origin,
                     angles,
+                    lightstyle_values,
                     *leaf_id,
                 );
             }

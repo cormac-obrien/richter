@@ -25,7 +25,7 @@ use chrono::Duration;
 use chrono::Utc;
 
 // TODO: replace with cvar
-const FPS_MAX: f32 = 72.0;
+const FPS_MAX: f32 = 144.0;
 
 pub trait Program: Sized {
     fn frame(&mut self, frame_duration: Duration);

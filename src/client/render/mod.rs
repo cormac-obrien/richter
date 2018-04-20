@@ -303,6 +303,7 @@ impl SceneRenderer {
         entities: &[ClientEntity],
         time: Duration,
         camera: &Camera,
+        lightstyle_values: &[f32],
     ) -> Result<(), Error>
     where
         C: gfx::CommandBuffer<Resources>,
@@ -314,6 +315,7 @@ impl SceneRenderer {
             camera,
             Vector3::zero(),
             Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            lightstyle_values,
         )?;
         flame::end("render_world");
 
@@ -326,7 +328,8 @@ impl SceneRenderer {
                     time,
                     camera,
                     ent.get_origin(),
-                    ent.get_angles()
+                    ent.get_angles(),
+                    lightstyle_values,
                 )?;
             } else if let Some(ref alias_renderer) = self.alias_renderers.get(&model_id) {
                 // TODO: pull keyframe and texture ID

@@ -1658,6 +1658,32 @@ impl Client {
         &self.state.stats
     }
 
+    pub fn lightstyle_values(&self) -> Result<Vec<f32>, Error> {
+        let mut values = Vec::new();
+
+        for lightstyle_id in 0..64 {
+            match self.state.light_styles.get(&lightstyle_id) {
+                Some(ls) => {
+                    let float_time = engine::duration_to_f32(self.state.time);
+                    let frame = if ls.len() == 0 {
+                        None
+                    } else {
+                        Some((float_time * 10.0) as usize % ls.len())
+                    };
+
+                    values.push(match frame {
+                        Some(f) => (ls.as_bytes()[f] - 'a' as u8) as f32 * 22.0 / 256.0,
+                        None => 1.0,
+                    })
+                }
+
+                None => bail!("No lightstyle with ID {}", lightstyle_id),
+            }
+        }
+
+        Ok(values)
+    }
+
     pub fn disconnect(&self) {
         unimplemented!();
     }

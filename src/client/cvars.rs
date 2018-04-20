@@ -29,7 +29,7 @@ pub fn register_cvars(cvars: &CvarRegistry) {
     cvars.register_archive("_cl_color", "0").unwrap();
     cvars.register("cl_crossx", "0").unwrap();
     cvars.register("cl_crossy", "0").unwrap();
-    cvars.register_archive("cl_forwardspeed", "200").unwrap();
+    cvars.register_archive("cl_forwardspeed", "400").unwrap();
     cvars.register("cl_movespeedkey", "2.0").unwrap();
     cvars.register_archive("_cl_name", "player").unwrap();
     cvars.register("cl_nolerp", "0").unwrap();
