@@ -68,13 +68,26 @@ void main() {
     vec4 color = texture(u_Texture, f_diffuseTexcoord);
     vec4 lightmap = texture(u_Lightmap, f_lightmapTexcoord);
 
+    color.rgb *= lightmap.rrr;
+
+    int lightstyle_count = 0;
+    float light_factor = 0.0;
     for (int i = 0; i < 4; i++) {
         if (u_LightstyleValue[i] != -1) {
-            color.rgb *= lightmap.rrr * u_LightstyleValue[i];
+            light_factor += u_LightstyleValue[i];
+            lightstyle_count = i + 1;
+        } else {
+            break;
         }
     }
 
-    Target0 = color;
+    if (lightstyle_count != 0) {
+        light_factor /= lightstyle_count;
+    } else {
+        light_factor = 1.0;
+    }
+
+    Target0 = color * light_factor;
 }"#;
 
 gfx_defines! {
