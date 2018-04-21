@@ -1671,8 +1671,10 @@ impl Client {
                         Some((float_time * 10.0) as usize % ls.len())
                     };
 
+                    // NOTE: we use 44 instead of the original engine's 22 to recreate the
+                    // overbright effect of the software renderer
                     values.push(match frame {
-                        Some(f) => (ls.as_bytes()[f] - 'a' as u8) as f32 * 22.0 / 256.0,
+                        Some(f) => (ls.as_bytes()[f] - 'a' as u8) as f32 * 44.0 / 256.0,
                         None => 1.0,
                     })
                 }

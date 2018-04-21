@@ -35,7 +35,7 @@ pub struct WorldRenderFace {
     pub slice: Slice<Resources>,
     pub tex_id: usize,
     pub lightmap_id: Option<usize>,
-    pub lightstyle_id: u8,
+    pub light_styles: [u8; 4],
 }
 
 pub struct WorldRenderLeaf {
@@ -179,7 +179,7 @@ impl WorldRenderer {
                     },
                     tex_id: texinfo.tex_id,
                     lightmap_id,
-                    lightstyle_id: face.light_styles[0],
+                    light_styles: face.light_styles,
                 });
             }
 
@@ -247,7 +247,7 @@ impl WorldRenderer {
             transform: Matrix4::identity().into(),
             diffuse_sampler: (self.dummy_texture.clone(), self.diffuse_sampler.clone()),
             lightmap_sampler: (self.dummy_lightmap.clone(), self.lightmap_sampler.clone()),
-            lightstyle_value: 0.0,
+            lightstyle_value: [0.0; 4],
             out_color: self.color_target.clone(),
             out_depth: self.depth_target.clone(),
         };
@@ -287,7 +287,14 @@ impl WorldRenderer {
                 Some(l_id) => self.lightmap_views[l_id].clone(),
                 None => self.dummy_lightmap.clone(),
             };
-            pipeline_data.lightstyle_value = *lightstyle_values.get(face.lightstyle_id as usize).unwrap_or(&1.0);
+
+            let mut lightstyle_value = [-1.0; 4];
+            for i in 0..4 {
+                if let Some(l) = lightstyle_values.get(face.light_styles[i] as usize) {
+                    lightstyle_value[i] = *l;
+                }
+            }
+            pipeline_data.lightstyle_value = lightstyle_value;
 
             encoder.draw(&face.slice, pipeline_state, pipeline_data);
         }
