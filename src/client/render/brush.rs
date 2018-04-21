@@ -162,11 +162,10 @@ where
 }
 
 // FIXME: this calculation is (very slightly) off. not sure why.
-fn calculate_lightmap_texcoords(
+pub fn calculate_lightmap_texcoords(
     position: Vector3<f32>,
     face: &BspFace,
     texinfo: &BspTexInfo,
-    texture: &BspTexture
 ) -> [f32; 2] {
     let mut s = texinfo.s_vector.dot(position) + texinfo.s_offset;
     s -= face.texture_mins[0] as f32;
@@ -176,6 +175,99 @@ fn calculate_lightmap_texcoords(
     t -= face.texture_mins[1] as f32;
     t /= face.extents[1] as f32;
     [s, t]
+}
+
+// TODO: remove collinear points in faces
+// Converts a brush model face from edge-based layout to triangle list layout.
+//
+// The newly created `BrushVertex` vertices will be stored in `vertices`. The index of this face's
+// first vertex in `vertices`, and the number of vertices pushed, will be stored in this face object
+// for rendering.
+pub fn create_brush_render_face<F>(
+    factory: &mut F,
+    bsp_data: &BspData,
+    face_id: usize,
+    vertices: &mut Vec<BrushVertex>,
+    lightmap_views: &mut Vec<ShaderResourceView<Resources, f32>>,
+) -> Result<BrushRenderFace, Error>
+where
+    F: Factory<Resources>,
+{
+    let face = &bsp_data.faces()[face_id];
+    let face_vert_id = vertices.len();
+    let texinfo = &bsp_data.texinfo()[face.texinfo_id];
+    let tex = &bsp_data.textures()[texinfo.tex_id];
+    let face_edge_ids = &bsp_data.edgelist()[face.edge_id..face.edge_id + face.edge_count];
+    let base_vertex_id = bsp_data.edges()[face_edge_ids[0].index].vertex_ids[face_edge_ids[0].direction as usize];
+    let base_position = bsp_data.vertices()[base_vertex_id as usize];
+    let base_diffuse_texcoords = [
+        (base_position.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32,
+        (base_position.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32,
+    ];
+
+    // start at 1 since we've already calculated the base vertex
+    // stop at len - 1 because we use two vertices per iteration
+    for i in 1..face_edge_ids.len() - 1 {
+        // push the base vertex of the fan
+        vertices.push(BrushVertex {
+            position: base_position.into(),
+            diffuse_texcoord: base_diffuse_texcoords,
+            lightmap_texcoord: calculate_lightmap_texcoords(base_position, face, texinfo),
+        });
+
+        // push the ith and (i + 1)th vertices
+        for v in 0..2 {
+            let edge_id = &face_edge_ids[i + v];
+            let vertex_id = bsp_data.edges()[edge_id.index].vertex_ids[edge_id.direction as usize];
+            let position = bsp_data.vertices()[vertex_id as usize];
+            let diffuse_texcoords = [
+                (position.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32,
+                (position.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32,
+            ];
+            vertices.push(BrushVertex {
+                position: position.into(),
+                diffuse_texcoord: diffuse_texcoords,
+                lightmap_texcoord: calculate_lightmap_texcoords(position, face, texinfo),
+            })
+        }
+    }
+
+    let lightmap_w = face.extents[0] / 16 + 1;
+    let lightmap_h = face.extents[1] / 16 + 1;
+    let lightmap_size = lightmap_w * lightmap_h;
+
+    let lightmap_id = if !texinfo.special {
+        if let Some(ofs) = face.lightmap_id {
+            let lightmap_data = &bsp_data.lightmaps()[ofs..ofs + lightmap_size as usize];
+            let (_lightmap_handle, lightmap_view) = factory.create_texture_immutable_u8::<(R8, Unorm)>(
+                texture::Kind::D2(lightmap_w as u16, lightmap_h as u16, texture::AaMode::Single),
+                texture::Mipmap::Allocated,
+                &[lightmap_data],
+            )?;
+            let l_id = lightmap_views.len();
+            lightmap_views.push(lightmap_view);
+            Some(l_id)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let face_vert_count = vertices.len() - face_vert_id;
+
+    Ok(BrushRenderFace {
+        slice: Slice {
+            start: 0,
+            end: face_vert_count as u32,
+            base_vertex: face_vert_id as u32,
+            instances: None,
+            buffer: IndexBuffer::Auto,
+        },
+        tex_id: texinfo.tex_id,
+        lightmap_id,
+        light_styles: face.light_styles,
+    })
 }
 
 impl BrushRenderer {
@@ -197,88 +289,14 @@ impl BrushRenderer {
 
         let bsp_data = bsp_model.bsp_data().clone();
 
-        // BSP vertex data is stored in triangle fan layout so we have to convert to triangle list
         for face_id in bsp_model.face_id..bsp_model.face_id + bsp_model.face_count {
-            let face = &bsp_data.faces()[face_id];
-
-            let face_vertex_id = vertices.len();
-
-            let texinfo = &bsp_data.texinfo()[face.texinfo_id];
-            let tex = &bsp_data.textures()[texinfo.tex_id];
-
-            let face_edge_ids = &bsp_data.edgelist()[face.edge_id..face.edge_id + face.edge_count];
-
-            let base_edge_id = &face_edge_ids[0];
-            let base_vertex_id =
-                bsp_data.edges()[base_edge_id.index].vertex_ids[base_edge_id.direction as usize];
-            let base_position = bsp_data.vertices()[base_vertex_id as usize];
-            let base_diffuse_s =
-                (base_position.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32;
-            let base_diffuse_t =
-                (base_position.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32;
-
-            for i in 1..face_edge_ids.len() - 1 {
-                vertices.push(BrushVertex {
-                    position: base_position.into(),
-                    diffuse_texcoord: [base_diffuse_s, base_diffuse_t],
-                    lightmap_texcoord: calculate_lightmap_texcoords(base_position, face, texinfo, tex),
-                });
-
-                for v in 0..2 {
-                    let edge_id = &face_edge_ids[i + v];
-                    let vertex_id =
-                        bsp_data.edges()[edge_id.index].vertex_ids[edge_id.direction as usize];
-                    let position = bsp_data.vertices()[vertex_id as usize];
-                    let diffuse_s =
-                        (position.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32;
-                    let diffuse_t =
-                        (position.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32;
-                    vertices.push(BrushVertex {
-                        position: position.into(),
-                        diffuse_texcoord: [diffuse_s, diffuse_t],
-                        lightmap_texcoord: calculate_lightmap_texcoords(position, face, texinfo, tex),
-                    });
-                }
-            }
-
-            let lightmap_w = face.extents[0] / 16 + 1;
-            let lightmap_h = face.extents[1] / 16 + 1;
-            let face_vertex_count = vertices.len() - face_vertex_id;
-
-            let lightmap_size = lightmap_w * lightmap_h;
-
-            // TODO: check r_fullbright != 0
-
-            let lightmap_id = if !texinfo.special {
-                if let Some(ofs) = face.lightmap_id {
-                    let lightmap_data = &bsp_data.lightmaps()[ofs..ofs + lightmap_size as usize];
-                    let (lightmap_handle, lightmap_view) = factory.create_texture_immutable_u8::<(R8, Unorm)>(
-                        texture::Kind::D2(lightmap_w as u16, lightmap_h as u16, texture::AaMode::Single),
-                        texture::Mipmap::Allocated,
-                        &[lightmap_data],
-                    ).unwrap();
-                    let l_id = lightmap_views.len();
-                    lightmap_views.push(lightmap_view);
-                    Some(l_id)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            faces.push(BrushRenderFace {
-                slice: Slice {
-                    start: 0,
-                    end: face_vertex_count as u32,
-                    base_vertex: face_vertex_id as u32,
-                    instances: None,
-                    buffer: IndexBuffer::Auto,
-                },
-                tex_id: texinfo.tex_id,
-                lightmap_id,
-                light_styles: face.light_styles,
-            });
+            faces.push(create_brush_render_face(
+                factory,
+                &bsp_data,
+                face_id,
+                &mut vertices,
+                &mut lightmap_views
+            )?);
         }
 
         let vertex_buffer = factory.create_vertex_buffer(&vertices);
