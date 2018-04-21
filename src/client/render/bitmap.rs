@@ -57,7 +57,7 @@ impl BitmapTexture {
     where
         F: Factory<Resources>,
     {
-        let rgba = palette.indexed_to_rgba(qpic.indices());
+        let (rgba, _fullbright) = palette.translate(qpic.indices());
 
         BitmapTexture::new(factory, qpic.width(), qpic.height(), rgba.into_boxed_slice())
     }

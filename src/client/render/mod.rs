@@ -432,25 +432,30 @@ impl Palette {
 
     // TODO: this will not render console characters correctly, as they use index 0 (black) to
     // indicate transparency.
-    pub fn indexed_to_rgba(&self, indices: &[u8]) -> Vec<u8> {
+    /// Translates a set of indices into a list of RGBA values and a list of fullbright values.
+    pub fn translate(&self, indices: &[u8]) -> (Vec<u8>, Vec<u8>) {
         let mut rgba = Vec::with_capacity(indices.len() * 4);
+        let mut fullbright = Vec::with_capacity(indices.len());
 
         for index in indices {
             match *index {
                 0xFF => for i in 0..4 {
                     rgba.push(0);
+                    fullbright.push(0);
                 },
 
-                _ => {
+                i => {
                     for component in 0..3 {
                         rgba.push(self.rgb[*index as usize][component]);
                     }
                     rgba.push(0xFF);
+
+                    fullbright.push(if i > 223 { 0xFF } else { 0 });
                 }
             }
         }
 
-        rgba
+        (rgba, fullbright)
     }
 }
 

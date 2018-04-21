@@ -143,7 +143,7 @@ const MAX_HULLS: usize = 3;
 pub const MAX_LIGHTMAPS: usize = 64;
 pub const MAX_LIGHTSTYLES: usize = 4;
 pub const MAX_SOUNDS: usize = 4;
-const MIPLEVELS: usize = 4;
+pub const MIPLEVELS: usize = 4;
 const DIST_EPSILON: f32 = 0.03125;
 
 #[derive(Debug)]
@@ -185,7 +185,7 @@ impl From<::std::io::Error> for BspError {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, FromPrimitive)]
 pub enum BspTextureMipmap {
     Full = 0,
     Half = 1,

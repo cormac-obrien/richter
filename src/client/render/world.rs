@@ -20,17 +20,18 @@ use std::rc::Rc;
 use client::render::{Camera, ColorFormat, DepthFormat, Palette};
 use client::render::brush::{self, BrushPipelineData, BrushPipelineState, BrushRenderFace,
     BrushVertex, pipe_brush};
-use common::bsp::{BspData, BspFace, BspModel, BspTexInfo, BspTextureMipmap};
+use common::bsp::{BspData, BspModel, BspTextureMipmap, MIPLEVELS};
 
-use cgmath::{Deg, Euler, InnerSpace, Vector3, Matrix4, SquareMatrix};
+use cgmath::{Deg, Euler, Vector3, Matrix4, SquareMatrix};
 use chrono::Duration;
 use failure::Error;
-use gfx::{self, CommandBuffer, Encoder, Factory, IndexBuffer, Slice};
+use gfx::{self, CommandBuffer, Encoder, Factory};
 use gfx::format::{R8, Unorm};
 use gfx::handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView};
 use gfx::texture;
 use gfx::traits::FactoryExt;
 use gfx_device_gl::Resources;
+use num::FromPrimitive;
 
 pub struct WorldRenderLeaf {
     pub faces: Box<[BrushRenderFace]>,
@@ -97,14 +98,20 @@ impl WorldRenderer {
 
         let mut texture_views = Vec::new();
         for tex in bsp_data.textures().iter() {
-            let mipmap_full = palette.indexed_to_rgba(tex.mipmap(BspTextureMipmap::Full));
+            let mut mipmaps = Vec::new();
+            for i in 0..MIPLEVELS {
+                let (mipmap, _fullbright) =
+                    palette.translate(tex.mipmap(BspTextureMipmap::from_usize(i).unwrap()));
+                mipmaps.push(mipmap);
+            }
+
             let (width, height) = tex.dimensions();
 
             let (_, view) = factory
                 .create_texture_immutable_u8::<ColorFormat>(
                     texture::Kind::D2(width as u16, height as u16, texture::AaMode::Single),
                     texture::Mipmap::Provided,
-                    &[&mipmap_full],
+                    &[&mipmaps[0], &mipmaps[1], &mipmaps[2], &mipmaps[3]],
                 )
                 .unwrap();
 

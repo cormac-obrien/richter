@@ -18,7 +18,7 @@
 use std::rc::Rc;
 
 use client::render::{self, Camera, ColorFormat, DepthFormat, Palette};
-use common::bsp::{BspData, BspFace, BspModel, BspTexInfo, BspTexture, BspTextureMipmap};
+use common::bsp::{BspData, BspFace, BspModel, BspTexInfo, BspTextureMipmap, MIPLEVELS};
 
 use cgmath::{Deg, Euler, InnerSpace, Matrix4, SquareMatrix, Vector3};
 use chrono::Duration;
@@ -30,6 +30,7 @@ use gfx::pso::{PipelineData, PipelineState};
 use gfx::texture;
 use gfx::traits::FactoryExt;
 use gfx_device_gl::Resources;
+use num::FromPrimitive;
 
 // TODO: per-API coordinate system conversions
 pub static BRUSH_VERTEX_SHADER_GLSL: &[u8] = br#"
@@ -108,7 +109,10 @@ gfx_defines! {
     }
 }
 
+/// A `PipelineState` object specific to the `brush` and `world` pipelines.
 pub type BrushPipelineState = PipelineState<Resources, <pipe_brush::Data<Resources> as PipelineData<Resources>>::Meta>;
+
+/// A `PipelineData` object specific to the `brush` and `world` pipelines.
 pub type BrushPipelineData = pipe_brush::Data<Resources>;
 
 pub struct BrushRenderFace {
@@ -118,6 +122,7 @@ pub struct BrushRenderFace {
     pub light_styles: [u8; 4],
 }
 
+/// An object responsible for drawing brush models.
 pub struct BrushRenderer {
     bsp_data: Rc<BspData>,
 
@@ -162,7 +167,7 @@ where
 }
 
 // FIXME: this calculation is (very slightly) off. not sure why.
-pub fn calculate_lightmap_texcoords(
+fn calculate_lightmap_texcoords(
     position: Vector3<f32>,
     face: &BspFace,
     texinfo: &BspTexInfo,
@@ -183,7 +188,7 @@ pub fn calculate_lightmap_texcoords(
 // The newly created `BrushVertex` vertices will be stored in `vertices`. The index of this face's
 // first vertex in `vertices`, and the number of vertices pushed, will be stored in this face object
 // for rendering.
-pub fn create_brush_render_face<F>(
+pub(super) fn create_brush_render_face<F>(
     factory: &mut F,
     bsp_data: &BspData,
     face_id: usize,
@@ -303,9 +308,22 @@ impl BrushRenderer {
 
         let mut texture_views = Vec::new();
         for tex in bsp_data.textures().iter() {
-            let mipmap_full = palette.indexed_to_rgba(tex.mipmap(BspTextureMipmap::Full));
+            let mut mipmaps = Vec::new();
+            for i in 0..MIPLEVELS {
+                let (mipmap, _fullbright) =
+                    palette.translate(tex.mipmap(BspTextureMipmap::from_usize(i).unwrap()));
+                mipmaps.push(mipmap);
+            }
+
             let (width, height) = tex.dimensions();
-            let (_, view) = render::create_texture(factory, width, height, &mipmap_full).unwrap();
+            let (_, view) = factory
+                .create_texture_immutable_u8::<ColorFormat>(
+                    texture::Kind::D2(width as u16, height as u16, texture::AaMode::Single),
+                    texture::Mipmap::Provided,
+                    &[&mipmaps[0], &mipmaps[1], &mipmaps[2], &mipmaps[3]],
+                )
+                .unwrap();
+
             texture_views.push(view);
         }
 

@@ -182,7 +182,7 @@ impl AliasRenderer {
         for texture in alias_model.textures() {
             match *texture {
                 Texture::Static(ref static_texture) => {
-                    let rgba = palette.indexed_to_rgba(static_texture.indices());
+                    let (rgba, _fullbright) = palette.translate(static_texture.indices());
                     let (_, view) = factory
                         .create_texture_immutable_u8::<ColorFormat>(
                             gfx::texture::Kind::D2(w as u16, h as u16, gfx::texture::AaMode::Single),
@@ -202,7 +202,7 @@ impl AliasRenderer {
                     for frame in animated_texture.frames() {
                         durations.push(frame.duration());
 
-                        let rgba = palette.indexed_to_rgba(frame.indices());
+                        let (rgba, _fullbright) = palette.translate(frame.indices());
                         let (_, view) = factory
                             .create_texture_immutable_u8::<ColorFormat>(
                                 gfx::texture::Kind::D2(w as u16, h as u16, gfx::texture::AaMode::Single),
