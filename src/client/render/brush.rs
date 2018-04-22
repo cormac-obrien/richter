@@ -61,15 +61,16 @@ in vec2 f_lightmapTexcoord;
 
 uniform vec4 u_LightstyleValue;
 uniform sampler2D u_Texture;
+uniform sampler2D u_Fullbright;
 uniform sampler2D u_Lightmap;
 
 out vec4 Target0;
 
 void main() {
-    vec4 color = texture(u_Texture, f_diffuseTexcoord);
+    vec4 base_color = texture(u_Texture, f_diffuseTexcoord);
     vec4 lightmap = texture(u_Lightmap, f_lightmapTexcoord);
 
-    color.rgb *= lightmap.rrr;
+    vec4 lightmapped_color = vec4(base_color.rgb * lightmap.rrr, 1.0);
 
     int lightstyle_count = 0;
     float light_factor = 0.0;
@@ -88,7 +89,9 @@ void main() {
         light_factor = 1.0;
     }
 
-    Target0 = color * light_factor;
+    float fullbright_factor = texture(u_Fullbright, f_diffuseTexcoord).r;
+
+    Target0 = mix(lightmapped_color * light_factor, base_color, fullbright_factor);
 }"#;
 
 gfx_defines! {
@@ -103,6 +106,7 @@ gfx_defines! {
         transform: gfx::Global<[[f32; 4]; 4]> = "u_Transform",
         lightstyle_value: gfx::Global<[f32; 4]> = "u_LightstyleValue",
         diffuse_sampler: gfx::TextureSampler<[f32; 4]> = "u_Texture",
+        fullbright_sampler: gfx::TextureSampler<f32> = "u_Fullbright",
         lightmap_sampler: gfx::TextureSampler<f32> = "u_Lightmap",
         out_color: gfx::RenderTarget<ColorFormat> = "Target0",
         out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
@@ -128,14 +132,17 @@ pub struct BrushRenderer {
 
     faces: Box<[BrushRenderFace]>,
     texture_views: Box<[ShaderResourceView<Resources, [f32; 4]>]>,
+    fullbright_views: Box<[ShaderResourceView<Resources, f32>]>,
     lightmap_views: Box<[ShaderResourceView<Resources, f32>]>,
 
     pipeline_state: BrushPipelineState,
     vertex_buffer: Buffer<Resources, BrushVertex>,
     dummy_texture: ShaderResourceView<Resources, [f32; 4]>,
+    dummy_fullbright: ShaderResourceView<Resources, f32>,
     dummy_lightmap: ShaderResourceView<Resources, f32>,
 
     diffuse_sampler: Sampler<Resources>,
+    fullbright_sampler: Sampler<Resources>,
     lightmap_sampler: Sampler<Resources>,
     color_target: RenderTargetView<Resources, ColorFormat>,
     depth_target: DepthStencilView<Resources, DepthFormat>,
@@ -307,24 +314,35 @@ impl BrushRenderer {
         let vertex_buffer = factory.create_vertex_buffer(&vertices);
 
         let mut texture_views = Vec::new();
+        let mut fullbright_views = Vec::new();
         for tex in bsp_data.textures().iter() {
             let mut mipmaps = Vec::new();
+            let mut fullbrights = Vec::new();
             for i in 0..MIPLEVELS {
-                let (mipmap, _fullbright) =
+                let (mipmap, fullbright) =
                     palette.translate(tex.mipmap(BspTextureMipmap::from_usize(i).unwrap()));
                 mipmaps.push(mipmap);
+                fullbrights.push(fullbright);
             }
 
             let (width, height) = tex.dimensions();
-            let (_, view) = factory
+
+            let (_, texture_view) = factory
                 .create_texture_immutable_u8::<ColorFormat>(
                     texture::Kind::D2(width as u16, height as u16, texture::AaMode::Single),
                     texture::Mipmap::Provided,
                     &[&mipmaps[0], &mipmaps[1], &mipmaps[2], &mipmaps[3]],
-                )
-                .unwrap();
+                )?;
 
-            texture_views.push(view);
+            let (_, fullbright_view) = factory
+                .create_texture_immutable_u8::<(R8, Unorm)>(
+                    texture::Kind::D2(width as u16, height as u16, texture::AaMode::Single),
+                    texture::Mipmap::Provided,
+                    &[&fullbrights[0], &fullbrights[1], &fullbrights[2], &fullbrights[3]],
+                )?;
+
+            texture_views.push(texture_view);
+            fullbright_views.push(fullbright_view);
         }
 
         let (_, dummy_texture) = factory.create_texture_immutable_u8::<ColorFormat>(
@@ -332,6 +350,11 @@ impl BrushRenderer {
             gfx::texture::Mipmap::Allocated,
             &[&[]]
         ).expect("dummy texture generation failed");
+        let (_, dummy_fullbright) = factory.create_texture_immutable_u8::<(R8, Unorm)>(
+            texture::Kind::D2(1, 1, texture::AaMode::Single),
+            texture::Mipmap::Allocated,
+            &[&[0]],
+        ).unwrap();
         let (_, dummy_lightmap) = factory.create_texture_immutable_u8::<(R8, Unorm)>(
             texture::Kind::D2(1, 1, texture::AaMode::Single),
             texture::Mipmap::Allocated,
@@ -344,10 +367,16 @@ impl BrushRenderer {
             pipeline_state,
             vertex_buffer,
             texture_views: texture_views.into_boxed_slice(),
+            fullbright_views: fullbright_views.into_boxed_slice(),
             lightmap_views: lightmap_views.into_boxed_slice(),
             dummy_texture,
+            dummy_fullbright,
             dummy_lightmap,
             diffuse_sampler: factory.create_sampler(gfx::texture::SamplerInfo::new(
+                gfx::texture::FilterMethod::Scale,
+                gfx::texture::WrapMode::Tile,
+            )),
+            fullbright_sampler: factory.create_sampler(gfx::texture::SamplerInfo::new(
                 gfx::texture::FilterMethod::Scale,
                 gfx::texture::WrapMode::Tile,
             )),
@@ -367,6 +396,7 @@ impl BrushRenderer {
             vertex_buffer: self.vertex_buffer.clone(),
             transform: Matrix4::identity().into(),
             diffuse_sampler: (self.dummy_texture.clone(), self.diffuse_sampler.clone()),
+            fullbright_sampler: (self.dummy_fullbright.clone(), self.fullbright_sampler.clone()),
             lightmap_sampler: (self.dummy_lightmap.clone(), self.lightmap_sampler.clone()),
             lightstyle_value: [0.0; 4],
             out_color: self.color_target.clone(),
@@ -400,6 +430,7 @@ impl BrushRenderer {
             pipeline_data.transform = (camera.get_transform() * model_transform).into();
 
             pipeline_data.diffuse_sampler.0 = self.texture_views[frame].clone();
+            pipeline_data.fullbright_sampler.0 = self.fullbright_views[frame].clone();
             pipeline_data.lightmap_sampler.0 = match face.lightmap_id {
                 Some(l_id) => self.lightmap_views[l_id].clone(),
                 None => self.dummy_lightmap.clone(),
