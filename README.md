@@ -1,7 +1,7 @@
 # Richter
 An open-source implementation of the Quake engine in Rust
 
-![alt tag](https://i.imgur.com/O0KUuBp.jpg)
+![alt tag](https://i.imgur.com/5zMgZVL.jpg)
 
 ## Status
 
