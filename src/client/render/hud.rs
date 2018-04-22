@@ -50,7 +50,6 @@ use gfx_device_gl::Resources;
 use failure::Error;
 
 // these have to be wound clockwise
-// t-texcoords are currently inverted because bitmaps are defined with t=0 at the top
 static FULLSCREEN_QUAD: [Vertex2d; 6] = [
     Vertex2d { pos: [-1.0, -1.0], texcoord: [0.0, 1.0] }, // bottom left
     Vertex2d { pos: [-1.0, 1.0], texcoord: [0.0, 0.0] }, // top left

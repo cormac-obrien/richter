@@ -26,12 +26,8 @@ pub mod world;
 
 use std::collections::HashMap;
 
-use client::Client;
-use client::ClientEntity;
-use common::model::Model;
-use common::model::ModelKind;
-use common::net::ItemFlags;
-use common::net::MAX_ITEMS;
+use client::{Client, ClientEntity};
+use common::model::{Model, ModelKind};
 use common::pak::Pak;
 use common::wad::Wad;
 
@@ -41,8 +37,9 @@ use failure::Error;
 use flame;
 use gfx;
 use gfx::handle::{DepthStencilView, RenderTargetView, ShaderResourceView, Texture};
-use gfx::format::R8_G8_B8_A8;
+use gfx::format::{R8, R8_G8_B8_A8, Unorm};
 use gfx::pso::{PipelineData, PipelineState};
+use gfx::texture;
 use gfx_device_gl::{Factory, Resources};
 
 pub use gfx::format::Srgba8 as ColorFormat;
@@ -473,6 +470,57 @@ where
         gfx::texture::Kind::D2(width as u16, height as u16, gfx::texture::AaMode::Single),
         gfx::texture::Mipmap::Allocated,
         &[&rgba],
+    )?;
+
+    Ok(ret)
+}
+
+pub fn create_dummy_texture<F>(
+    factory: &mut F,
+) -> Result<(Texture<Resources, R8_G8_B8_A8>, ShaderResourceView<Resources, [f32; 4]>), Error>
+where
+    F: gfx::Factory<Resources>
+{
+    // the infamous Source engine "missing texture" texture
+    let rgba = [
+        0xFF, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFF,
+        0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0xFF, 0xFF,
+    ];
+
+    let ret = factory.create_texture_immutable_u8::<ColorFormat>(
+        gfx::texture::Kind::D2(2, 2, gfx::texture::AaMode::Single),
+        gfx::texture::Mipmap::Allocated,
+        &[&rgba],
+    )?;
+
+    Ok(ret)
+}
+
+pub fn create_dummy_fullbright<F>(
+    factory: &mut F,
+) -> Result<(Texture<Resources, R8>, ShaderResourceView<Resources, f32>), Error>
+where
+    F: gfx::Factory<Resources>
+{
+    let ret = factory.create_texture_immutable_u8::<(R8, Unorm)>(
+        texture::Kind::D2(1, 1, texture::AaMode::Single),
+        texture::Mipmap::Allocated,
+        &[&[0]],
+    )?;
+
+    Ok(ret)
+}
+
+pub fn create_dummy_lightmap<F>(
+    factory: &mut F,
+) -> Result<(Texture<Resources, R8>, ShaderResourceView<Resources, f32>), Error>
+where
+    F: gfx::Factory<Resources>
+{
+    let ret = factory.create_texture_immutable_u8::<(R8, Unorm)>(
+        texture::Kind::D2(1, 1, texture::AaMode::Single),
+        texture::Mipmap::Allocated,
+        &[&[0xFF]],
     )?;
 
     Ok(ret)

@@ -345,21 +345,9 @@ impl BrushRenderer {
             fullbright_views.push(fullbright_view);
         }
 
-        let (_, dummy_texture) = factory.create_texture_immutable_u8::<ColorFormat>(
-            gfx::texture::Kind::D2(0, 0, gfx::texture::AaMode::Single),
-            gfx::texture::Mipmap::Allocated,
-            &[&[]]
-        ).expect("dummy texture generation failed");
-        let (_, dummy_fullbright) = factory.create_texture_immutable_u8::<(R8, Unorm)>(
-            texture::Kind::D2(1, 1, texture::AaMode::Single),
-            texture::Mipmap::Allocated,
-            &[&[0]],
-        ).unwrap();
-        let (_, dummy_lightmap) = factory.create_texture_immutable_u8::<(R8, Unorm)>(
-            texture::Kind::D2(1, 1, texture::AaMode::Single),
-            texture::Mipmap::Allocated,
-            &[&[::std::u8::MAX]],
-        ).unwrap();
+        let (_, dummy_texture) = render::create_dummy_texture(factory)?;
+        let (_, dummy_fullbright) = render::create_dummy_fullbright(factory)?;
+        let (_, dummy_lightmap) = render::create_dummy_lightmap(factory)?;
 
         Ok(BrushRenderer {
             bsp_data,
