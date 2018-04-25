@@ -1,0 +1,65 @@
+@import "base";
+
+$body-margin-top: 150px;
+
+body {
+    margin: $body-margin-top auto;
+
+    padding: $body-margin-top / 2 0;
+
+    background-image: url(richter-insignia.svg);
+    background-repeat: no-repeat;
+    background-position: 50% $body-margin-top;
+    background-size: 400px;
+
+    max-width: $main-content-width;
+    justify-items: center;
+
+    h1 {
+        $heading-font-size: 6rem;
+
+        margin: ($heading-font-size / 3) auto ($heading-font-size / 3);
+
+        font-family: $display-font-stack;
+        font-size: $heading-font-size;
+        text-align: center;
+        letter-spacing: 1rem;
+    }
+
+    h2 {
+        $subheading-font-size: 3rem;
+
+        margin: ($subheading-font-size / 3) auto ($subheading-font-size / 3);
+
+        font-family: $display-font-stack;
+        font-size: $subheading-font-size;
+        text-align: center;
+    }
+
+    .links {
+        margin: 40px 0;
+
+        font-family: $text-font-stack;
+        font-size: 1.5rem;
+        text-align: center;
+
+        li {
+            display: inline;
+            list-style: none;
+
+            // put dots between items
+            &:not(:first-child):before {
+                content: " · ";
+            }
+        }
+    }
+
+    .intro {
+        margin-top: 40px;
+
+        font-family: $text-font-stack;
+        font-size: 1rem;
+        text-align: justify;
+    }
+}
+

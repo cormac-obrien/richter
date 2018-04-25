@@ -1,0 +1,8 @@
+name = "richter"
+description = "theme for the Richter webpage"
+license = "MIT"
+min_version = "0.2.2"
+
+[author]
+name = "Mac O'Brien"
+homepage = "http://c-obrien.org"

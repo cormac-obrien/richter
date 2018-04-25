@@ -1,0 +1,75 @@
+@import "reset";
+
+@font-face {
+    font-family: "Renner";
+    src: local('Renner*'), local('Renner-Book'),
+    url("fonts/Renner-Book.woff2") format('woff2'),
+    url("fonts/Renner-Book.woff") format('woff');
+}
+
+@font-face {
+    font-family: "Roboto";
+    font-style: normal;
+    font-weight: 400;
+    src: local("Roboto"), local("Roboto-Regular"),
+    url("fonts/roboto-v18-latin-regular.woff2") format("woff2"),
+    url("fonts/roboto-v18-latin-regular.woff") format("woff");
+}
+
+$display-font-stack: Renner, Futura, Arial, sans-serif;
+$text-font-stack: Roboto, Arial, sans-serif;
+
+$bg-color: #1F1F1F;
+$bg-hl-color: #0F0F0F;
+$text-color: #ABABAB;
+$link-color: #EFEFEF;
+
+$main-content-width: 40rem;
+
+html {
+    height: 100%;
+}
+
+body {
+    font: 100% $text-font-stack;
+    color: $text-color;
+    background-color: $bg-color;
+
+    display: grid;
+    grid-template-areas:
+        "header"
+        "main"
+        "footer";
+    grid-template-rows: 0px 1fr auto;
+
+    margin: 100px auto;
+    max-width: $main-content-width;
+    justify-items: center;
+
+    min-height: 100%;
+}
+
+footer {
+    grid-area: footer;
+}
+
+p {
+    margin: 1rem auto;
+}
+
+a {
+    color: $link-color;
+    text-decoration: none;
+}
+
+hr {
+    margin: 1rem auto;
+    border: 0;
+    border-top: 1px solid $text-color;
+    border-bottom: 1px solid $bg-hl-color;
+}
+
+footer {
+    font: 0.75rem $text-font-stack;
+    text-align: center;
+}

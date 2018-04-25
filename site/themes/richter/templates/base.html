@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    {% block head %}
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="{{ config.description }}">
+    {% block style %}
+    <link rel="stylesheet" href="style.css" />
+    {% endblock style %}
+    <title>{% block title %}{% endblock title %} – Richter</title>
+    {% endblock head %}
+  </head>
+  <body>
+    <header>{% block header %}{% endblock header %}</header>
+    <main>{% block main %}{% endblock main %}</main>
+
+    <footer>
+      {% block footer %}
+      <p>Copyright © 2018 Cormac O'Brien.</p>
+
+      <p>
+        This work is licensed under a
+        <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">
+          Creative Commons Attribution-ShareAlike 4.0 International License
+        </a>.
+      </p>
+
+      {% endblock footer %}
+    </footer>
+  </body>
+</html>

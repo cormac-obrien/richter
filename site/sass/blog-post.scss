@@ -1,0 +1,16 @@
+@import "base";
+
+body {
+    margin: 0 auto;
+    display: grid;
+
+    max-width: $main-content-width;
+
+    .date {
+        font-family: $text-font-stack;
+    }
+
+    .title {
+        font-size: 2rem;
+    }
+}

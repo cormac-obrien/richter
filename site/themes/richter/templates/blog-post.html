@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block style %}<link rel="stylesheet" href="/blog-post.css" >{% endblock style %}
+{% block title %}{{ page.title }}{% endblock title%}
+
+{% block main %}
+<h4>{{ page.date }}</h4>
+<h2>{{ page.title }}</h2>
+{{ page.content | safe }}
+{% endblock main %}

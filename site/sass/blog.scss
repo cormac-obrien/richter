@@ -1,0 +1,30 @@
+@import "base";
+
+body {
+    // title of the page
+    h1 {
+        margin: 1rem auto;
+        text-align: center;
+        font: 3rem $display-font-stack;
+    }
+
+    // subtitle of the page
+    h2 {
+        margin: 1rem auto;
+        text-align: center;
+        font: 1.5rem $display-font-stack;
+    }
+
+    // post name
+    h3 {
+        font-weight: bold;
+        font-family: $text-font-stack;
+    }
+
+    // post date
+    h4 {
+        font-style: italic;
+        font-family: $text-font-stack;
+    }
+}
+

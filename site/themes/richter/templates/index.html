@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+
+{% block title %}Home{% endblock title %}
+{% block style %}<link rel="stylesheet" href="/style.css">{% endblock style %}
+{% block main %}{{ section.content | safe }}{% endblock main %}

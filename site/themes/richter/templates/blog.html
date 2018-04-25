@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block style %}<link rel="stylesheet" href="/blog.css" >{% endblock style %}
+{% block title %}{{ section.title }}{% endblock title %}
+{% block main %}
+<h1>{{ section.title }}</h1>
+{{ section.content | safe }}
+{% for page in section.pages %}
+<h3>{{ page.title }}</h2>
+<h4>{{ page.date }}</h3>
+{{ page.content | safe }}
+{% endfor %}
+{% endblock main %}
