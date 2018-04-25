@@ -1,4 +1,7 @@
 # Richter
+
+[![Build Status](https://travis-ci.org/cormac-obrien/richter.svg?branch=devel)](https://travis-ci.org/cormac-obrien/richter)
+
 An open-source implementation of the Quake engine in Rust
 
 ![alt tag](https://i.imgur.com/5zMgZVL.jpg)
