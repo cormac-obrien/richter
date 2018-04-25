@@ -1,4 +1,7 @@
-﻿language: rust
+language: rust
+
+rust:
+  - nightly
 
 addons:
   apt:
