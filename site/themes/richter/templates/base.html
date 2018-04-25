@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="{{ config.description }}">
     {% block style %}
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="{{ get_url(path='style.css', trailing_slash=false) }}" />
     {% endblock style %}
     <title>{% block title %}{% endblock title %} – Richter</title>
     {% endblock head %}
