@@ -231,6 +231,58 @@ impl HudRenderer {
         encoder.draw(&render::QUAD_SLICE, pso, user_data);
     }
 
+    pub fn render_number<C>(
+        &self,
+        number: i32,
+        max_digits: usize,
+        alt_color: bool,
+        encoder: &mut Encoder<Resources, C>,
+        pso: &PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
+        user_data: &mut pipeline2d::Data<Resources>,
+        display_width: u32,
+        display_height: u32,
+        position_x: i32,
+        position_y: i32,
+    )
+    where
+        C: CommandBuffer<Resources>,
+    {
+        let number_str = format!("{}", number);
+        let number_chars: Vec<char> = number_str.chars().collect();
+
+        let mut skip = 0;
+        let mut ofs = 0;
+        if number_chars.len() > max_digits {
+            skip = number_chars.len() - max_digits;
+        } else if max_digits > number_chars.len() {
+            ofs = (max_digits - number_chars.len()) as i32 * 24;
+        }
+
+        for (chr_id, chr) in number_chars.into_iter().skip(skip).enumerate() {
+            self.render_bitmap(
+                match chr {
+                    '-' => if alt_color { &self.alt_minus } else { &self.minus },
+                    '0'..='9' => {
+                        let index = chr as usize - '0' as usize;
+                        if alt_color {
+                            &self.alt_digits[index]
+                        } else {
+                            &self.digits[index]
+                        }
+                    }
+                    _ => unreachable!(),
+                },
+                encoder,
+                pso,
+                user_data,
+                display_width,
+                display_height,
+                position_x + ofs + 24 * chr_id as i32,
+                position_y,
+            );
+        }
+    }
+
     pub fn render<F, C>(
         &mut self,
         factory: &mut F,
@@ -352,6 +404,114 @@ impl HudRenderer {
                 );
             }
         }
+
+        // armor
+        if client.items().contains(ItemFlags::INVULNERABILITY) {
+            self.render_number(
+                666,
+                3,
+                true,
+                encoder,
+                pso,
+                user_data,
+                display_width,
+                display_height,
+                sbar_x + 24,
+                sbar_y,
+            );
+            // TODO: draw_disc
+        } else {
+            let armor = client.stats()[ClientStat::Armor as usize];
+            self.render_number(
+                armor,
+                3,
+                armor <= 25,
+                encoder,
+                pso,
+                user_data,
+                display_width,
+                display_height,
+                sbar_x + 24,
+                sbar_y,
+            );
+
+            let armor_pic_id = if client.items().contains(ItemFlags::ARMOR_3) {
+                Some(2)
+            } else if client.items().contains(ItemFlags::ARMOR_2) {
+                Some(1)
+            } else if client.items().contains(ItemFlags::ARMOR_1) {
+                Some(0)
+            } else {
+                None
+            };
+
+            if let Some(i) = armor_pic_id {
+                self.render_bitmap(
+                    &self.armor[i],
+                    encoder,
+                    pso,
+                    user_data,
+                    display_width,
+                    display_height,
+                    sbar_x,
+                    sbar_y,
+                );
+            }
+        }
+
+        // health
+        let health = client.stats()[ClientStat::Health as usize];
+        self.render_number(
+            health,
+            3,
+            health <= 25,
+            encoder,
+            pso,
+            user_data,
+            display_width,
+            display_height,
+            sbar_x + 136,
+            sbar_y,
+        );
+
+        let ammo_id = if client.items().contains(ItemFlags::SHELLS) {
+            Some(0)
+        } else if client.items().contains(ItemFlags::NAILS) {
+            Some(1)
+        } else if client.items().contains(ItemFlags::ROCKETS) {
+            Some(2)
+        } else if client.items().contains(ItemFlags::CELLS) {
+            Some(3)
+        } else {
+            None
+        };
+
+        if let Some(i) = ammo_id {
+            self.render_bitmap(
+                &self.ammo[i],
+                encoder,
+                pso,
+                user_data,
+                display_width,
+                display_height,
+                sbar_x + 224,
+                sbar_y,
+            );
+        }
+
+        let ammo = client.stats()[ClientStat::Ammo as usize];
+        self.render_number(
+            ammo,
+            3,
+            ammo <= 10,
+            encoder,
+            pso,
+            user_data,
+            display_width,
+            display_height,
+            sbar_x + 248,
+            sbar_y,
+        );
 
         Ok(())
     }
