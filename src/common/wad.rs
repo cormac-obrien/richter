@@ -113,7 +113,28 @@ impl Wad {
         Ok(Wad { files })
     }
 
+    pub fn open_conchars(&self) -> Result<QPic, Error> {
+        match self.files.get("CONCHARS") {
+            Some(ref data) => {
+                let width = 128;
+                let height = 128;
+                let indices = Vec::from(&data[..(width * height) as usize]);
+
+                Ok(QPic {
+                    width,
+                    height,
+                    indices: indices.into_boxed_slice(),
+                })
+            }
+
+            None => bail!("conchars not found in WAD"),
+        }
+    }
+
     pub fn open_qpic<S>(&self, name: S) -> Result<QPic, Error> where S: AsRef<str> {
+        if name.as_ref() == "CONCHARS" {
+            bail!("conchars must be opened with open_conchars()");
+        }
         match self.files.get(name.as_ref()) {
             Some(ref data) => {
                 let mut reader = BufReader::new(Cursor::new(data));

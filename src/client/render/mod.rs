@@ -21,10 +21,12 @@
 pub mod alias;
 pub mod bitmap;
 pub mod brush;
+pub mod glyph;
 pub mod hud;
 pub mod world;
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use client::{Client, ClientEntity};
 use common::model::{Model, ModelKind};
@@ -35,7 +37,7 @@ use cgmath::{Deg, Euler, Matrix4, Vector3, Zero};
 use chrono::Duration;
 use failure::Error;
 use flame;
-use gfx;
+use gfx::{self, IndexBuffer, Slice};
 use gfx::handle::{DepthStencilView, RenderTargetView, ShaderResourceView, Texture};
 use gfx::format::{R8, R8_G8_B8_A8, Unorm};
 use gfx::pso::{PipelineData, PipelineState};
@@ -47,6 +49,7 @@ pub use gfx::format::DepthStencil as DepthFormat;
 
 use self::alias::AliasRenderer;
 use self::brush::BrushRenderer;
+use self::glyph::GlyphRenderer;
 use self::hud::HudRenderer;
 use self::world::WorldRenderer;
 
@@ -122,6 +125,24 @@ void main() {
     }
 }
 "#;
+
+// these have to be wound clockwise
+static QUAD_VERTICES: [Vertex2d; 6] = [
+    Vertex2d { pos: [-1.0, -1.0], texcoord: [0.0, 1.0] }, // bottom left
+    Vertex2d { pos: [-1.0, 1.0], texcoord: [0.0, 0.0] }, // top left
+    Vertex2d { pos: [1.0, 1.0], texcoord: [1.0, 0.0] }, // top right
+    Vertex2d { pos: [-1.0, -1.0], texcoord: [0.0, 1.0] }, // bottom left
+    Vertex2d { pos: [1.0, 1.0], texcoord: [1.0, 0.0] }, // top right
+    Vertex2d { pos: [1.0, -1.0], texcoord: [1.0, 1.0] }, // bottom right
+];
+
+static QUAD_SLICE: Slice<Resources> = Slice {
+    start: 0,
+    end: 6,
+    base_vertex: 0,
+    instances: None,
+    buffer: IndexBuffer::Auto,
+};
 
 gfx_defines! {
     vertex Vertex {
@@ -351,6 +372,7 @@ impl SceneRenderer {
 
 pub struct UiRenderer {
     pipeline: PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
+    glyph_renderer: Rc<GlyphRenderer>,
     hud_renderer: HudRenderer,
 }
 
@@ -376,12 +398,15 @@ impl UiRenderer {
             gfx::Primitive::TriangleList,
             rasterizer,
             pipeline2d::new(),
-        ).unwrap();
+        )?;
 
-        let hud_renderer = HudRenderer::new(gfx_wad, palette, factory)?;
+        let glyph_renderer = Rc::new(GlyphRenderer::new(factory, &gfx_wad.open_conchars()?, palette)?);
+
+        let hud_renderer = HudRenderer::new(glyph_renderer.clone(), gfx_wad, palette, factory)?;
 
         Ok(UiRenderer {
             pipeline,
+            glyph_renderer,
             hud_renderer,
         })
     }
@@ -524,4 +549,28 @@ where
     )?;
 
     Ok(ret)
+}
+
+pub fn screen_space_vertex_transform(
+    display_w: u32,
+    display_h: u32,
+    quad_w: u32,
+    quad_h: u32,
+    pos_x: i32,
+    pos_y: i32,
+) -> Matrix4<f32> {
+    // find center
+    let center_x = pos_x + quad_w as i32 / 2;
+    let center_y = pos_y + quad_h as i32 / 2;
+
+    // rescale from [0, DISPLAY_*] to [-1, 1] (NDC)
+    // TODO: this may break on APIs other than OpenGL
+    let ndc_x = (center_x * 2 - display_w as i32) as f32 / display_w as f32;
+    let ndc_y = (center_y * 2 - display_h as i32) as f32 / display_h as f32;
+
+    let scale_x = quad_w as f32 / display_w as f32;
+    let scale_y = quad_h as f32 / display_h as f32;
+
+    Matrix4::from_translation([ndc_x, ndc_y, 0.0].into())
+        * Matrix4::from_nonuniform_scale(scale_x, scale_y, 1.0)
 }

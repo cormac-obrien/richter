@@ -18,54 +18,27 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::mem;
+use std::rc::Rc;
 
 use client::Client;
-use client::render::Palette;
-use client::render::Vertex2d;
+use client::render::{self, Palette, Vertex2d};
 use client::render::bitmap::BitmapTexture;
+use client::render::glyph::GlyphRenderer;
 use client::render::pipeline2d;
-use common::net::ClientStat;
-use common::net::ItemFlags;
-use common::net::MAX_ITEMS;
+use common::net::{ClientStat, ItemFlags, MAX_ITEMS};
 use common::wad::Wad;
 
 use cgmath::Matrix4;
 use cgmath::SquareMatrix;
 use chrono::Duration;
 use flame;
-use gfx::CommandBuffer;
-use gfx::Encoder;
-use gfx::Factory;
-use gfx::IndexBuffer;
-use gfx::Slice;
+use gfx::{CommandBuffer, Encoder, Factory, IndexBuffer, Slice};
 use gfx::format::R8_G8_B8_A8;
-use gfx::handle::Buffer;
-use gfx::handle::ShaderResourceView;
-use gfx::handle::Texture;
-use gfx::pso::PipelineData;
-use gfx::pso::PipelineState;
+use gfx::handle::{Buffer, ShaderResourceView, Texture};
+use gfx::pso::{PipelineData, PipelineState};
 use gfx_device_gl::Resources;
 
 use failure::Error;
-
-// these have to be wound clockwise
-static FULLSCREEN_QUAD: [Vertex2d; 6] = [
-    Vertex2d { pos: [-1.0, -1.0], texcoord: [0.0, 1.0] }, // bottom left
-    Vertex2d { pos: [-1.0, 1.0], texcoord: [0.0, 0.0] }, // top left
-    Vertex2d { pos: [1.0, 1.0], texcoord: [1.0, 0.0] }, // top right
-    Vertex2d { pos: [-1.0, -1.0], texcoord: [0.0, 1.0] }, // bottom left
-    Vertex2d { pos: [1.0, 1.0], texcoord: [1.0, 0.0] }, // top right
-    Vertex2d { pos: [1.0, -1.0], texcoord: [1.0, 1.0] }, // bottom right
-];
-
-static FULLSCREEN_SLICE: Slice<Resources> = Slice {
-    start: 0,
-    end: 6,
-    base_vertex: 0,
-    instances: None,
-    buffer: IndexBuffer::Auto,
-};
 
 enum WeaponSlots {
     Shotgun = 0,
@@ -85,6 +58,7 @@ enum AmmoSlots {
 }
 
 pub struct HudRenderer {
+    glyph_renderer: Rc<GlyphRenderer>,
     digits: Box<[BitmapTexture]>,
     minus: BitmapTexture,
     alt_digits: Box<[BitmapTexture]>,
@@ -113,6 +87,7 @@ pub struct HudRenderer {
 
 impl HudRenderer {
     pub fn new<F>(
+        glyph_renderer: Rc<GlyphRenderer>,
         gfx_wad: &Wad,
         palette: &Palette,
         factory: &mut F
@@ -121,7 +96,7 @@ impl HudRenderer {
         F: Factory<Resources>
     {
         use gfx::traits::FactoryExt;
-        let vertex_buffer = factory.create_vertex_buffer(&FULLSCREEN_QUAD);
+        let vertex_buffer = factory.create_vertex_buffer(&render::QUAD_VERTICES);
 
         let mut digits = Vec::new();
         let mut alt_digits = Vec::new();
@@ -207,6 +182,8 @@ impl HudRenderer {
         // TODO: use a cvar to determine HUD scaling (for now, do 2:1)
 
         Ok(HudRenderer {
+            glyph_renderer,
+
             digits: digits.into_boxed_slice(),
             minus,
             alt_digits: alt_digits.into_boxed_slice(),
@@ -251,7 +228,7 @@ impl HudRenderer {
         user_data.vertex_buffer = self.vertex_buffer.clone();
         user_data.transform = bitmap.transform(display_width, display_height, position_x, position_y).into();
         user_data.sampler.0 = bitmap.view();
-        encoder.draw(&FULLSCREEN_SLICE, pso, user_data);
+        encoder.draw(&render::QUAD_SLICE, pso, user_data);
     }
 
     pub fn render<F, C>(
@@ -275,10 +252,22 @@ impl HudRenderer {
         let _guard = flame::start_guard("HudRenderer::render");
 
         let sbar_x = (display_width - self.sbar.width()) as i32 / 2;
-        let sbar_y = 0;
+        let sbar_y = 0i32;
+
+        let ibar_x = sbar_x;
+        let ibar_y = sbar_y + self.sbar.height() as i32;
 
         self.render_bitmap(&self.sbar, encoder, pso, user_data, display_width, display_height, sbar_x, sbar_y);
-        self.render_bitmap(&self.ibar, encoder, pso, user_data, display_width, display_height, sbar_x, sbar_y + self.ibar.height() as i32);
+        self.render_bitmap(
+            &self.ibar,
+            encoder,
+            pso,
+            user_data,
+            display_width,
+            display_height,
+            ibar_x,
+            ibar_y,
+        );
 
         // weapons
         for i in 0..8 {
@@ -313,7 +302,16 @@ impl HudRenderer {
             let ammo_str = format!("{: >3}", client.stats()[ClientStat::Shells as usize + i]);
             for (chr_id, chr) in ammo_str.chars().enumerate() {
                 if chr != ' ' {
-                    // TODO
+                    self.glyph_renderer.render_glyph(
+                        encoder,
+                        pso,
+                        user_data,
+                        18 + chr as u8 - '0' as u8,
+                        display_width,
+                        display_height,
+                        ibar_x + (6 * i + chr_id) as i32 * 8 + 10,
+                        ibar_y + 16,
+                    )?;
                 }
             }
         }

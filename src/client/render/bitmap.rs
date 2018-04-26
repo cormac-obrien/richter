@@ -81,19 +81,13 @@ impl BitmapTexture {
         position_x: i32,
         position_y: i32,
     ) -> Matrix4<f32> {
-        // find center
-        let center_x = position_x + self.width as i32 / 2;
-        let center_y = position_y + self.height as i32 / 2;
-
-        // rescale from [0, DISPLAY_*] to [-1, 1] (NDC)
-        // TODO: this may break on APIs other than OpenGL
-        let ndc_x = (center_x * 2 - display_width as i32) as f32 / display_width as f32;
-        let ndc_y = (center_y * 2 - display_height as i32) as f32 / display_height as f32;
-
-        let scale_x = self.width as f32 / display_width as f32;
-        let scale_y = self.height as f32 / display_height as f32;
-
-        Matrix4::from_translation([ndc_x, ndc_y, 0.0].into())
-            * Matrix4::from_nonuniform_scale(scale_x, scale_y, 1.0)
+        render::screen_space_vertex_transform(
+            display_width,
+            display_height,
+            self.width,
+            self.height,
+            position_x,
+            position_y,
+        )
     }
 }
