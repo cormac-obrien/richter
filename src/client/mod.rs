@@ -754,7 +754,6 @@ impl Client {
 
     #[flame]
     pub fn send(&mut self) -> Result<(), ClientError> {
-        // TODO: report !can_send as a failure?
         if self.qsock.can_send() && !self.compose.is_empty() {
             self.qsock.begin_send_msg(&self.compose)?;
             self.compose.clear();
@@ -1505,7 +1504,7 @@ impl Client {
             return;
         }
 
-        let delta = match self.state.msg_times[0] - self.state.msg_times[1] {
+        let server_delta = engine::duration_to_f32(match self.state.msg_times[0] - self.state.msg_times[1] {
             // if no time has passed, don't lerp anything
             d if d == Duration::zero() => {
                 self.state.time = self.state.msg_times[0];
@@ -1518,13 +1517,20 @@ impl Client {
                 Duration::milliseconds(100)
             }
 
-            d => d,
-        };
+            d if d < Duration::zero() => {
+                warn!("Negative time delta from server!: ({})s", engine::duration_to_f32(d));
+                d
+            }
 
-        self.state.lerp_factor = match engine::duration_to_f32(self.state.time - self.state.msg_times[1])
-            / engine::duration_to_f32(delta)
-        {
+            d => d,
+        });
+
+        let frame_delta = engine::duration_to_f32(self.state.time - self.state.msg_times[1]);
+
+        // XXX lerp factor here outside [0, 1] seems to be causing stuttering
+        self.state.lerp_factor = match frame_delta / server_delta {
             f if f < 0.0 => {
+                warn!("Negative lerp factor ({})", f);
                 if f < -0.01 {
                     self.state.time = self.state.msg_times[1];
                 }
@@ -1533,6 +1539,7 @@ impl Client {
             }
 
             f if f > 1.0 => {
+                warn!("Lerp factor > 1 ({})", f);
                 if f > 1.01 {
                     self.state.time = self.state.msg_times[0];
                 }
@@ -1588,8 +1595,8 @@ impl Client {
             } else {
                 let origin_delta = ent.msg_origins[0] - ent.msg_origins[1];
                 let ent_lerp_factor = if origin_delta.magnitude2() > 10_000.0 {
-                    // NOTE: the original engine uses magnitude vs. 100 units, where we use magnitude^2
-                    // vs. 10000 sq. units
+                    // NOTE: the original engine uses magnitude vs. +/- 100 units, where we use
+                    // magnitude^2 vs. 10000 sq. units
                     //
                     // if the entity moved more than 100 units in one frame, assume it was teleported
                     // and don't lerp anything
@@ -1621,6 +1628,7 @@ impl Client {
     pub fn frame(&mut self, frame_time: Duration) -> Result<(), ClientError> {
         self.update_time();
         self.state.time = self.state.time + frame_time;
+        self.send()?;
         self.parse_server_msg()?;
         self.relink_entities();
         // TODO: CL_UpdateTEnts

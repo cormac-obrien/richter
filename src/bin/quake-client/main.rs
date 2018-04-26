@@ -317,8 +317,6 @@ impl Program for ClientProgram  {
             // run console commands
             self.console.borrow_mut().execute();
 
-            client.borrow_mut().send().unwrap();
-
             self.encoder.borrow_mut().clear(&self.data.borrow().out_color, [0.0, 0.0, 0.0, 1.0]);
             let (win_w, win_h) = self.window.borrow().get_inner_size().unwrap();
             if let Some(ref scene_renderer) = self.scene_renderer {
@@ -331,8 +329,8 @@ impl Program for ClientProgram  {
                 let perspective = cgmath::perspective(
                     fov_y,
                     aspect,
-                    1.0,
-                    65536.0
+                    4.0,
+                    4096.0,
                 );
 
                 let camera = render::Camera::new(
