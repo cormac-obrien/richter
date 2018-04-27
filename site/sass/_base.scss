@@ -16,8 +16,17 @@
     url("fonts/roboto-v18-latin-regular.woff") format("woff");
 }
 
+@font-face {
+    font-family: "DejaVu Sans Mono";
+    font-style: normal;
+    src: local("DejaVu Sans Mono"),
+    url("fonts/DejaVuSansMono.woff2") format("woff2"),
+    url("fonts/DejaVuSansMono.woff") format("woff");
+}
+
 $display-font-stack: Renner, Futura, Arial, sans-serif;
 $text-font-stack: Roboto, Arial, sans-serif;
+$code-font-stack: "DejaVu Sans Mono", "Consolas", monospace;
 
 $bg-color: #1F1F1F;
 $bg-hl-color: #0F0F0F;
@@ -49,12 +58,18 @@ body {
     min-height: 100%;
 }
 
-footer {
-    grid-area: footer;
-}
-
 p {
     margin: 1rem auto;
+    line-height: 1.5;
+    text-align: justify;
+}
+
+code {
+    font: 100% $code-font-stack;
+    border: 1px solid $text-color;
+    border-radius: 4px;
+    padding: 0 0.25rem 0;
+    margin: 0 0.25rem 0;
 }
 
 a {
@@ -69,7 +84,15 @@ hr {
     border-bottom: 1px solid $bg-hl-color;
 }
 
+img {
+    max-width: 100%;
+}
+
 footer {
     font: 0.75rem $text-font-stack;
     text-align: center;
+
+    p {
+        text-align: center;
+    }
 }

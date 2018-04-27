@@ -11,7 +11,7 @@ date = 2018-04-22
 
 <ul class="links">
 <li><a href="https://github.com/cormac-obrien/richter">Github</a></li>
-<li><a href="/blog">Blog</a></li>
+<li><a href="./blog">Blog</a></li>
 </ul>
 
 </div>

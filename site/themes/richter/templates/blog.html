@@ -8,8 +8,10 @@
 <h1>{{ section.title }}</h1>
 {{ section.content | safe }}
 {% for page in section.pages %}
-<h3>{{ page.title }}</h2>
-<h4>{{ page.date }}</h3>
-{{ page.content | safe }}
+<div class="post">
+  <h3><a href="{{ page.permalink }}">{{ page.title }}</a></h3>
+  <h4>{{ page.date }}</h4>
+  {{ page.content | safe }}
+</div>
 {% endfor %}
 {% endblock main %}
