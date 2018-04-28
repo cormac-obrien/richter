@@ -112,10 +112,12 @@ impl Model {
     where
         S: AsRef<str>,
     {
+        let flags = alias_model.flags();
+
         Model {
             name: name.as_ref().to_owned(),
             kind: ModelKind::Alias(alias_model),
-            flags: ModelFlags::empty(),
+            flags,
         }
     }
 
@@ -175,7 +177,11 @@ impl Model {
         }
     }
 
-    pub fn get_flags(&self) -> ModelFlags {
+    pub fn flags(&self) -> ModelFlags {
         self.flags
+    }
+
+    pub fn has_flag(&self, flag: ModelFlags) -> bool {
+        self.flags.contains(flag)
     }
 }

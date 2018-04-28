@@ -252,8 +252,8 @@ impl AliasRenderer {
         ensure!(keyframe_id < self.keyframes.len(), "Keyframe ID out of range: {}", keyframe_id);
         ensure!(texture_id < self.textures.len(), "Texture ID out of range: {}", texture_id);
 
-        let model_transform = Matrix4::from(Euler::new(angles.x, angles.y, angles.z))
-            * Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x));
+        let model_transform = Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
+            * Matrix4::from(Euler::new(angles.x, angles.y, angles.z));
 
         user_data.vertex_buffer = self.vertex_buffer.clone();
         user_data.transform = (camera.get_transform() * model_transform).into();

@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::iter::FromIterator;
 use std::rc::Rc;
 
+use failure::Error;
 use winit::VirtualKeyCode as Key;
 
 /// Stores console commands.
@@ -411,7 +412,7 @@ impl Console {
         }
     }
 
-    pub fn send_char(&mut self, c: char) -> Result<(), ()> {
+    pub fn send_char(&mut self, c: char) -> Result<(), Error> {
         match c {
             '\r' => {
                 // push this line to the execution buffer
@@ -435,19 +436,23 @@ impl Console {
         Ok(())
     }
 
-    pub fn send_key(&mut self, key: Key) {
-        match key {
-            Key::Up => if let Some(line) = self.hist.line_up() {
-                self.input.set_text(&line);
-            },
+    pub fn cursor_right(&mut self) {
+        self.input.cursor_right()
+    }
 
-            Key::Down => if let Some(line) = self.hist.line_down() {
-                self.input.set_text(&line);
-            },
+    pub fn cursor_left(&mut self) {
+        self.input.cursor_left()
+    }
 
-            Key::Right => self.input.cursor_right(),
-            Key::Left => self.input.cursor_left(),
-            _ => return,
+    pub fn history_up(&mut self) {
+        if let Some(line) = self.hist.line_up() {
+            self.input.set_text(&line);
+        }
+    }
+
+    pub fn history_down(&mut self) {
+        if let Some(line) = self.hist.line_down() {
+            self.input.set_text(&line);
         }
     }
 

@@ -22,7 +22,7 @@ use std::io::Seek;
 use std::io::SeekFrom;
 
 use common::engine;
-use common::model::SyncType;
+use common::model::{ModelFlags, SyncType};
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
@@ -227,6 +227,7 @@ pub struct AliasModel {
     texcoords: Box<[Texcoord]>,
     polygons: Box<[IndexedPolygon]>,
     keyframes: Box<[Keyframe]>,
+    flags: ModelFlags,
 }
 
 impl AliasModel {
@@ -260,6 +261,10 @@ impl AliasModel {
 
     pub fn keyframes(&self) -> &[Keyframe] {
         &self.keyframes
+    }
+
+    pub fn flags(&self) -> ModelFlags {
+        self.flags
     }
 }
 
@@ -311,7 +316,10 @@ pub fn load(data: &[u8]) -> Result<AliasModel, Error> {
 
     let sync_type = SyncType::from_i32(reader.read_i32::<LittleEndian>()?);
 
-    let flags = reader.read_i32::<LittleEndian>()?;
+    let flags_bits = reader.read_i32::<LittleEndian>()?;
+    ensure!(flags_bits >= 0, "Invalid flag bits for alias model");
+    ensure!(flags_bits < ::std::u8::MAX as i32, "Invalid flag bits for alias model");
+    let flags = ModelFlags::from_bits(flags_bits as u8).unwrap();
 
     let size = match reader.read_i32::<LittleEndian>()? {
         s if s < 0 => panic!("Negative size ({})", s),
@@ -584,5 +592,6 @@ pub fn load(data: &[u8]) -> Result<AliasModel, Error> {
         texcoords: texcoords.into_boxed_slice(),
         polygons: polygons.into_boxed_slice(),
         keyframes: keyframes.into_boxed_slice(),
+        flags,
     })
 }

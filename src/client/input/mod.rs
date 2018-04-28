@@ -15,6 +15,8 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+pub mod console;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -127,7 +129,6 @@ pub enum BindTarget {
     }
 }
 
-// TODO: commands/cvars/toggles will not be differentiable without CvarRegistry and CmdRegistry provided
 impl FromStr for BindTarget {
     type Err = Error;
 

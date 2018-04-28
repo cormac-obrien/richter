@@ -1614,7 +1614,7 @@ impl Client {
                 }
             }
 
-            if self.state.models[ent.model_id].get_flags().contains(ModelFlags::ROTATE) {
+            if self.state.models[ent.model_id].has_flag(ModelFlags::ROTATE) {
                 ent.angles[1] = obj_rotate;
             }
 

@@ -412,8 +412,8 @@ impl BrushRenderer {
         for face in self.faces.iter() {
             let frame = self.bsp_data.texture_frame_for_time(face.tex_id, time);
 
-            let model_transform = Matrix4::from(Euler::new(angles.x, angles.y, angles.z))
-                * Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x));
+            let model_transform = Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
+                * Matrix4::from(Euler::new(angles.x, angles.y, angles.z));
             pipeline_data.vertex_buffer = self.vertex_buffer.clone();
             pipeline_data.transform = (camera.get_transform() * model_transform).into();
 
