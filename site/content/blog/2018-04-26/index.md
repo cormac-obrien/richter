@@ -19,6 +19,6 @@ been able to pinpoint the exact problem -- only that the lerp factor seems to go
 out of the expected range of `[0, 1)` once per server frame. I'll keep an eye on
 it.
 
-[1]: /blog/2018-04-26/hud-screenshot.png
+[1]: http://c-obrien.org/richter/blog/2018-04-26/hud-screenshot.png
 [2]: https://quakewiki.org/wiki/Quake_font
 [3]: https://github.com/cormac-obrien/richter/blob/12b1d9448cf9c3cfed013108fe0866cb78755902/src/client/mod.rs#L1499-L1552
