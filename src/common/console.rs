@@ -103,8 +103,10 @@ struct Cvar {
     // If true, this variable should be archived in vars.rc
     archive: bool,
 
-    // If true, updating this variable must also update serverinfo/userinfo
-    info: bool,
+    // If true:
+    // - If a server cvar, broadcast updates to clients
+    // - If a client cvar, update userinfo
+    notify: bool,
 
     // The default value of this variable
     default: String,
@@ -122,7 +124,7 @@ impl CvarRegistry {
         }
     }
 
-    fn register_impl<S>(&self, name: S, default: S, archive: bool, info: bool) -> Result<(), ()>
+    fn register_impl<S>(&self, name: S, default: S, archive: bool, notify: bool) -> Result<(), ()>
     where
         S: AsRef<str>,
     {
@@ -138,7 +140,7 @@ impl CvarRegistry {
                     Cvar {
                         val: default.to_owned(),
                         archive,
-                        info,
+                        notify,
                         default: default.to_owned(),
                     },
                 );
@@ -167,7 +169,7 @@ impl CvarRegistry {
         self.register_impl(name, default, true, false)
     }
 
-    /// Register a new info `Cvar` with the given name.
+    /// Register a new notify `Cvar` with the given name.
     ///
     /// When this `Cvar` is set:
     /// - If the host is a server, broadcast that the variable has been changed to all clients.
@@ -179,7 +181,7 @@ impl CvarRegistry {
         self.register_impl(name, default, false, true)
     }
 
-    /// Register a new info + archived `Cvar` with the given name.
+    /// Register a new notify + archived `Cvar` with the given name.
     ///
     /// The value of this `Cvar` should be written to `vars.rc` whenever the game is closed or
     /// `host_writeconfig` is issued.
@@ -225,7 +227,7 @@ impl CvarRegistry {
         match self.cvars.borrow_mut().get_mut(name.as_ref()) {
             Some(s) => {
                 s.val = value.as_ref().to_owned();
-                if s.info {
+                if s.notify {
                     // TODO: update userinfo/serverinfo
                     unimplemented!();
                 }

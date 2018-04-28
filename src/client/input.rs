@@ -21,15 +21,12 @@ use std::rc::Rc;
 use std::str::FromStr;
 use std::string::ToString;
 
-use common::console::CmdRegistry;
-use common::console::CvarRegistry;
+use common::console::{CmdRegistry, Console, CvarRegistry};
 use common::parse;
 
+use failure::Error;
 use nom::IResult;
-use winit::ElementState;
-use winit::VirtualKeyCode as Key;
-use winit::MouseButton;
-use winit::MouseScrollDelta;
+use winit::{ElementState, VirtualKeyCode as Key, MouseButton, MouseScrollDelta};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Action {
@@ -60,8 +57,7 @@ pub enum Action {
 }
 
 impl FromStr for Action {
-    // TODO: implement an error type
-    type Err = ();
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let action = match s.to_lowercase().as_str() {
@@ -84,7 +80,7 @@ impl FromStr for Action {
             "mlook" => Action::MLook,
             "showscores" => Action::ShowScores,
             "showteamscores" => Action::ShowTeamScores,
-            _ => return Err(()),
+            _ => bail!("Invalid action name: {}", s),
         };
 
         Ok(action)
@@ -126,45 +122,28 @@ pub enum BindTarget {
         action: Action,
     },
 
-    Command {
-        name: String,
-        args: Vec<String>,
-    },
-
-    Cvar {
-        name: String,
-        val: String,
-    },
+    ConsoleInput {
+        text: String,
+    }
 }
 
 // TODO: commands/cvars/toggles will not be differentiable without CvarRegistry and CmdRegistry provided
 impl FromStr for BindTarget {
-    // TODO: implement an error type
-    type Err = ();
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (trigger, action_str) = match parse::action(s.as_bytes()) {
-            IResult::Done(_remaining, output) => output,
-            IResult::Incomplete(_) => {
-                error!("\"{}\" is not a valid action", s);
-                return Err(());
+        match parse::action(s.as_bytes()) {
+            // first, check if this is an action
+            IResult::Done(_remaining, (trigger, action_str)) => {
+                Ok(BindTarget::Action {
+                    trigger,
+                    action: Action::from_str(action_str)?,
+                })
             }
-            IResult::Error(e) => {
-                error!("\"{}\" is not a valid action: {}", s, e);
-                return Err(());
-            }
-        };
 
-        let action = match Action::from_str(action_str) {
-            Ok(a) => a,
-            Err(err) => {
-                // TODO: update when we have a real error type
-                error!("Invalid action string");
-                return Err(());
-            }
-        };
-
-        Ok(BindTarget::Action { trigger, action })
+            // if the parse fails, assume it's a cvar/cmd and return the text
+            _ => Ok(BindTarget::ConsoleInput { text: s.to_owned() })
+        }
     }
 }
 
@@ -178,15 +157,9 @@ impl ToString for BindTarget {
                 } + &action.to_string()
             }
 
-            BindTarget::Command { ref name, ref args } => {
-                let mut s = name.to_owned();
-                for arg in args {
-                    s += &format!(" \"{}\"", arg);
-                }
-                s
+            BindTarget::ConsoleInput { ref text } => {
+                format!("\"{}\"", text.to_owned())
             }
-
-            BindTarget::Cvar { ref name, ref val } => name.to_owned() + &format!(" \"{}\"", val),
         }
     }
 }
@@ -195,14 +168,20 @@ impl ToString for BindTarget {
 pub struct Bindings {
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
+    console: Rc<RefCell<Console>>,
     bindings: HashMap<BindInput, BindTarget>,
 }
 
 impl Bindings {
-    pub fn new(cvars: Rc<RefCell<CvarRegistry>>, cmds: Rc<RefCell<CmdRegistry>>) -> Bindings {
+    pub fn new(
+        cvars: Rc<RefCell<CvarRegistry>>,
+        cmds: Rc<RefCell<CmdRegistry>>,
+        console: Rc<RefCell<Console>>
+    ) -> Bindings {
         Bindings {
             cvars,
             cmds,
+            console,
             bindings: HashMap::new(),
         }
     }
@@ -219,6 +198,7 @@ impl Bindings {
         self.bind(Key::Right, BindTarget::from_str("+right").unwrap());
         self.bind(Key::LControl, BindTarget::from_str("+attack").unwrap());
         self.bind(Key::E, BindTarget::from_str("+use").unwrap());
+        self.bind(Key::Grave, BindTarget::from_str("toggleconsole").unwrap());
     }
 
     pub fn bind<I, T>(&mut self, input: I, target: T) -> Option<BindTarget>
@@ -245,21 +225,14 @@ impl Bindings {
         I: Into<BindInput> + ::std::fmt::Debug,
     {
         if let Some(target) = self.get(input) {
-
             match *target {
                 BindTarget::Action { trigger, action } => {
                     game_input.handle_action(action, input_state == trigger);
                     debug!("{}{}", if input_state == trigger { '+' } else { '-' }, action.to_string());
                 }
-                BindTarget::Command { ref name, ref args } => {
-                    // TODO
-                    unimplemented!();
-                    // self.cmds.exec_cmd(name, args.iter().map(|s| s.as_str()).collect()).unwrap();
-                    debug!("{:?}", target);
-                }
-                BindTarget::Cvar { ref name, ref val } => {
-                    self.cvars.borrow_mut().set(name, val).unwrap();
-                    debug!("{:?}", target);
+
+                BindTarget::ConsoleInput { ref text } => {
+                    self.console.borrow_mut().stuff_text(text);
                 }
             }
         }
@@ -521,25 +494,5 @@ mod test {
         };
 
         assert_eq!(target.to_string(), "+forward");
-    }
-
-    #[test]
-    fn test_bind_target_command_to_string() {
-        let target = BindTarget::Command {
-            name: String::from("give"),
-            args: vec![String::from("R"), String::from("255")],
-        };
-
-        assert_eq!(target.to_string(), "give \"R\" \"255\"");
-    }
-
-    #[test]
-    fn test_bind_target_cvar_to_string() {
-        let target = BindTarget::Cvar {
-            name: String::from("sv_gravity"),
-            val: String::from("800"),
-        };
-
-        assert_eq!(target.to_string(), "sv_gravity \"800\"");
     }
 }

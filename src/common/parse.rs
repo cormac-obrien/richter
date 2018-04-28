@@ -21,9 +21,11 @@ use cgmath::Vector3;
 use nom::is_alphabetic;
 use winit::ElementState;
 
-// Parse quoted strings
+/// Parse a quoted string.
+///
+/// Supports escaping quotes with `"`.
 named!(
-    quoted<&str>,
+    pub quoted<&str>,
     map_res!(
         delimited!(tag!("\""), take_until_s!("\""), tag!("\"")),
         ::std::str::from_utf8
@@ -50,6 +52,7 @@ named!(
     )
 );
 
+/// Parse a series of entity maps into a `Vec`.
 named!(
     pub entity_maps <Vec<HashMap<&str, &str>>>,
     many0!(entity_map)

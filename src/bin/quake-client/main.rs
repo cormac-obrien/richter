@@ -130,7 +130,7 @@ impl ClientProgram  {
 
         let console = Rc::new(RefCell::new(Console::new(cmds.clone(), cvars.clone())));
 
-        let bindings = Rc::new(RefCell::new(Bindings::new(cvars.clone(), cmds.clone())));
+        let bindings = Rc::new(RefCell::new(Bindings::new(cvars.clone(), cmds.clone(), console.clone())));
         bindings.borrow_mut().assign_defaults();
 
         let events_loop = glutin::EventsLoop::new();
