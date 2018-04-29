@@ -32,7 +32,7 @@ use std::io::BufReader;
 use std::net::ToSocketAddrs;
 use std::rc::Rc;
 
-use client::input::GameInput;
+use client::input::game::{GameInput, Action};
 use client::sound::AudioSource;
 use client::sound::Channel;
 use client::sound::StaticSound;
@@ -628,15 +628,15 @@ impl Client {
         let frame_time_f32 = engine::duration_to_f32(frame_time);
         let cl_anglespeedkey = self.cvars.borrow().get_value("cl_anglespeedkey").unwrap();
 
-        let speed = if game_input.speed {
+        let speed = if game_input.action_state(Action::Speed) {
             frame_time_f32 * cl_anglespeedkey
         } else {
             frame_time_f32
         };
 
-        if !game_input.strafe {
-            let right_factor = game_input.right as i32 as f32;
-            let left_factor = game_input.left as i32 as f32;
+        if !game_input.action_state(Action::Strafe) {
+            let right_factor = game_input.action_state(Action::Right) as i32 as f32;
+            let left_factor = game_input.action_state(Action::Left) as i32 as f32;
             let cl_yawspeed = self.cvars.borrow().get_value("cl_yawspeed").unwrap();
 
             self.state.view.view_angles.y -= Deg(speed * cl_yawspeed * right_factor);
@@ -645,17 +645,17 @@ impl Client {
         }
 
         let cl_pitchspeed = self.cvars.borrow().get_value("cl_pitchspeed").unwrap();
-        if game_input.klook {
-            let forward_factor = game_input.forward as i32 as f32;
-            let back_factor = game_input.back as i32 as f32;
+        if game_input.action_state(Action::KLook) {
+            let forward_factor = game_input.action_state(Action::Forward) as i32 as f32;
+            let back_factor = game_input.action_state(Action::Back) as i32 as f32;
 
             // TODO: V_StopPitchDrift
             self.state.view.view_angles.x -= Deg(speed * cl_pitchspeed * forward_factor);
             self.state.view.view_angles.x += Deg(speed * cl_pitchspeed * back_factor);
         }
 
-        let lookup_factor = game_input.lookup as i32 as f32;
-        let lookdown_factor = game_input.lookdown as i32 as f32;
+        let lookup_factor = game_input.action_state(Action::LookUp) as i32 as f32;
+        let lookdown_factor = game_input.action_state(Action::LookDown) as i32 as f32;
 
         self.state.view.view_angles.x -= Deg(speed * cl_pitchspeed * lookup_factor);
         self.state.view.view_angles.x += Deg(speed * cl_pitchspeed * lookdown_factor);
@@ -693,27 +693,27 @@ impl Client {
         let cl_upspeed = self.cvars.borrow().get_value("cl_upspeed").unwrap();
 
         let mut sidemove = 0.0;
-        if game_input.strafe {
-            sidemove += cl_sidespeed * game_input.right as i32 as f32;
-            sidemove -= cl_sidespeed * game_input.left as i32 as f32;
+        if game_input.action_state(Action::Strafe) {
+            sidemove += cl_sidespeed * game_input.action_state(Action::Right) as i32 as f32;
+            sidemove -= cl_sidespeed * game_input.action_state(Action::Left) as i32 as f32;
         }
 
-        sidemove += cl_sidespeed * game_input.moveright as i32 as f32;
-        sidemove -= cl_sidespeed * game_input.moveleft as i32 as f32;
+        sidemove += cl_sidespeed * game_input.action_state(Action::MoveRight) as i32 as f32;
+        sidemove -= cl_sidespeed * game_input.action_state(Action::MoveLeft) as i32 as f32;
 
         let mut upmove = 0.0;
-        upmove += cl_upspeed * game_input.moveup as i32 as f32;
-        upmove -= cl_upspeed * game_input.movedown as i32 as f32;
+        upmove += cl_upspeed * game_input.action_state(Action::MoveUp) as i32 as f32;
+        upmove -= cl_upspeed * game_input.action_state(Action::MoveDown) as i32 as f32;
 
         let mut forwardmove = 0.0;
-        if !game_input.klook {
+        if !game_input.action_state(Action::KLook) {
             let cl_forwardspeed = self.cvars.borrow().get_value("cl_forwardspeed").unwrap();
             let cl_backspeed = self.cvars.borrow().get_value("cl_backspeed").unwrap();
-            forwardmove += cl_forwardspeed * game_input.forward as i32 as f32;
-            forwardmove -= cl_backspeed * game_input.back as i32 as f32;
+            forwardmove += cl_forwardspeed * game_input.action_state(Action::Forward) as i32 as f32;
+            forwardmove -= cl_backspeed * game_input.action_state(Action::Back) as i32 as f32;
         }
 
-        if game_input.speed {
+        if game_input.action_state(Action::Speed) {
             let cl_movespeedkey = self.cvars.borrow().get_value("cl_movespeedkey").unwrap();
             sidemove *= cl_movespeedkey;
             upmove *= cl_movespeedkey;
@@ -722,11 +722,11 @@ impl Client {
 
         let mut button_flags = ButtonFlags::empty();
 
-        if game_input.attack {
+        if game_input.action_state(Action::Attack) {
             button_flags |= ButtonFlags::ATTACK;
         }
 
-        if game_input.jump {
+        if game_input.action_state(Action::Jump) {
             button_flags |= ButtonFlags::JUMP;
         }
 

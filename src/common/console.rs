@@ -380,15 +380,22 @@ impl History {
 }
 
 pub struct ConsoleOutput {
-    lines: Vec<Vec<char>>,
+    lines: VecDeque<Vec<char>>,
 }
 
 impl ConsoleOutput {
-    pub fn println<S>(&mut self, msg: S)
+    pub fn new() -> ConsoleOutput {
+        ConsoleOutput {
+            lines: VecDeque::new(),
+        }
+    }
+
+    pub fn push<S>(&mut self, chars: Vec<char>)
     where
         S: AsRef<str>,
     {
-        println!("{}", msg.as_ref());
+        self.lines.push_front(chars);
+        // TODO: set maximum capacity and pop_back when we reach it
     }
 }
 
@@ -399,6 +406,7 @@ pub struct Console {
     input: ConsoleInput,
     hist: History,
     buffer: String,
+    output: ConsoleOutput,
 }
 
 impl Console {
@@ -409,6 +417,7 @@ impl Console {
             input: ConsoleInput::new(),
             hist: History::new(),
             buffer: String::new(),
+            output: ConsoleOutput::new(),
         }
     }
 
@@ -492,6 +501,10 @@ impl Console {
 
     pub fn stuff_text<S>(&mut self, text: S) where S: AsRef<str> {
         self.buffer.push_str(text.as_ref());
+    }
+
+    pub fn output_lines(&self) -> ::std::collections::vec_deque::Iter<Vec<char>> {
+        self.output.lines.iter()
     }
 }
 

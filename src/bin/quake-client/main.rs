@@ -41,7 +41,7 @@ use std::process::exit;
 use std::rc::Rc;
 
 use richter::client::{self, Client};
-use richter::client::input::{Bindings, GameInput, MouseWheel};
+use richter::client::input::game::{GameInput, MouseWheel};
 use richter::client::render::{self, SceneRenderer, UiRenderer};
 use richter::common;
 use richter::common::console::{CmdRegistry, Console, CvarRegistry};
@@ -75,13 +75,12 @@ struct ClientProgram {
     data: RefCell<render::pipe::Data<Resources>>,
     data_2d: RefCell<render::pipeline2d::Data<Resources>>,
 
-    bindings: Rc<RefCell<Bindings>>,
     endpoint: Rc<Endpoint>,
 
     palette: render::Palette,
 
     client: Option<RefCell<Client>>,
-    actions: RefCell<GameInput>,
+    game_input: RefCell<GameInput>,
     scene_renderer: Option<RefCell<SceneRenderer>>,
     ui_renderer: Option<RefCell<UiRenderer>>,
 }
@@ -111,8 +110,8 @@ impl ClientProgram  {
 
         let console = Rc::new(RefCell::new(Console::new(cmds.clone(), cvars.clone())));
 
-        let bindings = Rc::new(RefCell::new(Bindings::new(cvars.clone(), cmds.clone(), console.clone())));
-        bindings.borrow_mut().assign_defaults();
+        let game_input = RefCell::new(GameInput::new(console.clone()));
+        game_input.borrow_mut().bind_defaults();
 
         let events_loop = glutin::EventsLoop::new();
         let window_builder = glutin::WindowBuilder::new()
@@ -178,11 +177,10 @@ impl ClientProgram  {
             data_2d: RefCell::new(data_2d),
             color: color,
             depth: depth,
-            bindings,
             endpoint,
             palette,
             client: None,
-            actions: RefCell::new(GameInput::new()),
+            game_input,
             scene_renderer: None,
             ui_renderer: None,
         }
@@ -238,14 +236,8 @@ impl Program for ClientProgram  {
                     ).unwrap()));
                 }
 
-                self.bindings
-                    .borrow()
-                    .handle(&mut self.actions.borrow_mut(), MouseWheel::Up, ElementState::Released);
-                self.bindings.borrow().handle(
-                    &mut self.actions.borrow_mut(),
-                    MouseWheel::Down,
-                    ElementState::Released,
-                );
+                self.game_input.borrow_mut().handle(MouseWheel::Up, ElementState::Released);
+                self.game_input.borrow_mut().handle(MouseWheel::Down, ElementState::Released);
 
                 flame::start("EventsLoop::poll_events");
                 self.events_loop
@@ -267,16 +259,15 @@ impl Program for ClientProgram  {
                                     },
                                 ..
                             } => {
-                                self.bindings.borrow().handle(&mut self.actions.borrow_mut(), key, state);
+                                self.game_input.borrow_mut().handle(key, state);
                             }
 
                             WindowEvent::MouseInput { state, button, .. } => {
-                                self.bindings.borrow().handle(&mut self.actions.borrow_mut(), button, state);
+                                self.game_input.borrow_mut().handle(button, state);
                             }
 
                             WindowEvent::MouseWheel { delta, .. } => {
-                                self.bindings.borrow().handle(
-                                    &mut self.actions.borrow_mut(),
+                                self.game_input.borrow_mut().handle(
                                     delta,
                                     ElementState::Pressed,
                                 );
@@ -291,7 +282,7 @@ impl Program for ClientProgram  {
 
                 client
                     .borrow_mut()
-                    .handle_input(&mut self.actions.borrow(), frame_duration, 0)
+                    .handle_input(&self.game_input.borrow(), frame_duration, 0)
                     .unwrap();
             }
 
