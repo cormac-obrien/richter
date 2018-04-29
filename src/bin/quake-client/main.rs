@@ -41,7 +41,8 @@ use std::process::exit;
 use std::rc::Rc;
 
 use richter::client::{self, Client};
-use richter::client::input::game::{GameInput, MouseWheel};
+use richter::client::input::{Input, InputFocus};
+use richter::client::input::game::MouseWheel;
 use richter::client::render::{self, SceneRenderer, UiRenderer};
 use richter::common;
 use richter::common::console::{CmdRegistry, Console, CvarRegistry};
@@ -55,7 +56,7 @@ use chrono::Duration;
 use gfx::Encoder;
 use gfx::handle::{DepthStencilView, RenderTargetView};
 use gfx_device_gl::{CommandBuffer, Device, Factory as GlFactory, Resources};
-use glutin::{ElementState, Event, EventsLoop, GlContext, GlWindow, KeyboardInput, WindowEvent};
+use glutin::{ElementState, Event, EventsLoop, GlContext, GlWindow, WindowEvent};
 use rodio::Endpoint;
 
 struct ClientProgram {
@@ -80,7 +81,7 @@ struct ClientProgram {
     palette: render::Palette,
 
     client: Option<RefCell<Client>>,
-    game_input: RefCell<GameInput>,
+    input: RefCell<Input>,
     scene_renderer: Option<RefCell<SceneRenderer>>,
     ui_renderer: Option<RefCell<UiRenderer>>,
 }
@@ -110,8 +111,8 @@ impl ClientProgram  {
 
         let console = Rc::new(RefCell::new(Console::new(cmds.clone(), cvars.clone())));
 
-        let game_input = RefCell::new(GameInput::new(console.clone()));
-        game_input.borrow_mut().bind_defaults();
+        let input = RefCell::new(Input::new(InputFocus::Game, console.clone()));
+        input.borrow_mut().bind_defaults();
 
         let events_loop = glutin::EventsLoop::new();
         let window_builder = glutin::WindowBuilder::new()
@@ -180,7 +181,7 @@ impl ClientProgram  {
             endpoint,
             palette,
             client: None,
-            game_input,
+            input,
             scene_renderer: None,
             ui_renderer: None,
         }
@@ -233,11 +234,14 @@ impl Program for ClientProgram  {
                         &gfx_wad,
                         &self.palette,
                         &mut self.factory.borrow_mut(),
+                        self.console.clone(),
                     ).unwrap()));
                 }
 
-                self.game_input.borrow_mut().handle(MouseWheel::Up, ElementState::Released);
-                self.game_input.borrow_mut().handle(MouseWheel::Down, ElementState::Released);
+                if let Some(ref mut game_input) = self.input.borrow_mut().game_input_mut() {
+                    game_input.handle_input(MouseWheel::Up, ElementState::Released).unwrap();
+                    game_input.handle_input(MouseWheel::Down, ElementState::Released).unwrap();
+                }
 
                 flame::start("EventsLoop::poll_events");
                 self.events_loop
@@ -250,28 +254,7 @@ impl Program for ClientProgram  {
                                 std::process::exit(0);
                             }
 
-                            WindowEvent::KeyboardInput {
-                                input:
-                                    KeyboardInput {
-                                        state,
-                                        virtual_keycode: Some(key),
-                                        ..
-                                    },
-                                ..
-                            } => {
-                                self.game_input.borrow_mut().handle(key, state);
-                            }
-
-                            WindowEvent::MouseInput { state, button, .. } => {
-                                self.game_input.borrow_mut().handle(button, state);
-                            }
-
-                            WindowEvent::MouseWheel { delta, .. } => {
-                                self.game_input.borrow_mut().handle(
-                                    delta,
-                                    ElementState::Pressed,
-                                );
-                            }
+                            e => self.input.borrow_mut().handle_event(e).unwrap(),
 
                             _ => (),
                         },
@@ -280,10 +263,12 @@ impl Program for ClientProgram  {
                     });
                 flame::end("EventsLoop::poll_events");
 
-                client
-                    .borrow_mut()
-                    .handle_input(&self.game_input.borrow(), frame_duration, 0)
-                    .unwrap();
+                if let Some(ref game_input) = self.input.borrow().game_input() {
+                    client
+                        .borrow_mut()
+                        .handle_input(game_input, frame_duration, 0)
+                        .unwrap();
+                }
             }
 
             // run console commands

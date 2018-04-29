@@ -26,8 +26,8 @@ use gfx::handle::{Buffer, ShaderResourceView, Texture};
 use gfx::pso::{PipelineData, PipelineState};
 use gfx_device_gl::Resources;
 
-const GLYPH_WIDTH: usize = 8;
-const GLYPH_HEIGHT: usize = 8;
+pub const GLYPH_WIDTH: usize = 8;
+pub const GLYPH_HEIGHT: usize = 8;
 const GLYPH_COLS: usize = 16;
 const GLYPH_ROWS: usize = 16;
 const GLYPH_COUNT: usize = GLYPH_ROWS * GLYPH_COLS;
@@ -129,6 +129,44 @@ impl GlyphRenderer {
         let slice = self.slice_for_glyph(glyph_id);
 
         encoder.draw(&slice, pso, user_data);
+
+        Ok(())
+    }
+
+    pub fn render_string<C, S>(
+        &self,
+        encoder: &mut Encoder<Resources, C>,
+        pso: &PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
+        user_data: &mut pipeline2d::Data<Resources>,
+        string: S,
+        display_width: u32,
+        display_height: u32,
+        position_x: i32,
+        position_y: i32,
+    ) -> Result<(), Error>
+    where
+        C: CommandBuffer<Resources>,
+        S: AsRef<str>,
+    {
+        for (chr_id, chr) in string.as_ref().chars().enumerate() {
+            let abs_x = position_x + (GLYPH_WIDTH * chr_id) as i32;
+
+            if abs_x >= display_width as i32 {
+                // this is off the edge of the screen, don't bother rendering
+                break;
+            }
+
+            self.render_glyph(
+                encoder,
+                pso,
+                user_data,
+                chr as u8,
+                display_width,
+                display_height,
+                abs_x as i32,
+                position_y,
+            )?;
+        }
 
         Ok(())
     }

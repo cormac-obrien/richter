@@ -256,7 +256,7 @@ impl AliasRenderer {
             * Matrix4::from(Euler::new(angles.x, angles.y, angles.z));
 
         user_data.vertex_buffer = self.vertex_buffer.clone();
-        user_data.transform = (camera.get_transform() * model_transform).into();
+        user_data.transform = (camera.transform() * model_transform).into();
 
         match self.textures[texture_id] {
             AliasRenderTexture::Static(ref static_texture) => {

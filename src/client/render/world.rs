@@ -205,7 +205,7 @@ impl WorldRenderer {
             let model_transform = Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
                 * Matrix4::from(Euler::new(angles.x, angles.y, angles.z));
             pipeline_data.vertex_buffer = self.vertex_buffer.clone();
-            pipeline_data.transform = (camera.get_transform() * model_transform).into();
+            pipeline_data.transform = (camera.transform() * model_transform).into();
 
             pipeline_data.diffuse_sampler.0 = self.texture_views[frame].clone();
             pipeline_data.fullbright_sampler.0 = self.fullbright_views[frame].clone();
@@ -241,7 +241,7 @@ impl WorldRenderer {
     {
         let mut pipeline_data = self.create_pipeline_data()?;
 
-        let containing_leaf_id = self.bsp_data.find_leaf(camera.get_origin());
+        let containing_leaf_id = self.bsp_data.find_leaf(camera.origin());
         let pvs = self.bsp_data.get_pvs(containing_leaf_id, self.leaves.len());
 
         if pvs.is_empty() {

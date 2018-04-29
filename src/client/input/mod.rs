@@ -27,7 +27,7 @@ use failure::Error;
 use winit::WindowEvent;
 
 use self::console::ConsoleInput;
-use self::game::GameInput;
+use self::game::{BindInput, BindTarget, GameInput};
 
 #[derive(Clone, Copy)]
 pub enum InputFocus {
@@ -54,9 +54,9 @@ impl Input {
         }
     }
 
-    pub fn handle_event(&self, event: WindowEvent) -> Result<(), Error> {
+    pub fn handle_event(&mut self, event: WindowEvent) -> Result<(), Error> {
         match self.current_focus {
-            InputFocus::Game => (),
+            InputFocus::Game => self.game_input.handle_event(event)?,
             InputFocus::Console => self.console_input.handle_event(event)?,
             InputFocus::Menu => unimplemented!(),
         }
@@ -68,6 +68,35 @@ impl Input {
         self.current_focus = new_focus;
 
         Ok(())
+    }
+
+    /// Bind a `BindInput` to a `BindTarget`.
+    pub fn bind<I, T>(&mut self, input: I, target: T) -> Option<BindTarget>
+    where
+        I: Into<BindInput>,
+        T: Into<BindTarget>,
+    {
+        self.game_input.bind(input, target)
+    }
+
+    pub fn bind_defaults(&mut self) {
+        self.game_input.bind_defaults();
+    }
+
+    pub fn game_input(&self) -> Option<&GameInput> {
+        if let InputFocus::Game = self.current_focus {
+            Some(&self.game_input)
+        } else {
+            None
+        }
+    }
+
+    pub fn game_input_mut(&mut self) -> Option<&mut GameInput> {
+        if let InputFocus::Game = self.current_focus {
+            Some(&mut self.game_input)
+        } else {
+            None
+        }
     }
 }
 

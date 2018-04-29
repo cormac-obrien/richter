@@ -26,7 +26,8 @@ use common::parse;
 
 use failure::Error;
 use nom::IResult;
-use winit::{ElementState, VirtualKeyCode as Key, MouseButton, MouseScrollDelta};
+use winit::{ElementState, VirtualKeyCode as Key, KeyboardInput, MouseButton, MouseScrollDelta,
+    WindowEvent};
 
 const ACTION_COUNT: usize = 19;
 
@@ -319,18 +320,33 @@ impl GameInput {
         self.bindings.get(&input.into())
     }
 
-    pub fn handle<I>(
-        &mut self,
-        input: I,
-        input_state: ElementState,
-    ) where
-        I: Into<BindInput> + ::std::fmt::Debug,
+    pub fn handle_event(&mut self, event: WindowEvent) -> Result<(), Error> {
+        let (input, state): (BindInput, _) = match event {
+            WindowEvent::KeyboardInput {
+                input: KeyboardInput { state, virtual_keycode: Some(key), .. },
+                ..
+            } => (key.into(), state),
+
+            WindowEvent::MouseInput { state, button, .. } => (button.into(), state),
+            WindowEvent::MouseWheel { delta, .. } => (delta.into(), ElementState::Pressed),
+
+            _ => return Ok(()),
+        };
+
+        self.handle_input(input, state)?;
+
+        Ok(())
+    }
+
+    pub fn handle_input<I>(&mut self, input: I, state: ElementState) -> Result<(), Error>
+    where
+        I: Into<BindInput>
     {
         if let Some(target) = self.bindings.get(&input.into()) {
             match *target {
                 BindTarget::Action { trigger, action } => {
-                    self.action_states[action as usize] = input_state == trigger;
-                    debug!("{}{}", if input_state == trigger { '+' } else { '-' }, action.to_string());
+                    self.action_states[action as usize] = state == trigger;
+                    debug!("{}{}", if state == trigger { '+' } else { '-' }, action.to_string());
                 }
 
                 BindTarget::ConsoleInput { ref text } => {
@@ -338,6 +354,8 @@ impl GameInput {
                 }
             }
         }
+
+        Ok(())
     }
 
     pub fn action_state(

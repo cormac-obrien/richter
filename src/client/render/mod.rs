@@ -21,14 +21,17 @@
 pub mod alias;
 pub mod bitmap;
 pub mod brush;
+pub mod console;
 pub mod glyph;
 pub mod hud;
 pub mod world;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use client::{Client, ClientEntity};
+use common::console::Console;
 use common::model::{Model, ModelKind};
 use common::pak::Pak;
 use common::wad::Wad;
@@ -49,6 +52,7 @@ pub use gfx::format::DepthStencil as DepthFormat;
 
 use self::alias::AliasRenderer;
 use self::brush::BrushRenderer;
+use self::console::ConsoleRenderer;
 use self::glyph::GlyphRenderer;
 use self::hud::HudRenderer;
 use self::world::WorldRenderer;
@@ -210,11 +214,11 @@ impl Camera {
         }
     }
 
-    pub fn get_origin(&self) -> Vector3<f32> {
+    pub fn origin(&self) -> Vector3<f32> {
         self.origin
     }
 
-    pub fn get_transform(&self) -> Matrix4<f32> {
+    pub fn transform(&self) -> Matrix4<f32> {
         self.transform
     }
 }
@@ -374,6 +378,7 @@ pub struct UiRenderer {
     pipeline: PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
     glyph_renderer: Rc<GlyphRenderer>,
     hud_renderer: HudRenderer,
+    console_renderer: ConsoleRenderer,
 }
 
 impl UiRenderer {
@@ -381,6 +386,7 @@ impl UiRenderer {
         gfx_wad: &Wad,
         palette: &Palette,
         factory: &mut Factory,
+        console: Rc<RefCell<Console>>,
     ) -> Result<UiRenderer, Error> {
         use gfx::traits::FactoryExt;
         let shader_set = factory.create_shader_set(VERTEX_SHADER_2D_GLSL, FRAGMENT_SHADER_2D_GLSL).unwrap();
@@ -404,10 +410,13 @@ impl UiRenderer {
 
         let hud_renderer = HudRenderer::new(glyph_renderer.clone(), gfx_wad, palette, factory)?;
 
+        let console_renderer = ConsoleRenderer::new(console.clone(), glyph_renderer.clone())?;
+
         Ok(UiRenderer {
             pipeline,
             glyph_renderer,
             hud_renderer,
+            console_renderer,
         })
     }
 
