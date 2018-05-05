@@ -64,6 +64,10 @@ impl Input {
         Ok(())
     }
 
+    pub fn current_focus(&self) -> InputFocus {
+        self.current_focus
+    }
+
     pub fn set_focus(&mut self, new_focus: InputFocus) -> Result<(), Error> {
         self.current_focus = new_focus;
 

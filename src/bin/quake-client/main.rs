@@ -24,6 +24,7 @@
 extern crate cgmath;
 extern crate chrono;
 extern crate env_logger;
+extern crate failure;
 extern crate flame;
 extern crate gfx;
 extern crate gfx_device_gl;
@@ -31,6 +32,8 @@ extern crate gfx_window_glutin;
 extern crate glutin;
 extern crate richter;
 extern crate rodio;
+
+mod game;
 
 use std::cell::RefCell;
 use std::env;
@@ -43,13 +46,16 @@ use std::rc::Rc;
 use richter::client::{self, Client};
 use richter::client::input::{Input, InputFocus};
 use richter::client::input::game::MouseWheel;
-use richter::client::render::{self, SceneRenderer, UiRenderer};
+use richter::client::render::{self, GraphicsPackage, UiRenderer};
+use richter::client::render::glyph::GlyphRenderer;
 use richter::common;
 use richter::common::console::{CmdRegistry, Console, CvarRegistry};
 use richter::common::host::{Host, Program};
 use richter::common::net::SignOnStage;
 use richter::common::pak::Pak;
 use richter::common::wad::Wad;
+
+use game::Game;
 
 use cgmath::{Matrix4, SquareMatrix};
 use chrono::Duration;
@@ -58,6 +64,16 @@ use gfx::handle::{DepthStencilView, RenderTargetView};
 use gfx_device_gl::{CommandBuffer, Device, Factory as GlFactory, Resources};
 use glutin::{ElementState, Event, EventsLoop, GlContext, GlWindow, WindowEvent};
 use rodio::Endpoint;
+
+enum TitleState {
+    Menu,
+    Console,
+}
+
+enum ProgramState {
+    Title,
+    Game(Game),
+}
 
 struct ClientProgram {
     pak: Rc<Pak>,
@@ -68,22 +84,17 @@ struct ClientProgram {
     events_loop: RefCell<EventsLoop>,
     window: RefCell<GlWindow>,
 
+    gfx_pkg: Rc<RefCell<GraphicsPackage>>,
     device: RefCell<Device>,
-    factory: RefCell<GlFactory>,
     encoder: RefCell<Encoder<Resources, CommandBuffer>>,
-    color: RenderTargetView<Resources, render::ColorFormat>,
-    depth: DepthStencilView<Resources, render::DepthFormat>,
     data: RefCell<render::pipe::Data<Resources>>,
     data_2d: RefCell<render::pipeline2d::Data<Resources>>,
 
     endpoint: Rc<Endpoint>,
 
-    palette: render::Palette,
-
-    client: Option<RefCell<Client>>,
-    input: RefCell<Input>,
-    scene_renderer: Option<RefCell<SceneRenderer>>,
-    ui_renderer: Option<RefCell<UiRenderer>>,
+    state: RefCell<ProgramState>,
+    input: Rc<RefCell<Input>>,
+    ui_renderer: Rc<RefCell<UiRenderer>>,
 }
 
 impl ClientProgram  {
@@ -111,7 +122,7 @@ impl ClientProgram  {
 
         let console = Rc::new(RefCell::new(Console::new(cmds.clone(), cvars.clone())));
 
-        let input = RefCell::new(Input::new(InputFocus::Game, console.clone()));
+        let input = Rc::new(RefCell::new(Input::new(InputFocus::Game, console.clone())));
         input.borrow_mut().bind_defaults();
 
         let events_loop = glutin::EventsLoop::new();
@@ -164,6 +175,25 @@ impl ClientProgram  {
 
         let palette = render::Palette::load(&pak, "gfx/palette.lmp");
 
+        let gfx_wad = Wad::load(pak.open("gfx.wad").unwrap()).unwrap();
+        let ui_renderer = Rc::new(RefCell::new(UiRenderer::new(
+            &gfx_wad,
+            &palette,
+            &mut factory,
+            console.clone(),
+        ).unwrap()));
+
+        let glyph_renderer = GlyphRenderer::new(&mut factory, &gfx_wad.open_conchars().unwrap(), &palette).unwrap();
+
+        let gfx_pkg = Rc::new(RefCell::new(GraphicsPackage::new(
+            palette,
+            gfx_wad,
+            glyph_renderer,
+            factory,
+            color,
+            depth,
+        )));
+
         ClientProgram {
             pak: Rc::new(pak),
             cvars,
@@ -171,19 +201,15 @@ impl ClientProgram  {
             console,
             events_loop: RefCell::new(events_loop),
             window: RefCell::new(window),
+            gfx_pkg,
             device: RefCell::new(device),
-            factory: RefCell::new(factory),
             encoder: RefCell::new(encoder),
             data: RefCell::new(data),
             data_2d: RefCell::new(data_2d),
-            color: color,
-            depth: depth,
             endpoint,
-            palette,
-            client: None,
+            state: RefCell::new(ProgramState::Title),
             input,
-            scene_renderer: None,
-            ui_renderer: None,
+            ui_renderer,
         }
     }
 
@@ -191,148 +217,102 @@ impl ClientProgram  {
     where
         A: ToSocketAddrs,
     {
-        self.client = Some(RefCell::new({
-            let cl = Client::connect(
-                server_addrs,
-                self.pak.clone(),
-                self.cvars.clone(),
-                self.cmds.clone(),
-                self.console.clone(),
-                self.endpoint.clone(),
-            ).unwrap();
-            cl.register_cmds(&mut self.cmds.borrow_mut());
-            cl
-        }
-        ));
+        let cl = Client::connect(
+            server_addrs,
+            self.pak.clone(),
+            self.cvars.clone(),
+            self.cmds.clone(),
+            self.console.clone(),
+            self.endpoint.clone(),
+        ).unwrap();
 
+        cl.register_cmds(&mut self.cmds.borrow_mut());
+
+        self.state.replace(ProgramState::Game(Game::new(
+            self.pak.clone(),
+            self.cvars.clone(),
+            self.gfx_pkg.clone(),
+            self.input.clone(),
+            cl,
+        ).unwrap()));
+    }
+
+    fn render(&mut self) {
+        self.encoder.borrow_mut().clear(&self.data.borrow().out_color, [0.0, 0.0, 0.0, 1.0]);
+        self.encoder.borrow_mut().clear_depth(&self.data.borrow().out_depth, 1.0);
+        let (win_w, win_h) = self.window.borrow().get_inner_size().unwrap();
+        let aspect = win_w as f32 / win_h as f32;
+
+        match *self.state.borrow_mut() {
+            ProgramState::Title => unimplemented!(),
+            ProgramState::Game(ref mut game) => {
+                game.render(
+                    &mut self.encoder.borrow_mut(),
+                    &mut self.data.borrow_mut(),
+                    win_w,
+                    win_h,
+                );
+            }
+        }
+
+        use std::ops::DerefMut;
+        flame::start("Encoder::flush");
+        self.encoder.borrow_mut().flush(self.device.borrow_mut().deref_mut());
+        flame::end("Encoder::flush");
+
+        flame::start("Window::swap_buffers");
+        self.window.borrow_mut().swap_buffers().unwrap();
+        flame::end("Window::swap_buffers");
+
+        use gfx::Device;
+        flame::start("Device::cleanup");
+        self.device.borrow_mut().cleanup();
+        flame::end("Device::cleanup");
     }
 }
 
 impl Program for ClientProgram  {
+
     fn frame(&mut self, frame_duration: Duration) {
         let _guard = flame::start_guard("ClientProgram::frame");
-        if let Some(ref client) = self.client {
-            flame::start("Client::frame");
-            client.borrow_mut().frame(frame_duration).unwrap();
-            flame::end("Client::frame");
+        match *self.state.borrow_mut() {
+            ProgramState::Title => unimplemented!(),
 
-            if client.borrow().get_signon_stage() == SignOnStage::Done {
-                if self.scene_renderer.is_none() {
-                    self.scene_renderer = Some(RefCell::new(SceneRenderer::new(
-                        client.borrow().get_models().unwrap(),
-                        1,
-                        &self.palette,
-                        &mut self.factory.borrow_mut(),
-                        self.color.clone(),
-                        self.depth.clone(),
-                    ).unwrap()));
-                }
-
-                if self.ui_renderer.is_none() {
-                    let gfx_wad = Wad::load(self.pak.open("gfx.wad").unwrap()).unwrap();
-                    self.ui_renderer = Some(RefCell::new(UiRenderer::new(
-                        &gfx_wad,
-                        &self.palette,
-                        &mut self.factory.borrow_mut(),
-                        self.console.clone(),
-                    ).unwrap()));
-                }
-
-                if let Some(ref mut game_input) = self.input.borrow_mut().game_input_mut() {
-                    game_input.handle_input(MouseWheel::Up, ElementState::Released).unwrap();
-                    game_input.handle_input(MouseWheel::Down, ElementState::Released).unwrap();
-                }
-
-                flame::start("EventsLoop::poll_events");
-                self.events_loop
-                    .borrow_mut()
-                    .poll_events(|event| match event {
-                        Event::WindowEvent { event, .. } => match event {
-                            WindowEvent::Closed => {
-                                // TODO: handle quit properly
-                                flame::dump_html(File::create("flame.html").unwrap()).unwrap();
-                                std::process::exit(0);
-                            }
-
-                            e => self.input.borrow_mut().handle_event(e).unwrap(),
-
-                            _ => (),
-                        },
-
-                        _ => (),
-                    });
-                flame::end("EventsLoop::poll_events");
-
-                if let Some(ref game_input) = self.input.borrow().game_input() {
-                    client
-                        .borrow_mut()
-                        .handle_input(game_input, frame_duration, 0)
-                        .unwrap();
-                }
+            ProgramState::Game(ref mut game) => {
+                game.frame(frame_duration);
             }
-
-            // run console commands
-            self.console.borrow_mut().execute();
-
-            self.encoder.borrow_mut().clear(&self.data.borrow().out_color, [0.0, 0.0, 0.0, 1.0]);
-            let (win_w, win_h) = self.window.borrow().get_inner_size().unwrap();
-            if let Some(ref scene_renderer) = self.scene_renderer {
-                let cl = client.borrow();
-
-                let fov_x = self.cvars.borrow().get_value("fov").unwrap();
-                let aspect = win_w as f32 / win_h as f32;
-                let fov_y = common::math::fov_x_to_fov_y(cgmath::Deg(fov_x), aspect).unwrap();
-
-                let perspective = cgmath::perspective(
-                    fov_y,
-                    aspect,
-                    4.0,
-                    4096.0,
-                );
-
-                let camera = render::Camera::new(
-                    cl.get_view_origin(),
-                    cl.get_view_angles(),
-                    perspective,
-                );
-
-                self.encoder.borrow_mut().clear_depth(&self.data.borrow().out_depth, 1.0);
-                scene_renderer.borrow_mut().render(
-                    &mut self.encoder.borrow_mut(),
-                    &mut self.data.borrow_mut(),
-                    cl.get_entities().unwrap(),
-                    cl.get_time(),
-                    &camera,
-                    &cl.lightstyle_values().unwrap(),
-                ).unwrap();
-            }
-
-            if let Some(ref ui_renderer) = self.ui_renderer {
-                ui_renderer.borrow_mut().render(
-                    &mut self.factory.borrow_mut(),
-                    &mut self.encoder.borrow_mut(),
-                    &mut self.data_2d.borrow_mut(),
-                    &client.borrow(),
-                    win_w,
-                    win_h,
-                ).unwrap();
-            }
-
-            use std::ops::DerefMut;
-
-            flame::start("Encoder::flush");
-            self.encoder.borrow_mut().flush(self.device.borrow_mut().deref_mut());
-            flame::end("Encoder::flush");
-
-            flame::start("Window::swap_buffers");
-            self.window.borrow_mut().swap_buffers().unwrap();
-            flame::end("Window::swap_buffers");
-
-            use gfx::Device;
-            flame::start("Device::cleanup");
-            self.device.borrow_mut().cleanup();
-            flame::end("Device::cleanup");
         }
+
+        if let Some(ref mut game_input) = self.input.borrow_mut().game_input_mut() {
+            game_input.handle_input(MouseWheel::Up, ElementState::Released).unwrap();
+            game_input.handle_input(MouseWheel::Down, ElementState::Released).unwrap();
+        }
+
+        flame::start("EventsLoop::poll_events");
+        self.events_loop
+            .borrow_mut()
+            .poll_events(|event| match event {
+                Event::WindowEvent { event, .. } => match event {
+                    WindowEvent::Closed => {
+                        // TODO: handle quit properly
+                        flame::dump_html(File::create("flame.html").unwrap()).unwrap();
+                        std::process::exit(0);
+                    }
+
+                    e => match *self.state.borrow_mut() {
+                        ProgramState::Title => unimplemented!(),
+                        ProgramState::Game(ref mut game) => game.handle_input(e),
+                    }
+                },
+
+                _ => (),
+            });
+        flame::end("EventsLoop::poll_events");
+
+        // run console commands
+        self.console.borrow_mut().execute();
+
+        self.render();
     }
 }
 

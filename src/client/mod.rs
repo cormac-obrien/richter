@@ -1464,34 +1464,34 @@ impl Client {
         Ok(())
     }
 
-    pub fn get_signon_stage(&self) -> SignOnStage {
+    pub fn signon_stage(&self) -> SignOnStage {
         self.signon
     }
 
-    pub fn get_entities(&self) -> Option<&[ClientEntity]> {
+    pub fn entities(&self) -> Option<&[ClientEntity]> {
         match self.signon {
             SignOnStage::Done => Some(&self.state.entities),
             _ => None,
         }
     }
 
-    pub fn get_models(&self) -> Option<&[Model]> {
+    pub fn models(&self) -> Option<&[Model]> {
         match self.signon {
             SignOnStage::Done => Some(&self.state.models),
             _ => None,
         }
     }
 
-    pub fn get_view_origin(&self) -> Vector3<f32> {
+    pub fn view_origin(&self) -> Vector3<f32> {
         self.state.entities[self.state.view.ent_id].origin
             + Vector3::new(0.0, 0.0, self.state.view.view_height)
     }
 
-    pub fn get_view_angles(&self) -> Vector3<Deg<f32>> {
+    pub fn view_angles(&self) -> Vector3<Deg<f32>> {
         self.state.view.view_angles
     }
 
-    pub fn get_time(&self) -> Duration {
+    pub fn time(&self) -> Duration {
         self.state.time
     }
 

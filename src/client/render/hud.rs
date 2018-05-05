@@ -18,22 +18,19 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use client::Client;
-use client::render::{self, Palette, Vertex2d};
+use client::render::{self, GraphicsPackage, Palette, PipelineData2d, PipelineState2d, Vertex2d};
 use client::render::bitmap::BitmapTexture;
-use client::render::glyph::GlyphRenderer;
 use client::render::pipeline2d;
 use common::net::{ClientStat, ItemFlags, MAX_ITEMS};
-use common::wad::Wad;
 
-use cgmath::Matrix4;
-use cgmath::SquareMatrix;
+use cgmath::{Matrix4, SquareMatrix};
 use chrono::Duration;
 use flame;
 use gfx::{CommandBuffer, Encoder, Factory, IndexBuffer, Slice};
-use gfx::format::R8_G8_B8_A8;
 use gfx::handle::{Buffer, ShaderResourceView, Texture};
 use gfx::pso::{PipelineData, PipelineState};
 use gfx_device_gl::Resources;
@@ -58,7 +55,8 @@ enum AmmoSlots {
 }
 
 pub struct HudRenderer {
-    glyph_renderer: Rc<GlyphRenderer>,
+    gfx_pkg: Rc<RefCell<GraphicsPackage>>,
+
     digits: Box<[BitmapTexture]>,
     minus: BitmapTexture,
     alt_digits: Box<[BitmapTexture]>,
@@ -86,25 +84,25 @@ pub struct HudRenderer {
 }
 
 impl HudRenderer {
-    pub fn new<F>(
-        glyph_renderer: Rc<GlyphRenderer>,
-        gfx_wad: &Wad,
-        palette: &Palette,
-        factory: &mut F
-    ) -> Result<HudRenderer, Error>
-    where
-        F: Factory<Resources>
-    {
+    pub fn new(gfx_pkg: Rc<RefCell<GraphicsPackage>>) -> Result<HudRenderer, Error> {
         use gfx::traits::FactoryExt;
-        let vertex_buffer = factory.create_vertex_buffer(&render::QUAD_VERTICES);
+        let vertex_buffer = {
+            let pkg_mut = gfx_pkg.borrow_mut();
+            let mut factory_mut = pkg_mut.factory_mut();
+            factory_mut.create_vertex_buffer(&render::QUAD_VERTICES)
+        };
 
         let mut digits = Vec::new();
         let mut alt_digits = Vec::new();
 
         // just to make the following code a bit less painful
         let mut qpic_to_bitmap = |name: &str| -> Result<BitmapTexture, Error> {
-            let qpic = gfx_wad.open_qpic(name)?;
-            BitmapTexture::from_qpic(factory, &qpic, palette)
+            let pkg = gfx_pkg.clone();
+            let qpic = pkg.borrow().gfx_wad().open_qpic(name)?;
+            let pkg_mut = pkg.borrow_mut();
+            use std::ops::DerefMut;
+            let tex = BitmapTexture::from_qpic(pkg_mut.factory_mut().deref_mut(), &qpic, pkg_mut.palette())?;
+            Ok(tex)
         };
 
         for i in 0..10 {
@@ -182,7 +180,7 @@ impl HudRenderer {
         // TODO: use a cvar to determine HUD scaling (for now, do 2:1)
 
         Ok(HudRenderer {
-            glyph_renderer,
+            gfx_pkg: gfx_pkg.clone(),
 
             digits: digits.into_boxed_slice(),
             minus,
@@ -215,8 +213,7 @@ impl HudRenderer {
         &self,
         bitmap: &BitmapTexture,
         encoder: &mut Encoder<Resources, C>,
-        pso: &PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
-        user_data: &mut pipeline2d::Data<Resources>,
+        user_data: &mut PipelineData2d,
         display_width: u32,
         display_height: u32,
         position_x: i32,
@@ -228,7 +225,7 @@ impl HudRenderer {
         user_data.vertex_buffer = self.vertex_buffer.clone();
         user_data.transform = bitmap.transform(display_width, display_height, position_x, position_y).into();
         user_data.sampler.0 = bitmap.view();
-        encoder.draw(&render::QUAD_SLICE, pso, user_data);
+        encoder.draw(&render::QUAD_SLICE, &self.gfx_pkg.borrow().pipeline_2d(), user_data);
     }
 
     pub fn render_number<C>(
@@ -237,8 +234,7 @@ impl HudRenderer {
         max_digits: usize,
         alt_color: bool,
         encoder: &mut Encoder<Resources, C>,
-        pso: &PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
-        user_data: &mut pipeline2d::Data<Resources>,
+        user_data: &mut PipelineData2d,
         display_width: u32,
         display_height: u32,
         position_x: i32,
@@ -273,7 +269,6 @@ impl HudRenderer {
                     _ => unreachable!(),
                 },
                 encoder,
-                pso,
                 user_data,
                 display_width,
                 display_height,
@@ -283,20 +278,28 @@ impl HudRenderer {
         }
     }
 
-    pub fn render<F, C>(
+    fn gen_user_data(&self) -> PipelineData2d {
+        PipelineData2d {
+            vertex_buffer: self.gfx_pkg.borrow().quad_vertex_buffer(),
+            transform: Matrix4::identity().into(),
+            sampler: (self.gfx_pkg.borrow().dummy_diffuse_texture(), self.gfx_pkg.borrow().sampler()),
+            out_color: self.gfx_pkg.borrow().color_target(),
+            out_depth: self.gfx_pkg.borrow().depth_stencil(),
+        }
+    }
+
+    pub fn render<C>(
         &mut self,
-        factory: &mut F,
         encoder: &mut Encoder<Resources, C>,
-        pso: &PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
-        user_data: &mut pipeline2d::Data<Resources>,
         client: &Client,
         display_width: u32,
         display_height: u32,
     ) -> Result<(), Error>
     where
-        F: Factory<Resources>,
         C: CommandBuffer<Resources>,
     {
+        let mut user_data = self.gen_user_data();
+
         // TODO: scale using a cvar (`r_hudscale` or something)
         let display_width = display_width / 2;
         let display_height = display_height / 2;
@@ -309,12 +312,11 @@ impl HudRenderer {
         let ibar_x = sbar_x;
         let ibar_y = sbar_y + self.sbar.height() as i32;
 
-        self.render_bitmap(&self.sbar, encoder, pso, user_data, display_width, display_height, sbar_x, sbar_y);
+        self.render_bitmap(&self.sbar, encoder, &mut user_data, display_width, display_height, sbar_x, sbar_y);
         self.render_bitmap(
             &self.ibar,
             encoder,
-            pso,
-            user_data,
+            &mut user_data,
             display_width,
             display_height,
             ibar_x,
@@ -325,7 +327,7 @@ impl HudRenderer {
         for i in 0..8 {
             if client.items().contains(ItemFlags::from_bits(ItemFlags::SHOTGUN.bits() << i).unwrap()) {
                 let get_time = client.item_get_time()[i];
-                let delta = client.get_time() - get_time;
+                let delta = client.time() - get_time;
                 let flash_on = if delta >= Duration::milliseconds(100) {
                     if client.active_weapon() as u32 == ItemFlags::SHOTGUN.bits() << i {
                         1
@@ -339,8 +341,7 @@ impl HudRenderer {
                 self.render_bitmap(
                     &self.weapons[i][flash_on],
                     encoder,
-                    pso,
-                    user_data,
+                    &mut user_data,
                     display_width,
                     display_height,
                     sbar_x + 24 * i as i32,
@@ -354,10 +355,10 @@ impl HudRenderer {
             let ammo_str = format!("{: >3}", client.stats()[ClientStat::Shells as usize + i]);
             for (chr_id, chr) in ammo_str.chars().enumerate() {
                 if chr != ' ' {
-                    self.glyph_renderer.render_glyph(
+                    self.gfx_pkg.borrow().glyph_renderer().render_glyph(
                         encoder,
-                        pso,
-                        user_data,
+                        self.gfx_pkg.borrow().pipeline_2d(),
+                        &mut user_data,
                         18 + chr as u8 - '0' as u8,
                         display_width,
                         display_height,
@@ -371,15 +372,14 @@ impl HudRenderer {
         for i in 0..6 {
             if client.items().contains(ItemFlags::from_bits(ItemFlags::KEY_1.bits() << i).unwrap()) {
                 let get_time = client.item_get_time()[17 + i];
-                let delta = client.get_time() - get_time;
+                let delta = client.time() - get_time;
 
                 // TODO: add !hipnotic as a condition
                 if i > 1 {
                     self.render_bitmap(
                         &self.items[i],
                         encoder,
-                        pso,
-                        user_data,
+                        &mut user_data,
                         display_width,
                         display_height,
                         sbar_x + 192 + 16 * i as i32,
@@ -395,8 +395,7 @@ impl HudRenderer {
                 self.render_bitmap(
                     &self.sigils[i],
                     encoder,
-                    pso,
-                    user_data,
+                    &mut user_data,
                     display_width,
                     display_height,
                     sbar_x + 288 + 8 * i as i32,
@@ -412,8 +411,7 @@ impl HudRenderer {
                 3,
                 true,
                 encoder,
-                pso,
-                user_data,
+                &mut user_data,
                 display_width,
                 display_height,
                 sbar_x + 24,
@@ -427,8 +425,7 @@ impl HudRenderer {
                 3,
                 armor <= 25,
                 encoder,
-                pso,
-                user_data,
+                &mut user_data,
                 display_width,
                 display_height,
                 sbar_x + 24,
@@ -449,8 +446,7 @@ impl HudRenderer {
                 self.render_bitmap(
                     &self.armor[i],
                     encoder,
-                    pso,
-                    user_data,
+                    &mut user_data,
                     display_width,
                     display_height,
                     sbar_x,
@@ -466,8 +462,7 @@ impl HudRenderer {
             3,
             health <= 25,
             encoder,
-            pso,
-            user_data,
+            &mut user_data,
             display_width,
             display_height,
             sbar_x + 136,
@@ -490,8 +485,7 @@ impl HudRenderer {
             self.render_bitmap(
                 &self.ammo[i],
                 encoder,
-                pso,
-                user_data,
+                &mut user_data,
                 display_width,
                 display_height,
                 sbar_x + 224,
@@ -505,8 +499,7 @@ impl HudRenderer {
             3,
             ammo <= 10,
             encoder,
-            pso,
-            user_data,
+            &mut user_data,
             display_width,
             display_height,
             sbar_x + 248,

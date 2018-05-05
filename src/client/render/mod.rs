@@ -26,8 +26,9 @@ pub mod glyph;
 pub mod hud;
 pub mod world;
 
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
+use std::ops::DerefMut;
 use std::rc::Rc;
 
 use client::{Client, ClientEntity};
@@ -41,10 +42,11 @@ use chrono::Duration;
 use failure::Error;
 use flame;
 use gfx::{self, IndexBuffer, Slice};
-use gfx::handle::{DepthStencilView, RenderTargetView, ShaderResourceView, Texture};
+use gfx::handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView, Texture};
 use gfx::format::{R8, R8_G8_B8_A8, Unorm};
 use gfx::pso::{PipelineData, PipelineState};
-use gfx::texture;
+use gfx::texture::{self, SamplerInfo};
+use gfx::traits::FactoryExt;
 use gfx_device_gl::{Factory, Resources};
 
 pub use gfx::format::Srgba8 as ColorFormat;
@@ -130,6 +132,114 @@ void main() {
 }
 "#;
 
+pub struct GraphicsPackage {
+    palette: Palette,
+    gfx_wad: Wad,
+    glyph_renderer: GlyphRenderer,
+    factory: RefCell<Factory>,
+    color_target: RenderTargetView<Resources, ColorFormat>,
+    depth_stencil: DepthStencilView<Resources, DepthFormat>,
+    quad_vertex_buffer: Buffer<Resources, Vertex2d>,
+    dummy_diffuse_texture: ShaderResourceView<Resources, [f32; 4]>,
+    sampler: Sampler<Resources>,
+    pipeline_2d: PipelineState2d,
+}
+
+impl GraphicsPackage {
+    pub fn new(
+        palette: Palette,
+        gfx_wad: Wad,
+        glyph_renderer: GlyphRenderer,
+        mut factory: Factory,
+        color_target: RenderTargetView<Resources, ColorFormat>,
+        depth_stencil: DepthStencilView<Resources, DepthFormat>,
+    ) -> GraphicsPackage {
+        let quad_vertex_buffer = factory.create_vertex_buffer(&QUAD_VERTICES);
+        let (_handle, dummy_diffuse_texture) = create_dummy_texture(&mut factory).unwrap();
+
+        use gfx::texture::WrapMode;
+        use gfx::Factory;
+        let sampler = factory.create_sampler(SamplerInfo::new(
+            gfx::texture::FilterMethod::Scale,
+            WrapMode::Tile,
+        ));
+
+        let shader_set_2d = factory.create_shader_set(VERTEX_SHADER_2D_GLSL, FRAGMENT_SHADER_2D_GLSL).unwrap();
+
+        let rasterizer_2d = gfx::state::Rasterizer {
+            front_face: gfx::state::FrontFace::Clockwise,
+            cull_face: gfx::state::CullFace::Back,
+            method: gfx::state::RasterMethod::Fill,
+            offset: None,
+            samples: Some(gfx::state::MultiSample),
+        };
+
+        let pipeline_2d = factory.create_pipeline_state(
+            &shader_set_2d,
+            gfx::Primitive::TriangleList,
+            rasterizer_2d,
+            pipeline2d::new(),
+        ).unwrap();
+
+        GraphicsPackage {
+            palette,
+            gfx_wad,
+            glyph_renderer,
+            factory: RefCell::new(factory),
+            color_target,
+            depth_stencil,
+            quad_vertex_buffer,
+            dummy_diffuse_texture,
+            sampler,
+            pipeline_2d,
+        }
+    }
+
+    pub fn palette(&self) -> &Palette {
+        &self.palette
+    }
+
+    pub fn gfx_wad(&self) -> &Wad {
+        &self.gfx_wad
+    }
+
+    pub fn glyph_renderer(&self) -> &GlyphRenderer {
+        &self.glyph_renderer
+    }
+
+    pub fn factory(&self) -> Ref<Factory> {
+        self.factory.borrow()
+    }
+
+    pub fn factory_mut(&self) -> RefMut<Factory> {
+        self.factory.borrow_mut()
+    }
+
+    pub fn color_target(&self) -> RenderTargetView<Resources, ColorFormat> {
+        self.color_target.clone()
+    }
+
+    pub fn depth_stencil(&self) -> DepthStencilView<Resources, DepthFormat> {
+        self.depth_stencil.clone()
+    }
+
+    pub fn quad_vertex_buffer(&self) -> Buffer<Resources, Vertex2d> {
+        self.quad_vertex_buffer.clone()
+    }
+
+    pub fn dummy_diffuse_texture(&self) -> ShaderResourceView<Resources, [f32; 4]> {
+        self.dummy_diffuse_texture.clone()
+    }
+
+    pub fn sampler(&self) -> Sampler<Resources> {
+        self.sampler.clone()
+    }
+
+    pub fn pipeline_2d(&self) -> &PipelineState2d {
+        &self.pipeline_2d
+    }
+}
+
 // these have to be wound clockwise
 static QUAD_VERTICES: [Vertex2d; 6] = [
     Vertex2d { pos: [-1.0, -1.0], texcoord: [0.0, 1.0] }, // bottom left
@@ -186,6 +296,9 @@ gfx_defines! {
     }
 }
 
+pub type PipelineState2d = PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>;
+pub type PipelineData2d = pipeline2d::Data<Resources>;
+
 pub struct Camera {
     origin: Vector3<f32>,
     angles: Vector3<Deg<f32>>,
@@ -235,14 +348,11 @@ impl SceneRenderer {
     pub fn new(
         models: &[Model],
         worldmodel_id: usize,
-        palette: &Palette,
-        factory: &mut Factory,
-        color_target: RenderTargetView<Resources, ColorFormat>,
-        depth_target: DepthStencilView<Resources, DepthFormat>,
+        gfx_pkg: &mut GraphicsPackage
     ) -> Result<SceneRenderer, Error>
     {
         use gfx::traits::FactoryExt;
-        let shader_set = factory.create_shader_set(VERTEX_SHADER_GLSL, FRAGMENT_SHADER_GLSL).unwrap();
+        let shader_set = gfx_pkg.factory_mut().create_shader_set(VERTEX_SHADER_GLSL, FRAGMENT_SHADER_GLSL).unwrap();
 
         let rasterizer = gfx::state::Rasterizer {
             front_face: gfx::state::FrontFace::Clockwise,
@@ -252,7 +362,7 @@ impl SceneRenderer {
             samples: Some(gfx::state::MultiSample),
         };
 
-        let pipeline = factory.create_pipeline_state(
+        let pipeline = gfx_pkg.factory_mut().create_pipeline_state(
             &shader_set,
             gfx::Primitive::TriangleList,
             rasterizer,
@@ -269,10 +379,10 @@ impl SceneRenderer {
                         debug!("model {}: world model", i);
                         maybe_world_renderer = Some(WorldRenderer::new(
                             &bmodel,
-                            palette,
-                            factory,
-                            color_target.clone(),
-                            depth_target.clone()
+                            gfx_pkg.palette(),
+                            gfx_pkg.factory_mut().deref_mut(),
+                            gfx_pkg.color_target(),
+                            gfx_pkg.depth_stencil(),
                         )?);
                     }
 
@@ -284,16 +394,16 @@ impl SceneRenderer {
                         debug!("model {}: brush model", i);
                         brush_renderers.insert(i, BrushRenderer::new(
                             &bmodel,
-                            palette,
-                            factory,
-                            color_target.clone(),
-                            depth_target.clone(),
+                            gfx_pkg.palette(),
+                            gfx_pkg.factory_mut().deref_mut(),
+                            gfx_pkg.color_target(),
+                            gfx_pkg.depth_stencil(),
                         )?);
                     }
 
                     ModelKind::Alias(ref amodel) => {
                         debug!("model {}: alias model", i);
-                        alias_renderers.insert(i, AliasRenderer::new(&amodel, palette, factory)?);
+                        alias_renderers.insert(i, AliasRenderer::new(&amodel, gfx_pkg.palette(), gfx_pkg.factory_mut().deref_mut())?);
                     },
 
                     // TODO handle sprite and null models
@@ -377,7 +487,6 @@ impl SceneRenderer {
 pub struct UiRenderer {
     pipeline: PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
     glyph_renderer: Rc<GlyphRenderer>,
-    hud_renderer: HudRenderer,
     console_renderer: ConsoleRenderer,
 }
 
@@ -408,14 +517,11 @@ impl UiRenderer {
 
         let glyph_renderer = Rc::new(GlyphRenderer::new(factory, &gfx_wad.open_conchars()?, palette)?);
 
-        let hud_renderer = HudRenderer::new(glyph_renderer.clone(), gfx_wad, palette, factory)?;
-
         let console_renderer = ConsoleRenderer::new(console.clone(), glyph_renderer.clone())?;
 
         Ok(UiRenderer {
             pipeline,
             glyph_renderer,
-            hud_renderer,
             console_renderer,
         })
     }
@@ -432,7 +538,7 @@ impl UiRenderer {
     where
         C: gfx::CommandBuffer<Resources>,
     {
-        self.hud_renderer.render(factory, encoder, &self.pipeline, user_data, client, display_width, display_height)?;
+        self.console_renderer.render(encoder, &self.pipeline, user_data, display_width, display_height, 1.0, 1.0)?;
 
         Ok(())
     }
