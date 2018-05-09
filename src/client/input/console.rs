@@ -21,7 +21,7 @@ use std::rc::Rc;
 use common::console::Console;
 
 use failure::Error;
-use winit::{VirtualKeyCode as Key, KeyboardInput, WindowEvent};
+use winit::{ElementState, VirtualKeyCode as Key, KeyboardInput, WindowEvent};
 
 pub struct ConsoleInput {
     console: Rc<RefCell<Console>>,
@@ -41,7 +41,7 @@ impl ConsoleInput {
             WindowEvent::ReceivedCharacter(c) => self.console.borrow_mut().send_char(c)?,
 
             WindowEvent::KeyboardInput {
-                input: KeyboardInput { virtual_keycode: Some(key), .. },
+                input: KeyboardInput { virtual_keycode: Some(key), state: ElementState::Pressed, .. },
                 ..
             } => {
                 match key {
@@ -49,6 +49,7 @@ impl ConsoleInput {
                     Key::Down => self.console.borrow_mut().history_down(),
                     Key::Left => self.console.borrow_mut().cursor_left(),
                     Key::Right => self.console.borrow_mut().cursor_right(),
+                    Key::Grave => self.console.borrow_mut().stuff_text("toggleconsole\n"),
                     _ => (),
                 }
             }

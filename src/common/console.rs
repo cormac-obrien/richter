@@ -423,6 +423,9 @@ impl Console {
 
     pub fn send_char(&mut self, c: char) -> Result<(), Error> {
         match c {
+            // ignore grave key
+            '`' => (),
+
             '\r' => {
                 // push this line to the execution buffer
                 let entered = self.get_string();
@@ -465,10 +468,12 @@ impl Console {
         }
     }
 
+    /// Interprets the contents of the execution buffer.
     pub fn execute(&mut self) {
         for line in (&self.buffer).split(|c| c == '\n' || c == ';') {
             let mut tok = Tokenizer::new(line);
             if let Some(arg_0) = tok.next() {
+                println!("arg0: {}", arg_0);
                 // TODO: check aliases first
 
                 if self.cmds.borrow().contains(arg_0) {

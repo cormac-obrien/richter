@@ -62,7 +62,7 @@ impl ConsoleRenderer {
         ensure!(alpha >= 0.0 && alpha <= 1.0, "alpha must be between 0 and 1");
 
         // determine how far down the screen we should start drawing
-        let y_min = (proportion * display_height as f32) as i32;
+        let y_min = ((1.0 - proportion) * display_height as f32) as i32;
 
         // draw version string
         // TODO: get this dynamically
@@ -78,21 +78,9 @@ impl ConsoleRenderer {
             y_min,
         )?;
 
-        for (chr_id, chr) in version_string.chars().enumerate() {
-            self.glyph_renderer.render_glyph(
-                encoder,
-                pso,
-                user_data,
-                chr as u8,
-                display_width,
-                display_height,
-                display_width as i32 - GLYPH_WIDTH as i32 * (version_string.len() - chr_id) as i32,
-                y_min,
-            )?;
-        }
+        // TODO: draw input line
 
-        // draw input line
-
+        // draw output
         for (line_id, line) in self.console.borrow().output_lines().enumerate() {
             for (chr_id, chr) in line.iter().enumerate() {
                 let mut c = *chr;

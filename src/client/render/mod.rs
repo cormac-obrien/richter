@@ -37,7 +37,7 @@ use common::model::{Model, ModelKind};
 use common::pak::Pak;
 use common::wad::Wad;
 
-use cgmath::{Deg, Euler, Matrix4, Vector3, Zero};
+use cgmath::{Deg, Euler, Matrix4, SquareMatrix, Vector3, Zero};
 use chrono::Duration;
 use failure::Error;
 use flame;
@@ -132,10 +132,12 @@ void main() {
 }
 "#;
 
+/// Shared resources between different renderers.
 pub struct GraphicsPackage {
     palette: Palette,
     gfx_wad: Wad,
-    glyph_renderer: GlyphRenderer,
+    glyph_renderer: Rc<GlyphRenderer>,
+    console_renderer: ConsoleRenderer,
     factory: RefCell<Factory>,
     color_target: RenderTargetView<Resources, ColorFormat>,
     depth_stencil: DepthStencilView<Resources, DepthFormat>,
@@ -147,13 +149,23 @@ pub struct GraphicsPackage {
 
 impl GraphicsPackage {
     pub fn new(
-        palette: Palette,
-        gfx_wad: Wad,
-        glyph_renderer: GlyphRenderer,
+        pak: &Pak,
         mut factory: Factory,
         color_target: RenderTargetView<Resources, ColorFormat>,
         depth_stencil: DepthStencilView<Resources, DepthFormat>,
+        console: Rc<RefCell<Console>>,
     ) -> GraphicsPackage {
+        let palette = Palette::load(&pak, "gfx/palette.lmp");
+        let gfx_wad = Wad::load(pak.open("gfx.wad").unwrap()).unwrap();
+
+        let glyph_renderer = Rc::new(GlyphRenderer::new(
+            &mut factory,
+            &gfx_wad.open_conchars().unwrap(),
+            &palette,
+        ).unwrap());
+
+        let console_renderer = ConsoleRenderer::new(console.clone(), glyph_renderer.clone()).unwrap();
+
         let quad_vertex_buffer = factory.create_vertex_buffer(&QUAD_VERTICES);
         let (_handle, dummy_diffuse_texture) = create_dummy_texture(&mut factory).unwrap();
 
@@ -185,6 +197,7 @@ impl GraphicsPackage {
             palette,
             gfx_wad,
             glyph_renderer,
+            console_renderer,
             factory: RefCell::new(factory),
             color_target,
             depth_stencil,
@@ -205,6 +218,10 @@ impl GraphicsPackage {
 
     pub fn glyph_renderer(&self) -> &GlyphRenderer {
         &self.glyph_renderer
+    }
+
+    pub fn console_renderer(&self) -> &ConsoleRenderer {
+        &self.console_renderer
     }
 
     pub fn factory(&self) -> Ref<Factory> {
@@ -237,6 +254,16 @@ impl GraphicsPackage {
 
     pub fn pipeline_2d(&self) -> &PipelineState2d {
         &self.pipeline_2d
+    }
+
+    pub fn gen_user_data_2d(&self) -> PipelineData2d {
+        PipelineData2d {
+            vertex_buffer: self.quad_vertex_buffer(),
+            transform: Matrix4::identity().into(),
+            sampler: (self.dummy_diffuse_texture(), self.sampler()),
+            out_color: self.color_target(),
+            out_depth: self.depth_stencil(),
+        }
     }
 }
 

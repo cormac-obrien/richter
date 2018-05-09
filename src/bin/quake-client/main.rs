@@ -88,13 +88,11 @@ struct ClientProgram {
     device: RefCell<Device>,
     encoder: RefCell<Encoder<Resources, CommandBuffer>>,
     data: RefCell<render::pipe::Data<Resources>>,
-    data_2d: RefCell<render::pipeline2d::Data<Resources>>,
 
     endpoint: Rc<Endpoint>,
 
     state: RefCell<ProgramState>,
     input: Rc<RefCell<Input>>,
-    ui_renderer: Rc<RefCell<UiRenderer>>,
 }
 
 impl ClientProgram  {
@@ -153,15 +151,7 @@ impl ClientProgram  {
             gfx::texture::WrapMode::Tile,
         ));
 
-        let mut data = render::pipe::Data {
-            vertex_buffer: factory.create_vertex_buffer(&[]),
-            transform: Matrix4::identity().into(),
-            sampler: (dummy_texture.clone(), sampler.clone()),
-            out_color: color.clone(),
-            out_depth: depth.clone(),
-        };
-
-        let mut data_2d = render::pipeline2d::Data {
+        let data = render::pipe::Data {
             vertex_buffer: factory.create_vertex_buffer(&[]),
             transform: Matrix4::identity().into(),
             sampler: (dummy_texture.clone(), sampler.clone()),
@@ -173,25 +163,12 @@ impl ClientProgram  {
 
         let endpoint = Rc::new(rodio::get_endpoints_list().next().unwrap());
 
-        let palette = render::Palette::load(&pak, "gfx/palette.lmp");
-
-        let gfx_wad = Wad::load(pak.open("gfx.wad").unwrap()).unwrap();
-        let ui_renderer = Rc::new(RefCell::new(UiRenderer::new(
-            &gfx_wad,
-            &palette,
-            &mut factory,
-            console.clone(),
-        ).unwrap()));
-
-        let glyph_renderer = GlyphRenderer::new(&mut factory, &gfx_wad.open_conchars().unwrap(), &palette).unwrap();
-
         let gfx_pkg = Rc::new(RefCell::new(GraphicsPackage::new(
-            palette,
-            gfx_wad,
-            glyph_renderer,
+            &pak,
             factory,
             color,
             depth,
+            console.clone(),
         )));
 
         ClientProgram {
@@ -205,11 +182,9 @@ impl ClientProgram  {
             device: RefCell::new(device),
             encoder: RefCell::new(encoder),
             data: RefCell::new(data),
-            data_2d: RefCell::new(data_2d),
             endpoint,
             state: RefCell::new(ProgramState::Title),
             input,
-            ui_renderer,
         }
     }
 
@@ -231,6 +206,7 @@ impl ClientProgram  {
         self.state.replace(ProgramState::Game(Game::new(
             self.pak.clone(),
             self.cvars.clone(),
+            self.cmds.clone(),
             self.gfx_pkg.clone(),
             self.input.clone(),
             cl,
@@ -238,10 +214,9 @@ impl ClientProgram  {
     }
 
     fn render(&mut self) {
-        self.encoder.borrow_mut().clear(&self.data.borrow().out_color, [0.0, 0.0, 0.0, 1.0]);
-        self.encoder.borrow_mut().clear_depth(&self.data.borrow().out_depth, 1.0);
+        self.encoder.borrow_mut().clear(&self.gfx_pkg.borrow().color_target(), [0.0, 0.0, 0.0, 1.0]);
+        self.encoder.borrow_mut().clear_depth(&self.gfx_pkg.borrow().depth_stencil(), 1.0);
         let (win_w, win_h) = self.window.borrow().get_inner_size().unwrap();
-        let aspect = win_w as f32 / win_h as f32;
 
         match *self.state.borrow_mut() {
             ProgramState::Title => unimplemented!(),

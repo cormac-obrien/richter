@@ -278,16 +278,6 @@ impl HudRenderer {
         }
     }
 
-    fn gen_user_data(&self) -> PipelineData2d {
-        PipelineData2d {
-            vertex_buffer: self.gfx_pkg.borrow().quad_vertex_buffer(),
-            transform: Matrix4::identity().into(),
-            sampler: (self.gfx_pkg.borrow().dummy_diffuse_texture(), self.gfx_pkg.borrow().sampler()),
-            out_color: self.gfx_pkg.borrow().color_target(),
-            out_depth: self.gfx_pkg.borrow().depth_stencil(),
-        }
-    }
-
     pub fn render<C>(
         &mut self,
         encoder: &mut Encoder<Resources, C>,
@@ -298,7 +288,7 @@ impl HudRenderer {
     where
         C: CommandBuffer<Resources>,
     {
-        let mut user_data = self.gen_user_data();
+        let mut user_data = self.gfx_pkg.borrow().gen_user_data_2d();
 
         // TODO: scale using a cvar (`r_hudscale` or something)
         let display_width = display_width / 2;

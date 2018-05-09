@@ -349,7 +349,7 @@ impl GameInput {
                     debug!("{}{}", if state == trigger { '+' } else { '-' }, action.to_string());
                 }
 
-                BindTarget::ConsoleInput { ref text } => {
+                BindTarget::ConsoleInput { ref text } => if state == ElementState::Pressed {
                     self.console.borrow_mut().stuff_text(text);
                 }
             }
