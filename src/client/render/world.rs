@@ -25,6 +25,7 @@ use common::bsp::{BspData, BspModel, BspTextureMipmap, MIPLEVELS};
 use cgmath::{Deg, Euler, Vector3, Matrix4, SquareMatrix};
 use chrono::Duration;
 use failure::Error;
+use flame;
 use gfx::{self, CommandBuffer, Encoder, Factory};
 use gfx::format::{R8, Unorm};
 use gfx::handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView};
@@ -226,7 +227,6 @@ impl WorldRenderer {
         }
     }
 
-    #[flame]
     pub fn render<C>(
         &self,
         encoder: &mut Encoder<Resources, C>,
@@ -239,6 +239,7 @@ impl WorldRenderer {
     where
         C: CommandBuffer<Resources>,
     {
+        let _guard = flame::start_guard("WorldRenderer::render");
         let mut pipeline_data = self.create_pipeline_data()?;
 
         let containing_leaf_id = self.bsp_data.find_leaf(camera.origin());

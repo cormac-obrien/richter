@@ -18,9 +18,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![feature(custom_attribute, plugin)]
-#![plugin(flamer)]
-
 extern crate cgmath;
 extern crate chrono;
 extern crate env_logger;

@@ -74,6 +74,7 @@ use cgmath::Vector3;
 use cgmath::Zero;
 use chrono::Duration;
 use failure::Error;
+use flame;
 use rodio::Endpoint;
 
 // connections are tried 3 times, see
@@ -752,8 +753,8 @@ impl Client {
         Ok(())
     }
 
-    #[flame]
     pub fn send(&mut self) -> Result<(), ClientError> {
+        let _guard = flame::start_guard("Client::send");
         if self.qsock.can_send() && !self.compose.is_empty() {
             self.qsock.begin_send_msg(&self.compose)?;
             self.compose.clear();
@@ -854,8 +855,8 @@ impl Client {
         Ok(&mut self.state.entities[id])
     }
 
-    #[flame]
     pub fn parse_server_msg(&mut self) -> Result<(), ClientError> {
+        let _guard = flame::start_guard("Client::parse_server_msg");
         let msg = self.qsock.recv_msg(match self.signon {
             // if we're in the game, don't block waiting for messages
             SignOnStage::Done => BlockingMode::NonBlocking,
@@ -1495,8 +1496,8 @@ impl Client {
         self.state.time
     }
 
-    #[flame]
     pub fn update_time(&mut self) {
+        let _guard = flame::start_guard("Client::update_time");
         // TODO: don't lerp if cls.timedemo != 0 (???) or server is running on this host
         if self.cvars.borrow().get_value("cl_nolerp").unwrap() != 0.0 {
             self.state.time = self.state.msg_times[0];
@@ -1555,8 +1556,8 @@ impl Client {
         self.state.lerp_factor
     }
 
-    #[flame]
     pub fn relink_entities(&mut self) {
+        let _guard = flame::start_guard("Client::relink_entities");
         let lerp_factor = self.get_lerp_factor();
 
         self.state.velocity = self.state.msg_velocity[1] + lerp_factor * self.state.msg_velocity[0];

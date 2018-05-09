@@ -23,6 +23,7 @@ use common::bsp::{BspData, BspFace, BspModel, BspTexInfo, BspTextureMipmap, MIPL
 use cgmath::{Deg, Euler, InnerSpace, Matrix4, SquareMatrix, Vector3};
 use chrono::Duration;
 use failure::Error;
+use flame;
 use gfx::{self, CommandBuffer, Encoder, Factory, IndexBuffer, Slice};
 use gfx::format::{R8, Unorm};
 use gfx::handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView};
@@ -394,7 +395,6 @@ impl BrushRenderer {
         Ok(pipeline_data)
     }
 
-    #[flame]
     pub fn render<C>(
         &self,
         encoder: &mut Encoder<Resources, C>,
@@ -407,6 +407,7 @@ impl BrushRenderer {
     where
         C: CommandBuffer<Resources>,
     {
+        let _guard = flame::start_guard("BrushRenderer::render");
         let mut pipeline_data = self.create_pipeline_data()?;
 
         for face in self.faces.iter() {

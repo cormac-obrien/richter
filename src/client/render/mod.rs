@@ -454,7 +454,6 @@ impl SceneRenderer {
         })
     }
 
-    #[flame]
     pub fn render<C>(
         &self,
         encoder: &mut gfx::Encoder<Resources, C>,

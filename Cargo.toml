@@ -11,7 +11,6 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 "env_logger" = "0.5.3"
 "failure" = "0.1.1"
 "flame" = "0.2.0"
-"flamer" = "0.2.0"
 "nom" = "3.2.1"
 "num" = "0.1.42"
 "num-derive" = "0.1.42"
