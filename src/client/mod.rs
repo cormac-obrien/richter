@@ -32,7 +32,7 @@ use std::io::BufReader;
 use std::net::ToSocketAddrs;
 use std::rc::Rc;
 
-use client::input::game::{GameInput, Action};
+use client::input::game::{Action, GameInput};
 use client::sound::AudioSource;
 use client::sound::Channel;
 use client::sound::StaticSound;
@@ -87,60 +87,6 @@ const DEFAULT_SOUND_PACKET_VOLUME: u8 = 255;
 const DEFAULT_SOUND_PACKET_ATTENUATION: f32 = 1.0;
 
 const MAX_CHANNELS: usize = 128;
-
-#[derive(Debug)]
-pub enum ClientError {
-    Io(::std::io::Error),
-    Net(NetError),
-    Other(String),
-}
-
-impl ClientError {
-    pub fn with_msg<S>(msg: S) -> Self
-    where
-        S: AsRef<str>,
-    {
-        ClientError::Other(msg.as_ref().to_owned())
-    }
-}
-
-impl fmt::Display for ClientError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            ClientError::Io(ref err) => {
-                write!(f, "I/O error: ")?;
-                err.fmt(f)
-            }
-            ClientError::Net(ref err) => {
-                write!(f, "Network error: ")?;
-                err.fmt(f)
-            }
-            ClientError::Other(ref msg) => write!(f, "{}", msg),
-        }
-    }
-}
-
-impl ::std::error::Error for ClientError {
-    fn description(&self) -> &str {
-        match *self {
-            ClientError::Io(ref err) => err.description(),
-            ClientError::Net(ref err) => err.description(),
-            ClientError::Other(ref msg) => &msg,
-        }
-    }
-}
-
-impl From<::std::io::Error> for ClientError {
-    fn from(error: ::std::io::Error) -> Self {
-        ClientError::Io(error)
-    }
-}
-
-impl From<NetError> for ClientError {
-    fn from(error: NetError) -> Self {
-        ClientError::Net(error)
-    }
-}
 
 #[derive(Debug, FromPrimitive)]
 enum ColorShiftCode {
@@ -523,7 +469,7 @@ impl Client {
         cmds: Rc<RefCell<CmdRegistry>>,
         console: Rc<RefCell<Console>>,
         endpoint: Rc<Endpoint>,
-    ) -> Result<Client, ClientError>
+    ) -> Result<Client, Error>
     where
         A: ToSocketAddrs,
     {
@@ -552,7 +498,7 @@ impl Client {
                         NetError::InvalidData(msg) => error!("{}", msg),
 
                         // other errors are fatal
-                        _ => return Err(ClientError::from(err)),
+                        e => return Err(e.into()),
                     }
                 }
 
@@ -569,35 +515,28 @@ impl Client {
         }
 
         // make sure we actually got a response
-        if response.is_none() {
-            // TODO: specific error for this. Shouldn't be fatal.
-            return Err(ClientError::with_msg("No response"));
-        }
+        // TODO: specific error for this. Shouldn't be fatal.
+        ensure!(response.is_some(), "No response");
 
         // we can unwrap this because we just checked it
         let port = match response.unwrap() {
             // if the server accepted our connect request, make sure the port number makes sense
             Response::Accept(accept) => {
-                if accept.port < 0 || accept.port > ::std::u16::MAX as i32 {
-                    return Err(ClientError::with_msg(format!("Invalid port number")));
-                }
-
+                ensure!(
+                    accept.port >= 0 && accept.port < ::std::u16::MAX as i32,
+                    "Invalid port number"
+                );
                 println!("Connection accepted on port {}", accept.port);
                 accept.port as u16
             }
 
             // our request was rejected. TODO: this error shouldn't be fatal.
-            Response::Reject(reject) => {
-                return Err(ClientError::with_msg(format!(
-                    "Connection rejected: {}",
-                    reject.message
-                )))
-            }
+            Response::Reject(reject) => bail!("Connection rejected: {}", reject.message),
 
             // the server sent back a response that doesn't make sense here (i.e. something other
             // than an Accept or Reject).
             // TODO: more specific error. this shouldn't be fatal.
-            _ => return Err(ClientError::with_msg("Invalid connect response")),
+            _ => bail!("Invalid connect response"),
         };
 
         let mut new_addr = server_addr;
@@ -619,7 +558,7 @@ impl Client {
         })
     }
 
-    pub fn add_cmd(&mut self, cmd: ClientCmd) -> Result<(), ClientError> {
+    pub fn add_cmd(&mut self, cmd: ClientCmd) -> Result<(), Error> {
         cmd.serialize(&mut self.compose)?;
 
         Ok(())
@@ -753,7 +692,7 @@ impl Client {
         Ok(())
     }
 
-    pub fn send(&mut self) -> Result<(), ClientError> {
+    pub fn send(&mut self) -> Result<(), Error> {
         let _guard = flame::start_guard("Client::send");
         if self.qsock.can_send() && !self.compose.is_empty() {
             self.qsock.begin_send_msg(&self.compose)?;
@@ -764,34 +703,25 @@ impl Client {
     }
 
     // return an error if the given entity ID does not refer to a valid entity
-    fn check_entity_id(&self, id: usize) -> Result<(), ClientError> {
-        if id == 0 {
-            return Err(ClientError::Other(String::from("entity 0 is NULL")));
-        }
-
-        if id >= self.state.entities.len() {
-            return Err(ClientError::Other(format!("invalid entity id ({})", id)));
-        }
-
+    fn check_entity_id(&self, id: usize) -> Result<(), Error> {
+        ensure!(id != 0, "Entity 0 is NULL");
+        ensure!(id < self.state.entities.len(), "Invalid entity id ({})", id);
         Ok(())
     }
 
-    fn check_player_id(&self, id: usize) -> Result<(), ClientError> {
-        if id > net::MAX_CLIENTS {
-            return Err(ClientError::Other(format!(
-                "player ID {} exceeds net::MAX_CLIENTS ({})",
-                id,
-                net::MAX_CLIENTS
-            )));
-        }
-
-        if id > self.state.max_players {
-            return Err(ClientError::Other(format!(
-                "player ID ({}) exceeds max_players ({})",
-                id, self.state.max_players,
-            )));
-        }
-
+    fn check_player_id(&self, id: usize) -> Result<(), Error> {
+        ensure!(
+            id < net::MAX_CLIENTS,
+            "Player ID ({}) exceeds MAX_CLIENTS ({})",
+            id,
+            net::MAX_CLIENTS
+        );
+        ensure!(
+            id <= self.state.max_players,
+            "Player ID ({}) exceeds max_players ({})",
+            id,
+            self.state.max_players
+        );
         Ok(())
     }
 
@@ -809,13 +739,15 @@ impl Client {
         skin_id: u8,
         origin: Vector3<f32>,
         angles: Vector3<Deg<f32>>,
-    ) -> Result<(), ClientError> {
+    ) -> Result<(), Error> {
         let id = ent_id as usize;
 
         // don't clobber existing entities
-        if id < self.state.entities.len() {
-            return Err(ClientError::Other(format!("entity {} already exists", id)));
-        }
+        ensure!(
+            id >= self.state.entities.len(),
+            "Entity {} already exists",
+            id
+        );
 
         // spawn intermediate entities (uninitialized)
         for i in self.state.entities.len()..id {
@@ -845,17 +777,17 @@ impl Client {
         Ok(())
     }
 
-    pub fn get_entity(&self, id: usize) -> Result<&ClientEntity, ClientError> {
+    pub fn get_entity(&self, id: usize) -> Result<&ClientEntity, Error> {
         self.check_entity_id(id)?;
         Ok(&self.state.entities[id])
     }
 
-    pub fn get_entity_mut(&mut self, id: usize) -> Result<&mut ClientEntity, ClientError> {
+    pub fn get_entity_mut(&mut self, id: usize) -> Result<&mut ClientEntity, Error> {
         self.check_entity_id(id)?;
         Ok(&mut self.state.entities[id])
     }
 
-    pub fn parse_server_msg(&mut self) -> Result<(), ClientError> {
+    pub fn parse_server_msg(&mut self) -> Result<(), Error> {
         let _guard = flame::start_guard("Client::parse_server_msg");
         let msg = self.qsock.recv_msg(match self.signon {
             // if we're in the game, don't block waiting for messages
@@ -1038,12 +970,12 @@ impl Client {
 
                     let new_model_id = match model_id {
                         Some(m_id) => {
-                            if m_id as usize >= self.state.models.len() {
-                                return Err(ClientError::with_msg(format!(
-                                    "Update for entity {}: model ID {} is out of range",
-                                    ent_id, m_id
-                                )));
-                            }
+                            ensure!(
+                                (m_id as usize) < self.state.models.len(),
+                                "Update for entity {}: model ID {} is out of range",
+                                ent_id,
+                                m_id
+                            );
 
                             m_id as usize
                         }
@@ -1076,12 +1008,11 @@ impl Client {
                         // TODO: use default colormap
                     } else {
                         // only players may have custom colormaps
-                        if new_colormap > self.state.max_players {
-                            return Err(ClientError::with_msg(format!(
-                                "Attempted to assign custom colormap to entity with ID {}",
-                                ent_id
-                            )));
-                        }
+                        ensure!(
+                            new_colormap <= self.state.max_players,
+                            "Attempted to assign custom colormap to entity with ID {}",
+                            ent_id,
+                        );
 
                         // TODO: set player custom colormaps
                         warn!("Player colormaps not yet implemented");
@@ -1133,7 +1064,9 @@ impl Client {
                 }
 
                 ServerCmd::FoundSecret => self.state.stats[ClientStat::FoundSecrets as usize] += 1,
-                ServerCmd::KilledMonster => self.state.stats[ClientStat::KilledMonsters as usize] += 1,
+                ServerCmd::KilledMonster => {
+                    self.state.stats[ClientStat::KilledMonsters as usize] += 1
+                }
 
                 ServerCmd::LightStyle { id, value } => {
                     debug!("Inserting light style {} with value {}", id, &value);
@@ -1170,24 +1103,19 @@ impl Client {
                 }
 
                 ServerCmd::SetView { ent_id } => {
-                    let new_view_ent_id = ent_id as usize;
-                    if new_view_ent_id == 0 {
-                        return Err(ClientError::with_msg("Server set view entity to NULL"));
-                    }
+                    let new_id = ent_id as usize;
+                    ensure!(new_id != 0, "Server set view entity to NULL");
 
                     // we have to allow the server to SetView on the player entity ID, which will
                     // be uninitialized at first.
-                    if new_view_ent_id >= self.state.max_players
-                        && new_view_ent_id >= self.state.entities.len()
-                    {
-                        return Err(ClientError::with_msg(format!(
-                            "View entity ID is out of range: {}",
-                            new_view_ent_id
-                        )));
-                    }
+                    ensure!(
+                        new_id < self.state.max_players || new_id < self.state.entities.len(),
+                        "View entity ID ({}) is out of range",
+                        new_id,
+                    );
 
                     debug!("Set view entity to {}", ent_id);
-                    self.state.view.ent_id = new_view_ent_id;
+                    self.state.view.ent_id = new_id;
                 }
 
                 ServerCmd::SignOnStage { stage } => self.handle_signon(stage)?,
@@ -1200,7 +1128,10 @@ impl Client {
                     sound_id,
                     position,
                 } => {
-                    println!("starting sound with id {} on entity {} channel {}", sound_id, entity_id, channel);
+                    println!(
+                        "starting sound with id {} on entity {} channel {}",
+                        sound_id, entity_id, channel
+                    );
                     let volume = volume.unwrap_or(DEFAULT_SOUND_PACKET_VOLUME);
                     let attenuation = attenuation.unwrap_or(DEFAULT_SOUND_PACKET_ATTENUATION);
                     // TODO: apply volume, attenuation, spatialization
@@ -1273,7 +1204,10 @@ impl Client {
                         }
 
                         None => {
-                            error!("Attempted to set colors on nonexistant player with ID {}", player_id);
+                            error!(
+                                "Attempted to set colors on nonexistant player with ID {}",
+                                player_id
+                            );
                         }
                     }
                 }
@@ -1294,7 +1228,10 @@ impl Client {
                             info.frags = new_frags as i32;
                         }
                         None => {
-                            error!("Attempted to set frags on nonexistant player with ID {}", player_id);
+                            error!(
+                                "Attempted to set frags on nonexistant player with ID {}",
+                                player_id
+                            );
                         }
                     }
                 }
@@ -1345,7 +1282,7 @@ impl Client {
         Ok(())
     }
 
-    fn handle_signon(&mut self, stage: SignOnStage) -> Result<(), ClientError> {
+    fn handle_signon(&mut self, stage: SignOnStage) -> Result<(), Error> {
         match stage {
             SignOnStage::Not => (), // TODO this is an error (invalid value)
             SignOnStage::Prespawn => {
@@ -1390,17 +1327,16 @@ impl Client {
         message: String,
         model_precache: Vec<String>,
         sound_precache: Vec<String>,
-    ) -> Result<(), ClientError> {
+    ) -> Result<(), Error> {
         let mut new_client_state = ClientState::new(self.pak.clone(), self.endpoint.clone());
 
         // check protocol version
-        if protocol_version != net::PROTOCOL_VERSION as i32 {
-            return Err(ClientError::with_msg(format!(
-                "Incompatible protocol version (got {}, should be {})",
-                protocol_version,
-                net::PROTOCOL_VERSION
-            )));
-        }
+        ensure!(
+            protocol_version == net::PROTOCOL_VERSION as i32,
+            "Incompatible protocol version (got {}, should be {})",
+            protocol_version,
+            net::PROTOCOL_VERSION,
+        );
 
         // TODO: print sign-on message to in-game console
         println!("{}", message);
@@ -1409,23 +1345,14 @@ impl Client {
         // TODO: validate submodel names
         for mod_name in model_precache {
             if mod_name.ends_with(".bsp") {
-                let bsp_data = match self.pak.open(&mod_name) {
-                    Some(b) => b,
-                    None => {
-                        return Err(ClientError::with_msg(format!(
-                            "Model not found in pak archive: {}",
-                            mod_name
-                        )))
-                    }
-                };
-
+                let bsp_data = self.pak.open(&mod_name)?;
                 let (mut brush_models, _) = bsp::load(bsp_data).unwrap();
                 new_client_state.models.append(&mut brush_models);
             } else if !mod_name.starts_with("*") {
                 debug!("Loading model {}", mod_name);
                 new_client_state
                     .models
-                    .push(Model::load(&self.pak, mod_name));
+                    .push(Model::load(&self.pak, mod_name)?);
             }
 
             // TODO: send keepalive message?
@@ -1505,26 +1432,30 @@ impl Client {
             return;
         }
 
-        let server_delta = engine::duration_to_f32(match self.state.msg_times[0] - self.state.msg_times[1] {
-            // if no time has passed, don't lerp anything
-            d if d == Duration::zero() => {
-                self.state.time = self.state.msg_times[0];
-                self.state.lerp_factor = 1.0;
-                return;
-            }
+        let server_delta =
+            engine::duration_to_f32(match self.state.msg_times[0] - self.state.msg_times[1] {
+                // if no time has passed, don't lerp anything
+                d if d == Duration::zero() => {
+                    self.state.time = self.state.msg_times[0];
+                    self.state.lerp_factor = 1.0;
+                    return;
+                }
 
-            d if d > Duration::milliseconds(100) => {
-                self.state.msg_times[1] = self.state.msg_times[0] - Duration::milliseconds(100);
-                Duration::milliseconds(100)
-            }
+                d if d > Duration::milliseconds(100) => {
+                    self.state.msg_times[1] = self.state.msg_times[0] - Duration::milliseconds(100);
+                    Duration::milliseconds(100)
+                }
 
-            d if d < Duration::zero() => {
-                warn!("Negative time delta from server!: ({})s", engine::duration_to_f32(d));
-                d
-            }
+                d if d < Duration::zero() => {
+                    warn!(
+                        "Negative time delta from server!: ({})s",
+                        engine::duration_to_f32(d)
+                    );
+                    d
+                }
 
-            d => d,
-        });
+                d => d,
+            });
 
         let frame_delta = engine::duration_to_f32(self.state.time - self.state.msg_times[1]);
 
@@ -1611,7 +1542,8 @@ impl Client {
 
                 for i in 0..3 {
                     let angle_delta = ent.msg_angles[0][i] - ent.msg_angles[1][i];
-                    ent.angles[i] = (ent.msg_angles[1][i] + angle_delta * ent_lerp_factor).normalize();
+                    ent.angles[i] =
+                        (ent.msg_angles[1][i] + angle_delta * ent_lerp_factor).normalize();
                 }
             }
 
@@ -1626,7 +1558,7 @@ impl Client {
         }
     }
 
-    pub fn frame(&mut self, frame_time: Duration) -> Result<(), ClientError> {
+    pub fn frame(&mut self, frame_time: Duration) -> Result<(), Error> {
         self.update_time();
         self.state.time = self.state.time + frame_time;
         self.send()?;
@@ -1639,12 +1571,15 @@ impl Client {
 
     pub fn register_cmds(&self, cmds: &mut CmdRegistry) {
         let bonus_cshift = self.state.color_shifts[ColorShiftCode::Bonus as usize].clone();
-        cmds.insert_or_replace("bf", Box::new(move |_| {
-            bonus_cshift.replace(ColorShift {
-                dest_color: [215, 186, 69],
-                percent: 50,
-            });
-        })).unwrap();
+        cmds.insert_or_replace(
+            "bf",
+            Box::new(move |_| {
+                bonus_cshift.replace(ColorShift {
+                    dest_color: [215, 186, 69],
+                    percent: 50,
+                });
+            }),
+        ).unwrap();
     }
 
     pub fn spawn_temp_entity(&self, temp_entity: &TempEntity) {
