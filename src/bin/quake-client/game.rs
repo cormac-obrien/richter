@@ -248,7 +248,7 @@ impl Game {
                             &mut data,
                             display_width,
                             display_height,
-                            1.0,
+                            0.5,
                             1.0,
                         ).unwrap();
                     },

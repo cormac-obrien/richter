@@ -157,6 +157,7 @@ impl GraphicsPackage {
     ) -> GraphicsPackage {
         let palette = Palette::load(&pak, "gfx/palette.lmp");
         let gfx_wad = Wad::load(pak.open("gfx.wad").unwrap()).unwrap();
+        let quad_vertex_buffer = factory.create_vertex_buffer(&QUAD_VERTICES);
 
         let glyph_renderer = Rc::new(GlyphRenderer::new(
             &mut factory,
@@ -164,9 +165,15 @@ impl GraphicsPackage {
             &palette,
         ).unwrap());
 
-        let console_renderer = ConsoleRenderer::new(console.clone(), glyph_renderer.clone()).unwrap();
+        let console_renderer = ConsoleRenderer::new(
+            &pak,
+            &mut factory,
+            quad_vertex_buffer.clone(),
+            &palette,
+            console.clone(),
+            glyph_renderer.clone()
+        ).unwrap();
 
-        let quad_vertex_buffer = factory.create_vertex_buffer(&QUAD_VERTICES);
         let (_handle, dummy_diffuse_texture) = create_dummy_texture(&mut factory).unwrap();
 
         use gfx::texture::WrapMode;
@@ -513,7 +520,6 @@ impl SceneRenderer {
 pub struct UiRenderer {
     pipeline: PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
     glyph_renderer: Rc<GlyphRenderer>,
-    console_renderer: ConsoleRenderer,
 }
 
 impl UiRenderer {
@@ -543,12 +549,9 @@ impl UiRenderer {
 
         let glyph_renderer = Rc::new(GlyphRenderer::new(factory, &gfx_wad.open_conchars()?, palette)?);
 
-        let console_renderer = ConsoleRenderer::new(console.clone(), glyph_renderer.clone())?;
-
         Ok(UiRenderer {
             pipeline,
             glyph_renderer,
-            console_renderer,
         })
     }
 
@@ -564,7 +567,6 @@ impl UiRenderer {
     where
         C: gfx::CommandBuffer<Resources>,
     {
-        self.console_renderer.render(encoder, &self.pipeline, user_data, display_width, display_height, 1.0, 1.0)?;
 
         Ok(())
     }

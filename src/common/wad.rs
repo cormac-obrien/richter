@@ -43,6 +43,22 @@ pub struct QPic {
 }
 
 impl QPic {
+    pub fn load(data: &[u8]) -> Result<QPic, Error> {
+        let mut reader = BufReader::new(data);
+
+        let width = reader.read_u32::<LittleEndian>()?;
+        let height = reader.read_u32::<LittleEndian>()?;
+
+        let mut indices = Vec::new();
+        (&mut reader).take((width * height) as u64).read_to_end(&mut indices)?;
+
+        Ok(QPic {
+            width,
+            height,
+            indices: indices.into_boxed_slice(),
+        })
+    }
+
     pub fn width(&self) -> u32 {
         self.width
     }
@@ -135,20 +151,9 @@ impl Wad {
         if name.as_ref() == "CONCHARS" {
             bail!("conchars must be opened with open_conchars()");
         }
-        match self.files.get(name.as_ref()) {
-            Some(ref data) => {
-                let mut reader = BufReader::new(Cursor::new(data));
-                let width = reader.read_u32::<LittleEndian>()?;
-                let height = reader.read_u32::<LittleEndian>()?;
-                let mut indices = Vec::with_capacity((width * height) as usize);
-                (&mut reader).take((width * height) as u64).read_to_end(&mut indices)?;
 
-                Ok(QPic {
-                    width,
-                    height,
-                    indices: indices.into_boxed_slice(),
-                })
-            }
+        match self.files.get(name.as_ref()) {
+            Some(ref data) => QPic::load(data),
             None => bail!("File not found in WAD: {}", name.as_ref()),
         }
     }

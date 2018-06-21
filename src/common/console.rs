@@ -492,7 +492,7 @@ impl Console {
         self.buffer.clear();
     }
 
-    fn get_string(&self) -> String {
+    pub fn get_string(&self) -> String {
         String::from_iter(self.input.text.clone().into_iter())
     }
 

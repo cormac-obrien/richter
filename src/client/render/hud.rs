@@ -290,7 +290,7 @@ impl HudRenderer {
     {
         let mut user_data = self.gfx_pkg.borrow().gen_user_data_2d();
 
-        // TODO: scale using a cvar (`r_hudscale` or something)
+        // TODO: scale using a cvar (Quakespasm uses scr_{con,crosshair,menu,sbar}scale)
         let display_width = display_width / 2;
         let display_height = display_height / 2;
 

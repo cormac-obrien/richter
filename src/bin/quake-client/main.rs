@@ -43,22 +43,18 @@ use std::rc::Rc;
 use richter::client::{self, Client};
 use richter::client::input::{Input, InputFocus};
 use richter::client::input::game::MouseWheel;
-use richter::client::render::{self, GraphicsPackage, UiRenderer};
-use richter::client::render::glyph::GlyphRenderer;
+use richter::client::render::{self, GraphicsPackage};
 use richter::common;
 use richter::common::console::{CmdRegistry, Console, CvarRegistry};
 use richter::common::host::{Host, Program};
-use richter::common::net::SignOnStage;
 use richter::common::pak::Pak;
-use richter::common::wad::Wad;
 
 use game::Game;
 
 use cgmath::{Matrix4, SquareMatrix};
 use chrono::Duration;
 use gfx::Encoder;
-use gfx::handle::{DepthStencilView, RenderTargetView};
-use gfx_device_gl::{CommandBuffer, Device, Factory as GlFactory, Resources};
+use gfx_device_gl::{CommandBuffer, Device, Resources};
 use glutin::{ElementState, Event, EventsLoop, GlContext, GlWindow, WindowEvent};
 use rodio::Endpoint;
 
