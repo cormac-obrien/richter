@@ -30,7 +30,6 @@ use std::path::PathBuf;
 use std::process::exit;
 
 use richter::common::pak::Pak;
-use richter::common::pak::PakError;
 
 use docopt::Docopt;
 

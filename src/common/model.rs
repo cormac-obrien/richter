@@ -23,6 +23,7 @@ use common::sprite;
 use common::sprite::SpriteModel;
 
 use cgmath::Vector3;
+use failure::Error;
 
 #[derive(Debug, FromPrimitive)]
 pub enum SyncType {
@@ -72,7 +73,7 @@ impl Model {
         &self.kind
     }
 
-    pub fn load<S>(pak: &Pak, name: S) -> Model
+    pub fn load<S>(pak: &Pak, name: S) -> Result<Model, Error>
     where
         S: AsRef<str>,
     {
@@ -81,15 +82,15 @@ impl Model {
         if name.ends_with(".bsp") {
             panic!("BSP files may contain multiple models, use bsp::load for this");
         } else if name.ends_with(".mdl") {
-            match pak.open(name) {
-                Some(m) => Model::from_alias_model(name.to_owned(), mdl::load(m).unwrap()),
-                None => panic!("No such file: {}", name),
-            }
+            Ok(Model::from_alias_model(
+                name.to_owned(),
+                mdl::load(pak.open(name)?)?,
+            ))
         } else if name.ends_with(".spr") {
-            match pak.open(name) {
-                Some(m) => Model::from_sprite_model(name.to_owned(), sprite::load(m)),
-                None => panic!("No such file: {}", name),
-            }
+            Ok(Model::from_sprite_model(
+                name.to_owned(),
+                sprite::load(pak.open(name)?),
+            ))
         } else {
             panic!("Unrecognized model type: {}", name);
         }
