@@ -137,7 +137,8 @@ impl ConsoleRenderer {
         )?;
 
         // draw output
-        for (line_id, line) in self.console.borrow().output_lines().enumerate() {
+        let console = self.console.borrow();
+        for (line_id, line) in console.output_lines().enumerate() {
             for (chr_id, chr) in line.iter().enumerate() {
                 let mut c = *chr;
 
@@ -153,8 +154,9 @@ impl ConsoleRenderer {
                     c as u8,
                     display_width,
                     display_height,
-                    GLYPH_WIDTH as i32 * chr_id as i32,
-                    y_min + GLYPH_HEIGHT as i32 * (line_id as i32 + 1),
+                    PAD_LEFT as i32 + GLYPH_WIDTH as i32 * chr_id as i32,
+                    // line_id + 2 is the row above the input line
+                    y_min + GLYPH_HEIGHT as i32 * (line_id + 2) as i32,
                 )?;
             }
         }

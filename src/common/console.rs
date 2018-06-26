@@ -390,10 +390,7 @@ impl ConsoleOutput {
         }
     }
 
-    pub fn push<S>(&mut self, chars: Vec<char>)
-    where
-        S: AsRef<str>,
-    {
+    pub fn push(&mut self, chars: Vec<char>) {
         self.lines.push_front(chars);
         // TODO: set maximum capacity and pop_back when we reach it
     }
@@ -431,8 +428,15 @@ impl Console {
                 let entered = self.get_string();
                 self.buffer.push_str(&entered);
 
-                // add the current input to the history and clear it
+                // add the current input to the history
                 self.hist.add_line(self.input.get_text());
+
+                // echo the input to console output
+                let mut input_echo: Vec<char> = vec![']'];
+                input_echo.append(&mut self.input.get_text());
+                self.output.push(input_echo);
+
+                // clear the input line
                 self.input.clear();
             }
 
@@ -479,12 +483,17 @@ impl Console {
                 if self.cmds.borrow().contains(arg_0) {
                     self.cmds.borrow_mut().exec(arg_0, tok.collect()).unwrap();
                 } else if self.cvars.borrow().contains(arg_0) {
-                    // TODO set cvar
-                    unimplemented!();
+                    // TODO error handling on cvar set
+                    match tok.next() {
+                        Some(arg_1) => self.cvars.borrow_mut().set(arg_0, arg_1).unwrap(),
+                        None => {
+                            let msg = format!("\"{}\" is \"{}\"", arg_0, self.cvars.borrow().get(arg_0).unwrap());
+                            self.output.push(msg.as_str().chars().collect());
+                        }
+                    }
                 } else {
-                    // TODO print an error to the console -- for now just panic so we don't miss
-                    // real commands
-                    panic!("Unrecognized arg0 in console input: {}", arg_0);
+                    // TODO: try sending to server first
+                    self.output.push(format!("Unrecognized command \"{}\"", arg_0).as_str().chars().collect());
                 }
             }
         }
@@ -508,7 +517,7 @@ impl Console {
         self.buffer.push_str(text.as_ref());
     }
 
-    pub fn output_lines(&self) -> ::std::collections::vec_deque::Iter<Vec<char>> {
+    pub fn output_lines(&self) -> impl Iterator<Item=&Vec<char>> {
         self.output.lines.iter()
     }
 }
