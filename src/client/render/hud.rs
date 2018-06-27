@@ -24,10 +24,10 @@ use std::rc::Rc;
 use client::Client;
 use client::render::{self, GraphicsPackage, Palette, PipelineData2d, PipelineState2d, Vertex2d};
 use client::render::bitmap::BitmapTexture;
+use client::render::glyph::GlyphRendererCommand;
 use client::render::pipeline2d;
 use common::net::{ClientStat, ItemFlags, MAX_ITEMS};
 
-use cgmath::{Matrix4, SquareMatrix};
 use chrono::Duration;
 use flame;
 use gfx::{CommandBuffer, Encoder, Factory, IndexBuffer, Slice};
@@ -345,15 +345,17 @@ impl HudRenderer {
             let ammo_str = format!("{: >3}", client.stats()[ClientStat::Shells as usize + i]);
             for (chr_id, chr) in ammo_str.chars().enumerate() {
                 if chr != ' ' {
-                    self.gfx_pkg.borrow().glyph_renderer().render_glyph(
+                    self.gfx_pkg.borrow().glyph_renderer().render_command(
                         encoder,
                         self.gfx_pkg.borrow().pipeline_2d(),
                         &mut user_data,
-                        18 + chr as u8 - '0' as u8,
                         display_width,
                         display_height,
-                        ibar_x + (6 * i + chr_id) as i32 * 8 + 10,
-                        ibar_y + 16,
+                        GlyphRendererCommand::glyph(
+                            18 + chr as u8 - '0' as u8,
+                            ibar_x + (6 * i + chr_id) as i32 * 8 + 10,
+                            ibar_y + 16,
+                        ),
                     )?;
                 }
             }

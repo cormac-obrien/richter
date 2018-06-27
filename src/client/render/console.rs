@@ -20,7 +20,7 @@ use std::rc::Rc;
 
 use client::render::{self, Palette, Vertex2d};
 use client::render::bitmap::BitmapTexture;
-use client::render::glyph::{GLYPH_HEIGHT, GlyphRenderer, GLYPH_WIDTH};
+use client::render::glyph::{GLYPH_HEIGHT, GlyphRenderer, GlyphRendererCommand, GLYPH_WIDTH};
 use client::render::pipeline2d;
 use common::console::Console;
 use common::pak::Pak;
@@ -99,46 +99,34 @@ impl ConsoleRenderer {
         user_data.sampler.0 = self.conback.view();
         encoder.draw(&self.slice, pso, user_data);
 
+        let mut commands = Vec::new();
+
         // draw version string
         // TODO: get this dynamically
         let version_string = String::from("Richter 0.1.0");
-        self.glyph_renderer.render_string(
-            encoder,
-            pso,
-            user_data,
-            &version_string,
-            display_width,
-            display_height,
+        commands.push(GlyphRendererCommand::text(
+            version_string.to_owned(),
             display_width as i32 - (version_string.len() * GLYPH_WIDTH) as i32,
-            y_min,
-        )?;
+            y_min
+        ));
 
         // draw input line
-        self.glyph_renderer.render_glyph(
-            encoder,
-            pso,
-            user_data,
-            ']' as u8,
-            display_width,
-            display_height,
-            PAD_LEFT as i32,
-            y_min + GLYPH_HEIGHT as i32,
-        )?;
-
-        self.glyph_renderer.render_string(
-            encoder,
-            pso,
-            user_data,
+        commands.push(GlyphRendererCommand::glyph(']' as u8, PAD_LEFT as i32, y_min + GLYPH_HEIGHT as i32));
+        commands.push(GlyphRendererCommand::text(
             self.console.borrow().get_string(),
-            display_width,
-            display_height,
             PAD_LEFT as i32 + GLYPH_WIDTH as i32,
             y_min + GLYPH_HEIGHT as i32,
-        )?;
+        ));
 
         // draw output
         let console = self.console.borrow();
         for (line_id, line) in console.output_lines().enumerate() {
+            // TODO: actually calculate the maximum extent of the console and stop rendering there
+            // this will be needed for scrolling functionality
+            if line_id > 100 {
+                break;
+            }
+
             for (chr_id, chr) in line.iter().enumerate() {
                 let mut c = *chr;
 
@@ -147,18 +135,24 @@ impl ConsoleRenderer {
                     continue;
                 }
 
-                self.glyph_renderer.render_glyph(
-                    encoder,
-                    pso,
-                    user_data,
+                commands.push(GlyphRendererCommand::glyph(
                     c as u8,
-                    display_width,
-                    display_height,
                     PAD_LEFT as i32 + GLYPH_WIDTH as i32 * chr_id as i32,
                     // line_id + 2 is the row above the input line
                     y_min + GLYPH_HEIGHT as i32 * (line_id + 2) as i32,
-                )?;
+                ));
             }
+        }
+
+        for command in commands {
+            self.glyph_renderer.render_command(
+                encoder,
+                pso,
+                user_data,
+                display_width,
+                display_height,
+                command,
+            )?;
         }
 
         Ok(())

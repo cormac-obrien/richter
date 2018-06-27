@@ -36,6 +36,30 @@ const GLYPH_TEXTURE_HEIGHT: usize = GLYPH_HEIGHT * GLYPH_ROWS;
 const GLYPH_WIDTH_TEXCOORD: f32 = 1.0 / GLYPH_COLS as f32;
 const GLYPH_HEIGHT_TEXCOORD: f32 = 1.0 / GLYPH_ROWS as f32;
 
+pub enum GlyphRendererCommand {
+    Glyph {
+        glyph_id: u8,
+        x: i32,
+        y: i32,
+    },
+
+    Text {
+        text: String,
+        x: i32,
+        y: i32,
+    }
+}
+
+impl GlyphRendererCommand {
+    pub fn glyph(glyph_id: u8, x: i32, y: i32) -> GlyphRendererCommand {
+        GlyphRendererCommand::Glyph { glyph_id, x, y }
+    }
+
+    pub fn text(text: String, x: i32, y: i32) -> GlyphRendererCommand {
+        GlyphRendererCommand::Text { text, x, y }
+    }
+}
+
 #[derive(Debug)]
 pub struct GlyphRenderer {
     vertex_buffer: Buffer<Resources, Vertex2d>,
@@ -101,71 +125,58 @@ impl GlyphRenderer {
         }
     }
 
-    pub fn render_glyph<C>(
+    pub fn render_command<C>(
         &self,
         encoder: &mut Encoder<Resources, C>,
         pso: &PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
         user_data: &mut pipeline2d::Data<Resources>,
-        glyph_id: u8,
         display_width: u32,
         display_height: u32,
-        position_x: i32,
-        position_y: i32,
-    ) -> Result<(), Error>
-    where
-        C: CommandBuffer<Resources>
-    {
-        user_data.vertex_buffer = self.vertex_buffer.clone();
-        user_data.transform = render::screen_space_vertex_transform(
-            display_width,
-            display_height,
-            GLYPH_WIDTH as u32,
-            GLYPH_HEIGHT as u32,
-            position_x,
-            position_y,
-        ).into();
-        user_data.sampler.0 = self.view.clone();
-
-        let slice = self.slice_for_glyph(glyph_id);
-
-        encoder.draw(&slice, pso, user_data);
-
-        Ok(())
-    }
-
-    pub fn render_string<C, S>(
-        &self,
-        encoder: &mut Encoder<Resources, C>,
-        pso: &PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
-        user_data: &mut pipeline2d::Data<Resources>,
-        string: S,
-        display_width: u32,
-        display_height: u32,
-        position_x: i32,
-        position_y: i32,
+        command: GlyphRendererCommand,
     ) -> Result<(), Error>
     where
         C: CommandBuffer<Resources>,
-        S: AsRef<str>,
     {
-        for (chr_id, chr) in string.as_ref().chars().enumerate() {
-            let abs_x = position_x + (GLYPH_WIDTH * chr_id) as i32;
+        user_data.vertex_buffer = self.vertex_buffer.clone();
+        user_data.sampler.0 = self.view.clone();
 
-            if abs_x >= display_width as i32 {
-                // this is off the edge of the screen, don't bother rendering
-                break;
+        match command {
+            GlyphRendererCommand::Glyph { glyph_id, x, y } => {
+                user_data.transform = render::screen_space_vertex_transform(
+                    display_width,
+                    display_height,
+                    GLYPH_WIDTH as u32,
+                    GLYPH_HEIGHT as u32,
+                    x,
+                    y,
+                ).into();
+                let slice = self.slice_for_glyph(glyph_id);
+                encoder.draw(&slice, pso, user_data);
             }
 
-            self.render_glyph(
-                encoder,
-                pso,
-                user_data,
-                chr as u8,
-                display_width,
-                display_height,
-                abs_x as i32,
-                position_y,
-            )?;
+            GlyphRendererCommand::Text { text, x, y } => {
+                for (chr_id, chr) in text.as_str().chars().enumerate() {
+                    let abs_x = x + (GLYPH_WIDTH as i32 * chr_id as i32);
+
+                    if abs_x >= display_width as i32 {
+                        // this is off the edge of the screen, don't bother rendering
+                        break;
+                    }
+
+                    user_data.transform = render::screen_space_vertex_transform(
+                        display_width,
+                        display_height,
+                        GLYPH_WIDTH as u32,
+                        GLYPH_HEIGHT as u32,
+                        abs_x,
+                        y,
+                    ).into();
+
+                    // TODO: check ASCII -> conchar mapping
+                    let slice = self.slice_for_glyph(chr as u8);
+                    encoder.draw(&slice, pso, user_data);
+                }
+            }
         }
 
         Ok(())
