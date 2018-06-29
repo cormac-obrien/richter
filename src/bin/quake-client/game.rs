@@ -124,6 +124,8 @@ impl Game {
         input: Rc<RefCell<Input>>,
         client: Client
     ) -> Result<Game, Error> {
+        input.borrow().register_cmds(&mut cmds.borrow_mut());
+
         Ok(Game {
             pak,
             cvars,

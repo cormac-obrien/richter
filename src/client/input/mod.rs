@@ -21,7 +21,7 @@ pub mod game;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use common::console::Console;
+use common::console::{CmdRegistry, Console};
 
 use failure::Error;
 use winit::WindowEvent;
@@ -101,6 +101,10 @@ impl Input {
         } else {
             None
         }
+    }
+
+    pub fn register_cmds(&self, cmds: &mut CmdRegistry) {
+        self.game_input.register_cmds(cmds);
     }
 }
 

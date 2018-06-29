@@ -32,7 +32,7 @@ use winit::{ElementState, VirtualKeyCode as Key, KeyboardInput, MouseButton, Mou
 const ACTION_COUNT: usize = 19;
 
 /// A unique identifier for an in-game action.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, FromPrimitive, PartialEq)]
 pub enum Action {
     /// Move forward.
     Forward = 0,
@@ -275,7 +275,7 @@ impl ToString for BindTarget {
 pub struct GameInput {
     console: Rc<RefCell<Console>>,
     bindings: HashMap<BindInput, BindTarget>,
-    action_states: [bool; ACTION_COUNT],
+    action_states: Rc<RefCell<[bool; ACTION_COUNT]>>,
 }
 
 impl GameInput {
@@ -283,7 +283,7 @@ impl GameInput {
         GameInput {
             console,
             bindings: HashMap::new(),
-            action_states: [false; ACTION_COUNT],
+            action_states: Rc::new(RefCell::new([false; ACTION_COUNT])),
         }
     }
 
@@ -345,7 +345,7 @@ impl GameInput {
         if let Some(target) = self.bindings.get(&input.into()) {
             match *target {
                 BindTarget::Action { trigger, action } => {
-                    self.action_states[action as usize] = state == trigger;
+                    self.action_states.borrow_mut()[action as usize] = state == trigger;
                     debug!("{}{}", if state == trigger { '+' } else { '-' }, action.to_string());
                 }
 
@@ -362,7 +362,147 @@ impl GameInput {
         &self,
         action: Action,
     ) -> bool {
-        self.action_states[action as usize]
+        self.action_states.borrow()[action as usize]
+    }
+
+    // TODO: roll this into a loop
+    pub fn register_cmds(&self, cmds: &mut CmdRegistry) {
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+forward", Box::new(move |_| {
+            states.borrow_mut()[Action::Forward as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-forward", Box::new(move |_| {
+            states.borrow_mut()[Action::Forward as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+back", Box::new(move |_| {
+            states.borrow_mut()[Action::Back as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-back", Box::new(move |_| {
+            states.borrow_mut()[Action::Back as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+moveright", Box::new(move |_| {
+            states.borrow_mut()[Action::MoveRight as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-moveright", Box::new(move |_| {
+            states.borrow_mut()[Action::MoveRight as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+moveleft", Box::new(move |_| {
+            states.borrow_mut()[Action::MoveLeft as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-moveleft", Box::new(move |_| {
+            states.borrow_mut()[Action::MoveLeft as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+lookup", Box::new(move |_| {
+            states.borrow_mut()[Action::LookUp as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-lookup", Box::new(move |_| {
+            states.borrow_mut()[Action::LookUp as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+lookdown", Box::new(move |_| {
+            states.borrow_mut()[Action::LookDown as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-lookdown", Box::new(move |_| {
+            states.borrow_mut()[Action::LookDown as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+Left", Box::new(move |_| {
+            states.borrow_mut()[Action::Left as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-Left", Box::new(move |_| {
+            states.borrow_mut()[Action::Left as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+right", Box::new(move |_| {
+            states.borrow_mut()[Action::Right as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-right", Box::new(move |_| {
+            states.borrow_mut()[Action::Right as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+speed", Box::new(move |_| {
+            states.borrow_mut()[Action::Speed as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-speed", Box::new(move |_| {
+            states.borrow_mut()[Action::Speed as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+jump", Box::new(move |_| {
+            states.borrow_mut()[Action::Jump as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-jump", Box::new(move |_| {
+            states.borrow_mut()[Action::Jump as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+strafe", Box::new(move |_| {
+            states.borrow_mut()[Action::Strafe as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-strafe", Box::new(move |_| {
+            states.borrow_mut()[Action::Strafe as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+attack", Box::new(move |_| {
+            states.borrow_mut()[Action::Attack as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-attack", Box::new(move |_| {
+            states.borrow_mut()[Action::Attack as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+use", Box::new(move |_| {
+            states.borrow_mut()[Action::Use as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-use", Box::new(move |_| {
+            states.borrow_mut()[Action::Use as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+klook", Box::new(move |_| {
+            states.borrow_mut()[Action::KLook as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-klook", Box::new(move |_| {
+            states.borrow_mut()[Action::KLook as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+mlook", Box::new(move |_| {
+            states.borrow_mut()[Action::MLook as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-mlook", Box::new(move |_| {
+            states.borrow_mut()[Action::MLook as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+showscores", Box::new(move |_| {
+            states.borrow_mut()[Action::ShowScores as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-showscores", Box::new(move |_| {
+            states.borrow_mut()[Action::ShowScores as usize] = false;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("+showteamscores", Box::new(move |_| {
+            states.borrow_mut()[Action::ShowTeamScores as usize] = true;
+        })).unwrap();
+        let states = self.action_states.clone();
+        cmds.insert_or_replace("-showteamscores", Box::new(move |_| {
+            states.borrow_mut()[Action::ShowTeamScores as usize] = false;
+        })).unwrap();
     }
 }
 

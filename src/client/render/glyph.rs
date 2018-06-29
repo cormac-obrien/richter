@@ -19,10 +19,9 @@ use client::render::{self, Palette, Vertex2d};
 use client::render::pipeline2d;
 use common::wad::QPic;
 
-use cgmath::Matrix4;
 use failure::Error;
 use gfx::{CommandBuffer, Encoder, Factory, IndexBuffer, Slice};
-use gfx::handle::{Buffer, ShaderResourceView, Texture};
+use gfx::handle::{Buffer, ShaderResourceView};
 use gfx::pso::{PipelineData, PipelineState};
 use gfx_device_gl::Resources;
 
