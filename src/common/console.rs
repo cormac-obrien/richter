@@ -19,7 +19,7 @@
 
 // TODO: have console commands take an IntoIter<AsRef<str>> instead of a Vec<String>
 
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::collections::VecDeque;
 use std::collections::HashMap;
 use std::iter::FromIterator;
@@ -394,6 +394,10 @@ impl ConsoleOutput {
         self.lines.push_front(chars);
         // TODO: set maximum capacity and pop_back when we reach it
     }
+
+    pub fn lines(&self) -> impl Iterator<Item=&[char]> {
+        self.lines.iter().map(|v| v.as_slice())
+    }
 }
 
 pub struct Console {
@@ -403,18 +407,29 @@ pub struct Console {
     input: ConsoleInput,
     hist: History,
     buffer: String,
-    output: ConsoleOutput,
+    output: Rc<RefCell<ConsoleOutput>>,
 }
 
 impl Console {
     pub fn new(cmds: Rc<RefCell<CmdRegistry>>, cvars: Rc<RefCell<CvarRegistry>>) -> Console {
+        let output = Rc::new(RefCell::new(ConsoleOutput::new()));
+        let echo_output = output.clone();
+        cmds.borrow_mut().insert("echo", Box::new(move |args| {
+            let msg = match args.len() {
+                0 => "",
+                _ => args[0],
+            };
+
+            echo_output.borrow_mut().push(msg.chars().collect());
+        })).unwrap();
+
         Console {
             cmds,
             cvars,
             input: ConsoleInput::new(),
             hist: History::new(),
             buffer: String::new(),
-            output: ConsoleOutput::new(),
+            output: output.clone(),
         }
     }
 
@@ -434,7 +449,7 @@ impl Console {
                 // echo the input to console output
                 let mut input_echo: Vec<char> = vec![']'];
                 input_echo.append(&mut self.input.get_text());
-                self.output.push(input_echo);
+                self.output.borrow_mut().push(input_echo);
 
                 // clear the input line
                 self.input.clear();
@@ -488,12 +503,12 @@ impl Console {
                         Some(arg_1) => self.cvars.borrow_mut().set(arg_0, arg_1).unwrap(),
                         None => {
                             let msg = format!("\"{}\" is \"{}\"", arg_0, self.cvars.borrow().get(arg_0).unwrap());
-                            self.output.push(msg.as_str().chars().collect());
+                            self.output.borrow_mut().push(msg.as_str().chars().collect());
                         }
                     }
                 } else {
                     // TODO: try sending to server first
-                    self.output.push(format!("Unrecognized command \"{}\"", arg_0).as_str().chars().collect());
+                    self.output.borrow_mut().push(format!("Unrecognized command \"{}\"", arg_0).as_str().chars().collect());
                 }
             }
         }
@@ -517,8 +532,8 @@ impl Console {
         self.buffer.push_str(text.as_ref());
     }
 
-    pub fn output_lines(&self) -> impl Iterator<Item=&Vec<char>> {
-        self.output.lines.iter()
+    pub fn output(&self) -> Ref<ConsoleOutput> {
+        self.output.borrow()
     }
 }
 
@@ -628,7 +643,7 @@ impl<'a> ::std::iter::Iterator for Tokenizer<'a> {
                     Some((end_i, '"')) => {
                         let len = end_i + 1 - start_i;
                         self.byte_offset += len;
-                        Some(&self.input[offset..offset + len])
+                        Some(&self.input[offset + 1..offset + len - 1])
                     }
 
                     // This case should not be possible

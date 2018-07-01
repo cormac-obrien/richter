@@ -120,7 +120,8 @@ impl ConsoleRenderer {
 
         // draw output
         let console = self.console.borrow();
-        for (line_id, line) in console.output_lines().enumerate() {
+        let con_out = console.output();
+        for (line_id, line) in con_out.lines().enumerate() {
             // TODO: actually calculate the maximum extent of the console and stop rendering there
             // this will be needed for scrolling functionality
             if line_id > 100 {
