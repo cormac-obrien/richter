@@ -31,6 +31,157 @@ use winit::{ElementState, VirtualKeyCode as Key, KeyboardInput, MouseButton, Mou
 
 const ACTION_COUNT: usize = 19;
 
+static INPUT_NAMES: [&'static str; 72] = [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "A",
+    "ALT",
+    "B",
+    "BACKSPACE",
+    "C",
+    "CTRL",
+    "D",
+    "DEL",
+    "DOWN",
+    "E",
+    "END",
+    "ENTER",
+    "ESCAPE",
+    "F",
+    "F1",
+    "F10",
+    "F11",
+    "F12",
+    "F2",
+    "F3",
+    "F4",
+    "F5",
+    "F6",
+    "F7",
+    "F8",
+    "F9",
+    "G",
+    "H",
+    "HOME",
+    "I",
+    "INS",
+    "J",
+    "K",
+    "L",
+    "LEFTARROW",
+    "M",
+    "MOUSE1",
+    "MOUSE2",
+    "MOUSE3",
+    "MWHEELDOWN",
+    "MWHEELUP",
+    "N",
+    "O",
+    "P",
+    "PGDN",
+    "PGUP",
+    "Q",
+    "R",
+    "RIGHTARROW",
+    "S",
+    "SEMICOLON",
+    "SHIFT",
+    "SPACE",
+    "T",
+    "TAB",
+    "U",
+    "UPARROW",
+    "V",
+    "W",
+    "X",
+    "Y",
+    "Z",
+];
+
+static INPUT_VALUES: [BindInput; 72] = [
+    BindInput::Key(Key::Key0),
+    BindInput::Key(Key::Key1),
+    BindInput::Key(Key::Key2),
+    BindInput::Key(Key::Key3),
+    BindInput::Key(Key::Key4),
+    BindInput::Key(Key::Key5),
+    BindInput::Key(Key::Key6),
+    BindInput::Key(Key::Key7),
+    BindInput::Key(Key::Key8),
+    BindInput::Key(Key::Key9),
+    BindInput::Key(Key::A),
+    BindInput::Key(Key::LAlt),
+    BindInput::Key(Key::B),
+    BindInput::Key(Key::Back),
+    BindInput::Key(Key::C),
+    BindInput::Key(Key::LControl),
+    BindInput::Key(Key::D),
+    BindInput::Key(Key::Delete),
+    BindInput::Key(Key::Down),
+    BindInput::Key(Key::E),
+    BindInput::Key(Key::End),
+    BindInput::Key(Key::Return),
+    BindInput::Key(Key::Escape),
+    BindInput::Key(Key::F),
+    BindInput::Key(Key::F1),
+    BindInput::Key(Key::F10),
+    BindInput::Key(Key::F11),
+    BindInput::Key(Key::F12),
+    BindInput::Key(Key::F2),
+    BindInput::Key(Key::F3),
+    BindInput::Key(Key::F4),
+    BindInput::Key(Key::F5),
+    BindInput::Key(Key::F6),
+    BindInput::Key(Key::F7),
+    BindInput::Key(Key::F8),
+    BindInput::Key(Key::F9),
+    BindInput::Key(Key::G),
+    BindInput::Key(Key::H),
+    BindInput::Key(Key::Home),
+    BindInput::Key(Key::I),
+    BindInput::Key(Key::Insert),
+    BindInput::Key(Key::J),
+    BindInput::Key(Key::K),
+    BindInput::Key(Key::L),
+    BindInput::Key(Key::Left),
+    BindInput::Key(Key::M),
+    BindInput::MouseButton(MouseButton::Left),
+    BindInput::MouseButton(MouseButton::Right),
+    BindInput::MouseButton(MouseButton::Middle),
+    BindInput::MouseWheel(MouseWheel::Down),
+    BindInput::MouseWheel(MouseWheel::Up),
+    BindInput::Key(Key::N),
+    BindInput::Key(Key::O),
+    BindInput::Key(Key::P),
+    BindInput::Key(Key::PageDown),
+    BindInput::Key(Key::PageUp),
+    BindInput::Key(Key::Q),
+    BindInput::Key(Key::R),
+    BindInput::Key(Key::Right),
+    BindInput::Key(Key::S),
+    BindInput::Key(Key::Semicolon),
+    BindInput::Key(Key::LShift),
+    BindInput::Key(Key::Space),
+    BindInput::Key(Key::T),
+    BindInput::Key(Key::Tab),
+    BindInput::Key(Key::U),
+    BindInput::Key(Key::Up),
+    BindInput::Key(Key::V),
+    BindInput::Key(Key::W),
+    BindInput::Key(Key::X),
+    BindInput::Key(Key::Y),
+    BindInput::Key(Key::Z),
+];
+
+
 /// A unique identifier for an in-game action.
 #[derive(Clone, Copy, Debug, Eq, FromPrimitive, PartialEq)]
 pub enum Action {
@@ -218,6 +369,35 @@ impl ::std::convert::From<MouseScrollDelta> for BindInput {
     }
 }
 
+impl FromStr for BindInput {
+    type Err = Error;
+
+    fn from_str(src: &str) -> Result<BindInput, Error> {
+        let upper = src.to_uppercase();
+
+        for (i, name) in INPUT_NAMES.iter().enumerate() {
+            if upper == *name {
+                return Ok(INPUT_VALUES[i].clone());
+            }
+        }
+
+        bail!("\"{}\" isn't a valid key", src);
+    }
+}
+
+impl ToString for BindInput {
+    fn to_string(&self) -> String {
+        // this could be a binary search but it's unlikely to affect performance much
+        for (i, input) in INPUT_VALUES.iter().enumerate() {
+            if self == input {
+                return INPUT_NAMES[i].to_owned();
+            }
+        }
+
+        String::new()
+    }
+}
+
 /// An operation to perform when a `BindInput` is received.
 #[derive(Clone, Debug)]
 pub enum BindTarget {
@@ -274,7 +454,7 @@ impl ToString for BindTarget {
 #[derive(Clone)]
 pub struct GameInput {
     console: Rc<RefCell<Console>>,
-    bindings: HashMap<BindInput, BindTarget>,
+    bindings: Rc<RefCell<HashMap<BindInput, BindTarget>>>,
     action_states: Rc<RefCell<[bool; ACTION_COUNT]>>,
 }
 
@@ -282,7 +462,7 @@ impl GameInput {
     pub fn new(console: Rc<RefCell<Console>>) -> GameInput {
         GameInput {
             console,
-            bindings: HashMap::new(),
+            bindings: Rc::new(RefCell::new(HashMap::new())),
             action_states: Rc::new(RefCell::new([false; ACTION_COUNT])),
         }
     }
@@ -309,15 +489,15 @@ impl GameInput {
         I: Into<BindInput>,
         T: Into<BindTarget>,
     {
-        self.bindings.insert(input.into(), target.into())
+        self.bindings.borrow_mut().insert(input.into(), target.into())
     }
 
     /// Return the `BindTarget` that `input` is bound to, or `None` if `input` is not present.
-    pub fn binding<I>(&self, input: I) -> Option<&BindTarget>
+    pub fn binding<I>(&self, input: I) -> Option<BindTarget>
     where
         I: Into<BindInput>,
     {
-        self.bindings.get(&input.into())
+        self.bindings.borrow().get(&input.into()).map(|t| t.clone())
     }
 
     pub fn handle_event(&mut self, event: WindowEvent) -> Result<(), Error> {
@@ -342,7 +522,7 @@ impl GameInput {
     where
         I: Into<BindInput>
     {
-        if let Some(target) = self.bindings.get(&input.into()) {
+        if let Some(target) = self.bindings.borrow().get(&input.into()) {
             match *target {
                 BindTarget::Action { trigger, action } => {
                     self.action_states.borrow_mut()[action as usize] = state == trigger;
@@ -365,7 +545,7 @@ impl GameInput {
         self.action_states.borrow()[action as usize]
     }
 
-    // TODO: roll this into a loop
+    // TODO: roll actions into a loop
     pub fn register_cmds(&self, cmds: &mut CmdRegistry) {
         let states = self.action_states.clone();
         cmds.insert_or_replace("+forward", Box::new(move |_| {
@@ -503,87 +683,39 @@ impl GameInput {
         cmds.insert_or_replace("-showteamscores", Box::new(move |_| {
             states.borrow_mut()[Action::ShowTeamScores as usize] = false;
         })).unwrap();
-    }
-}
 
-pub fn get_input_by_name<S>(name: S) -> Option<BindInput>
-where
-    S: AsRef<str>,
-{
-    match name.as_ref().to_uppercase().as_ref() {
-        "0" => Some(BindInput::Key(Key::Key0)),
-        "1" => Some(BindInput::Key(Key::Key1)),
-        "2" => Some(BindInput::Key(Key::Key2)),
-        "3" => Some(BindInput::Key(Key::Key3)),
-        "4" => Some(BindInput::Key(Key::Key4)),
-        "5" => Some(BindInput::Key(Key::Key5)),
-        "6" => Some(BindInput::Key(Key::Key6)),
-        "7" => Some(BindInput::Key(Key::Key7)),
-        "8" => Some(BindInput::Key(Key::Key8)),
-        "9" => Some(BindInput::Key(Key::Key9)),
-        "A" => Some(BindInput::Key(Key::A)),
-        "ALT" => Some(BindInput::Key(Key::LAlt)),
-        "B" => Some(BindInput::Key(Key::B)),
-        "BACKSPACE" => Some(BindInput::Key(Key::Back)),
-        "C" => Some(BindInput::Key(Key::C)),
-        "CTRL" => Some(BindInput::Key(Key::LControl)),
-        "D" => Some(BindInput::Key(Key::D)),
-        "DEL" => Some(BindInput::Key(Key::Delete)),
-        "DOWN" => Some(BindInput::Key(Key::Down)),
-        "E" => Some(BindInput::Key(Key::E)),
-        "END" => Some(BindInput::Key(Key::End)),
-        "ENTER" => Some(BindInput::Key(Key::Return)),
-        "ESCAPE" => Some(BindInput::Key(Key::Escape)),
-        "F" => Some(BindInput::Key(Key::F)),
-        "F1" => Some(BindInput::Key(Key::F1)),
-        "F10" => Some(BindInput::Key(Key::F10)),
-        "F11" => Some(BindInput::Key(Key::F11)),
-        "F12" => Some(BindInput::Key(Key::F12)),
-        "F2" => Some(BindInput::Key(Key::F2)),
-        "F3" => Some(BindInput::Key(Key::F3)),
-        "F4" => Some(BindInput::Key(Key::F4)),
-        "F5" => Some(BindInput::Key(Key::F5)),
-        "F6" => Some(BindInput::Key(Key::F6)),
-        "F7" => Some(BindInput::Key(Key::F7)),
-        "F8" => Some(BindInput::Key(Key::F8)),
-        "F9" => Some(BindInput::Key(Key::F9)),
-        "G" => Some(BindInput::Key(Key::G)),
-        "H" => Some(BindInput::Key(Key::H)),
-        "HOME" => Some(BindInput::Key(Key::Home)),
-        "I" => Some(BindInput::Key(Key::I)),
-        "INS" => Some(BindInput::Key(Key::Insert)),
-        "J" => Some(BindInput::Key(Key::J)),
-        "K" => Some(BindInput::Key(Key::K)),
-        "L" => Some(BindInput::Key(Key::L)),
-        "LEFTARROW" => Some(BindInput::Key(Key::Left)),
-        "M" => Some(BindInput::Key(Key::M)),
-        "MOUSE1" => Some(BindInput::MouseButton(MouseButton::Left)),
-        "MOUSE2" => Some(BindInput::MouseButton(MouseButton::Right)),
-        "MOUSE3" => Some(BindInput::MouseButton(MouseButton::Middle)),
-        "MWHEELDOWN" => Some(BindInput::MouseWheel(MouseWheel::Down)),
-        "MWHEELUP" => Some(BindInput::MouseWheel(MouseWheel::Up)),
-        "N" => Some(BindInput::Key(Key::N)),
-        "O" => Some(BindInput::Key(Key::O)),
-        "P" => Some(BindInput::Key(Key::P)),
-        "PGDN" => Some(BindInput::Key(Key::PageDown)),
-        "PGUP" => Some(BindInput::Key(Key::PageUp)),
-        "Q" => Some(BindInput::Key(Key::Q)),
-        "R" => Some(BindInput::Key(Key::R)),
-        "RIGHTARROW" => Some(BindInput::Key(Key::Right)),
-        "S" => Some(BindInput::Key(Key::S)),
-        "SEMICOLON" => Some(BindInput::Key(Key::Semicolon)),
-        "SHIFT" => Some(BindInput::Key(Key::LShift)),
-        "SPACE" => Some(BindInput::Key(Key::Space)),
-        "T" => Some(BindInput::Key(Key::T)),
-        "TAB" => Some(BindInput::Key(Key::Tab)),
-        "U" => Some(BindInput::Key(Key::U)),
-        "UPARROW" => Some(BindInput::Key(Key::Up)),
-        "V" => Some(BindInput::Key(Key::V)),
-        "W" => Some(BindInput::Key(Key::W)),
-        "X" => Some(BindInput::Key(Key::X)),
-        "Y" => Some(BindInput::Key(Key::Y)),
-        "Z" => Some(BindInput::Key(Key::Z)),
-        _ => None,
+        // "bind"
+        let bindings = self.bindings.clone();
+        cmds.insert_or_replace("bind", Box::new(move |args| {
+            println!("args: {}", args.len());
+            match args.len() {
+                // bind (key)
+                // queries what (key) is bound to, if anything
+                1 => {
+                    match BindInput::from_str(args[0]) {
+                        Ok(i) => match bindings.borrow().get(&i) {
+                            Some(t) => println!("\"{}\" = \"{}\"", i.to_string(), t.to_string()),
+                            None => println!("\"{}\" is not bound", i.to_string()),
+                        }
+
+                        Err(_) => println!("\"{}\" isn't a valid key", args[0]),
+                    }
+                }
+
+                // bind (key) [command]
+                2 => {
+                    match BindInput::from_str(args[0]) {
+                        Ok(i) => {
+                            bindings.borrow_mut().insert(i, BindTarget::from_str(args[1]).unwrap());
+                        }
+
+                        Err(_) => println!("\"{}\" isn't a valid key", args[0]),
+                    }
+                }
+
+                _ => println!("bind [key] (command): attach a command to a key"),
+            }
+        })).unwrap();
     }
 }
 
