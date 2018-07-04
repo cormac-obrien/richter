@@ -656,7 +656,7 @@ impl<'a> ::std::iter::Iterator for Tokenizer<'a> {
             }
 
             // Any other token ends on the next whitespace character
-            Some((start_i, _)) => {
+            Some((start_i, start_char)) => {
                 let offset = self.byte_offset + start_i;
 
                 match char_indices.take_while(|&(_, c)| !c.is_whitespace()).last() {
@@ -665,7 +665,13 @@ impl<'a> ::std::iter::Iterator for Tokenizer<'a> {
                         self.byte_offset += len;
                         Some(&self.input[offset..offset + len])
                     }
-                    None => None,
+
+                    // single-character token
+                    None => {
+                        let len = start_char.len_utf8();
+                        self.byte_offset += len;
+                        Some(&self.input[offset..offset + len])
+                    },
                 }
             }
 
