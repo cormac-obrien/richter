@@ -24,12 +24,12 @@ use std::rc::Rc;
 use common::console::{CmdRegistry, Console};
 
 use failure::Error;
-use winit::WindowEvent;
+use winit::{Event, WindowEvent};
 
 use self::console::ConsoleInput;
 use self::game::{BindInput, BindTarget, GameInput};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum InputFocus {
     Game,
     Console,
@@ -37,6 +37,7 @@ pub enum InputFocus {
 }
 
 pub struct Input {
+    window_focused: bool,
     current_focus: InputFocus,
 
     game_input: GameInput,
@@ -47,6 +48,7 @@ pub struct Input {
 impl Input {
     pub fn new(init_focus: InputFocus, console: Rc<RefCell<Console>>) -> Input {
         Input {
+            window_focused: true,
             current_focus: init_focus,
 
             game_input: GameInput::new(console.clone()),
@@ -54,11 +56,23 @@ impl Input {
         }
     }
 
-    pub fn handle_event(&mut self, event: WindowEvent) -> Result<(), Error> {
-        match self.current_focus {
-            InputFocus::Game => self.game_input.handle_event(event)?,
-            InputFocus::Console => self.console_input.handle_event(event)?,
-            InputFocus::Menu => unimplemented!(),
+    pub fn handle_event(&mut self, event: Event) -> Result<(), Error> {
+        match event {
+            // we're polling for hardware events, so we have to check window focus ourselves
+            Event::WindowEvent {
+                event: WindowEvent::Focused(focused),
+                ..
+            } => self.window_focused = focused,
+
+            _ => if self.window_focused {
+                debug!("focus: {:?}", self.current_focus);
+
+                match self.current_focus {
+                    InputFocus::Game => self.game_input.handle_event(event)?,
+                    InputFocus::Console => self.console_input.handle_event(event)?,
+                    InputFocus::Menu => unimplemented!(),
+                }
+            },
         }
 
         Ok(())
@@ -107,5 +121,3 @@ impl Input {
         self.game_input.register_cmds(cmds);
     }
 }
-
-

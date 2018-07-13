@@ -21,12 +21,12 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use richter::client::Client;
 use richter::client::input::{Input, InputFocus};
-use richter::client::render::{self, GraphicsPackage, PipelineState2d, pipe, SceneRenderer};
 use richter::client::render::hud::HudRenderer;
-use richter::common::math;
+use richter::client::render::{self, pipe, GraphicsPackage, SceneRenderer};
+use richter::client::Client;
 use richter::common::console::{CmdRegistry, CvarRegistry};
+use richter::common::math;
 use richter::common::net::SignOnStage;
 use richter::common::pak::Pak;
 
@@ -35,7 +35,7 @@ use chrono::Duration;
 use failure::Error;
 use gfx::{CommandBuffer, Encoder};
 use gfx_device_gl::Resources;
-use glutin::WindowEvent;
+use glutin::Event;
 
 #[derive(Clone, Copy)]
 enum InGameFocus {
@@ -61,26 +61,29 @@ impl InGameState {
         cmds: Rc<RefCell<CmdRegistry>>,
         scene_renderer: SceneRenderer,
         hud_renderer: HudRenderer,
-        focus: InGameFocus
+        focus: InGameFocus,
     ) -> InGameState {
         let focus_rc = Rc::new(Cell::new(focus));
         let toggleconsole_focus = focus_rc.clone();
 
-        cmds.borrow_mut().insert("toggleconsole", Box::new(move |_| {
-            match toggleconsole_focus.get() {
-                InGameFocus::Game => {
-                    println!("toggleconsole: ON");
-                    toggleconsole_focus.set(InGameFocus::Console);
-                }
+        cmds.borrow_mut()
+            .insert(
+                "toggleconsole",
+                Box::new(move |_| match toggleconsole_focus.get() {
+                    InGameFocus::Game => {
+                        println!("toggleconsole: ON");
+                        toggleconsole_focus.set(InGameFocus::Console);
+                    }
 
-                InGameFocus::Console => {
-                    println!("toggleconsole: OFF");
-                    toggleconsole_focus.set(InGameFocus::Game);
-                }
+                    InGameFocus::Console => {
+                        println!("toggleconsole: OFF");
+                        toggleconsole_focus.set(InGameFocus::Game);
+                    }
 
-                InGameFocus::Menu => (),
-            }
-        })).unwrap();
+                    InGameFocus::Menu => (),
+                }),
+            )
+            .unwrap();
 
         InGameState {
             cmds,
@@ -122,7 +125,7 @@ impl Game {
         cmds: Rc<RefCell<CmdRegistry>>,
         gfx_pkg: Rc<RefCell<GraphicsPackage>>,
         input: Rc<RefCell<Input>>,
-        client: Client
+        client: Client,
     ) -> Result<Game, Error> {
         input.borrow().register_cmds(&mut cmds.borrow_mut());
 
@@ -142,7 +145,9 @@ impl Game {
         self.client.frame(frame_duration).unwrap();
 
         if let Some(ref game_input) = self.input.borrow().game_input() {
-            self.client.handle_input(game_input, frame_duration, 0).unwrap();
+            self.client
+                .handle_input(game_input, frame_duration, 0)
+                .unwrap();
         }
 
         if let GameState::Loading = self.state {
@@ -169,7 +174,7 @@ impl Game {
         }
     }
 
-    pub fn handle_input(&mut self, event: WindowEvent) {
+    pub fn handle_input(&mut self, event: Event) {
         match self.state {
             // ignore inputs during loading
             GameState::Loading => return,
@@ -177,9 +182,17 @@ impl Game {
             GameState::InGame(ref state) => {
                 // set the proper focus
                 match state.focus.get() {
-                    InGameFocus::Game => self.input.borrow_mut().set_focus(InputFocus::Game).unwrap(),
-                    InGameFocus::Menu => self.input.borrow_mut().set_focus(InputFocus::Menu).unwrap(),
-                    InGameFocus::Console => self.input.borrow_mut().set_focus(InputFocus::Console).unwrap(),
+                    InGameFocus::Game => {
+                        self.input.borrow_mut().set_focus(InputFocus::Game).unwrap()
+                    }
+                    InGameFocus::Menu => {
+                        self.input.borrow_mut().set_focus(InputFocus::Menu).unwrap()
+                    }
+                    InGameFocus::Console => self
+                        .input
+                        .borrow_mut()
+                        .set_focus(InputFocus::Console)
+                        .unwrap(),
                 }
             }
         }
@@ -193,9 +206,8 @@ impl Game {
         user_data: &mut pipe::Data<Resources>,
         display_width: u32,
         display_height: u32,
-    )
-    where
-        C: CommandBuffer<Resources>
+    ) where
+        C: CommandBuffer<Resources>,
     {
         match self.state {
             // TODO: loading screen
@@ -206,12 +218,7 @@ impl Game {
                 let fov_x = self.cvars.borrow().get_value("fov").unwrap();
                 let fov_y = math::fov_x_to_fov_y(cgmath::Deg(fov_x), aspect).unwrap();
 
-                let perspective = cgmath::perspective(
-                    fov_y,
-                    aspect,
-                    4.0,
-                    4096.0,
-                );
+                let perspective = cgmath::perspective(fov_y, aspect, 4.0, 4096.0);
 
                 let camera = render::Camera::new(
                     self.client.view_origin(),
@@ -220,21 +227,22 @@ impl Game {
                 );
 
                 // render world
-                state.renderer.render(
-                    encoder,
-                    user_data,
-                    self.client.entities().unwrap(),
-                    self.client.time(),
-                    &camera,
-                    self.client.lightstyle_values().unwrap().as_slice(),
-                ).unwrap();
+                state
+                    .renderer
+                    .render(
+                        encoder,
+                        user_data,
+                        self.client.entities().unwrap(),
+                        self.client.time(),
+                        &camera,
+                        self.client.lightstyle_values().unwrap().as_slice(),
+                    )
+                    .unwrap();
 
-                state.hud_renderer.render(
-                    encoder,
-                    &self.client,
-                    display_width,
-                    display_height,
-                ).unwrap();
+                state
+                    .hud_renderer
+                    .render(encoder, &self.client, display_width, display_height)
+                    .unwrap();
 
                 match state.focus.get() {
                     // don't need to render anything else
@@ -244,16 +252,20 @@ impl Game {
                     InGameFocus::Console => {
                         let mut data = self.gfx_pkg.borrow().gen_user_data_2d();
 
-                        self.gfx_pkg.borrow().console_renderer().render(
-                            encoder,
-                            self.gfx_pkg.borrow().pipeline_2d(),
-                            &mut data,
-                            display_width,
-                            display_height,
-                            0.5,
-                            1.0,
-                        ).unwrap();
-                    },
+                        self.gfx_pkg
+                            .borrow()
+                            .console_renderer()
+                            .render(
+                                encoder,
+                                self.gfx_pkg.borrow().pipeline_2d(),
+                                &mut data,
+                                display_width,
+                                display_height,
+                                0.5,
+                                1.0,
+                            )
+                            .unwrap();
+                    }
 
                     // render the menu
                     InGameFocus::Menu => unimplemented!(),

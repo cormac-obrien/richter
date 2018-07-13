@@ -40,10 +40,10 @@ use std::path::Path;
 use std::process::exit;
 use std::rc::Rc;
 
-use richter::client::{self, Client};
-use richter::client::input::{Input, InputFocus};
 use richter::client::input::game::MouseWheel;
+use richter::client::input::{Input, InputFocus};
 use richter::client::render::{self, GraphicsPackage};
+use richter::client::{self, Client};
 use richter::common;
 use richter::common::console::{CmdRegistry, Console, CvarRegistry};
 use richter::common::host::{Host, Program};
@@ -88,7 +88,7 @@ struct ClientProgram {
     input: Rc<RefCell<Input>>,
 }
 
-impl ClientProgram  {
+impl ClientProgram {
     pub fn new() -> ClientProgram {
         let mut pak = Pak::new();
         for pak_id in 0..common::MAX_PAKFILES {
@@ -131,13 +131,15 @@ impl ClientProgram  {
                 &events_loop,
             );
 
-        use gfx::Factory;
         use gfx::traits::FactoryExt;
-        let (_, dummy_texture) = factory.create_texture_immutable_u8::<render::ColorFormat>(
-            gfx::texture::Kind::D2(0, 0, gfx::texture::AaMode::Single),
-            gfx::texture::Mipmap::Allocated,
-            &[&[]]
-        ).expect("dummy texture generation failed");
+        use gfx::Factory;
+        let (_, dummy_texture) = factory
+            .create_texture_immutable_u8::<render::ColorFormat>(
+                gfx::texture::Kind::D2(0, 0, gfx::texture::AaMode::Single),
+                gfx::texture::Mipmap::Allocated,
+                &[&[]],
+            )
+            .expect("dummy texture generation failed");
 
         let sampler = factory.create_sampler(gfx::texture::SamplerInfo::new(
             gfx::texture::FilterMethod::Scale,
@@ -196,19 +198,25 @@ impl ClientProgram  {
 
         cl.register_cmds(&mut self.cmds.borrow_mut());
 
-        self.state.replace(ProgramState::Game(Game::new(
-            self.pak.clone(),
-            self.cvars.clone(),
-            self.cmds.clone(),
-            self.gfx_pkg.clone(),
-            self.input.clone(),
-            cl,
-        ).unwrap()));
+        self.state.replace(ProgramState::Game(
+            Game::new(
+                self.pak.clone(),
+                self.cvars.clone(),
+                self.cmds.clone(),
+                self.gfx_pkg.clone(),
+                self.input.clone(),
+                cl,
+            ).unwrap(),
+        ));
     }
 
     fn render(&mut self) {
-        self.encoder.borrow_mut().clear(&self.gfx_pkg.borrow().color_target(), [0.0, 0.0, 0.0, 1.0]);
-        self.encoder.borrow_mut().clear_depth(&self.gfx_pkg.borrow().depth_stencil(), 1.0);
+        self.encoder
+            .borrow_mut()
+            .clear(&self.gfx_pkg.borrow().color_target(), [0.0, 0.0, 0.0, 1.0]);
+        self.encoder
+            .borrow_mut()
+            .clear_depth(&self.gfx_pkg.borrow().depth_stencil(), 1.0);
         let (win_w, win_h) = self.window.borrow().get_inner_size().unwrap();
 
         match *self.state.borrow_mut() {
@@ -225,7 +233,9 @@ impl ClientProgram  {
 
         use std::ops::DerefMut;
         flame::start("Encoder::flush");
-        self.encoder.borrow_mut().flush(self.device.borrow_mut().deref_mut());
+        self.encoder
+            .borrow_mut()
+            .flush(self.device.borrow_mut().deref_mut());
         flame::end("Encoder::flush");
 
         flame::start("Window::swap_buffers");
@@ -239,8 +249,7 @@ impl ClientProgram  {
     }
 }
 
-impl Program for ClientProgram  {
-
+impl Program for ClientProgram {
     fn frame(&mut self, frame_duration: Duration) {
         let _guard = flame::start_guard("ClientProgram::frame");
         match *self.state.borrow_mut() {
@@ -252,8 +261,12 @@ impl Program for ClientProgram  {
         }
 
         if let Some(ref mut game_input) = self.input.borrow_mut().game_input_mut() {
-            game_input.handle_input(MouseWheel::Up, ElementState::Released).unwrap();
-            game_input.handle_input(MouseWheel::Down, ElementState::Released).unwrap();
+            game_input
+                .handle_input(MouseWheel::Up, ElementState::Released)
+                .unwrap();
+            game_input
+                .handle_input(MouseWheel::Down, ElementState::Released)
+                .unwrap();
         }
 
         flame::start("EventsLoop::poll_events");
@@ -267,13 +280,13 @@ impl Program for ClientProgram  {
                         std::process::exit(0);
                     }
 
-                    e => match *self.state.borrow_mut() {
-                        ProgramState::Title => unimplemented!(),
-                        ProgramState::Game(ref mut game) => game.handle_input(e),
-                    }
+                    _ => (),
                 },
 
-                _ => (),
+                e => match *self.state.borrow_mut() {
+                    ProgramState::Title => unimplemented!(),
+                    ProgramState::Game(ref mut game) => game.handle_input(e),
+                },
             });
         flame::end("EventsLoop::poll_events");
 

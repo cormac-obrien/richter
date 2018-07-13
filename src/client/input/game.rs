@@ -26,8 +26,10 @@ use common::parse;
 
 use failure::Error;
 use nom::IResult;
-use winit::{ElementState, VirtualKeyCode as Key, KeyboardInput, MouseButton, MouseScrollDelta,
-    WindowEvent};
+use winit::{
+    DeviceEvent, ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta,
+    VirtualKeyCode as Key, WindowEvent,
+};
 
 const ACTION_COUNT: usize = 19;
 
@@ -180,7 +182,6 @@ static INPUT_VALUES: [BindInput; 72] = [
     BindInput::Key(Key::Y),
     BindInput::Key(Key::Z),
 ];
-
 
 /// A unique identifier for an in-game action.
 #[derive(Clone, Copy, Debug, Eq, FromPrimitive, PartialEq)]
@@ -410,9 +411,7 @@ pub enum BindTarget {
     },
 
     /// Text to push to the console execution buffer.
-    ConsoleInput {
-        text: String,
-    }
+    ConsoleInput { text: String },
 }
 
 impl FromStr for BindTarget {
@@ -421,15 +420,13 @@ impl FromStr for BindTarget {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match parse::action(s.as_bytes()) {
             // first, check if this is an action
-            IResult::Done(_remaining, (trigger, action_str)) => {
-                Ok(BindTarget::Action {
-                    trigger,
-                    action: Action::from_str(action_str)?,
-                })
-            }
+            IResult::Done(_remaining, (trigger, action_str)) => Ok(BindTarget::Action {
+                trigger,
+                action: Action::from_str(action_str)?,
+            }),
 
             // if the parse fails, assume it's a cvar/cmd and return the text
-            _ => Ok(BindTarget::ConsoleInput { text: s.to_owned() })
+            _ => Ok(BindTarget::ConsoleInput { text: s.to_owned() }),
         }
     }
 }
@@ -444,9 +441,7 @@ impl ToString for BindTarget {
                 } + &action.to_string()
             }
 
-            BindTarget::ConsoleInput { ref text } => {
-                format!("\"{}\"", text.to_owned())
-            }
+            BindTarget::ConsoleInput { ref text } => format!("\"{}\"", text.to_owned()),
         }
     }
 }
@@ -456,6 +451,7 @@ pub struct GameInput {
     console: Rc<RefCell<Console>>,
     bindings: Rc<RefCell<HashMap<BindInput, BindTarget>>>,
     action_states: Rc<RefCell<[bool; ACTION_COUNT]>>,
+    mouse_delta: (f64, f64),
 }
 
 impl GameInput {
@@ -464,6 +460,7 @@ impl GameInput {
             console,
             bindings: Rc::new(RefCell::new(HashMap::new())),
             action_states: Rc::new(RefCell::new([false; ACTION_COUNT])),
+            mouse_delta: (0.0, 0.0),
         }
     }
 
@@ -489,7 +486,9 @@ impl GameInput {
         I: Into<BindInput>,
         T: Into<BindTarget>,
     {
-        self.bindings.borrow_mut().insert(input.into(), target.into())
+        self.bindings
+            .borrow_mut()
+            .insert(input.into(), target.into())
     }
 
     /// Return the `BindTarget` that `input` is bound to, or `None` if `input` is not present.
@@ -500,15 +499,42 @@ impl GameInput {
         self.bindings.borrow().get(&input.into()).map(|t| t.clone())
     }
 
-    pub fn handle_event(&mut self, event: WindowEvent) -> Result<(), Error> {
-        let (input, state): (BindInput, _) = match event {
-            WindowEvent::KeyboardInput {
-                input: KeyboardInput { state, virtual_keycode: Some(key), .. },
-                ..
-            } => (key.into(), state),
+    pub fn handle_event(&mut self, outer_event: Event) -> Result<(), Error> {
+        let (input, state): (BindInput, _) = match outer_event {
+            Event::WindowEvent { event, .. } => match event {
+                WindowEvent::KeyboardInput {
+                    input:
+                        KeyboardInput {
+                            state,
+                            virtual_keycode: Some(key),
+                            ..
+                        },
+                    ..
+                } => (key.into(), state),
 
-            WindowEvent::MouseInput { state, button, .. } => (button.into(), state),
-            WindowEvent::MouseWheel { delta, .. } => (delta.into(), ElementState::Pressed),
+                WindowEvent::MouseInput { state, button, .. } => (button.into(), state),
+                WindowEvent::MouseWheel { delta, .. } => (delta.into(), ElementState::Pressed),
+
+                _ => return Ok(()),
+            },
+
+            Event::DeviceEvent { event, .. } => match event {
+                DeviceEvent::MouseMotion { delta } => {
+                    self.mouse_delta = delta;
+                    return Ok(());
+                }
+
+                DeviceEvent::Key(KeyboardInput {
+                    state,
+                    virtual_keycode: Some(key),
+                    ..
+                }) => (key.into(), state),
+
+                _ => {
+                    debug!("{:?}", event);
+                    return Ok(());
+                }
+            },
 
             _ => return Ok(()),
         };
@@ -520,202 +546,318 @@ impl GameInput {
 
     pub fn handle_input<I>(&mut self, input: I, state: ElementState) -> Result<(), Error>
     where
-        I: Into<BindInput>
+        I: Into<BindInput>,
     {
-        if let Some(target) = self.bindings.borrow().get(&input.into()) {
+        let bind_input = input.into();
+
+        // debug!("handle input {:?}: {:?}", &bind_input, state);
+        if let Some(target) = self.bindings.borrow().get(&bind_input) {
             match *target {
                 BindTarget::Action { trigger, action } => {
                     self.action_states.borrow_mut()[action as usize] = state == trigger;
-                    debug!("{}{}", if state == trigger { '+' } else { '-' }, action.to_string());
+                    debug!(
+                        "{}{}",
+                        if state == trigger { '+' } else { '-' },
+                        action.to_string()
+                    );
                 }
 
                 BindTarget::ConsoleInput { ref text } => if state == ElementState::Pressed {
                     self.console.borrow_mut().stuff_text(text);
-                }
+                },
             }
         }
 
         Ok(())
     }
 
-    pub fn action_state(
-        &self,
-        action: Action,
-    ) -> bool {
+    pub fn action_state(&self, action: Action) -> bool {
         self.action_states.borrow()[action as usize]
     }
 
     // TODO: roll actions into a loop
     pub fn register_cmds(&self, cmds: &mut CmdRegistry) {
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+forward", Box::new(move |_| {
-            states.borrow_mut()[Action::Forward as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+forward",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Forward as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-forward", Box::new(move |_| {
-            states.borrow_mut()[Action::Forward as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-forward",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Forward as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+back", Box::new(move |_| {
-            states.borrow_mut()[Action::Back as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+back",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Back as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-back", Box::new(move |_| {
-            states.borrow_mut()[Action::Back as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-back",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Back as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+moveright", Box::new(move |_| {
-            states.borrow_mut()[Action::MoveRight as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+moveright",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::MoveRight as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-moveright", Box::new(move |_| {
-            states.borrow_mut()[Action::MoveRight as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-moveright",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::MoveRight as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+moveleft", Box::new(move |_| {
-            states.borrow_mut()[Action::MoveLeft as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+moveleft",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::MoveLeft as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-moveleft", Box::new(move |_| {
-            states.borrow_mut()[Action::MoveLeft as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-moveleft",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::MoveLeft as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+lookup", Box::new(move |_| {
-            states.borrow_mut()[Action::LookUp as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+lookup",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::LookUp as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-lookup", Box::new(move |_| {
-            states.borrow_mut()[Action::LookUp as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-lookup",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::LookUp as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+lookdown", Box::new(move |_| {
-            states.borrow_mut()[Action::LookDown as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+lookdown",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::LookDown as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-lookdown", Box::new(move |_| {
-            states.borrow_mut()[Action::LookDown as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-lookdown",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::LookDown as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+Left", Box::new(move |_| {
-            states.borrow_mut()[Action::Left as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+Left",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Left as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-Left", Box::new(move |_| {
-            states.borrow_mut()[Action::Left as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-Left",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Left as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+right", Box::new(move |_| {
-            states.borrow_mut()[Action::Right as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+right",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Right as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-right", Box::new(move |_| {
-            states.borrow_mut()[Action::Right as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-right",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Right as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+speed", Box::new(move |_| {
-            states.borrow_mut()[Action::Speed as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+speed",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Speed as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-speed", Box::new(move |_| {
-            states.borrow_mut()[Action::Speed as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-speed",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Speed as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+jump", Box::new(move |_| {
-            states.borrow_mut()[Action::Jump as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+jump",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Jump as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-jump", Box::new(move |_| {
-            states.borrow_mut()[Action::Jump as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-jump",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Jump as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+strafe", Box::new(move |_| {
-            states.borrow_mut()[Action::Strafe as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+strafe",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Strafe as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-strafe", Box::new(move |_| {
-            states.borrow_mut()[Action::Strafe as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-strafe",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Strafe as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+attack", Box::new(move |_| {
-            states.borrow_mut()[Action::Attack as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+attack",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Attack as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-attack", Box::new(move |_| {
-            states.borrow_mut()[Action::Attack as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-attack",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Attack as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+use", Box::new(move |_| {
-            states.borrow_mut()[Action::Use as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+use",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Use as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-use", Box::new(move |_| {
-            states.borrow_mut()[Action::Use as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-use",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::Use as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+klook", Box::new(move |_| {
-            states.borrow_mut()[Action::KLook as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+klook",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::KLook as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-klook", Box::new(move |_| {
-            states.borrow_mut()[Action::KLook as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-klook",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::KLook as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+mlook", Box::new(move |_| {
-            states.borrow_mut()[Action::MLook as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+mlook",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::MLook as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-mlook", Box::new(move |_| {
-            states.borrow_mut()[Action::MLook as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-mlook",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::MLook as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+showscores", Box::new(move |_| {
-            states.borrow_mut()[Action::ShowScores as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+showscores",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::ShowScores as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-showscores", Box::new(move |_| {
-            states.borrow_mut()[Action::ShowScores as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-showscores",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::ShowScores as usize] = false;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("+showteamscores", Box::new(move |_| {
-            states.borrow_mut()[Action::ShowTeamScores as usize] = true;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "+showteamscores",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::ShowTeamScores as usize] = true;
+            }),
+        ).unwrap();
         let states = self.action_states.clone();
-        cmds.insert_or_replace("-showteamscores", Box::new(move |_| {
-            states.borrow_mut()[Action::ShowTeamScores as usize] = false;
-        })).unwrap();
+        cmds.insert_or_replace(
+            "-showteamscores",
+            Box::new(move |_| {
+                states.borrow_mut()[Action::ShowTeamScores as usize] = false;
+            }),
+        ).unwrap();
 
         // "bind"
         let bindings = self.bindings.clone();
-        cmds.insert_or_replace("bind", Box::new(move |args| {
-            println!("args: {}", args.len());
-            match args.len() {
-                // bind (key)
-                // queries what (key) is bound to, if anything
-                1 => {
-                    match BindInput::from_str(args[0]) {
+        cmds.insert_or_replace(
+            "bind",
+            Box::new(move |args| {
+                println!("args: {}", args.len());
+                match args.len() {
+                    // bind (key)
+                    // queries what (key) is bound to, if anything
+                    1 => match BindInput::from_str(args[0]) {
                         Ok(i) => match bindings.borrow().get(&i) {
                             Some(t) => println!("\"{}\" = \"{}\"", i.to_string(), t.to_string()),
                             None => println!("\"{}\" is not bound", i.to_string()),
-                        }
+                        },
 
                         Err(_) => println!("\"{}\" isn't a valid key", args[0]),
-                    }
-                }
+                    },
 
-                // bind (key) [command]
-                2 => {
-                    match BindInput::from_str(args[0]) {
+                    // bind (key) [command]
+                    2 => match BindInput::from_str(args[0]) {
                         Ok(i) => {
-                            bindings.borrow_mut().insert(i, BindTarget::from_str(args[1]).unwrap());
+                            bindings
+                                .borrow_mut()
+                                .insert(i, BindTarget::from_str(args[1]).unwrap());
                         }
 
                         Err(_) => println!("\"{}\" isn't a valid key", args[0]),
-                    }
-                }
+                    },
 
-                _ => println!("bind [key] (command): attach a command to a key"),
-            }
-        })).unwrap();
+                    _ => println!("bind [key] (command): attach a command to a key"),
+                }
+            }),
+        ).unwrap();
+    }
+
+    // must be called at the beginning of every frame!
+    pub fn clear_mouse(&mut self) -> Result<(), Error> {
+        self.handle_input(MouseWheel::Up, ElementState::Released)?;
+        self.handle_input(MouseWheel::Down, ElementState::Released)?;
+        self.mouse_delta = (0.0, 0.0);
+
+        Ok(())
     }
 }
 

@@ -21,38 +21,41 @@ use std::rc::Rc;
 use common::console::Console;
 
 use failure::Error;
-use winit::{ElementState, VirtualKeyCode as Key, KeyboardInput, WindowEvent};
+use winit::{ElementState, Event, KeyboardInput, VirtualKeyCode as Key, WindowEvent};
 
 pub struct ConsoleInput {
     console: Rc<RefCell<Console>>,
 }
 
 impl ConsoleInput {
-    pub fn new(
-        console: Rc<RefCell<Console>>,
-    ) -> ConsoleInput {
-        ConsoleInput {
-            console
-        }
+    pub fn new(console: Rc<RefCell<Console>>) -> ConsoleInput {
+        ConsoleInput { console }
     }
 
-    pub fn handle_event(&self, event: WindowEvent) -> Result<(), Error> {
+    pub fn handle_event(&self, event: Event) -> Result<(), Error> {
         match event {
-            WindowEvent::ReceivedCharacter(c) => self.console.borrow_mut().send_char(c)?,
+            Event::WindowEvent { event, .. } => match event {
+                WindowEvent::ReceivedCharacter(c) => self.console.borrow_mut().send_char(c)?,
 
-            WindowEvent::KeyboardInput {
-                input: KeyboardInput { virtual_keycode: Some(key), state: ElementState::Pressed, .. },
-                ..
-            } => {
-                match key {
+                WindowEvent::KeyboardInput {
+                    input:
+                        KeyboardInput {
+                            virtual_keycode: Some(key),
+                            state: ElementState::Pressed,
+                            ..
+                        },
+                    ..
+                } => match key {
                     Key::Up => self.console.borrow_mut().history_up(),
                     Key::Down => self.console.borrow_mut().history_down(),
                     Key::Left => self.console.borrow_mut().cursor_left(),
                     Key::Right => self.console.borrow_mut().cursor_right(),
                     Key::Grave => self.console.borrow_mut().stuff_text("toggleconsole\n"),
                     _ => (),
-                }
-            }
+                },
+
+                _ => (),
+            },
 
             _ => (),
         }

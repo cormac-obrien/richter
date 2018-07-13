@@ -46,6 +46,10 @@ use common::model::ModelFlags;
 use common::model::ModelKind;
 use common::model::SyncType;
 use common::net;
+use common::net::connect::ConnectSocket;
+use common::net::connect::Request;
+use common::net::connect::Response;
+use common::net::connect::CONNECT_PROTOCOL_VERSION;
 use common::net::BlockingMode;
 use common::net::ButtonFlags;
 use common::net::ClientCmd;
@@ -61,10 +65,6 @@ use common::net::QSocket;
 use common::net::ServerCmd;
 use common::net::SignOnStage;
 use common::net::TempEntity;
-use common::net::connect::CONNECT_PROTOCOL_VERSION;
-use common::net::connect::ConnectSocket;
-use common::net::connect::Request;
-use common::net::connect::Response;
 use common::pak::Pak;
 
 use cgmath::Angle;
@@ -254,7 +254,8 @@ impl Mixer {
                     }
 
                     // replace sounds on the same entity channel
-                    if ent_channel != 0 && chan.ent_id == ent_id
+                    if ent_channel != 0
+                        && chan.ent_id == ent_id
                         && (chan.ent_channel == ent_channel || ent_channel == -1)
                     {
                         return i;
@@ -683,7 +684,7 @@ impl Client {
             button_flags,
             impulse,
         };
-        debug!("Sending move command: {:?}", move_cmd);
+        // debug!("Sending move command: {:?}", move_cmd);
 
         let mut msg = Vec::new();
         move_cmd.serialize(&mut msg)?;
@@ -1153,13 +1154,7 @@ impl Client {
                     angles,
                 } => {
                     self.spawn_entities(
-                        ent_id,
-                        model_id,
-                        frame_id,
-                        colormap,
-                        skin_id,
-                        origin,
-                        angles,
+                        ent_id, model_id, frame_id, colormap, skin_id, origin, angles,
                     )?;
                 }
 
