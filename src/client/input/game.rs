@@ -500,6 +500,7 @@ impl GameInput {
     }
 
     pub fn handle_event(&mut self, outer_event: Event) -> Result<(), Error> {
+        debug!("{:?}", outer_event);
         let (input, state): (BindInput, _) = match outer_event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::KeyboardInput {
@@ -531,7 +532,6 @@ impl GameInput {
                 }) => (key.into(), state),
 
                 _ => {
-                    debug!("{:?}", event);
                     return Ok(());
                 }
             },

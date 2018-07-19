@@ -273,15 +273,11 @@ impl Program for ClientProgram {
         self.events_loop
             .borrow_mut()
             .poll_events(|event| match event {
-                Event::WindowEvent { event, .. } => match event {
-                    WindowEvent::Closed => {
-                        // TODO: handle quit properly
-                        flame::dump_html(File::create("flame.html").unwrap()).unwrap();
-                        std::process::exit(0);
-                    }
-
-                    _ => (),
-                },
+                Event::WindowEvent { event: WindowEvent::Closed, .. } => {
+                    // TODO: handle quit properly
+                    flame::dump_html(File::create("flame.html").unwrap()).unwrap();
+                    std::process::exit(0);
+                }
 
                 e => match *self.state.borrow_mut() {
                     ProgramState::Title => unimplemented!(),
