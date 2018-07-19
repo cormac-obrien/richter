@@ -1,7 +1,7 @@
 +++
 title = "Shared Ownership of Rendering Resources"
 template = "blog-post.html"
-date = 2018-04-26
+date = 2018-05-12
 +++
 
 Among the most challenging design decisions in writing the rendering code has been the issue of
