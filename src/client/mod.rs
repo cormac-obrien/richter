@@ -672,6 +672,15 @@ impl Client {
         }
 
         // TODO: IN_Move (mouse / joystick / gamepad)
+        if game_input.action_state(Action::MLook) {
+            let m_pitch = self.cvars.borrow().get_value("m_pitch").unwrap();
+            self.state.view.view_angles.x += Deg(game_input.mouse_delta().1 as f32 * m_pitch);
+
+            let m_yaw = self.cvars.borrow().get_value("m_yaw").unwrap();
+            self.state.view.view_angles.y -= Deg(game_input.mouse_delta().0 as f32 * m_yaw);
+        } else {
+            // TODO: mouse movement controls player movement
+        }
 
         let send_time = self.state.msg_times[0];
         let angles = self.state.view.view_angles;

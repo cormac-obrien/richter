@@ -464,6 +464,10 @@ impl GameInput {
         }
     }
 
+    pub fn mouse_delta(&self) -> (f64, f64) {
+        self.mouse_delta
+    }
+
     /// Bind the default controls.
     pub fn bind_defaults(&mut self) {
         self.bind(Key::W, BindTarget::from_str("+forward").unwrap());
@@ -521,7 +525,8 @@ impl GameInput {
 
             Event::DeviceEvent { event, .. } => match event {
                 DeviceEvent::MouseMotion { delta } => {
-                    self.mouse_delta = delta;
+                    self.mouse_delta.0 += delta.0;
+                    self.mouse_delta.1 += delta.1;
                     return Ok(());
                 }
 
