@@ -525,16 +525,11 @@ impl GameInput {
 
             Event::DeviceEvent { event, .. } => match event {
                 DeviceEvent::MouseMotion { delta } => {
+                    debug!("updating mouse delta");
                     self.mouse_delta.0 += delta.0;
                     self.mouse_delta.1 += delta.1;
                     return Ok(());
                 }
-
-                DeviceEvent::Key(KeyboardInput {
-                    state,
-                    virtual_keycode: Some(key),
-                    ..
-                }) => (key.into(), state),
 
                 _ => {
                     return Ok(());

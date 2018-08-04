@@ -55,7 +55,7 @@ use cgmath::{Matrix4, SquareMatrix};
 use chrono::Duration;
 use gfx::Encoder;
 use gfx_device_gl::{CommandBuffer, Device, Resources};
-use glutin::{ElementState, Event, EventsLoop, GlContext, GlWindow, WindowEvent};
+use glutin::{CursorState, Event, EventsLoop, GlContext, GlWindow, MouseCursor, WindowEvent};
 use rodio::Endpoint;
 
 enum TitleState {
@@ -268,7 +268,10 @@ impl Program for ClientProgram {
         self.events_loop
             .borrow_mut()
             .poll_events(|event| match event {
-                Event::WindowEvent { event: WindowEvent::Closed, .. } => {
+                Event::WindowEvent {
+                    event: WindowEvent::Closed,
+                    ..
+                } => {
                     // TODO: handle quit properly
                     flame::dump_html(File::create("flame.html").unwrap()).unwrap();
                     std::process::exit(0);
@@ -280,6 +283,24 @@ impl Program for ClientProgram {
                 },
             });
         flame::end("EventsLoop::poll_events");
+
+        match self.input.borrow().current_focus() {
+            InputFocus::Game => {
+                self.window
+                    .borrow_mut()
+                    .set_cursor_state(CursorState::Grab)
+                    .unwrap();
+                self.window.borrow_mut().set_cursor(MouseCursor::NoneCursor);
+            }
+
+            _ => {
+                self.window
+                    .borrow_mut()
+                    .set_cursor_state(CursorState::Normal)
+                    .unwrap();
+                self.window.borrow_mut().set_cursor(MouseCursor::Default);
+            }
+        }
 
         // run console commands
         self.console.borrow_mut().execute();
