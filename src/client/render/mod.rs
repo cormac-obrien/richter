@@ -37,20 +37,22 @@ use common::model::{Model, ModelKind};
 use common::pak::Pak;
 use common::wad::Wad;
 
-use cgmath::{Deg, Euler, Matrix4, SquareMatrix, Vector3, Zero};
+use cgmath::{Deg, Euler, Matrix3, Matrix4, SquareMatrix, Vector3, Zero};
 use chrono::Duration;
 use failure::Error;
 use flame;
-use gfx::{self, IndexBuffer, Slice};
-use gfx::handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView, Texture};
 use gfx::format::{R8, R8_G8_B8_A8, Unorm};
+use gfx::handle::{
+    Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView, Texture,
+};
 use gfx::pso::{PipelineData, PipelineState};
 use gfx::texture::{self, SamplerInfo};
 use gfx::traits::FactoryExt;
+use gfx::{self, IndexBuffer, Slice};
 use gfx_device_gl::{Factory, Resources};
 
-pub use gfx::format::Srgba8 as ColorFormat;
 pub use gfx::format::DepthStencil as DepthFormat;
+pub use gfx::format::Srgba8 as ColorFormat;
 
 use self::alias::AliasRenderer;
 use self::brush::BrushRenderer;
@@ -159,11 +161,9 @@ impl GraphicsPackage {
         let gfx_wad = Wad::load(pak.open("gfx.wad").unwrap()).unwrap();
         let quad_vertex_buffer = factory.create_vertex_buffer(&QUAD_VERTICES);
 
-        let glyph_renderer = Rc::new(GlyphRenderer::new(
-            &mut factory,
-            &gfx_wad.open_conchars().unwrap(),
-            &palette,
-        ).unwrap());
+        let glyph_renderer = Rc::new(
+            GlyphRenderer::new(&mut factory, &gfx_wad.open_conchars().unwrap(), &palette).unwrap(),
+        );
 
         let console_renderer = ConsoleRenderer::new(
             &pak,
@@ -171,7 +171,7 @@ impl GraphicsPackage {
             quad_vertex_buffer.clone(),
             &palette,
             console.clone(),
-            glyph_renderer.clone()
+            glyph_renderer.clone(),
         ).unwrap();
 
         let (_handle, dummy_diffuse_texture) = create_dummy_texture(&mut factory).unwrap();
@@ -183,7 +183,9 @@ impl GraphicsPackage {
             WrapMode::Tile,
         ));
 
-        let shader_set_2d = factory.create_shader_set(VERTEX_SHADER_2D_GLSL, FRAGMENT_SHADER_2D_GLSL).unwrap();
+        let shader_set_2d = factory
+            .create_shader_set(VERTEX_SHADER_2D_GLSL, FRAGMENT_SHADER_2D_GLSL)
+            .unwrap();
 
         let rasterizer_2d = gfx::state::Rasterizer {
             front_face: gfx::state::FrontFace::Clockwise,
@@ -193,12 +195,14 @@ impl GraphicsPackage {
             samples: Some(gfx::state::MultiSample),
         };
 
-        let pipeline_2d = factory.create_pipeline_state(
-            &shader_set_2d,
-            gfx::Primitive::TriangleList,
-            rasterizer_2d,
-            pipeline2d::new(),
-        ).unwrap();
+        let pipeline_2d = factory
+            .create_pipeline_state(
+                &shader_set_2d,
+                gfx::Primitive::TriangleList,
+                rasterizer_2d,
+                pipeline2d::new(),
+            )
+            .unwrap();
 
         GraphicsPackage {
             palette,
@@ -276,12 +280,30 @@ impl GraphicsPackage {
 
 // these have to be wound clockwise
 static QUAD_VERTICES: [Vertex2d; 6] = [
-    Vertex2d { pos: [-1.0, -1.0], texcoord: [0.0, 1.0] }, // bottom left
-    Vertex2d { pos: [-1.0, 1.0], texcoord: [0.0, 0.0] }, // top left
-    Vertex2d { pos: [1.0, 1.0], texcoord: [1.0, 0.0] }, // top right
-    Vertex2d { pos: [-1.0, -1.0], texcoord: [0.0, 1.0] }, // bottom left
-    Vertex2d { pos: [1.0, 1.0], texcoord: [1.0, 0.0] }, // top right
-    Vertex2d { pos: [1.0, -1.0], texcoord: [1.0, 1.0] }, // bottom right
+    Vertex2d {
+        pos: [-1.0, -1.0],
+        texcoord: [0.0, 1.0],
+    }, // bottom left
+    Vertex2d {
+        pos: [-1.0, 1.0],
+        texcoord: [0.0, 0.0],
+    }, // top left
+    Vertex2d {
+        pos: [1.0, 1.0],
+        texcoord: [1.0, 0.0],
+    }, // top right
+    Vertex2d {
+        pos: [-1.0, -1.0],
+        texcoord: [0.0, 1.0],
+    }, // bottom left
+    Vertex2d {
+        pos: [1.0, 1.0],
+        texcoord: [1.0, 0.0],
+    }, // top right
+    Vertex2d {
+        pos: [1.0, -1.0],
+        texcoord: [1.0, 1.0],
+    }, // bottom right
 ];
 
 static QUAD_SLICE: Slice<Resources> = Slice {
@@ -330,7 +352,8 @@ gfx_defines! {
     }
 }
 
-pub type PipelineState2d = PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>;
+pub type PipelineState2d =
+    PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>;
 pub type PipelineData2d = pipeline2d::Data<Resources>;
 
 pub struct Camera {
@@ -382,11 +405,13 @@ impl SceneRenderer {
     pub fn new(
         models: &[Model],
         worldmodel_id: usize,
-        gfx_pkg: &mut GraphicsPackage
-    ) -> Result<SceneRenderer, Error>
-    {
+        gfx_pkg: &mut GraphicsPackage,
+    ) -> Result<SceneRenderer, Error> {
         use gfx::traits::FactoryExt;
-        let shader_set = gfx_pkg.factory_mut().create_shader_set(VERTEX_SHADER_GLSL, FRAGMENT_SHADER_GLSL).unwrap();
+        let shader_set = gfx_pkg
+            .factory_mut()
+            .create_shader_set(VERTEX_SHADER_GLSL, FRAGMENT_SHADER_GLSL)
+            .unwrap();
 
         let rasterizer = gfx::state::Rasterizer {
             front_face: gfx::state::FrontFace::Clockwise,
@@ -396,12 +421,15 @@ impl SceneRenderer {
             samples: Some(gfx::state::MultiSample),
         };
 
-        let pipeline = gfx_pkg.factory_mut().create_pipeline_state(
-            &shader_set,
-            gfx::Primitive::TriangleList,
-            rasterizer,
-            pipe::new(),
-        ).unwrap();
+        let pipeline = gfx_pkg
+            .factory_mut()
+            .create_pipeline_state(
+                &shader_set,
+                gfx::Primitive::TriangleList,
+                rasterizer,
+                pipe::new(),
+            )
+            .unwrap();
 
         let mut maybe_world_renderer = None;
         let mut brush_renderers = HashMap::new();
@@ -426,19 +454,29 @@ impl SceneRenderer {
                 match *model.kind() {
                     ModelKind::Brush(ref bmodel) => {
                         debug!("model {}: brush model", i);
-                        brush_renderers.insert(i, BrushRenderer::new(
-                            &bmodel,
-                            gfx_pkg.palette(),
-                            gfx_pkg.factory_mut().deref_mut(),
-                            gfx_pkg.color_target(),
-                            gfx_pkg.depth_stencil(),
-                        )?);
+                        brush_renderers.insert(
+                            i,
+                            BrushRenderer::new(
+                                &bmodel,
+                                gfx_pkg.palette(),
+                                gfx_pkg.factory_mut().deref_mut(),
+                                gfx_pkg.color_target(),
+                                gfx_pkg.depth_stencil(),
+                            )?,
+                        );
                     }
 
                     ModelKind::Alias(ref amodel) => {
                         debug!("model {}: alias model", i);
-                        alias_renderers.insert(i, AliasRenderer::new(&amodel, gfx_pkg.palette(), gfx_pkg.factory_mut().deref_mut())?);
-                    },
+                        alias_renderers.insert(
+                            i,
+                            AliasRenderer::new(
+                                &amodel,
+                                gfx_pkg.palette(),
+                                gfx_pkg.factory_mut().deref_mut(),
+                            )?,
+                        );
+                    }
 
                     // TODO handle sprite and null models
                     ModelKind::Sprite(_) => debug!("model {}: sprite model", i),
@@ -452,12 +490,11 @@ impl SceneRenderer {
             None => bail!("No worldmodel provided"),
         };
 
-
         Ok(SceneRenderer {
             pipeline,
             world_renderer,
             brush_renderers,
-            alias_renderers
+            alias_renderers,
         })
     }
 
@@ -466,6 +503,8 @@ impl SceneRenderer {
         encoder: &mut gfx::Encoder<Resources, C>,
         user_data: &mut pipe::Data<Resources>,
         entities: &[ClientEntity],
+        view_ent_id: usize,
+        view_model_id: usize,
         time: Duration,
         camera: &Camera,
         lightstyle_values: &[f32],
@@ -485,7 +524,31 @@ impl SceneRenderer {
         flame::end("render_world");
 
         flame::start("render_entities");
-        for ent in entities.iter() {
+        for (ent_id, ent) in entities.iter().enumerate() {
+            // draw viewmodel in first person perspective
+            if ent_id == view_ent_id {
+                if let Some(ref alias_renderer) = self.alias_renderers.get(&view_model_id) {
+                    let angles = ent.get_angles();
+                    let rotate: Matrix3<f32> = Euler::new(angles.x, angles.y, angles.z).into();
+                    let offset = rotate * Vector3::new(15.0, -10.0, 0.0);
+                    let position = ent.get_origin() + offset;
+                    // TODO: need keyframe, texture ID
+                    // also need to disable depth testing to stop viewmodel clipping into walls
+                    alias_renderer.render(
+                        encoder,
+                        &self.pipeline,
+                        user_data,
+                        time,
+                        camera,
+                        position,
+                        angles,
+                        0,
+                        0,
+                    )?;
+                }
+                continue;
+            }
+
             let model_id = ent.get_model_id();
             if let Some(ref brush_renderer) = self.brush_renderers.get(&model_id) {
                 brush_renderer.render(
@@ -507,7 +570,7 @@ impl SceneRenderer {
                     ent.get_origin(),
                     ent.get_angles(),
                     0,
-                    0
+                    0,
                 )?;
             }
         }
@@ -518,7 +581,8 @@ impl SceneRenderer {
 }
 
 pub struct UiRenderer {
-    pipeline: PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
+    pipeline:
+        PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
     glyph_renderer: Rc<GlyphRenderer>,
 }
 
@@ -530,7 +594,9 @@ impl UiRenderer {
         console: Rc<RefCell<Console>>,
     ) -> Result<UiRenderer, Error> {
         use gfx::traits::FactoryExt;
-        let shader_set = factory.create_shader_set(VERTEX_SHADER_2D_GLSL, FRAGMENT_SHADER_2D_GLSL).unwrap();
+        let shader_set = factory
+            .create_shader_set(VERTEX_SHADER_2D_GLSL, FRAGMENT_SHADER_2D_GLSL)
+            .unwrap();
 
         let rasterizer = gfx::state::Rasterizer {
             front_face: gfx::state::FrontFace::Clockwise,
@@ -547,7 +613,11 @@ impl UiRenderer {
             pipeline2d::new(),
         )?;
 
-        let glyph_renderer = Rc::new(GlyphRenderer::new(factory, &gfx_wad.open_conchars()?, palette)?);
+        let glyph_renderer = Rc::new(GlyphRenderer::new(
+            factory,
+            &gfx_wad.open_conchars()?,
+            palette,
+        )?);
 
         Ok(UiRenderer {
             pipeline,
@@ -567,7 +637,6 @@ impl UiRenderer {
     where
         C: gfx::CommandBuffer<Resources>,
     {
-
         Ok(())
     }
 }
@@ -629,11 +698,20 @@ pub fn create_texture<F>(
     width: u32,
     height: u32,
     rgba: &[u8],
-) -> Result<(Texture<Resources, R8_G8_B8_A8>, ShaderResourceView<Resources, [f32; 4]>), Error>
+) -> Result<
+    (
+        Texture<Resources, R8_G8_B8_A8>,
+        ShaderResourceView<Resources, [f32; 4]>,
+    ),
+    Error,
+>
 where
-    F: gfx::Factory<Resources>
+    F: gfx::Factory<Resources>,
 {
-    ensure!((width * height * 4) as usize == rgba.len(), "Invalid dimensions for texture");
+    ensure!(
+        (width * height * 4) as usize == rgba.len(),
+        "Invalid dimensions for texture"
+    );
     let ret = factory.create_texture_immutable_u8::<ColorFormat>(
         gfx::texture::Kind::D2(width as u16, height as u16, gfx::texture::AaMode::Single),
         gfx::texture::Mipmap::Allocated,
@@ -645,14 +723,20 @@ where
 
 pub fn create_dummy_texture<F>(
     factory: &mut F,
-) -> Result<(Texture<Resources, R8_G8_B8_A8>, ShaderResourceView<Resources, [f32; 4]>), Error>
+) -> Result<
+    (
+        Texture<Resources, R8_G8_B8_A8>,
+        ShaderResourceView<Resources, [f32; 4]>,
+    ),
+    Error,
+>
 where
-    F: gfx::Factory<Resources>
+    F: gfx::Factory<Resources>,
 {
     // the infamous Source engine "missing texture" texture
     let rgba = [
-        0xFF, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFF,
-        0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0xFF, 0xFF,
+        0xFF, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0xFF,
+        0xFF,
     ];
 
     let ret = factory.create_texture_immutable_u8::<ColorFormat>(
@@ -668,7 +752,7 @@ pub fn create_dummy_fullbright<F>(
     factory: &mut F,
 ) -> Result<(Texture<Resources, R8>, ShaderResourceView<Resources, f32>), Error>
 where
-    F: gfx::Factory<Resources>
+    F: gfx::Factory<Resources>,
 {
     let ret = factory.create_texture_immutable_u8::<(R8, Unorm)>(
         texture::Kind::D2(1, 1, texture::AaMode::Single),
@@ -683,7 +767,7 @@ pub fn create_dummy_lightmap<F>(
     factory: &mut F,
 ) -> Result<(Texture<Resources, R8>, ShaderResourceView<Resources, f32>), Error>
 where
-    F: gfx::Factory<Resources>
+    F: gfx::Factory<Resources>,
 {
     let ret = factory.create_texture_immutable_u8::<(R8, Unorm)>(
         texture::Kind::D2(1, 1, texture::AaMode::Single),

@@ -504,7 +504,6 @@ impl GameInput {
     }
 
     pub fn handle_event(&mut self, outer_event: Event) -> Result<(), Error> {
-        debug!("{:?}", outer_event);
         let (input, state): (BindInput, _) = match outer_event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::KeyboardInput {
@@ -525,7 +524,6 @@ impl GameInput {
 
             Event::DeviceEvent { event, .. } => match event {
                 DeviceEvent::MouseMotion { delta } => {
-                    debug!("updating mouse delta");
                     self.mouse_delta.0 += delta.0;
                     self.mouse_delta.1 += delta.1;
                     return Ok(());

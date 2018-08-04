@@ -233,6 +233,8 @@ impl Game {
                         encoder,
                         user_data,
                         self.client.entities().unwrap(),
+                        self.client.view_ent(),
+                        self.client.weapon() as usize,
                         self.client.time(),
                         &camera,
                         self.client.lightstyle_values().unwrap().as_slice(),

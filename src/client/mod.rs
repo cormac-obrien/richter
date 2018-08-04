@@ -1423,6 +1423,10 @@ impl Client {
         self.state.view.view_angles
     }
 
+    pub fn view_ent(&self) -> usize {
+        self.state.view.ent_id
+    }
+
     pub fn time(&self) -> Duration {
         self.state.time
     }
@@ -1596,6 +1600,10 @@ impl Client {
 
     pub fn item_get_time(&self) -> &[Duration; net::MAX_ITEMS] {
         &self.state.item_get_time
+    }
+
+    pub fn weapon(&self) -> i32 {
+        self.state.stats[ClientStat::Weapon as usize]
     }
 
     pub fn active_weapon(&self) -> i32 {

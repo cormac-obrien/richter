@@ -65,8 +65,6 @@ impl Input {
             } => self.window_focused = focused,
 
             _ => if self.window_focused {
-                debug!("focus: {:?}", self.current_focus);
-
                 match self.current_focus {
                     InputFocus::Game => self.game_input.handle_event(event)?,
                     InputFocus::Console => self.console_input.handle_event(event)?,
