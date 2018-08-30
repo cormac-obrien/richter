@@ -624,9 +624,8 @@ impl Client {
 
     pub fn handle_input(
         &mut self,
-        game_input: &GameInput,
+        game_input: &mut GameInput,
         frame_time: Duration,
-        impulse: u8,
     ) -> Result<(), Error> {
         self.adjust_angles(game_input, frame_time);
 
@@ -691,13 +690,16 @@ impl Client {
             side_move: sidemove as i16,
             up_move: upmove as i16,
             button_flags,
-            impulse,
+            impulse: game_input.impulse(),
         };
         // debug!("Sending move command: {:?}", move_cmd);
 
         let mut msg = Vec::new();
         move_cmd.serialize(&mut msg)?;
         self.qsock.send_msg_unreliable(&msg)?;
+
+        // clear mouse and impulse
+        game_input.refresh()?;
 
         Ok(())
     }

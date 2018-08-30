@@ -260,10 +260,6 @@ impl Program for ClientProgram {
             }
         }
 
-        if let Some(ref mut game_input) = self.input.borrow_mut().game_input_mut() {
-            game_input.clear_mouse().unwrap();
-        }
-
         flame::start("EventsLoop::poll_events");
         self.events_loop
             .borrow_mut()

@@ -15,7 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::str::FromStr;
@@ -452,6 +452,7 @@ pub struct GameInput {
     bindings: Rc<RefCell<HashMap<BindInput, BindTarget>>>,
     action_states: Rc<RefCell<[bool; ACTION_COUNT]>>,
     mouse_delta: (f64, f64),
+    impulse: Rc<Cell<u8>>,
 }
 
 impl GameInput {
@@ -461,11 +462,16 @@ impl GameInput {
             bindings: Rc::new(RefCell::new(HashMap::new())),
             action_states: Rc::new(RefCell::new([false; ACTION_COUNT])),
             mouse_delta: (0.0, 0.0),
+            impulse: Rc::new(Cell::new(0)),
         }
     }
 
     pub fn mouse_delta(&self) -> (f64, f64) {
         self.mouse_delta
+    }
+
+    pub fn impulse(&self) -> u8 {
+        self.impulse.get()
     }
 
     /// Bind the default controls.
@@ -482,6 +488,15 @@ impl GameInput {
         self.bind(Key::LControl, BindTarget::from_str("+attack").unwrap());
         self.bind(Key::E, BindTarget::from_str("+use").unwrap());
         self.bind(Key::Grave, BindTarget::from_str("toggleconsole").unwrap());
+        self.bind(Key::Key1, BindTarget::from_str("impulse 1").unwrap());
+        self.bind(Key::Key2, BindTarget::from_str("impulse 2").unwrap());
+        self.bind(Key::Key3, BindTarget::from_str("impulse 3").unwrap());
+        self.bind(Key::Key4, BindTarget::from_str("impulse 4").unwrap());
+        self.bind(Key::Key5, BindTarget::from_str("impulse 5").unwrap());
+        self.bind(Key::Key6, BindTarget::from_str("impulse 6").unwrap());
+        self.bind(Key::Key7, BindTarget::from_str("impulse 7").unwrap());
+        self.bind(Key::Key8, BindTarget::from_str("impulse 8").unwrap());
+        self.bind(Key::Key9, BindTarget::from_str("impulse 9").unwrap());
     }
 
     /// Bind a `BindInput` to a `BindTarget`.
@@ -847,13 +862,43 @@ impl GameInput {
                 }
             }),
         ).unwrap();
+
+        // "impulse"
+        let impulse = self.impulse.clone();
+        cmds.insert_or_replace(
+            "impulse",
+            Box::new(move |args| {
+                println!("args: {}", args.len());
+                match args.len() {
+                    1 => match u8::from_str(args[0]) {
+                        Ok(i) => impulse.set(i),
+                        Err(_) => println!("Impulse must be a number between 0 and 255"),
+                    }
+
+                    _ => println!("impulse [number]"),
+                }
+            })
+        ).unwrap();
     }
 
-    // must be called at the beginning of every frame!
-    pub fn clear_mouse(&mut self) -> Result<(), Error> {
+    // must be called every frame!
+    pub fn refresh(&mut self) -> Result<(), Error> {
+        self.clear_mouse()?;
+        self.clear_impulse()?;
+
+        Ok(())
+    }
+
+    fn clear_mouse(&mut self) -> Result<(), Error> {
         self.handle_input(MouseWheel::Up, ElementState::Released)?;
         self.handle_input(MouseWheel::Down, ElementState::Released)?;
         self.mouse_delta = (0.0, 0.0);
+
+        Ok(())
+    }
+
+    fn clear_impulse(&mut self) -> Result<(), Error> {
+        self.impulse.set(0);
 
         Ok(())
     }

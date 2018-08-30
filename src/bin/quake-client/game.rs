@@ -144,9 +144,9 @@ impl Game {
     pub fn frame(&mut self, frame_duration: Duration) {
         self.client.frame(frame_duration).unwrap();
 
-        if let Some(ref game_input) = self.input.borrow().game_input() {
+        if let Some(ref mut game_input) = self.input.borrow_mut().game_input_mut() {
             self.client
-                .handle_input(game_input, frame_duration, 0)
+                .handle_input(game_input, frame_duration)
                 .unwrap();
         }
 
