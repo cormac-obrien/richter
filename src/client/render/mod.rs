@@ -28,15 +28,17 @@ pub mod world;
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
+use std::io::BufReader;
 use std::ops::DerefMut;
 use std::rc::Rc;
 
 use client::{Client, ClientEntity};
 use common::console::Console;
 use common::model::{Model, ModelKind};
-use common::pak::Pak;
+use common::vfs::Vfs;
 use common::wad::Wad;
 
+use byteorder::ReadBytesExt;
 use cgmath::{Deg, Euler, Matrix3, Matrix4, SquareMatrix, Vector3, Zero};
 use chrono::Duration;
 use failure::Error;
@@ -58,7 +60,6 @@ use self::alias::AliasRenderer;
 use self::brush::BrushRenderer;
 use self::console::ConsoleRenderer;
 use self::glyph::GlyphRenderer;
-use self::hud::HudRenderer;
 use self::world::WorldRenderer;
 
 const PALETTE_SIZE: usize = 768;
@@ -151,14 +152,14 @@ pub struct GraphicsPackage {
 
 impl GraphicsPackage {
     pub fn new(
-        pak: &Pak,
+        vfs: &Vfs,
         mut factory: Factory,
         color_target: RenderTargetView<Resources, ColorFormat>,
         depth_stencil: DepthStencilView<Resources, DepthFormat>,
         console: Rc<RefCell<Console>>,
     ) -> GraphicsPackage {
-        let palette = Palette::load(&pak, "gfx/palette.lmp");
-        let gfx_wad = Wad::load(pak.open("gfx.wad").unwrap()).unwrap();
+        let palette = Palette::load(&vfs, "gfx/palette.lmp");
+        let gfx_wad = Wad::load(vfs.open("gfx.wad").unwrap()).unwrap();
         let quad_vertex_buffer = factory.create_vertex_buffer(&QUAD_VERTICES);
 
         let glyph_renderer = Rc::new(
@@ -166,7 +167,7 @@ impl GraphicsPackage {
         );
 
         let console_renderer = ConsoleRenderer::new(
-            &pak,
+            &vfs,
             &mut factory,
             quad_vertex_buffer.clone(),
             &palette,
@@ -646,18 +647,17 @@ pub struct Palette {
 }
 
 impl Palette {
-    pub fn load<S>(pak: &Pak, path: S) -> Palette
+    pub fn load<S>(vfs: &Vfs, path: S) -> Palette
     where
         S: AsRef<str>,
     {
-        let data = pak.open(path).unwrap();
-        assert_eq!(data.len(), PALETTE_SIZE);
+        let mut data = BufReader::new(vfs.open(path).unwrap());
 
         let mut rgb = [[0u8; 3]; 256];
 
         for color in 0..256 {
             for component in 0..3 {
-                rgb[color][component] = data[color * 3 + component];
+                rgb[color][component] = data.read_u8().unwrap();
             }
         }
 

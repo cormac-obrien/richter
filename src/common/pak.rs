@@ -19,12 +19,9 @@
 
 use std::collections::hash_map::Iter;
 use std::collections::HashMap;
-use std::fmt;
 use std::fs;
-use std::io;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
-use std::string;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use failure::Error;
@@ -32,40 +29,10 @@ use failure::Error;
 const PAK_MAGIC: [u8; 4] = [b'P', b'A', b'C', b'K'];
 const PAK_ENTRY_SIZE: usize = 64;
 
-/// A virtual file tree loaded from a PAK archive.
 pub struct Pak(HashMap<String, Box<[u8]>>);
 
 impl Pak {
-    /// Constructs a new `Pak` object.
-    ///
-    /// The virtual file tree is initially empty.
-    ///
-    /// # Examples
-    /// ```
-    /// # extern crate richter;
-    /// use richter::common::pak::Pak;
-    ///
-    /// # fn main() {
-    /// let pak = Pak::new();
-    /// # }
-    /// ```
-    pub fn new() -> Pak {
-        Pak(HashMap::new())
-    }
-
-    /// Adds the data from the specified PAK archive to the virtual file tree.
-    ///
-    /// # Examples
-    /// ```no_run
-    /// # extern crate richter;
-    /// use richter::common::pak::Pak;
-    ///
-    /// # fn main() {
-    /// let mut pak = Pak::new();
-    /// pak.add("pak0.pak").unwrap();
-    /// # }
-    /// ```
-    pub fn add<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Error> {
+    pub fn new<P>(path: P) -> Result<Pak, Error> where P: AsRef<Path> {
         debug!("Opening {}", path.as_ref().to_str().unwrap());
 
         let mut infile = try!(fs::File::open(path));
@@ -86,6 +53,8 @@ impl Pak {
             s if s <= 0 => bail!("Negative file table size"),
             s => s as u32,
         };
+
+        let mut map = HashMap::new();
 
         for i in 0..(wad_size as usize / PAK_ENTRY_SIZE) {
             let entry_offset = wad_offset as u64 + (i * PAK_ENTRY_SIZE) as u64;
@@ -119,9 +88,10 @@ impl Pak {
             let mut data: Vec<u8> = Vec::with_capacity(file_size as usize);
             (&mut infile).take(file_size as u64).read_to_end(&mut data)?;
 
-            self.0.insert(path, data.into_boxed_slice());
+            map.insert(path, data.into_boxed_slice());
         }
-        Ok(())
+
+        Ok(Pak(map))
     }
 
     /// Opens a file in the file tree for reading.
@@ -147,7 +117,7 @@ impl Pak {
         }
     }
 
-    pub fn iter<'a>(&self) -> Iter<String, Box<[u8]>> {
+    pub fn iter<'a>(&self) -> Iter<String, impl AsRef<[u8]>> {
         self.0.iter()
     }
 }

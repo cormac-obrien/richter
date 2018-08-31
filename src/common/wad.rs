@@ -43,7 +43,7 @@ pub struct QPic {
 }
 
 impl QPic {
-    pub fn load(data: &[u8]) -> Result<QPic, Error> {
+    pub fn load<R>(data: R) -> Result<QPic, Error> where R: Read + Seek {
         let mut reader = BufReader::new(data);
 
         let width = reader.read_u32::<LittleEndian>()?;
@@ -83,8 +83,8 @@ pub struct Wad {
 }
 
 impl Wad {
-    pub fn load(data: &[u8]) -> Result <Wad, Error> {
-        let mut reader = BufReader::new(Cursor::new(data));
+    pub fn load<R>(data: R) -> Result <Wad, Error> where R: Read + Seek {
+        let mut reader = BufReader::new(data);
 
         let magic = reader.read_u32::<LittleEndian>()?;
         ensure!(magic == MAGIC, "Bad magic number for WAD: got {}, should be {}", magic, MAGIC);
@@ -153,7 +153,7 @@ impl Wad {
         }
 
         match self.files.get(name.as_ref()) {
-            Some(ref data) => QPic::load(data),
+            Some(ref data) => QPic::load(Cursor::new(data)),
             None => bail!("File not found in WAD: {}", name.as_ref()),
         }
     }

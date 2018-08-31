@@ -18,7 +18,7 @@
 use common::bsp::BspModel;
 use common::mdl;
 use common::mdl::AliasModel;
-use common::pak::Pak;
+use common::vfs::Vfs;
 use common::sprite;
 use common::sprite::SpriteModel;
 
@@ -73,7 +73,7 @@ impl Model {
         &self.kind
     }
 
-    pub fn load<S>(pak: &Pak, name: S) -> Result<Model, Error>
+    pub fn load<S>(vfs: &Vfs, name: S) -> Result<Model, Error>
     where
         S: AsRef<str>,
     {
@@ -84,12 +84,12 @@ impl Model {
         } else if name.ends_with(".mdl") {
             Ok(Model::from_alias_model(
                 name.to_owned(),
-                mdl::load(pak.open(name)?)?,
+                mdl::load(vfs.open(name)?)?,
             ))
         } else if name.ends_with(".spr") {
             Ok(Model::from_sprite_model(
                 name.to_owned(),
-                sprite::load(pak.open(name)?),
+                sprite::load(vfs.open(name)?),
             ))
         } else {
             panic!("Unrecognized model type: {}", name);

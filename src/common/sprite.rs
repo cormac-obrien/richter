@@ -15,8 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::io::BufReader;
-use std::io::Cursor;
+use std::io::{BufReader, Cursor, Read, Seek};
 
 use common::engine;
 use common::model::SyncType;
@@ -84,8 +83,8 @@ pub struct SpriteGroup {
     frames: Vec<SpriteFrame>,
 }
 
-pub fn load(data: &[u8]) -> SpriteModel {
-    let mut reader = BufReader::new(Cursor::new(data));
+pub fn load<R>(data: R) -> SpriteModel where R: Read + Seek {
+    let mut reader = BufReader::new(data);
 
     let magic = reader.read_u32::<LittleEndian>().unwrap();
     if magic != MAGIC {

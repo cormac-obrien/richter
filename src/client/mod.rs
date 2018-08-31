@@ -50,22 +50,10 @@ use common::net::connect::ConnectSocket;
 use common::net::connect::Request;
 use common::net::connect::Response;
 use common::net::connect::CONNECT_PROTOCOL_VERSION;
-use common::net::BlockingMode;
-use common::net::ButtonFlags;
-use common::net::ClientCmd;
-use common::net::ClientStat;
-use common::net::ColorShift;
-use common::net::EntityEffects;
-use common::net::EntityState;
-use common::net::GameType;
-use common::net::ItemFlags;
-use common::net::NetError;
-use common::net::PlayerColor;
-use common::net::QSocket;
-use common::net::ServerCmd;
-use common::net::SignOnStage;
-use common::net::TempEntity;
-use common::pak::Pak;
+use common::net::{BlockingMode, ButtonFlags, ClientCmd, ClientStat, ColorShift, EntityEffects,
+                  EntityState, GameType, ItemFlags, NetError, PlayerColor, QSocket, ServerCmd,
+                  SignOnStage, TempEntity};
+use common::vfs::Vfs;
 
 use cgmath::Angle;
 use cgmath::Deg;
@@ -301,7 +289,7 @@ impl Mixer {
 
 // client information regarding the current level
 struct ClientState {
-    pak: Rc<Pak>,
+    vfs: Rc<Vfs>,
 
     // model precache
     models: Vec<Model>,
@@ -365,11 +353,11 @@ struct ClientState {
 
 impl ClientState {
     // TODO: add parameter for number of player slots and reserve them in entity list
-    pub fn new(pak: Rc<Pak>, endpoint: Rc<Endpoint>) -> ClientState {
+    pub fn new(vfs: Rc<Vfs>, endpoint: Rc<Endpoint>) -> ClientState {
         ClientState {
-            pak: pak.clone(),
+            vfs: vfs.clone(),
             models: vec![Model::none()],
-            sounds: vec![AudioSource::load(&pak, "misc/null.wav").unwrap()],
+            sounds: vec![AudioSource::load(&vfs, "misc/null.wav").unwrap()],
             static_sounds: Vec::new(),
             entities: Vec::new(),
             light_styles: HashMap::new(),
@@ -449,7 +437,7 @@ impl ClientState {
 }
 
 pub struct Client {
-    pak: Rc<Pak>,
+    vfs: Rc<Vfs>,
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
     console: Rc<RefCell<Console>>,
@@ -465,7 +453,7 @@ pub struct Client {
 impl Client {
     pub fn connect<A>(
         server_addrs: A,
-        pak: Rc<Pak>,
+        vfs: Rc<Vfs>,
         cvars: Rc<RefCell<CvarRegistry>>,
         cmds: Rc<RefCell<CmdRegistry>>,
         console: Rc<RefCell<Console>>,
@@ -547,7 +535,7 @@ impl Client {
         let qsock = con_sock.into_qsocket(new_addr);
 
         Ok(Client {
-            pak: pak.clone(),
+            vfs: vfs.clone(),
             cvars,
             cmds,
             console,
@@ -555,7 +543,7 @@ impl Client {
             qsock,
             compose: Vec::new(),
             signon: SignOnStage::Not,
-            state: ClientState::new(pak.clone(), endpoint.clone()),
+            state: ClientState::new(vfs.clone(), endpoint.clone()),
         })
     }
 
@@ -1334,7 +1322,7 @@ impl Client {
         model_precache: Vec<String>,
         sound_precache: Vec<String>,
     ) -> Result<(), Error> {
-        let mut new_client_state = ClientState::new(self.pak.clone(), self.endpoint.clone());
+        let mut new_client_state = ClientState::new(self.vfs.clone(), self.endpoint.clone());
 
         // check protocol version
         ensure!(
@@ -1351,14 +1339,14 @@ impl Client {
         // TODO: validate submodel names
         for mod_name in model_precache {
             if mod_name.ends_with(".bsp") {
-                let bsp_data = self.pak.open(&mod_name)?;
+                let bsp_data = self.vfs.open(&mod_name)?;
                 let (mut brush_models, _) = bsp::load(bsp_data).unwrap();
                 new_client_state.models.append(&mut brush_models);
             } else if !mod_name.starts_with("*") {
                 debug!("Loading model {}", mod_name);
                 new_client_state
                     .models
-                    .push(Model::load(&self.pak, mod_name)?);
+                    .push(Model::load(&self.vfs, mod_name)?);
             }
 
             // TODO: send keepalive message?
@@ -1371,11 +1359,11 @@ impl Client {
             // TODO: waiting on tomaka/rodio#157
             new_client_state
                 .sounds
-                .push(match AudioSource::load(&self.pak, snd_name) {
+                .push(match AudioSource::load(&self.vfs, snd_name) {
                     Ok(a) => a,
                     Err(e) => {
                         warn!("Loading {} failed: {}", snd_name, e);
-                        AudioSource::load(&self.pak, "misc/null.wav").unwrap()
+                        AudioSource::load(&self.vfs, "misc/null.wav").unwrap()
                     }
                 });
 

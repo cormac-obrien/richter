@@ -20,11 +20,10 @@
 
 use std::cell::RefCell;
 use std::fmt;
-use std::io::BufReader;
-use std::io::Cursor;
+use std::io::{BufReader, Cursor, Read};
 use std::rc::Rc;
 
-use common::pak::Pak;
+use common::vfs::Vfs;
 
 use cgmath::Vector3;
 use failure::Error;
@@ -36,12 +35,14 @@ use rodio::source::{Buffered, SamplesConverter};
 pub struct AudioSource(Buffered<SamplesConverter<Decoder<BufReader<Cursor<Vec<u8>>>>, f32>>);
 
 impl AudioSource {
-    pub fn load<S>(pak: &Pak, name: S) -> Result<AudioSource, Error>
+    pub fn load<S>(vfs: &Vfs, name: S) -> Result<AudioSource, Error>
     where
         S: AsRef<str>,
     {
         let full_path = "sound/".to_owned() + name.as_ref();
-        let data = pak.open(&full_path)?.to_vec();
+        let mut file = vfs.open(&full_path)?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)?;
         let src = Decoder::new(BufReader::new(Cursor::new(data)))?
             .convert_samples()
             .buffered();

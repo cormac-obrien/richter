@@ -28,7 +28,7 @@ use richter::client::Client;
 use richter::common::console::{CmdRegistry, CvarRegistry};
 use richter::common::math;
 use richter::common::net::SignOnStage;
-use richter::common::pak::Pak;
+use richter::common::vfs::Vfs;
 
 use cgmath;
 use chrono::Duration;
@@ -109,7 +109,7 @@ enum GameState {
 }
 
 pub struct Game {
-    pak: Rc<Pak>,
+    vfs: Rc<Vfs>,
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
     gfx_pkg: Rc<RefCell<GraphicsPackage>>,
@@ -120,7 +120,7 @@ pub struct Game {
 
 impl Game {
     pub fn new(
-        pak: Rc<Pak>,
+        vfs: Rc<Vfs>,
         cvars: Rc<RefCell<CvarRegistry>>,
         cmds: Rc<RefCell<CmdRegistry>>,
         gfx_pkg: Rc<RefCell<GraphicsPackage>>,
@@ -130,7 +130,7 @@ impl Game {
         input.borrow().register_cmds(&mut cmds.borrow_mut());
 
         Ok(Game {
-            pak,
+            vfs,
             cvars,
             cmds,
             gfx_pkg,

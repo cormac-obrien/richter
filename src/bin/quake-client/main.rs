@@ -47,7 +47,7 @@ use richter::client::{self, Client};
 use richter::common;
 use richter::common::console::{CmdRegistry, Console, CvarRegistry};
 use richter::common::host::{Host, Program};
-use richter::common::pak::Pak;
+use richter::common::vfs::Vfs;
 
 use game::Game;
 
@@ -69,7 +69,7 @@ enum ProgramState {
 }
 
 struct ClientProgram {
-    pak: Rc<Pak>,
+    vfs: Rc<Vfs>,
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
     console: Rc<RefCell<Console>>,
@@ -90,11 +90,16 @@ struct ClientProgram {
 
 impl ClientProgram {
     pub fn new() -> ClientProgram {
-        let mut pak = Pak::new();
-        for pak_id in 0..common::MAX_PAKFILES {
+        let mut vfs = Vfs::new();
+
+        // add basedir first
+        vfs.add_directory(common::DEFAULT_BASEDIR).unwrap();
+
+        // then add PAK archives
+        for vfs_id in 0..common::MAX_PAKFILES {
             // TODO: check `-basedir` command line argument
             let basedir = common::DEFAULT_BASEDIR;
-            let path_string = format!("{}/pak{}.pak", basedir, pak_id);
+            let path_string = format!("{}/pak{}.pak", basedir, vfs_id);
             let path = Path::new(&path_string);
 
             // keep adding PAKs until we don't find one or we hit MAX_PAKFILES
@@ -102,7 +107,7 @@ impl ClientProgram {
                 break;
             }
 
-            pak.add(path).unwrap();
+            vfs.add_pakfile(path).unwrap();
         }
 
         let cvars = Rc::new(RefCell::new(CvarRegistry::new()));
@@ -159,7 +164,7 @@ impl ClientProgram {
         let endpoint = Rc::new(rodio::get_endpoints_list().next().unwrap());
 
         let gfx_pkg = Rc::new(RefCell::new(GraphicsPackage::new(
-            &pak,
+            &vfs,
             factory,
             color,
             depth,
@@ -167,7 +172,7 @@ impl ClientProgram {
         )));
 
         ClientProgram {
-            pak: Rc::new(pak),
+            vfs: Rc::new(vfs),
             cvars,
             cmds,
             console,
@@ -189,7 +194,7 @@ impl ClientProgram {
     {
         let cl = Client::connect(
             server_addrs,
-            self.pak.clone(),
+            self.vfs.clone(),
             self.cvars.clone(),
             self.cmds.clone(),
             self.console.clone(),
@@ -200,7 +205,7 @@ impl ClientProgram {
 
         self.state.replace(ProgramState::Game(
             Game::new(
-                self.pak.clone(),
+                self.vfs.clone(),
                 self.cvars.clone(),
                 self.cmds.clone(),
                 self.gfx_pkg.clone(),

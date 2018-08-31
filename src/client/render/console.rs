@@ -23,7 +23,7 @@ use client::render::bitmap::BitmapTexture;
 use client::render::glyph::{GLYPH_HEIGHT, GlyphRenderer, GlyphRendererCommand, GLYPH_WIDTH};
 use client::render::pipeline2d;
 use common::console::Console;
-use common::pak::Pak;
+use common::vfs::Vfs;
 use common::wad::QPic;
 
 use failure::Error;
@@ -44,7 +44,7 @@ pub struct ConsoleRenderer {
 
 impl ConsoleRenderer {
     pub fn new<F>(
-        pak: &Pak,
+        vfs: &Vfs,
         factory: &mut F,
         vertex_buffer: Buffer<Resources, Vertex2d>,
         palette: &Palette,
@@ -53,7 +53,7 @@ impl ConsoleRenderer {
     ) -> Result<ConsoleRenderer, Error>
     where F: Factory<Resources> {
         let slice = Slice::new_match_vertex_buffer(&vertex_buffer);
-        let conback = BitmapTexture::from_qpic(factory, &QPic::load(pak.open("gfx/conback.lmp").unwrap())?, palette)?;
+        let conback = BitmapTexture::from_qpic(factory, &QPic::load(vfs.open("gfx/conback.lmp").unwrap())?, palette)?;
         Ok(ConsoleRenderer {
             console,
             glyph_renderer,

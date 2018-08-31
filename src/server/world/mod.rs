@@ -47,7 +47,7 @@ use common::engine;
 use common::mdl;
 use common::model::Model;
 use common::model::ModelKind;
-use common::pak::Pak;
+use common::vfs::Vfs;
 use common::parse;
 use common::sprite;
 use server::progs::EntityFieldAddr;
@@ -288,11 +288,11 @@ impl World {
         })
     }
 
-    pub fn add_model(&mut self, pak: &Pak, name_id: StringId) -> Result<(), ProgsError> {
+    pub fn add_model(&mut self, vfs: &Vfs, name_id: StringId) -> Result<(), ProgsError> {
         let name = self.string_table.get(name_id).unwrap();
 
         if name.ends_with(".bsp") {
-            let data = pak.open(name).unwrap();
+            let data = vfs.open(name).unwrap();
             let (mut brush_models, _) = bsp::load(data).unwrap();
             if brush_models.len() > 1 {
                 return Err(ProgsError::with_msg(
@@ -302,13 +302,13 @@ impl World {
             self.models.append(&mut brush_models);
             Ok(())
         } else if name.ends_with(".mdl") {
-            let data = pak.open(&name).unwrap();
+            let data = vfs.open(&name).unwrap();
             let alias_model = mdl::load(data).unwrap();
             self.models
                 .push(Model::from_alias_model(&name, alias_model));
             Ok(())
         } else if name.ends_with(".spr") {
-            let data = pak.open(&name).unwrap();
+            let data = vfs.open(&name).unwrap();
             let sprite_model = sprite::load(data);
             self.models
                 .push(Model::from_sprite_model(&name, sprite_model));
@@ -580,7 +580,7 @@ impl World {
         cvars: &mut CvarRegistry,
         server: &mut Server,
         map: HashMap<&str, &str>,
-        pak: &Pak,
+        vfs: &Vfs,
     ) -> Result<EntityId, ProgsError> {
         let classname = match map.get("classname") {
             Some(c) => c.to_owned(),
@@ -594,7 +594,7 @@ impl World {
         // set `self` before calling spawn function
         globals.put_entity_id(e_id, GlobalAddrEntity::Self_ as i16)?;
 
-        execution_context.execute_program_by_name(globals, self, cvars, server, pak, classname)?;
+        execution_context.execute_program_by_name(globals, self, cvars, server, vfs, classname)?;
 
         // TODO: should touch triggers?
         self.link_entity(e_id, false)?;
@@ -895,7 +895,7 @@ impl World {
         execution_context: &mut ExecutionContext,
         cvars: &mut CvarRegistry,
         server: &mut Server,
-        pak: &Pak,
+        vfs: &Vfs,
         sv_time: Duration,
     ) -> Result<(), ProgsError> {
         globals.put_entity_id(EntityId(0), GlobalAddrEntity::Self_ as i16)?;
@@ -905,7 +905,7 @@ impl World {
             GlobalAddrFloat::Time as i16,
         )?;
         let start_frame = globals.get_function_id(GlobalAddrFunction::StartFrame as i16)?;
-        execution_context.execute_program(globals, self, cvars, server, pak, start_frame)?;
+        execution_context.execute_program(globals, self, cvars, server, vfs, start_frame)?;
 
         for i in 0..self.slots.len() {
             if let AreaEntitySlot::Vacant = self.slots[i] {

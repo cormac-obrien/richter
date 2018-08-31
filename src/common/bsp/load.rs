@@ -317,8 +317,8 @@ where
 
 /// Load a BSP file, returning the models it contains and a `String` describing the entities
 /// it contains.
-pub fn load(data: &[u8]) -> Result<(Vec<Model>, String), Error> {
-    let mut reader = BufReader::new(Cursor::new(data));
+pub fn load<R>(data: R) -> Result<(Vec<Model>, String), Error> where R: Read + Seek {
+    let mut reader = BufReader::new(data);
 
     let version = reader.read_i32::<LittleEndian>()?;
     ensure!(version == VERSION, "Bad version number (found {}, should be {})", version, VERSION);

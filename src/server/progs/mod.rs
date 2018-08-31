@@ -111,7 +111,7 @@ use std::io::SeekFrom;
 use std::rc::Rc;
 
 use common::console::CvarRegistry;
-use common::pak::Pak;
+use common::vfs::Vfs;
 use server::Server;
 use server::world::FieldAddrFloat;
 use server::world::EntityError;
@@ -735,7 +735,7 @@ impl ExecutionContext {
         world: &mut World,
         cvars: &mut CvarRegistry,
         server: &mut Server,
-        pak: &Pak,
+        vfs: &Vfs,
         f: FunctionId,
     ) -> Result<(), ProgsError> {
         let mut runaway = 100000;
@@ -936,7 +936,7 @@ impl ExecutionContext {
                                 let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
                                 if !server.model_precache_lookup(s_id).is_ok() {
                                     server.precache_model(s_id);
-                                    world.add_model(pak, s_id)?;
+                                    world.add_model(vfs, s_id)?;
                                 }
                             }
                             StuffCmd => unimplemented!(),
@@ -1083,14 +1083,14 @@ impl ExecutionContext {
         world: &mut World,
         cvars: &mut CvarRegistry,
         server: &mut Server,
-        pak: &Pak,
+        vfs: &Vfs,
         name: S,
     ) -> Result<(), ProgsError>
     where
         S: AsRef<str>,
     {
         let func_id = self.functions.find_function_by_name(name)?;
-        self.execute_program(globals, world, cvars, server, pak, func_id)?;
+        self.execute_program(globals, world, cvars, server, vfs, func_id)?;
         Ok(())
     }
 }
