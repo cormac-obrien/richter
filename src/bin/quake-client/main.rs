@@ -171,6 +171,9 @@ impl ClientProgram {
             console.clone(),
         )));
 
+        // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
+        console.borrow().stuff_text("exec quake.rc\n");
+
         ClientProgram {
             vfs: Rc::new(vfs),
             cvars,
@@ -304,7 +307,7 @@ impl Program for ClientProgram {
         }
 
         // run console commands
-        self.console.borrow_mut().execute();
+        self.console.borrow().execute();
 
         self.render();
     }

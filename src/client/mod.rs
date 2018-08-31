@@ -28,31 +28,21 @@ pub use self::cvars::register_cvars;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::net::ToSocketAddrs;
 use std::rc::Rc;
 
 use client::input::game::{Action, GameInput};
-use client::sound::AudioSource;
-use client::sound::Channel;
-use client::sound::StaticSound;
+use client::sound::{AudioSource, Channel, StaticSound};
 use common::bsp;
-use common::console::CmdRegistry;
-use common::console::Console;
-use common::console::CvarRegistry;
+use common::console::{CmdRegistry, Console, CvarRegistry};
 use common::engine;
-use common::model::Model;
-use common::model::ModelFlags;
-use common::model::ModelKind;
-use common::model::SyncType;
-use common::net;
-use common::net::connect::ConnectSocket;
-use common::net::connect::Request;
-use common::net::connect::Response;
-use common::net::connect::CONNECT_PROTOCOL_VERSION;
-use common::net::{BlockingMode, ButtonFlags, ClientCmd, ClientStat, ColorShift, EntityEffects,
-                  EntityState, GameType, ItemFlags, NetError, PlayerColor, QSocket, ServerCmd,
-                  SignOnStage, TempEntity};
+use common::model::{Model, ModelFlags, ModelKind, SyncType};
+use common::net::connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION};
+use common::net::{
+    self, BlockingMode, ButtonFlags, ClientCmd, ClientStat, ColorShift, EntityEffects, EntityState,
+    GameType, ItemFlags, NetError, PlayerColor, QSocket, ServerCmd, SignOnStage, TempEntity,
+};
 use common::vfs::Vfs;
 
 use cgmath::Angle;
@@ -1576,6 +1566,33 @@ impl Client {
                     dest_color: [215, 186, 69],
                     percent: 50,
                 });
+            }),
+        ).unwrap();
+
+        let vfs = self.vfs.clone();
+        let console = self.console.clone();
+        cmds.insert_or_replace(
+            "exec",
+            Box::new(move |args| {
+                match args.len() {
+                    // exec (filename): execute a script file
+                    1 => {
+                        let mut script_file = match vfs.open(args[0]) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                println!("Couldn't exec {}: {:?}", args[0], e);
+                                return;
+                            }
+                        };
+
+                        let mut script = String::new();
+                        script_file.read_to_string(&mut script).unwrap();
+
+                        console.borrow().stuff_text(script);
+                    }
+
+                    _ => println!("exec (filename): execute a script file"),
+                }
             }),
         ).unwrap();
     }

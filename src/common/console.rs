@@ -406,7 +406,7 @@ pub struct Console {
 
     input: ConsoleInput,
     hist: History,
-    buffer: String,
+    buffer: RefCell<String>,
     output: Rc<RefCell<ConsoleOutput>>,
 }
 
@@ -428,7 +428,7 @@ impl Console {
             cvars,
             input: ConsoleInput::new(),
             hist: History::new(),
-            buffer: String::new(),
+            buffer: RefCell::new(String::new()),
             output: output.clone(),
         }
     }
@@ -441,7 +441,7 @@ impl Console {
             '\r' => {
                 // push this line to the execution buffer
                 let entered = self.get_string();
-                self.buffer.push_str(&entered);
+                self.buffer.borrow_mut().push_str(&entered);
 
                 // add the current input to the history
                 self.hist.add_line(self.input.get_text());
@@ -488,8 +488,11 @@ impl Console {
     }
 
     /// Interprets the contents of the execution buffer.
-    pub fn execute(&mut self) {
-        for line in (&self.buffer).split(|c| c == '\n' || c == ';') {
+    pub fn execute(&self) {
+        let text = self.buffer.borrow().to_owned();
+        self.buffer.borrow_mut().clear();
+
+        for line in text.split(|c| c == '\n' || c == ';') {
             let mut tok = Tokenizer::new(line);
             if let Some(arg_0) = tok.next() {
                 println!("arg0: {}", arg_0);
@@ -512,8 +515,6 @@ impl Console {
                 }
             }
         }
-
-        self.buffer.clear();
     }
 
     pub fn get_string(&self) -> String {
@@ -528,8 +529,9 @@ impl Console {
         )
     }
 
-    pub fn stuff_text<S>(&mut self, text: S) where S: AsRef<str> {
-        self.buffer.push_str(text.as_ref());
+    pub fn stuff_text<S>(&self, text: S) where S: AsRef<str> {
+        debug!("stuff_text:\n{}", text.as_ref());
+        self.buffer.borrow_mut().push_str(text.as_ref());
     }
 
     pub fn output(&self) -> Ref<ConsoleOutput> {
