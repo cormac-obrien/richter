@@ -76,8 +76,7 @@ fn main() {
         exit(0);
     }
 
-    let mut pak = Pak::new();
-    match pak.add(&args.arg_source) {
+    let pak = match Pak::new(&args.arg_source) {
         Ok(p) => p,
         Err(why) => {
             println!("Couldn't open {}: {}", &args.arg_source, why);
@@ -112,7 +111,7 @@ fn main() {
         };
 
         let mut writer = BufWriter::new(file);
-        match writer.write_all(v) {
+        match writer.write_all(v.as_ref()) {
             Ok(_) => (),
             Err(why) => {
                 println!("Couldn't write to {}: {}", path.to_str().unwrap(), why);
