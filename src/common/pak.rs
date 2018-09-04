@@ -32,7 +32,10 @@ const PAK_ENTRY_SIZE: usize = 64;
 pub struct Pak(HashMap<String, Box<[u8]>>);
 
 impl Pak {
-    pub fn new<P>(path: P) -> Result<Pak, Error> where P: AsRef<Path> {
+    pub fn new<P>(path: P) -> Result<Pak, Error>
+    where
+        P: AsRef<Path>,
+    {
         debug!("Opening {}", path.as_ref().to_str().unwrap());
 
         let mut infile = try!(fs::File::open(path));
@@ -102,8 +105,7 @@ impl Pak {
     /// use richter::common::pak::Pak;
     ///
     /// # fn main() {
-    /// let mut pak = Pak::new();
-    /// pak.add("pak0.pak").unwrap();
+    /// let mut pak = Pak::new("pak0.pak").unwrap();
     /// let progs_dat = pak.open("progs.dat").unwrap();
     /// # }
     /// ```
