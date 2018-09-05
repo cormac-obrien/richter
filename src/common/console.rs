@@ -407,6 +407,7 @@ impl ConsoleOutput {
 pub struct Console {
     cmds: Rc<RefCell<CmdRegistry>>,
     cvars: Rc<RefCell<CvarRegistry>>,
+    aliases: Rc<RefCell<HashMap<String, String>>>,
 
     input: ConsoleInput,
     hist: History,
@@ -432,9 +433,34 @@ impl Console {
             )
             .unwrap();
 
+        let aliases: Rc<RefCell<HashMap<String, String>>> = Rc::new(RefCell::new(HashMap::new()));
+        let cmd_aliases = aliases.clone();
+        cmds.borrow_mut()
+            .insert(
+                "alias",
+                Box::new(move |args| match args.len() {
+                    0 => {
+                        for (name, script) in cmd_aliases.borrow().iter() {
+                            println!("    {}: {}", name, script);
+                        }
+                        println!("{} alias command(s)", cmd_aliases.borrow().len());
+                    }
+
+                    2 => {
+                        let name = args[0].to_string();
+                        let script = args[1].to_string();
+                        let _ = cmd_aliases.borrow_mut().insert(name, script);
+                    }
+
+                    _ => (),
+                }),
+            )
+            .unwrap();
+
         Console {
             cmds,
             cvars,
+            aliases: aliases.clone(),
             input: ConsoleInput::new(),
             hist: History::new(),
             buffer: RefCell::new(String::new()),
@@ -504,6 +530,7 @@ impl Console {
         let text = self.buffer.borrow().to_owned();
         self.buffer.borrow_mut().clear();
 
+        println!("parsing: {:?}", text);
         let (commands, _remaining) = parse::commands().easy_parse(text.as_str()).unwrap();
 
         for command in commands.iter() {
@@ -512,64 +539,47 @@ impl Console {
 
         for args in commands {
             if let Some(arg_0) = args.get(0) {
-                println!("arg0: {}", arg_0);
-                // TODO: check aliases
+                let maybe_alias = self.aliases.borrow().get(arg_0).map(|s| s.to_owned());
+                match maybe_alias {
+                    Some(a) => {
+                        self.stuff_text(a);
+                        self.execute();
+                    }
 
-                let tail_args: Vec<&str> = (&args[1..]).iter().map(|s| s.as_str()).collect();
+                    None => {
+                        let tail_args: Vec<&str> =
+                            (&args[1..]).iter().map(|s| s.as_str()).collect();
 
-                if self.cmds.borrow().contains(arg_0) {
-                    self.cmds.borrow_mut().exec(arg_0, &tail_args).unwrap();
-                } else if self.cvars.borrow().contains(arg_0) {
-                    // TODO error handling on cvar set
-                    match args.get(1) {
-                        Some(arg_1) => self.cvars.borrow_mut().set(arg_0, arg_1).unwrap(),
-                        None => {
-                            let msg = format!(
-                                "\"{}\" is \"{}\"",
-                                arg_0,
-                                self.cvars.borrow().get(arg_0).unwrap()
+                        if self.cmds.borrow().contains(arg_0) {
+                            self.cmds.borrow_mut().exec(arg_0, &tail_args).unwrap();
+                        } else if self.cvars.borrow().contains(arg_0) {
+                            // TODO error handling on cvar set
+                            match args.get(1) {
+                                Some(arg_1) => self.cvars.borrow_mut().set(arg_0, arg_1).unwrap(),
+                                None => {
+                                    let msg = format!(
+                                        "\"{}\" is \"{}\"",
+                                        arg_0,
+                                        self.cvars.borrow().get(arg_0).unwrap()
+                                    );
+                                    self.output
+                                        .borrow_mut()
+                                        .push(msg.as_str().chars().collect());
+                                }
+                            }
+                        } else {
+                            // TODO: try sending to server first
+                            self.output.borrow_mut().push(
+                                format!("Unrecognized command \"{}\"", arg_0)
+                                    .as_str()
+                                    .chars()
+                                    .collect(),
                             );
-                            self.output
-                                .borrow_mut()
-                                .push(msg.as_str().chars().collect());
                         }
                     }
-                } else {
-                    // TODO: try sending to server first
-                    self.output.borrow_mut().push(
-                        format!("Unrecognized command \"{}\"", arg_0)
-                            .as_str()
-                            .chars()
-                            .collect(),
-                    );
                 }
             }
         }
-        /*
-        for line in text.split(|c| c == '\n' || c == ';') {
-            let mut tok = Tokenizer::new(line);
-            if let Some(arg_0) = tok.next() {
-                println!("arg0: {}", arg_0);
-                // TODO: check aliases first
-
-                if self.cmds.borrow().contains(arg_0) {
-                    self.cmds.borrow_mut().exec(arg_0, tok.collect()).unwrap();
-                } else if self.cvars.borrow().contains(arg_0) {
-                    // TODO error handling on cvar set
-                    match tok.next() {
-                        Some(arg_1) => self.cvars.borrow_mut().set(arg_0, arg_1).unwrap(),
-                        None => {
-                            let msg = format!("\"{}\" is \"{}\"", arg_0, self.cvars.borrow().get(arg_0).unwrap());
-                            self.output.borrow_mut().push(msg.as_str().chars().collect());
-                        }
-                    }
-                } else {
-                    // TODO: try sending to server first
-                    self.output.borrow_mut().push(format!("Unrecognized command \"{}\"", arg_0).as_str().chars().collect());
-                }
-            }
-        }
-        */
     }
 
     pub fn get_string(&self) -> String {
@@ -588,7 +598,7 @@ impl Console {
     where
         S: AsRef<str>,
     {
-        debug!("stuff_text:\n{}", text.as_ref());
+        debug!("stuff_text:\n{:?}", text.as_ref());
         self.buffer.borrow_mut().push_str(text.as_ref());
 
         // in case the last line doesn't end with a newline

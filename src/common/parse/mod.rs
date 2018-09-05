@@ -115,12 +115,20 @@ where
     )
 }
 
+pub fn newline<I>() -> impl Parser<Input = I, Output = ()>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
+{
+    choice((string("\r\n"), string("\n"))).map(|_| ())
+}
+
 pub fn line_ending<I>() -> impl Parser<Input = I, Output = ()>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    choice((string("\r\n"), string("\n"), string(";"))).map(|_| ())
+    choice((newline(), string(";").map(|_| ()))).map(|_| ())
 }
 
 pub fn vector3_components<S>(src: S) -> Option<[f32; 3]>

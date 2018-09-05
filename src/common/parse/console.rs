@@ -15,7 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use common::parse::{line_ending, non_newline_space, non_newline_spaces, quoted};
+use common::parse::{line_ending, newline, non_newline_space, non_newline_spaces, quoted};
 
 use combine::char::string;
 use combine::parser::repeat::{skip_many, skip_until};
@@ -34,7 +34,7 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    (string("//"), skip_until(token('\n')))
+    (string("//"), skip_until(newline()))
         .map(|_| ())
         .message("in line_comment")
 }
@@ -45,7 +45,8 @@ where
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     (
-        skip_many(choice((non_newline_space().map(|_| ()), line_comment()))),
+        optional(skip_many(non_newline_space())),
+        optional(line_comment().map(|_| ())),
         line_ending(),
     ).map(|_| ())
         .message("in empty_line")
@@ -107,7 +108,7 @@ where
                 // parse command
                 command(),
                 // then any trailing empty lines
-                skip_many(empty_line()),
+                skip_many(try(empty_line())),
             ).map(|(c, _)| c),
         ),
     ).map(|(_, cs)| cs)
