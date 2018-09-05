@@ -20,17 +20,21 @@
 // TODO: have console commands take an IntoIter<AsRef<str>> instead of a Vec<String>
 
 use std::cell::{Ref, RefCell};
-use std::collections::VecDeque;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::iter::FromIterator;
 use std::rc::Rc;
 
+use common::parse;
+
+use combine::easy::Stream;
+use combine::Parser;
 use failure::Error;
 use winit::VirtualKeyCode as Key;
 
 /// Stores console commands.
 pub struct CmdRegistry {
-    cmds: HashMap<String, Box<Fn(Vec<&str>)>>,
+    cmds: HashMap<String, Box<Fn(&[&str])>>,
 }
 
 impl CmdRegistry {
@@ -43,7 +47,7 @@ impl CmdRegistry {
     /// Registers a new command with the given name.
     ///
     /// Returns an error if a command with the specified name already exists.
-    pub fn insert<S>(&mut self, name: S, cmd: Box<Fn(Vec<&str>)>) -> Result<(), ()>
+    pub fn insert<S>(&mut self, name: S, cmd: Box<Fn(&[&str])>) -> Result<(), ()>
     where
         S: AsRef<str>,
     {
@@ -61,7 +65,7 @@ impl CmdRegistry {
     }
 
     /// Registers a new command with the given name, or replaces one if the name is in use.
-    pub fn insert_or_replace<S>(&mut self, name: S, cmd: Box<Fn(Vec<&str>)>) -> Result<(), ()>
+    pub fn insert_or_replace<S>(&mut self, name: S, cmd: Box<Fn(&[&str])>) -> Result<(), ()>
     where
         S: AsRef<str>,
     {
@@ -72,7 +76,7 @@ impl CmdRegistry {
     /// Executes a command.
     ///
     /// Returns an error if no command with the specified name exists.
-    pub fn exec<S>(&mut self, name: S, args: Vec<&str>) -> Result<(), ()>
+    pub fn exec<S>(&mut self, name: S, args: &[&str]) -> Result<(), ()>
     where
         S: AsRef<str>,
     {
@@ -395,7 +399,7 @@ impl ConsoleOutput {
         // TODO: set maximum capacity and pop_back when we reach it
     }
 
-    pub fn lines(&self) -> impl Iterator<Item=&[char]> {
+    pub fn lines(&self) -> impl Iterator<Item = &[char]> {
         self.lines.iter().map(|v| v.as_slice())
     }
 }
@@ -414,14 +418,19 @@ impl Console {
     pub fn new(cmds: Rc<RefCell<CmdRegistry>>, cvars: Rc<RefCell<CvarRegistry>>) -> Console {
         let output = Rc::new(RefCell::new(ConsoleOutput::new()));
         let echo_output = output.clone();
-        cmds.borrow_mut().insert("echo", Box::new(move |args| {
-            let msg = match args.len() {
-                0 => "",
-                _ => args[0],
-            };
+        cmds.borrow_mut()
+            .insert(
+                "echo",
+                Box::new(move |args| {
+                    let msg = match args.len() {
+                        0 => "",
+                        _ => args[0],
+                    };
 
-            echo_output.borrow_mut().push(msg.chars().collect());
-        })).unwrap();
+                    echo_output.borrow_mut().push(msg.chars().collect());
+                }),
+            )
+            .unwrap();
 
         Console {
             cmds,
@@ -439,6 +448,9 @@ impl Console {
             '`' => (),
 
             '\r' => {
+                // cap with a newline
+                self.input.insert('\n');
+
                 // push this line to the execution buffer
                 let entered = self.get_string();
                 self.buffer.borrow_mut().push_str(&entered);
@@ -492,6 +504,50 @@ impl Console {
         let text = self.buffer.borrow().to_owned();
         self.buffer.borrow_mut().clear();
 
+        debug!("Parsing commands");
+
+        let (commands, _remaining) = parse::commands().easy_parse(text.as_str()).unwrap();
+
+        for command in commands.iter() {
+            debug!("{:?}", command);
+        }
+
+        for args in commands {
+            if let Some(arg_0) = args.get(0) {
+                println!("arg0: {}", arg_0);
+                // TODO: check aliases
+
+                let tail_args: Vec<&str> = (&args[1..]).iter().map(|s| s.as_str()).collect();
+
+                if self.cmds.borrow().contains(arg_0) {
+                    self.cmds.borrow_mut().exec(arg_0, &tail_args).unwrap();
+                } else if self.cvars.borrow().contains(arg_0) {
+                    // TODO error handling on cvar set
+                    match args.get(1) {
+                        Some(arg_1) => self.cvars.borrow_mut().set(arg_0, arg_1).unwrap(),
+                        None => {
+                            let msg = format!(
+                                "\"{}\" is \"{}\"",
+                                arg_0,
+                                self.cvars.borrow().get(arg_0).unwrap()
+                            );
+                            self.output
+                                .borrow_mut()
+                                .push(msg.as_str().chars().collect());
+                        }
+                    }
+                } else {
+                    // TODO: try sending to server first
+                    self.output.borrow_mut().push(
+                        format!("Unrecognized command \"{}\"", arg_0)
+                            .as_str()
+                            .chars()
+                            .collect(),
+                    );
+                }
+            }
+        }
+        /*
         for line in text.split(|c| c == '\n' || c == ';') {
             let mut tok = Tokenizer::new(line);
             if let Some(arg_0) = tok.next() {
@@ -515,6 +571,7 @@ impl Console {
                 }
             }
         }
+        */
     }
 
     pub fn get_string(&self) -> String {
@@ -529,9 +586,15 @@ impl Console {
         )
     }
 
-    pub fn stuff_text<S>(&self, text: S) where S: AsRef<str> {
+    pub fn stuff_text<S>(&self, text: S)
+    where
+        S: AsRef<str>,
+    {
         debug!("stuff_text:\n{}", text.as_ref());
         self.buffer.borrow_mut().push_str(text.as_ref());
+
+        // in case the last line doesn't end with a newline
+        self.buffer.borrow_mut().push_str("\n");
     }
 
     pub fn output(&self) -> Ref<ConsoleOutput> {
@@ -578,7 +641,8 @@ impl<'a> Tokenizer<'a> {
 
     fn try_skip_line_comment(&mut self) -> bool {
         if self.get_remaining_input().starts_with("//") {
-            match self.get_remaining_input()
+            match self
+                .get_remaining_input()
                 .char_indices()
                 .skip_while(|&(_, c)| c != '\n')
                 .next()
@@ -673,7 +737,7 @@ impl<'a> ::std::iter::Iterator for Tokenizer<'a> {
                         let len = start_char.len_utf8();
                         self.byte_offset += len;
                         Some(&self.input[offset..offset + len])
-                    },
+                    }
                 }
             }
 

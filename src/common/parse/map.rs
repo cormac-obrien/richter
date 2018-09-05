@@ -15,38 +15,39 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#![deny(unused_must_use)]
-#![feature(try_from)]
+use std::collections::HashMap;
 
-#[macro_use]
-extern crate bitflags;
-extern crate byteorder;
-extern crate cgmath;
-extern crate chrono;
-extern crate combine;
-extern crate env_logger;
-#[macro_use]
-extern crate failure;
-extern crate flame;
-#[macro_use]
-extern crate gfx;
-extern crate gfx_device_gl;
-extern crate gfx_window_glutin;
-extern crate glutin;
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate nom;
-extern crate num;
-#[macro_use]
-extern crate num_derive;
-extern crate rand;
-extern crate regex;
-extern crate rodio;
-extern crate winit;
+use common::parse::quoted;
 
-pub mod client;
-pub mod common;
-pub mod server;
+use combine::char::string;
+use combine::{between, many, token, ParseError, Parser, Stream};
+
+// "name" "value"\n
+pub fn entity_attribute<I>() -> impl Parser<Input = I, Output = (String, String)>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
+{
+    (quoted(), token(' '), quoted(), token('\n')).map(|(k, _, v, _)| (k, v))
+}
+
+// {
+// "name1" "value1"
+// "name2" "value2"
+// "name3" "value3"
+// }
+pub fn entity<I>() -> impl Parser<Input = I, Output = HashMap<String, String>>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
+{
+    between(string("{\n"), string("}\n"), many(entity_attribute()))
+}
+
+pub fn entities<I>() -> impl Parser<Input = I, Output = Vec<HashMap<String, String>>>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
+{
+    many(entity())
+}

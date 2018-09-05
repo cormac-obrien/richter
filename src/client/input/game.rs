@@ -24,6 +24,7 @@ use std::string::ToString;
 use common::console::{CmdRegistry, Console, CvarRegistry};
 use common::parse;
 
+use combine::Parser;
 use failure::Error;
 use nom::IResult;
 use winit::{
@@ -33,7 +34,10 @@ use winit::{
 
 const ACTION_COUNT: usize = 19;
 
-static INPUT_NAMES: [&'static str; 72] = [
+static INPUT_NAMES: [&'static str; 75] = [
+    ",",
+    ".",
+    "/",
     "0",
     "1",
     "2",
@@ -52,7 +56,7 @@ static INPUT_NAMES: [&'static str; 72] = [
     "CTRL",
     "D",
     "DEL",
-    "DOWN",
+    "DOWNARROW",
     "E",
     "END",
     "ENTER",
@@ -108,7 +112,10 @@ static INPUT_NAMES: [&'static str; 72] = [
     "Z",
 ];
 
-static INPUT_VALUES: [BindInput; 72] = [
+static INPUT_VALUES: [BindInput; 75] = [
+    BindInput::Key(Key::Comma),
+    BindInput::Key(Key::Period),
+    BindInput::Key(Key::Slash),
     BindInput::Key(Key::Key0),
     BindInput::Key(Key::Key1),
     BindInput::Key(Key::Key2),
@@ -418,12 +425,16 @@ impl FromStr for BindTarget {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match parse::action(s.as_bytes()) {
+        match parse::action().parse(s) {
             // first, check if this is an action
-            IResult::Done(_remaining, (trigger, action_str)) => Ok(BindTarget::Action {
-                trigger,
-                action: Action::from_str(action_str)?,
-            }),
+            Ok(((trigger, action_str), _)) => {
+                let action = match Action::from_str(&action_str) {
+                    Ok(a) => a,
+                    _ => return Ok(BindTarget::ConsoleInput { text: s.to_owned() }),
+                };
+
+                Ok(BindTarget::Action { trigger, action })
+            }
 
             // if the parse fails, assume it's a cvar/cmd and return the text
             _ => Ok(BindTarget::ConsoleInput { text: s.to_owned() }),
@@ -850,9 +861,11 @@ impl GameInput {
                     // bind (key) [command]
                     2 => match BindInput::from_str(args[0]) {
                         Ok(i) => {
+                            let target = BindTarget::from_str(args[1]).unwrap();
                             bindings
                                 .borrow_mut()
                                 .insert(i, BindTarget::from_str(args[1]).unwrap());
+                            debug!("Bound {:?} to {:?}", i, target);
                         }
 
                         Err(_) => println!("\"{}\" isn't a valid key", args[0]),
@@ -873,11 +886,11 @@ impl GameInput {
                     1 => match u8::from_str(args[0]) {
                         Ok(i) => impulse.set(i),
                         Err(_) => println!("Impulse must be a number between 0 and 255"),
-                    }
+                    },
 
                     _ => println!("impulse [number]"),
                 }
-            })
+            }),
         ).unwrap();
     }
 
