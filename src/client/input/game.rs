@@ -34,7 +34,7 @@ use winit::{
 
 const ACTION_COUNT: usize = 19;
 
-static INPUT_NAMES: [&'static str; 75] = [
+static INPUT_NAMES: [&'static str; 79] = [
     ",",
     ".",
     "/",
@@ -110,9 +110,13 @@ static INPUT_NAMES: [&'static str; 75] = [
     "X",
     "Y",
     "Z",
+    "[",
+    "\\",
+    "]",
+    "`",
 ];
 
-static INPUT_VALUES: [BindInput; 75] = [
+static INPUT_VALUES: [BindInput; 79] = [
     BindInput::Key(Key::Comma),
     BindInput::Key(Key::Period),
     BindInput::Key(Key::Slash),
@@ -188,6 +192,10 @@ static INPUT_VALUES: [BindInput; 75] = [
     BindInput::Key(Key::X),
     BindInput::Key(Key::Y),
     BindInput::Key(Key::Z),
+    BindInput::Key(Key::LBracket),
+    BindInput::Key(Key::Backslash),
+    BindInput::Key(Key::RBracket),
+    BindInput::Key(Key::Grave),
 ];
 
 /// A unique identifier for an in-game action.
@@ -873,6 +881,18 @@ impl GameInput {
 
                     _ => println!("bind [key] (command): attach a command to a key"),
                 }
+            }),
+        ).unwrap();
+
+        // "unbindall"
+        let bindings = self.bindings.clone();
+        cmds.insert_or_replace(
+            "unbindall",
+            Box::new(move |args| match args.len() {
+                0 => {
+                    let _ = bindings.replace(HashMap::new());
+                }
+                _ => println!("unbindall: delete all keybindings"),
             }),
         ).unwrap();
 

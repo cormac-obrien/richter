@@ -504,8 +504,6 @@ impl Console {
         let text = self.buffer.borrow().to_owned();
         self.buffer.borrow_mut().clear();
 
-        debug!("Parsing commands");
-
         let (commands, _remaining) = parse::commands().easy_parse(text.as_str()).unwrap();
 
         for command in commands.iter() {
