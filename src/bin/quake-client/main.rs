@@ -140,7 +140,7 @@ impl ClientProgram {
         use gfx::Factory;
         let (_, dummy_texture) = factory
             .create_texture_immutable_u8::<render::ColorFormat>(
-                gfx::texture::Kind::D2(0, 0, gfx::texture::AaMode::Single),
+                gfx::texture::Kind::D2(1, 1, gfx::texture::AaMode::Single),
                 gfx::texture::Mipmap::Allocated,
                 &[&[]],
             )
