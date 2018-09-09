@@ -60,6 +60,17 @@ impl MenuBuilder {
             .push(NamedMenuItem::new(name, MenuItem::Action(action)));
         self
     }
+
+    pub fn add_toggle<S>(mut self, name: S, init: bool, on_toggle: Box<Fn(bool)>) -> MenuBuilder
+    where
+        S: AsRef<str>,
+    {
+        self.items.push(NamedMenuItem::new(
+            name,
+            MenuItem::Toggle(MenuItemToggle::new(init, on_toggle)),
+        ));
+        self
+    }
 }
 
 struct NamedMenuItem {
@@ -92,9 +103,9 @@ struct MenuItemToggle {
 }
 
 impl MenuItemToggle {
-    fn new(on_toggle: Box<Fn(bool)>) -> MenuItemToggle {
+    fn new(init: bool, on_toggle: Box<Fn(bool)>) -> MenuItemToggle {
         MenuItemToggle {
-            state: Cell::new(false),
+            state: Cell::new(init),
             on_toggle,
         }
     }
@@ -174,15 +185,24 @@ pub struct MenuItemSlider {
 }
 
 impl MenuItemSlider {
-    pub fn new(min: f32, max: f32, steps: usize, init: usize, on_select: Box<Fn(f32)>) -> Result<MenuItemSlider, Error> {
+    pub fn new(
+        min: f32,
+        max: f32,
+        steps: usize,
+        init: usize,
+        on_select: Box<Fn(f32)>,
+    ) -> Result<MenuItemSlider, Error> {
         ensure!(steps > 1, "Slider must have at least 2 steps");
         ensure!(init < steps, "Invalid initial setting");
-        ensure!(min < max, "Minimum setting must be less than maximum setting");
+        ensure!(
+            min < max,
+            "Minimum setting must be less than maximum setting"
+        );
 
         Ok(MenuItemSlider {
             min,
             max,
-            increment: (max - min) / steps as f32,
+            increment: (max - min) / (steps - 1) as f32,
             steps,
             selected: Cell::new(init),
             on_select,
@@ -221,11 +241,83 @@ mod test {
         let s = Rc::new(RefCell::new("false".to_string()));
 
         let s2 = s.clone();
-        let item = MenuItemToggle::new(Box::new(move |state| {
-            s2.replace(format!("{}", state));
-        }));
+        let item = MenuItemToggle::new(
+            false,
+            Box::new(move |state| {
+                s2.replace(format!("{}", state));
+            }),
+        );
         item.toggle();
 
         assert_eq!(*s.borrow(), "true");
+    }
+
+    #[test]
+    fn test_menu_item_enum() {
+        let s = Rc::new(RefCell::new("first".to_string()));
+        let (s2, s3, s4) = (s.clone(), s.clone(), s.clone());
+
+        let item = MenuItemEnum::new(
+            0,
+            vec![
+                MenuItemEnumItem::new(
+                    "first",
+                    Box::new(move || {
+                        s2.replace("first".to_string());
+                    }),
+                ).unwrap(),
+                MenuItemEnumItem::new(
+                    "second",
+                    Box::new(move || {
+                        s3.replace("second".to_string());
+                    }),
+                ).unwrap(),
+                MenuItemEnumItem::new(
+                    "third",
+                    Box::new(move || {
+                        s4.replace("third".to_string());
+                    }),
+                ).unwrap(),
+            ],
+        ).unwrap();
+
+        item.select_prev();
+        assert_eq!(s.borrow().as_str(), "third");
+
+        item.select_prev();
+        assert_eq!(s.borrow().as_str(), "second");
+
+        item.select_next();
+        assert_eq!(s.borrow().as_str(), "third");
+
+        item.select_next();
+        assert_eq!(s.borrow().as_str(), "first");
+    }
+
+    #[test]
+    fn test_menu_item_slider() {
+        let f = Rc::new(Cell::new(0.0f32));
+
+        let f2 = f.clone();
+        let item = MenuItemSlider::new(
+            0.0,
+            10.0,
+            11,
+            0,
+            Box::new(move |f| {
+                f2.set(f);
+            }),
+        ).unwrap();
+
+        item.decrease();
+        assert_eq!(f.get(), 0.0);
+
+        for i in 0..10 {
+            item.increase();
+            assert_eq!(f.get(), i as f32 + 1.0);
+        }
+
+        item.increase();
+        assert_eq!(f.get(), 10.0);
     }
 }
