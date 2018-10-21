@@ -208,4 +208,31 @@ mod test {
         e.select_next();
         assert_eq!(*target.borrow(), "option_0");
     }
+
+    #[test]
+    fn test_slider() {
+        let f = Rc::new(Cell::new(0.0f32));
+
+        let f2 = f.clone();
+        let item = MenuItemSlider::new(
+            0.0,
+            10.0,
+            11,
+            0,
+            Box::new(move |f| {
+                f2.set(f);
+            }),
+        ).unwrap();
+
+        item.decrease();
+        assert_eq!(f.get(), 0.0);
+
+        for i in 0..10 {
+            item.increase();
+            assert_eq!(f.get(), i as f32 + 1.0);
+        }
+
+        item.increase();
+        assert_eq!(f.get(), 10.0);
+    }
 }

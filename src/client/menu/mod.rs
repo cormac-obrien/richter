@@ -64,6 +64,17 @@ impl MenuBuilder {
             .push(NamedMenuItem::new(name, Item::Action(action)));
         self
     }
+
+    pub fn add_toggle<S>(mut self, name: S, init: bool, on_toggle: Box<Fn(bool)>) -> MenuBuilder
+    where
+        S: AsRef<str>,
+    {
+        self.items.push(NamedMenuItem::new(
+            name,
+            MenuItem::Toggle(MenuItemToggle::new(init, on_toggle)),
+        ));
+        self
+    }
 }
 
 struct NamedMenuItem {
@@ -83,7 +94,6 @@ impl NamedMenuItem {
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -100,4 +110,5 @@ mod test {
 
         // TODO
     }
+
 }
