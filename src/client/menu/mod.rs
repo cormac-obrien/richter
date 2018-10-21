@@ -18,9 +18,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+mod item;
+
 use std::cell::Cell;
 
 use failure::Error;
+
+use self::item::{Item, Toggle, Enum};
 
 pub struct Menu {
     selected: Cell<usize>,
@@ -48,7 +52,7 @@ impl MenuBuilder {
         S: AsRef<str>,
     {
         self.items
-            .push(NamedMenuItem::new(name, MenuItem::Submenu(submenu)));
+            .push(NamedMenuItem::new(name, Item::Submenu(submenu)));
         self
     }
 
@@ -57,18 +61,18 @@ impl MenuBuilder {
         S: AsRef<str>,
     {
         self.items
-            .push(NamedMenuItem::new(name, MenuItem::Action(action)));
+            .push(NamedMenuItem::new(name, Item::Action(action)));
         self
     }
 }
 
 struct NamedMenuItem {
     name: String,
-    item: MenuItem,
+    item: Item,
 }
 
 impl NamedMenuItem {
-    fn new<S>(name: S, item: MenuItem) -> NamedMenuItem
+    fn new<S>(name: S, item: Item) -> NamedMenuItem
     where
         S: AsRef<str>,
     {
@@ -79,136 +83,6 @@ impl NamedMenuItem {
     }
 }
 
-enum MenuItem {
-    Submenu(Menu),
-    Action(Box<Fn()>),
-    Toggle(MenuItemToggle),
-    Enum,
-}
-
-struct MenuItemToggle {
-    state: Cell<bool>,
-    on_toggle: Box<Fn(bool)>,
-}
-
-impl MenuItemToggle {
-    fn new(on_toggle: Box<Fn(bool)>) -> MenuItemToggle {
-        MenuItemToggle {
-            state: Cell::new(false),
-            on_toggle,
-        }
-    }
-
-    fn toggle(&self) {
-        self.state.set(!self.state.get());
-        (self.on_toggle)(self.state.get());
-    }
-}
-
-pub struct MenuItemEnum {
-    selected: Cell<usize>,
-    items: Vec<MenuItemEnumItem>,
-}
-
-impl MenuItemEnum {
-    pub fn new(init: usize, items: Vec<MenuItemEnumItem>) -> Result<MenuItemEnum, Error> {
-        ensure!(items.len() > 0, "Enum element must have at least one item");
-        ensure!(init < items.len(), "Invalid initial item ID");
-
-        Ok(MenuItemEnum {
-            selected: Cell::new(init),
-            items,
-        })
-    }
-
-    pub fn selected_name(&self) -> &str {
-        self.items[self.selected.get()].name.as_str()
-    }
-
-    pub fn select_next(&self) {
-        let selected = match self.selected.get() + 1 {
-            s if s >= self.items.len() => 0,
-            s => s,
-        };
-
-        self.selected.set(selected);
-        (self.items[selected].on_select)();
-    }
-
-    pub fn select_prev(&self) {
-        let selected = match self.selected.get() {
-            0 => self.items.len() - 1,
-            s => s - 1,
-        };
-
-        self.selected.set(selected);
-        (self.items[selected].on_select)();
-    }
-}
-
-pub struct MenuItemEnumItem {
-    name: String,
-    on_select: Box<Fn()>,
-}
-
-impl MenuItemEnumItem {
-    pub fn new<S>(name: S, on_select: Box<Fn()>) -> Result<MenuItemEnumItem, Error>
-    where
-        S: AsRef<str>,
-    {
-        Ok(MenuItemEnumItem {
-            name: name.as_ref().to_string(),
-            on_select,
-        })
-    }
-}
-
-pub struct MenuItemSlider {
-    min: f32,
-    max: f32,
-    increment: f32,
-    steps: usize,
-
-    selected: Cell<usize>,
-    on_select: Box<Fn(f32)>,
-}
-
-impl MenuItemSlider {
-    pub fn new(min: f32, max: f32, steps: usize, init: usize, on_select: Box<Fn(f32)>) -> Result<MenuItemSlider, Error> {
-        ensure!(steps > 1, "Slider must have at least 2 steps");
-        ensure!(init < steps, "Invalid initial setting");
-        ensure!(min < max, "Minimum setting must be less than maximum setting");
-
-        Ok(MenuItemSlider {
-            min,
-            max,
-            increment: (max - min) / steps as f32,
-            steps,
-            selected: Cell::new(init),
-            on_select,
-        })
-    }
-
-    pub fn increase(&self) {
-        let old = self.selected.get();
-
-        if old != self.steps - 1 {
-            self.selected.set(old + 1);
-        }
-
-        (self.on_select)(self.min + self.selected.get() as f32 * self.increment);
-    }
-
-    pub fn decrease(&self) {
-        let old = self.selected.get();
-
-        if old != 0 {
-            self.selected.set(old - 1);
-        }
-
-        (self.on_select)(self.min + self.selected.get() as f32 * self.increment);
-    }
-}
 
 #[cfg(test)]
 mod test {
@@ -216,16 +90,14 @@ mod test {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    #[test]
-    fn test_menu_item_toggle() {
-        let s = Rc::new(RefCell::new("false".to_string()));
+    fn test_menu_builder() {
+        let action_target = Rc::new(Cell::new(false));
+        let action_target_handle = action_target.clone();
 
-        let s2 = s.clone();
-        let item = MenuItemToggle::new(Box::new(move |state| {
-            s2.replace(format!("{}", state));
-        }));
-        item.toggle();
+        let m = MenuBuilder::new()
+            .add_action("action", Box::new(move || action_target_handle.set(true)))
+            .build();
 
-        assert_eq!(*s.borrow(), "true");
+        // TODO
     }
 }
