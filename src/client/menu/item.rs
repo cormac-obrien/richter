@@ -37,11 +37,16 @@ pub struct Toggle {
 }
 
 impl Toggle {
-    pub fn new(on_toggle: Box<Fn(bool)>) -> Toggle {
-        Toggle {
-            state: Cell::new(false),
+    pub fn new(init: bool, on_toggle: Box<Fn(bool)>) -> Toggle {
+        let t = Toggle {
+            state: Cell::new(init),
             on_toggle,
-        }
+        };
+
+        // initialize with default
+        (t.on_toggle)(init);
+
+        t
     }
 
     pub fn toggle(&self) {
@@ -134,7 +139,7 @@ impl Slider {
         Ok(Slider {
             min,
             max,
-            increment: (max - min) / steps as f32,
+            increment: (max - min) / (steps - 1) as f32,
             steps,
             selected: Cell::new(init),
             on_select,
@@ -162,6 +167,18 @@ impl Slider {
     }
 }
 
+pub struct TextField {
+    chars: Vec<char>,
+    max_len: Option<usize>,
+    on_update: Box<Fn(&str)>,
+}
+
+impl TextField {
+    pub fn new<S>(default: Option<S>, max_len: Option<usize>) -> Result<TextField, Error> {
+        unimplemented!()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -173,7 +190,7 @@ mod test {
         let s = Rc::new(RefCell::new("false".to_string()));
 
         let s2 = s.clone();
-        let item = Toggle::new(Box::new(move |state| {
+        let item = Toggle::new(false, Box::new(move |state| {
             s2.replace(format!("{}", state));
         }));
         item.toggle();
@@ -214,7 +231,7 @@ mod test {
         let f = Rc::new(Cell::new(0.0f32));
 
         let f2 = f.clone();
-        let item = MenuItemSlider::new(
+        let item = Slider::new(
             0.0,
             10.0,
             11,
@@ -224,6 +241,7 @@ mod test {
             }),
         ).unwrap();
 
+        // don't underflow
         item.decrease();
         assert_eq!(f.get(), 0.0);
 
@@ -232,6 +250,7 @@ mod test {
             assert_eq!(f.get(), i as f32 + 1.0);
         }
 
+        // don't overflow
         item.increase();
         assert_eq!(f.get(), 10.0);
     }

@@ -71,7 +71,7 @@ impl MenuBuilder {
     {
         self.items.push(NamedMenuItem::new(
             name,
-            MenuItem::Toggle(MenuItemToggle::new(init, on_toggle)),
+            Item::Toggle(Toggle::new(init, on_toggle)),
         ));
         self
     }
