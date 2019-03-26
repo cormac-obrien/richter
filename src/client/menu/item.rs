@@ -131,10 +131,19 @@ pub struct Slider {
 }
 
 impl Slider {
-    pub fn new(min: f32, max: f32, steps: usize, init: usize, on_select: Box<Fn(f32)>) -> Result<Slider, Error> {
+    pub fn new(
+        min: f32,
+        max: f32,
+        steps: usize,
+        init: usize,
+        on_select: Box<Fn(f32)>,
+    ) -> Result<Slider, Error> {
         ensure!(steps > 1, "Slider must have at least 2 steps");
         ensure!(init < steps, "Invalid initial setting");
-        ensure!(min < max, "Minimum setting must be less than maximum setting");
+        ensure!(
+            min < max,
+            "Minimum setting must be less than maximum setting"
+        );
 
         Ok(Slider {
             min,
@@ -171,11 +180,96 @@ pub struct TextField {
     chars: Vec<char>,
     max_len: Option<usize>,
     on_update: Box<Fn(&str)>,
+    cursor: usize,
 }
 
 impl TextField {
-    pub fn new<S>(default: Option<S>, max_len: Option<usize>) -> Result<TextField, Error> {
-        unimplemented!()
+    pub fn new<S>(
+        default: Option<S>,
+        max_len: Option<usize>,
+        on_update: Box<Fn(&str)>,
+    ) -> Result<TextField, Error>
+    where
+        S: AsRef<str>,
+    {
+        let chars = match default {
+            Some(d) => d.as_ref().chars().collect(),
+            None => Vec::new(),
+        };
+
+        let cursor = chars.len();
+
+        Ok(TextField {
+            chars,
+            max_len,
+            on_update,
+            cursor,
+        })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.chars.len() == 0
+    }
+
+    pub fn text(&self) -> String {
+        self.chars.iter().collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.chars.len()
+    }
+
+    pub fn set_cursor(&mut self, cursor: usize) -> Result<(), Error> {
+        ensure!(cursor <= self.chars.len(), "Index out of range");
+
+        self.cursor = cursor;
+
+        Ok(())
+    }
+
+    pub fn home(&mut self) {
+        self.cursor = 0;
+    }
+
+    pub fn end(&mut self) {
+        self.cursor = self.chars.len();
+    }
+
+    pub fn cursor_right(&mut self) {
+        if self.cursor < self.chars.len() {
+            self.cursor += 1;
+        }
+    }
+
+    pub fn cursor_left(&mut self) {
+        if self.cursor > 1 {
+            self.cursor -= 1;
+        }
+    }
+
+    pub fn insert(&mut self, c: char) {
+        if let Some(l) = self.max_len {
+            if self.len() == l {
+                return;
+            }
+        }
+
+        self.chars.insert(self.cursor, c);
+        (self.on_update)(&self.text());
+    }
+
+    pub fn backspace(&mut self) {
+        if self.cursor > 1 {
+            self.chars.remove(self.cursor - 1);
+            (self.on_update)(&self.text());
+        }
+    }
+
+    pub fn delete(&mut self) {
+        if self.cursor < self.chars.len() {
+            self.chars.remove(self.cursor);
+            (self.on_update)(&self.text());
+        }
     }
 }
 
@@ -190,9 +284,12 @@ mod test {
         let s = Rc::new(RefCell::new("false".to_string()));
 
         let s2 = s.clone();
-        let item = Toggle::new(false, Box::new(move |state| {
-            s2.replace(format!("{}", state));
-        }));
+        let item = Toggle::new(
+            false,
+            Box::new(move |state| {
+                s2.replace(format!("{}", state));
+            }),
+        );
         item.toggle();
 
         assert_eq!(*s.borrow(), "true");
@@ -202,12 +299,19 @@ mod test {
     fn test_enum() {
         let target = Rc::new(RefCell::new("null".to_string()));
 
-        let enum_items = (0..3i32).into_iter().map(|i: i32| {
-            let target_handle = target.clone();
-            EnumItem::new(format!("option_{}", i), Box::new(move || {
-                target_handle.replace(format!("option_{}", i));
-            })).unwrap()
-        }).collect();
+        let enum_items = (0..3i32)
+            .into_iter()
+            .map(|i: i32| {
+                let target_handle = target.clone();
+                EnumItem::new(
+                    format!("option_{}", i),
+                    Box::new(move || {
+                        target_handle.replace(format!("option_{}", i));
+                    }),
+                )
+                .unwrap()
+            })
+            .collect();
 
         let e = Enum::new(0, enum_items).unwrap();
         assert_eq!(*target.borrow(), "option_0");
@@ -239,7 +343,8 @@ mod test {
             Box::new(move |f| {
                 f2.set(f);
             }),
-        ).unwrap();
+        )
+        .unwrap();
 
         // don't underflow
         item.decrease();
@@ -253,5 +358,42 @@ mod test {
         // don't overflow
         item.increase();
         assert_eq!(f.get(), 10.0);
+    }
+
+    #[test]
+    fn test_textfield() {
+        let MAX_LEN = 10;
+        let s = Rc::new(RefCell::new("before".to_owned()));
+        let s2 = s.clone();
+
+        let mut tf = TextField::new(
+            Some("default"),
+            Some(MAX_LEN),
+            Box::new(move |x| {
+                s2.replace(x.to_string());
+            }),
+        )
+        .unwrap();
+
+        tf.cursor_left();
+        tf.backspace();
+        tf.backspace();
+        tf.home();
+        tf.delete();
+        tf.delete();
+        tf.delete();
+        tf.cursor_right();
+        tf.insert('f');
+        tf.end();
+        tf.insert('e');
+        tf.insert('r');
+
+        assert_eq!(tf.text(), *s.borrow());
+
+        for _ in 0..2 * MAX_LEN {
+            tf.insert('x');
+        }
+
+        assert_eq!(tf.len(), MAX_LEN);
     }
 }
