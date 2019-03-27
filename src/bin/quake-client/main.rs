@@ -55,7 +55,7 @@ use cgmath::{Matrix4, SquareMatrix};
 use chrono::Duration;
 use gfx::Encoder;
 use gfx_device_gl::{CommandBuffer, Device, Resources};
-use glutin::{CursorState, Event, EventsLoop, GlContext, GlWindow, MouseCursor, WindowEvent};
+use glutin::{Event, EventsLoop, MouseCursor, WindowEvent, WindowedContext};
 use rodio::Endpoint;
 
 enum TitleState {
@@ -75,7 +75,7 @@ struct ClientProgram {
     console: Rc<RefCell<Console>>,
 
     events_loop: RefCell<EventsLoop>,
-    window: RefCell<GlWindow>,
+    windowed_context: RefCell<WindowedContext>,
 
     gfx_pkg: Rc<RefCell<GraphicsPackage>>,
     device: RefCell<Device>,
@@ -124,17 +124,18 @@ impl ClientProgram {
         let events_loop = glutin::EventsLoop::new();
         let window_builder = glutin::WindowBuilder::new()
             .with_title("Richter client")
-            .with_dimensions(1600, 900);
+            .with_dimensions((1600, 900).into());
         let context_builder = glutin::ContextBuilder::new()
             .with_gl(glutin::GlRequest::Specific(glutin::Api::OpenGl, (3, 3)))
             .with_vsync(false);
 
-        let (window, device, mut factory, color, depth) =
+        let (windowed_context, device, mut factory, color, depth) =
             gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(
                 window_builder,
                 context_builder,
                 &events_loop,
-            );
+            )
+            .unwrap();
 
         use gfx::traits::FactoryExt;
         use gfx::Factory;
@@ -180,7 +181,7 @@ impl ClientProgram {
             cmds,
             console,
             events_loop: RefCell::new(events_loop),
-            window: RefCell::new(window),
+            windowed_context: RefCell::new(windowed_context),
             gfx_pkg,
             device: RefCell::new(device),
             encoder: RefCell::new(encoder),
@@ -202,7 +203,8 @@ impl ClientProgram {
             self.cmds.clone(),
             self.console.clone(),
             self.endpoint.clone(),
-        ).unwrap();
+        )
+        .unwrap();
 
         cl.register_cmds(&mut self.cmds.borrow_mut());
 
@@ -214,7 +216,8 @@ impl ClientProgram {
                 self.gfx_pkg.clone(),
                 self.input.clone(),
                 cl,
-            ).unwrap(),
+            )
+            .unwrap(),
         ));
     }
 
@@ -225,7 +228,12 @@ impl ClientProgram {
         self.encoder
             .borrow_mut()
             .clear_depth(&self.gfx_pkg.borrow().depth_stencil(), 1.0);
-        let (win_w, win_h) = self.window.borrow().get_inner_size().unwrap();
+        let (win_w, win_h) = self
+            .windowed_context
+            .borrow()
+            .get_inner_size()
+            .unwrap()
+            .into();
 
         match *self.state.borrow_mut() {
             ProgramState::Title => unimplemented!(),
@@ -247,7 +255,7 @@ impl ClientProgram {
         flame::end("Encoder::flush");
 
         flame::start("Window::swap_buffers");
-        self.window.borrow_mut().swap_buffers().unwrap();
+        self.windowed_context.borrow_mut().swap_buffers().unwrap();
         flame::end("Window::swap_buffers");
 
         use gfx::Device;
@@ -273,7 +281,7 @@ impl Program for ClientProgram {
             .borrow_mut()
             .poll_events(|event| match event {
                 Event::WindowEvent {
-                    event: WindowEvent::Closed,
+                    event: WindowEvent::CloseRequested,
                     ..
                 } => {
                     // TODO: handle quit properly
@@ -290,19 +298,19 @@ impl Program for ClientProgram {
 
         match self.input.borrow().current_focus() {
             InputFocus::Game => {
-                self.window
+                self.windowed_context
                     .borrow_mut()
-                    .set_cursor_state(CursorState::Grab)
+                    .grab_cursor(true)
                     .unwrap();
-                self.window.borrow_mut().set_cursor(MouseCursor::NoneCursor);
+                self.windowed_context.borrow_mut().hide_cursor(true);
             }
 
             _ => {
-                self.window
+                self.windowed_context
                     .borrow_mut()
-                    .set_cursor_state(CursorState::Normal)
+                    .grab_cursor(false)
                     .unwrap();
-                self.window.borrow_mut().set_cursor(MouseCursor::Default);
+                self.windowed_context.borrow_mut().hide_cursor(false);
             }
         }
 

@@ -25,11 +25,11 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 #
 # these break easily, especially with incompatibilities between the versions of glutin and winit.
 # check crates.io before changing them.
-"gfx" = "~0.17"
-"gfx_device_gl" = "~0.15"
-"gfx_window_glutin" = "~0.21"
-"glutin" = "~0.13"
-"winit" = "~0.11"
+"gfx" = "~0.18"
+"gfx_device_gl" = "~0.16"
+"gfx_window_glutin" = "~0.30.0"
+"glutin" = "~0.20"
+"winit" = "~0.19"
 
 # binaries only
 "docopt" = "0.8"
