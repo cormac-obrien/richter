@@ -35,22 +35,46 @@ pub fn build_main_menu() -> Menu {
 fn build_menu_sp() -> Menu {
     MenuBuilder::new()
         .add_action("New Game")
-        .add_submenu("Load", unimplemented!())
-        .add_submenu("Save", unimplemented!())
+        // .add_submenu("Load", unimplemented!())
+        // .add_submenu("Save", unimplemented!())
         .build()
 }
 
 fn build_menu_mp() -> Menu {
     MenuBuilder::new()
-        .add_submenu("Join a Game", unimplemented!())
-        .add_submenu("New Game", unimplemented!())
-        .add_submenu("Setup", unimplemented!())
+        .add_submenu("Join a Game", build_menu_mp_join())
+        // .add_submenu("New Game", unimplemented!())
+        // .add_submenu("Setup", unimplemented!())
+        .build()
+}
+
+fn build_menu_mp_join() -> Menu {
+    MenuBuilder::new()
+        // .add_submenu("IPX", unimplemented!()) // this is always disabled -- remove?
+        .add_submenu("TCP", build_menu_mp_join_tcp())
+        // .add_textbox // description
+        .build()
+}
+
+fn build_menu_mp_join_tcp() -> Menu {
+    // Join Game - TCP/IP          // title
+    //
+    //  Address: 127.0.0.1         // label
+    //
+    //  Port     [26000]           // text field
+    //
+    //  Search for local games...  // menu
+    //
+    //  Join game at:              // label
+    //  [                        ] // text field
+    MenuBuilder::new()
+        // .add
         .build()
 }
 
 fn build_menu_options() -> Menu {
     MenuBuilder::new()
-        .add_submenu("Customize controls", unimplemented!())
+        // .add_submenu("Customize controls", unimplemented!())
         .add_action("Go to console")
         .add_action("Reset to defaults")
         .add_slider("Render scale")
@@ -63,6 +87,6 @@ fn build_menu_options() -> Menu {
         .add_toggle("Invert mouse")
         .add_toggle("Lookspring")
         .add_toggle("Lookstrafe")
-        .add_submenu("Video options", unimplemented!())
+        // .add_submenu("Video options", unimplemented!())
         .build()
 }

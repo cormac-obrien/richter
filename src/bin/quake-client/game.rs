@@ -23,7 +23,7 @@ use std::rc::Rc;
 
 use richter::client::input::{Input, InputFocus};
 use richter::client::render::hud::HudRenderer;
-use richter::client::render::{self, pipe, GraphicsPackage, SceneRenderer};
+use richter::client::render::{self, pipe, GraphicsPackage, MenuRenderer, SceneRenderer};
 use richter::client::Client;
 use richter::common::console::{CmdRegistry, CvarRegistry};
 use richter::common::math;
@@ -53,6 +53,7 @@ struct InGameState {
     cmds: Rc<RefCell<CmdRegistry>>,
     renderer: SceneRenderer,
     hud_renderer: HudRenderer,
+    menu_renderer: MenuRenderer,
     focus: Rc<Cell<InGameFocus>>,
 }
 
@@ -61,6 +62,7 @@ impl InGameState {
         cmds: Rc<RefCell<CmdRegistry>>,
         scene_renderer: SceneRenderer,
         hud_renderer: HudRenderer,
+        menu_renderer: MenuRenderer,
         focus: InGameFocus,
     ) -> InGameState {
         let focus_rc = Rc::new(Cell::new(focus));
@@ -85,10 +87,30 @@ impl InGameState {
             )
             .unwrap();
 
+        let togglemenu_focus = focus_rc.clone();
+
+        cmds.borrow_mut()
+            .insert(
+                "togglemenu",
+                Box::new(move |_| match togglemenu_focus.get() {
+                    InGameFocus::Game => {
+                        println!("togglemenu: ON");
+                        togglemenu_focus.set(InGameFocus::Menu);
+                    }
+
+                    InGameFocus::Menu | InGameFocus::Console => {
+                        println!("togglemenu: OFF");
+                        togglemenu_focus.set(InGameFocus::Game);
+                    }
+                }),
+            )
+            .unwrap();
+
         InGameState {
             cmds,
             renderer: scene_renderer,
             hud_renderer,
+            menu_renderer,
             focus: focus_rc,
         }
     }
@@ -160,7 +182,8 @@ impl Game {
                     self.client.models().unwrap(),
                     1,
                     &mut self.gfx_pkg.borrow_mut(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 let hud_renderer = HudRenderer::new(self.gfx_pkg.clone()).unwrap();
 
@@ -270,7 +293,14 @@ impl Game {
                     }
 
                     // render the menu
-                    InGameFocus::Menu => unimplemented!(),
+                    InGameFocus::Menu => {
+                        // let mut data = self.gfx_pkg.borrow().gen_user_data_2d();
+
+                        self.state
+                            .menu_renderer
+                            .render(encoder, display_width, display_height)
+                            .unwrap();
+                    }
                 }
             }
         }

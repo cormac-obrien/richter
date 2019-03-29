@@ -24,11 +24,41 @@ use std::cell::Cell;
 
 use failure::Error;
 
-use self::item::{Item, Toggle, Enum};
+use self::item::{Enum, EnumItem, Item, Slider, TextField, Toggle};
+
+pub enum MenuState {
+    /// Menu is inactive.
+    Inactive,
+
+    /// Menu is active. `index` indicates the currently selected element.
+    Active { index: usize },
+
+    /// A submenu of this menu is active. `index` indicates the active submenu.
+    InSubMenu { index: usize },
+}
 
 pub struct Menu {
     selected: Cell<usize>,
     items: Vec<NamedMenuItem>,
+    state: MenuState,
+}
+
+impl Menu {
+    /// Select the next element of this Menu.
+    pub fn next(&self) {
+        let s = self.selected.get();
+        self.selected.set((s + 1) % self.items.len());
+    }
+
+    /// Select the previous element of this Menu.
+    pub fn prev(&self) {
+        let s = self.selected.get();
+        self.selected.get((s - 1) % self.items.len())
+    }
+
+    pub fn selected(&self) {
+        &self.items[self.selected.get()]
+    }
 }
 
 pub struct MenuBuilder {
@@ -74,6 +104,54 @@ impl MenuBuilder {
             Item::Toggle(Toggle::new(init, on_toggle)),
         ));
         self
+    }
+
+    pub fn add_enum<S, E>(mut self, name: S, items: E, init: usize) -> Result<MenuBuilder, Error>
+    where
+        S: AsRef<str>,
+        E: Into<Vec<EnumItem>>,
+    {
+        self.items.push(NamedMenuItem::new(
+            name,
+            Item::Enum(Enum::new(init, items.into())?),
+        ));
+        Ok(self)
+    }
+
+    pub fn add_slider<S>(
+        mut self,
+        name: S,
+        min: f32,
+        max: f32,
+        steps: usize,
+        init: usize,
+        on_select: Box<Fn(f32)>,
+    ) -> Result<MenuBuilder, Error>
+    where
+        S: AsRef<str>,
+    {
+        self.items.push(NamedMenuItem::new(
+            name,
+            Item::Slider(Slider::new(min, max, steps, init, on_select)?),
+        ));
+        Ok(self)
+    }
+
+    pub fn add_text_field<S>(
+        mut self,
+        name: S,
+        default: Option<S>,
+        max_len: Option<usize>,
+        on_update: Box<Fn(&str)>,
+    ) -> Result<MenuBuilder, Error>
+    where
+        S: AsRef<str>,
+    {
+        self.items.push(NamedMenuItem::new(
+            name,
+            Item::TextField(TextField::new(default, max_len, on_update)?),
+        ));
+        Ok(self)
     }
 }
 

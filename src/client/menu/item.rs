@@ -28,7 +28,9 @@ pub enum Item {
     Submenu(Menu),
     Action(Box<Fn()>),
     Toggle(Toggle),
-    Enum,
+    Enum(Enum),
+    Slider(Slider),
+    TextField(TextField),
 }
 
 pub struct Toggle {

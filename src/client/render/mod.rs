@@ -24,6 +24,7 @@ pub mod brush;
 pub mod console;
 pub mod glyph;
 pub mod hud;
+pub mod menu;
 pub mod world;
 
 use std::cell::{Ref, RefCell, RefMut};
@@ -43,7 +44,7 @@ use cgmath::{Deg, Euler, Matrix3, Matrix4, SquareMatrix, Vector3, Zero};
 use chrono::Duration;
 use failure::Error;
 use flame;
-use gfx::format::{R8, R8_G8_B8_A8, Unorm};
+use gfx::format::{Unorm, R8, R8_G8_B8_A8};
 use gfx::handle::{
     Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView, Texture,
 };
@@ -60,6 +61,7 @@ use self::alias::AliasRenderer;
 use self::brush::BrushRenderer;
 use self::console::ConsoleRenderer;
 use self::glyph::GlyphRenderer;
+use self::menu::MenuRenderer;
 use self::world::WorldRenderer;
 
 const PALETTE_SIZE: usize = 768;
@@ -173,7 +175,8 @@ impl GraphicsPackage {
             &palette,
             console.clone(),
             glyph_renderer.clone(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let (_handle, dummy_diffuse_texture) = create_dummy_texture(&mut factory).unwrap();
 
@@ -673,10 +676,12 @@ impl Palette {
 
         for index in indices {
             match *index {
-                0xFF => for i in 0..4 {
-                    rgba.push(0);
-                    fullbright.push(0);
-                },
+                0xFF => {
+                    for i in 0..4 {
+                        rgba.push(0);
+                        fullbright.push(0);
+                    }
+                }
 
                 i => {
                     for component in 0..3 {
