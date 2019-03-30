@@ -23,7 +23,7 @@ use std::rc::Rc;
 
 use richter::client::input::{Input, InputFocus};
 use richter::client::render::hud::HudRenderer;
-use richter::client::render::{self, pipe, GraphicsPackage, MenuRenderer, SceneRenderer};
+use richter::client::render::{self, pipe, GraphicsPackage, SceneRenderer};
 use richter::client::Client;
 use richter::common::console::{CmdRegistry, CvarRegistry};
 use richter::common::math;
@@ -53,7 +53,7 @@ struct InGameState {
     cmds: Rc<RefCell<CmdRegistry>>,
     renderer: SceneRenderer,
     hud_renderer: HudRenderer,
-    menu_renderer: MenuRenderer,
+    // menu_renderer: MenuRenderer,
     focus: Rc<Cell<InGameFocus>>,
 }
 
@@ -62,7 +62,7 @@ impl InGameState {
         cmds: Rc<RefCell<CmdRegistry>>,
         scene_renderer: SceneRenderer,
         hud_renderer: HudRenderer,
-        menu_renderer: MenuRenderer,
+        // menu_renderer: MenuRenderer,
         focus: InGameFocus,
     ) -> InGameState {
         let focus_rc = Rc::new(Cell::new(focus));
@@ -110,7 +110,7 @@ impl InGameState {
             cmds,
             renderer: scene_renderer,
             hud_renderer,
-            menu_renderer,
+            // menu_renderer,
             focus: focus_rc,
         }
     }
@@ -296,10 +296,10 @@ impl Game {
                     InGameFocus::Menu => {
                         // let mut data = self.gfx_pkg.borrow().gen_user_data_2d();
 
-                        self.state
-                            .menu_renderer
-                            .render(encoder, display_width, display_height)
-                            .unwrap();
+                        // self.state
+                            // .menu_renderer
+                            // .render(encoder, display_width, display_height)
+                            // .unwrap();
                     }
                 }
             }

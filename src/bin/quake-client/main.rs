@@ -31,6 +31,7 @@ extern crate richter;
 extern crate rodio;
 
 mod game;
+mod menu;
 
 use std::cell::RefCell;
 use std::env;
@@ -117,8 +118,9 @@ impl ClientProgram {
         // TODO: register commands as other subsystems come online
 
         let console = Rc::new(RefCell::new(Console::new(cmds.clone(), cvars.clone())));
+        let menu = Rc::new(RefCell::new(menu::build_main_menu().unwrap()));
 
-        let input = Rc::new(RefCell::new(Input::new(InputFocus::Game, console.clone())));
+        let input = Rc::new(RefCell::new(Input::new(InputFocus::Game, console.clone(), menu.clone())));
         input.borrow_mut().bind_defaults();
 
         let events_loop = glutin::EventsLoop::new();

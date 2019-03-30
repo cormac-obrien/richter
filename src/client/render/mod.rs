@@ -24,7 +24,7 @@ pub mod brush;
 pub mod console;
 pub mod glyph;
 pub mod hud;
-pub mod menu;
+// pub mod menu;
 pub mod world;
 
 use std::cell::{Ref, RefCell, RefMut};
@@ -61,7 +61,7 @@ use self::alias::AliasRenderer;
 use self::brush::BrushRenderer;
 use self::console::ConsoleRenderer;
 use self::glyph::GlyphRenderer;
-use self::menu::MenuRenderer;
+// use self::menu::MenuRenderer;
 use self::world::WorldRenderer;
 
 const PALETTE_SIZE: usize = 768;

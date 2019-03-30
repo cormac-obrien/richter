@@ -20,12 +20,13 @@
 
 mod item;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use failure::Error;
 
 use self::item::{Enum, EnumItem, Item, Slider, TextField, Toggle};
 
+#[derive(Clone)]
 pub enum MenuState {
     /// Menu is inactive.
     Inactive,
@@ -38,26 +39,138 @@ pub enum MenuState {
 }
 
 pub struct Menu {
-    selected: Cell<usize>,
     items: Vec<NamedMenuItem>,
-    state: MenuState,
+    state: RefCell<MenuState>,
 }
 
 impl Menu {
+    /// Returns a reference to the active submenu of this menu and its parent.
+    fn active_submenu_and_parent(&self) -> Result<(&Menu, Option<&Menu>), Error> {
+        let mut m = self;
+        let mut m_parent = None;
+
+        while let MenuState::InSubMenu { index } = *m.state.borrow() {
+            match m.items[index].item {
+                Item::Submenu(ref s) => {
+                    m_parent = Some(m);
+                    m = s;
+                }
+                _ => bail!("Menu state points to invalid submenu"),
+            }
+        }
+
+        Ok((m, m_parent))
+    }
+
+    /// Return a reference to the active submenu of this menu
+    fn active_submenu(&self) -> Result<&Menu, Error> {
+        let (m, _) = self.active_submenu_and_parent()?;
+        Ok(m)
+    }
+
+    /// Return a reference to the parent of the active submenu of this menu.
+    ///
+    /// If this is the root menu, returns None.
+    fn active_submenu_parent(&self) -> Result<Option<&Menu>, Error> {
+        let (_, m_parent) = self.active_submenu_and_parent()?;
+        Ok(m_parent)
+    }
+
     /// Select the next element of this Menu.
-    pub fn next(&self) {
-        let s = self.selected.get();
-        self.selected.set((s + 1) % self.items.len());
+    pub fn next(&self) -> Result<(), Error> {
+        let m = self.active_submenu()?;
+
+        if let MenuState::Active { index } = m.state.borrow().clone() {
+            m.state.replace(MenuState::Active {
+                index: (index + 1) % m.items.len(),
+            });
+        } else {
+            bail!("Selected menu is inactive (invariant violation)");
+        }
+
+        Ok(())
     }
 
     /// Select the previous element of this Menu.
-    pub fn prev(&self) {
-        let s = self.selected.get();
-        self.selected.get((s - 1) % self.items.len())
+    pub fn prev(&self) -> Result<(), Error> {
+        let m = self.active_submenu()?;
+
+        if let MenuState::Active { index } = m.state.borrow().clone() {
+            m.state.replace(MenuState::Active {
+                index: (index - 1) % m.items.len(),
+            });
+        } else {
+            bail!("Selected menu is inactive (invariant violation)");
+        }
+
+        Ok(())
     }
 
-    pub fn selected(&self) {
-        &self.items[self.selected.get()]
+    /// Return a reference to the currently selected menu item.
+    pub fn selected(&self) -> Result<&Item, Error> {
+        let m = self.active_submenu()?;
+
+        if let MenuState::Active { index } = *m.state.borrow() {
+            return Ok(&m.items[index].item);
+        } else {
+            bail!("Active menu in invalid state (invariant violation)")
+        }
+    }
+
+    /// Activate the currently selected menu item.
+    ///
+    /// If this item is a `Menu`, sets the active (sub)menu's state to
+    /// `MenuState::InSubMenu` and the selected submenu's state to
+    /// `MenuState::Active`.
+    ///
+    /// If this item is an `Action`, executes the function contained in the
+    /// `Action`.
+    pub fn activate(&self) -> Result<(), Error> {
+        let m = self.active_submenu()?;
+
+        if let MenuState::Active { index } = m.state.borrow().clone() {
+            match m.items[index].item {
+                Item::Submenu(ref submenu) => {
+                    m.state.replace(MenuState::InSubMenu { index });
+                    submenu.state.replace(MenuState::Active { index: 0 });
+                }
+
+                _ => unimplemented!(),
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Return `true` if the root menu is active, `false` otherwise.
+    fn at_root(&self) -> bool {
+        match *self.state.borrow() {
+            MenuState::Active { .. } => true,
+            _ => false,
+        }
+    }
+
+    /// Deactivate the active menu and activate its parent
+    pub fn back(&self) -> Result<(), Error> {
+        if self.at_root() {
+            bail!("Cannot back out of root menu!");
+        }
+
+        let (m, m_parent) = self.active_submenu_and_parent()?;
+        m.state.replace(MenuState::Inactive);
+
+        match m_parent {
+            Some(mp) => {
+                match mp.state.borrow().clone() {
+                    MenuState::InSubMenu { index } => mp.state.replace(MenuState::Active { index }),
+                    _ => unreachable!(),
+                };
+            }
+
+            None => unreachable!(),
+        }
+
+        Ok(())
     }
 }
 
@@ -72,8 +185,8 @@ impl MenuBuilder {
 
     pub fn build(self) -> Menu {
         Menu {
-            selected: Cell::new(0),
             items: self.items,
+            state: RefCell::new(MenuState::Active { index: 0 }),
         }
     }
 
@@ -189,4 +302,27 @@ mod test {
         // TODO
     }
 
+    fn test_menu_active_submenu() {
+        let menu = MenuBuilder::new()
+            .add_submenu(
+                "menu_1",
+                MenuBuilder::new().add_action("action_1", Box::new(|| ())).build(),
+            )
+            .add_submenu(
+                "menu_2",
+                MenuBuilder::new().add_action("action_2", Box::new(|| ())).build(),
+            )
+            .build();
+
+        let m = &menu;
+        let m1 = match m.items[0].item {
+            Item::Submenu(ref m1i) => m1i,
+            _ => unreachable!(),
+        };
+        let m2 = match m.items[1].item {
+            Item::Submenu(ref m2i) => m2i,
+            _ => unreachable!(),
+        };
+
+    }
 }

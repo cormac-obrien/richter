@@ -17,17 +17,20 @@
 
 pub mod console;
 pub mod game;
+pub mod menu;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use common::console::{CmdRegistry, Console};
+use client::menu::Menu;
 
 use failure::Error;
 use winit::{Event, WindowEvent};
 
 use self::console::ConsoleInput;
 use self::game::{BindInput, BindTarget, GameInput};
+use self::menu::MenuInput;
 
 #[derive(Clone, Copy, Debug)]
 pub enum InputFocus {
@@ -42,17 +45,18 @@ pub struct Input {
 
     game_input: GameInput,
     console_input: ConsoleInput,
-    // menu_input: MenuInput,
+    menu_input: MenuInput,
 }
 
 impl Input {
-    pub fn new(init_focus: InputFocus, console: Rc<RefCell<Console>>) -> Input {
+    pub fn new(init_focus: InputFocus, console: Rc<RefCell<Console>>, menu: Rc<RefCell<Menu>>) -> Input {
         Input {
             window_focused: true,
             current_focus: init_focus,
 
             game_input: GameInput::new(console.clone()),
             console_input: ConsoleInput::new(console.clone()),
+            menu_input: MenuInput::new(menu.clone()),
         }
     }
 
@@ -68,7 +72,7 @@ impl Input {
                 match self.current_focus {
                     InputFocus::Game => self.game_input.handle_event(event)?,
                     InputFocus::Console => self.console_input.handle_event(event)?,
-                    InputFocus::Menu => unimplemented!(),
+                    InputFocus::Menu => self.menu_input.handle_event(event)?,
                 }
             },
         }

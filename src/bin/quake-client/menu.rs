@@ -22,41 +22,43 @@
 
 use richter::client::menu::{Menu, MenuBuilder};
 
-pub fn build_main_menu() -> Menu {
-    MenuBuilder::new()
-        .add_submenu("Single Player", build_menu_sp())
-        .add_submenu("Multiplayer", build_menu_mp())
-        .add_submenu("Options", build_menu_options())
-        .add_action("Help/Ordering")
-        .add_action("Quit")
-        .build()
+use failure::Error;
+
+pub fn build_main_menu() -> Result<Menu, Error> {
+    Ok(MenuBuilder::new()
+        .add_submenu("Single Player", build_menu_sp()?)
+        .add_submenu("Multiplayer", build_menu_mp()?)
+        .add_submenu("Options", build_menu_options()?)
+        .add_action("Help/Ordering", Box::new(|| ()))
+        .add_action("Quit", Box::new(|| ()))
+        .build())
 }
 
-fn build_menu_sp() -> Menu {
-    MenuBuilder::new()
-        .add_action("New Game")
+fn build_menu_sp() -> Result<Menu, Error> {
+    Ok(MenuBuilder::new()
+        .add_action("New Game", Box::new(|| ()))
         // .add_submenu("Load", unimplemented!())
         // .add_submenu("Save", unimplemented!())
-        .build()
+        .build())
 }
 
-fn build_menu_mp() -> Menu {
-    MenuBuilder::new()
-        .add_submenu("Join a Game", build_menu_mp_join())
+fn build_menu_mp() -> Result<Menu, Error> {
+    Ok(MenuBuilder::new()
+        .add_submenu("Join a Game", build_menu_mp_join()?)
         // .add_submenu("New Game", unimplemented!())
         // .add_submenu("Setup", unimplemented!())
-        .build()
+        .build())
 }
 
-fn build_menu_mp_join() -> Menu {
-    MenuBuilder::new()
+fn build_menu_mp_join() -> Result<Menu, Error> {
+    Ok(MenuBuilder::new()
         // .add_submenu("IPX", unimplemented!()) // this is always disabled -- remove?
-        .add_submenu("TCP", build_menu_mp_join_tcp())
+        .add_submenu("TCP", build_menu_mp_join_tcp()?)
         // .add_textbox // description
-        .build()
+        .build())
 }
 
-fn build_menu_mp_join_tcp() -> Menu {
+fn build_menu_mp_join_tcp() -> Result<Menu, Error> {
     // Join Game - TCP/IP          // title
     //
     //  Address: 127.0.0.1         // label
@@ -67,26 +69,26 @@ fn build_menu_mp_join_tcp() -> Menu {
     //
     //  Join game at:              // label
     //  [                        ] // text field
-    MenuBuilder::new()
+    Ok(MenuBuilder::new()
         // .add
-        .build()
+        .build())
 }
 
-fn build_menu_options() -> Menu {
-    MenuBuilder::new()
+fn build_menu_options() -> Result<Menu, Error> {
+    Ok(MenuBuilder::new()
         // .add_submenu("Customize controls", unimplemented!())
-        .add_action("Go to console")
-        .add_action("Reset to defaults")
-        .add_slider("Render scale")
-        .add_slider("Screen Size")
-        .add_slider("Brightness")
-        .add_slider("Mouse Speed")
-        .add_slider("CD music volume")
-        .add_slider("Sound volume")
-        .add_toggle("Always run")
-        .add_toggle("Invert mouse")
-        .add_toggle("Lookspring")
-        .add_toggle("Lookstrafe")
+        .add_action("Go to console", Box::new(|| ()))
+        .add_action("Reset to defaults", Box::new(|| ()))
+        .add_slider("Render scale", 0.9, 1.0, 1, 0, Box::new(|_| ()))?
+        .add_slider("Screen Size", 0.0, 1.0, 100, 99, Box::new(|_| ()))?
+        .add_slider("Brightness", 0.0, 1.0, 100, 99, Box::new(|_| ()))?
+        .add_slider("Mouse Speed", 0.0, 1.0, 100, 99, Box::new(|_| ()))?
+        .add_slider("CD music volume", 0.0, 1.0, 100, 99, Box::new(|_| ()))?
+        .add_slider("Sound volume", 0.0, 1.0, 100, 99, Box::new(|_| ()))?
+        .add_toggle("Always run", true, Box::new(|_| ()))
+        .add_toggle("Invert mouse", false, Box::new(|_| ()))
+        .add_toggle("Lookspring", false, Box::new(|_| ()))
+        .add_toggle("Lookstrafe", false, Box::new(|_| ()))
         // .add_submenu("Video options", unimplemented!())
-        .build()
+        .build())
 }
