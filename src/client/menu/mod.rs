@@ -80,7 +80,8 @@ impl Menu {
     pub fn next(&self) -> Result<(), Error> {
         let m = self.active_submenu()?;
 
-        if let MenuState::Active { index } = m.state.borrow().clone() {
+        let s = m.state.borrow().clone();
+        if let MenuState::Active { index } = s {
             m.state.replace(MenuState::Active {
                 index: (index + 1) % m.items.len(),
             });
@@ -95,7 +96,8 @@ impl Menu {
     pub fn prev(&self) -> Result<(), Error> {
         let m = self.active_submenu()?;
 
-        if let MenuState::Active { index } = m.state.borrow().clone() {
+        let s = m.state.borrow().clone();
+        if let MenuState::Active { index } = s {
             m.state.replace(MenuState::Active {
                 index: (index - 1) % m.items.len(),
             });
@@ -128,7 +130,8 @@ impl Menu {
     pub fn activate(&self) -> Result<(), Error> {
         let m = self.active_submenu()?;
 
-        if let MenuState::Active { index } = m.state.borrow().clone() {
+        let s = m.state.borrow().clone();
+        if let MenuState::Active { index } = s {
             match m.items[index].item {
                 Item::Submenu(ref submenu) => {
                     m.state.replace(MenuState::InSubMenu { index });
@@ -161,7 +164,8 @@ impl Menu {
 
         match m_parent {
             Some(mp) => {
-                match mp.state.borrow().clone() {
+                let s = mp.state.borrow().clone();
+                match s {
                     MenuState::InSubMenu { index } => mp.state.replace(MenuState::Active { index }),
                     _ => unreachable!(),
                 };
@@ -184,6 +188,13 @@ impl MenuBuilder {
     }
 
     pub fn build(self) -> Menu {
+        // deactivate all child menus
+        for item in self.items.iter() {
+            if let Item::Submenu(ref m) = item.item {
+                m.state.replace(MenuState::Inactive);
+            }
+        }
+
         Menu {
             items: self.items,
             state: RefCell::new(MenuState::Active { index: 0 }),
@@ -291,6 +302,28 @@ mod test {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    fn is_inactive(state: &MenuState) -> bool {
+        match state {
+            MenuState::Inactive => true,
+            _ => false
+        }
+    }
+
+    fn is_active(state: &MenuState) -> bool {
+        match state {
+            MenuState::Active { .. } => true,
+            _ => false
+        }
+    }
+
+    fn is_insubmenu(state: &MenuState) -> bool {
+        match state {
+            MenuState::InSubMenu { .. } => true,
+            _ => false,
+        }
+    }
+
+    #[test]
     fn test_menu_builder() {
         let action_target = Rc::new(Cell::new(false));
         let action_target_handle = action_target.clone();
@@ -302,6 +335,7 @@ mod test {
         // TODO
     }
 
+    #[test]
     fn test_menu_active_submenu() {
         let menu = MenuBuilder::new()
             .add_submenu(
@@ -324,5 +358,27 @@ mod test {
             _ => unreachable!(),
         };
 
+        assert!(is_active(&m.state.borrow()));
+        assert!(is_inactive(&m1.state.borrow()));
+        assert!(is_inactive(&m2.state.borrow()));
+
+        // enter m1
+        m.activate().unwrap();
+        assert!(is_insubmenu(&m.state.borrow()));
+        assert!(is_active(&m1.state.borrow()));
+        assert!(is_inactive(&m2.state.borrow()));
+
+        // exit m1
+        m.back().unwrap();
+        assert!(is_active(&m.state.borrow()));
+        assert!(is_inactive(&m1.state.borrow()));
+        assert!(is_inactive(&m2.state.borrow()));
+
+        // enter m2
+        m.next().unwrap();
+        m.activate().unwrap();
+        assert!(is_insubmenu(&m.state.borrow()));
+        assert!(is_inactive(&m1.state.borrow()));
+        assert!(is_active(&m2.state.borrow()));
     }
 }
