@@ -19,17 +19,19 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use client::menu::Menu;
+use common::console::Console;
 
 use failure::Error;
 use winit::{ElementState, Event, KeyboardInput, VirtualKeyCode as Key, WindowEvent};
 
 pub struct MenuInput {
     menu: Rc<RefCell<Menu>>,
+    console: Rc<RefCell<Console>>,
 }
 
 impl MenuInput {
-    pub fn new(menu: Rc<RefCell<Menu>>) -> MenuInput {
-        MenuInput { menu }
+    pub fn new(menu: Rc<RefCell<Menu>>, console: Rc<RefCell<Console>>) -> MenuInput {
+        MenuInput { menu, console }
     }
 
     pub fn handle_event(&self, event: Event) -> Result<(), Error> {
@@ -46,15 +48,23 @@ impl MenuInput {
                         },
                     ..
                 } => match key {
+                    Key::Escape => {
+                        if self.menu.borrow().at_root() {
+                            self.console.borrow().stuff_text("togglemenu\n");
+                        } else {
+                            self.menu.borrow().back()?;
+                        }
+                    }
+
                     Key::Up => self.menu.borrow().prev()?,
                     Key::Down => self.menu.borrow().next()?,
                     Key::Return => self.menu.borrow().activate()?,
 
                     _ => (),
-                }
+                },
 
                 _ => (),
-            }
+            },
 
             _ => (),
         }

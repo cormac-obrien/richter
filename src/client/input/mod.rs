@@ -22,8 +22,8 @@ pub mod menu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use common::console::{CmdRegistry, Console};
 use client::menu::Menu;
+use common::console::{CmdRegistry, Console};
 
 use failure::Error;
 use winit::{Event, WindowEvent};
@@ -49,14 +49,18 @@ pub struct Input {
 }
 
 impl Input {
-    pub fn new(init_focus: InputFocus, console: Rc<RefCell<Console>>, menu: Rc<RefCell<Menu>>) -> Input {
+    pub fn new(
+        init_focus: InputFocus,
+        console: Rc<RefCell<Console>>,
+        menu: Rc<RefCell<Menu>>,
+    ) -> Input {
         Input {
             window_focused: true,
             current_focus: init_focus,
 
             game_input: GameInput::new(console.clone()),
             console_input: ConsoleInput::new(console.clone()),
-            menu_input: MenuInput::new(menu.clone()),
+            menu_input: MenuInput::new(menu.clone(), console.clone()),
         }
     }
 
@@ -68,13 +72,15 @@ impl Input {
                 ..
             } => self.window_focused = focused,
 
-            _ => if self.window_focused {
-                match self.current_focus {
-                    InputFocus::Game => self.game_input.handle_event(event)?,
-                    InputFocus::Console => self.console_input.handle_event(event)?,
-                    InputFocus::Menu => self.menu_input.handle_event(event)?,
+            _ => {
+                if self.window_focused {
+                    match self.current_focus {
+                        InputFocus::Game => self.game_input.handle_event(event)?,
+                        InputFocus::Console => self.console_input.handle_event(event)?,
+                        InputFocus::Menu => self.menu_input.handle_event(event)?,
+                    }
                 }
-            },
+            }
         }
 
         Ok(())

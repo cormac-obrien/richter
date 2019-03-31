@@ -146,7 +146,7 @@ impl Menu {
     }
 
     /// Return `true` if the root menu is active, `false` otherwise.
-    fn at_root(&self) -> bool {
+    pub fn at_root(&self) -> bool {
         match *self.state.borrow() {
             MenuState::Active { .. } => true,
             _ => false,
@@ -305,14 +305,14 @@ mod test {
     fn is_inactive(state: &MenuState) -> bool {
         match state {
             MenuState::Inactive => true,
-            _ => false
+            _ => false,
         }
     }
 
     fn is_active(state: &MenuState) -> bool {
         match state {
             MenuState::Active { .. } => true,
-            _ => false
+            _ => false,
         }
     }
 
@@ -340,11 +340,15 @@ mod test {
         let menu = MenuBuilder::new()
             .add_submenu(
                 "menu_1",
-                MenuBuilder::new().add_action("action_1", Box::new(|| ())).build(),
+                MenuBuilder::new()
+                    .add_action("action_1", Box::new(|| ()))
+                    .build(),
             )
             .add_submenu(
                 "menu_2",
-                MenuBuilder::new().add_action("action_2", Box::new(|| ())).build(),
+                MenuBuilder::new()
+                    .add_action("action_2", Box::new(|| ()))
+                    .build(),
             )
             .build();
 
