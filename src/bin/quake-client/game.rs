@@ -22,7 +22,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use richter::client::input::{Input, InputFocus};
+use richter::client::menu::Menu;
 use richter::client::render::hud::HudRenderer;
+use richter::client::render::menu::MenuRenderer;
 use richter::client::render::{self, pipe, GraphicsPackage, SceneRenderer};
 use richter::client::Client;
 use richter::common::console::{CmdRegistry, CvarRegistry};
@@ -53,7 +55,6 @@ struct InGameState {
     cmds: Rc<RefCell<CmdRegistry>>,
     renderer: SceneRenderer,
     hud_renderer: HudRenderer,
-    // menu_renderer: MenuRenderer,
     focus: Rc<Cell<InGameFocus>>,
 }
 
@@ -62,7 +63,6 @@ impl InGameState {
         cmds: Rc<RefCell<CmdRegistry>>,
         scene_renderer: SceneRenderer,
         hud_renderer: HudRenderer,
-        // menu_renderer: MenuRenderer,
         focus: InGameFocus,
     ) -> InGameState {
         let focus_rc = Rc::new(Cell::new(focus));
@@ -110,7 +110,6 @@ impl InGameState {
             cmds,
             renderer: scene_renderer,
             hud_renderer,
-            // menu_renderer,
             focus: focus_rc,
         }
     }
@@ -134,6 +133,8 @@ pub struct Game {
     vfs: Rc<Vfs>,
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
+    menu: Rc<RefCell<Menu>>,
+    menu_renderer: MenuRenderer,
     gfx_pkg: Rc<RefCell<GraphicsPackage>>,
     state: GameState,
     input: Rc<RefCell<Input>>,
@@ -145,16 +146,27 @@ impl Game {
         vfs: Rc<Vfs>,
         cvars: Rc<RefCell<CvarRegistry>>,
         cmds: Rc<RefCell<CmdRegistry>>,
+        menu: Rc<RefCell<Menu>>,
         gfx_pkg: Rc<RefCell<GraphicsPackage>>,
         input: Rc<RefCell<Input>>,
         client: Client,
     ) -> Result<Game, Error> {
         input.borrow().register_cmds(&mut cmds.borrow_mut());
 
+        println!("Building menu renderer...");
+        let menu_renderer = MenuRenderer::new(
+            &vfs,
+            menu.clone(),
+            gfx_pkg.clone(),
+        )
+        .unwrap();
+
         Ok(Game {
             vfs,
             cvars,
             cmds,
+            menu,
+            menu_renderer,
             gfx_pkg,
             state: GameState::Loading,
             input,
@@ -294,12 +306,18 @@ impl Game {
 
                     // render the menu
                     InGameFocus::Menu => {
-                        // let mut data = self.gfx_pkg.borrow().gen_user_data_2d();
+                        let mut data = self.gfx_pkg.borrow().gen_user_data_2d();
 
-                        // self.state
-                            // .menu_renderer
-                            // .render(encoder, display_width, display_height)
-                            // .unwrap();
+                        self.menu_renderer
+                            .render(
+                                encoder,
+                                self.gfx_pkg.borrow().pipeline_2d(),
+                                &mut data,
+                                display_width,
+                                display_height,
+                                0.5,
+                            )
+                            .unwrap();
                     }
                 }
             }

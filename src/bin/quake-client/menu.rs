@@ -18,8 +18,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// XXX: most of this code is placeholder and will not compile
-
 use richter::client::menu::{Menu, MenuBuilder};
 
 use failure::Error;
@@ -79,7 +77,7 @@ fn build_menu_options() -> Result<Menu, Error> {
         // .add_submenu("Customize controls", unimplemented!())
         .add_action("Go to console", Box::new(|| ()))
         .add_action("Reset to defaults", Box::new(|| ()))
-        .add_slider("Render scale", 0.9, 1.0, 1, 0, Box::new(|_| ()))?
+        .add_slider("Render scale", 0.9, 1.0, 2, 0, Box::new(|_| ()))?
         .add_slider("Screen Size", 0.0, 1.0, 100, 99, Box::new(|_| ()))?
         .add_slider("Brightness", 0.0, 1.0, 100, 99, Box::new(|_| ()))?
         .add_slider("Mouse Speed", 0.0, 1.0, 100, 99, Box::new(|_| ()))?

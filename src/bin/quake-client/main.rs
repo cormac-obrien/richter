@@ -43,6 +43,7 @@ use std::rc::Rc;
 
 use richter::client::input::game::MouseWheel;
 use richter::client::input::{Input, InputFocus};
+use richter::client::menu::Menu;
 use richter::client::render::{self, GraphicsPackage};
 use richter::client::{self, Client};
 use richter::common;
@@ -74,6 +75,7 @@ struct ClientProgram {
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
     console: Rc<RefCell<Console>>,
+    menu: Rc<RefCell<Menu>>,
 
     events_loop: RefCell<EventsLoop>,
     windowed_context: RefCell<WindowedContext>,
@@ -182,6 +184,7 @@ impl ClientProgram {
             cvars,
             cmds,
             console,
+            menu,
             events_loop: RefCell::new(events_loop),
             windowed_context: RefCell::new(windowed_context),
             gfx_pkg,
@@ -215,6 +218,7 @@ impl ClientProgram {
                 self.vfs.clone(),
                 self.cvars.clone(),
                 self.cmds.clone(),
+                self.menu.clone(),
                 self.gfx_pkg.clone(),
                 self.input.clone(),
                 cl,
