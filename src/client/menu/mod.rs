@@ -38,8 +38,35 @@ pub enum MenuState {
     InSubMenu { index: usize },
 }
 
-pub struct Menu {
+struct Layout {
+    gfx_name: String,
     items: Vec<NamedMenuItem>,
+    cursor_pos: Vec<(u32, u32)>,
+}
+
+enum Items {
+    List(Vec<NamedMenuItem>),
+    Layout(Layout),
+}
+
+impl Items {
+    pub fn item(&self, i: usize) -> &Item {
+        match self {
+            Items::List(ref list) => &list[i].item,
+            Items::Layout(ref layout) => &layout.items[i].item,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Items::List(ref list) => list.len(),
+            Items::Layout(ref layout) => layout.items.len(),
+        }
+    }
+}
+
+pub struct Menu {
+    items: Items,
     state: RefCell<MenuState>,
 }
 
@@ -50,7 +77,7 @@ impl Menu {
         let mut m_parent = None;
 
         while let MenuState::InSubMenu { index } = *m.state.borrow() {
-            match m.items[index].item {
+            match m.items.item(index) {
                 Item::Submenu(ref s) => {
                     m_parent = Some(m);
                     m = s;
@@ -113,7 +140,7 @@ impl Menu {
         let m = self.active_submenu()?;
 
         if let MenuState::Active { index } = *m.state.borrow() {
-            return Ok(&m.items[index].item);
+            return Ok(&m.items.item(index));
         } else {
             bail!("Active menu in invalid state (invariant violation)")
         }
@@ -132,7 +159,7 @@ impl Menu {
 
         let s = m.state.borrow().clone();
         if let MenuState::Active { index } = s {
-            match m.items[index].item {
+            match m.items.item(index) {
                 Item::Submenu(ref submenu) => {
                     m.state.replace(MenuState::InSubMenu { index });
                     submenu.state.replace(MenuState::Active { index: 0 });
@@ -196,7 +223,7 @@ impl MenuBuilder {
         }
 
         Menu {
-            items: self.items,
+            items: Items::List(self.items),
             state: RefCell::new(MenuState::Active { index: 0 }),
         }
     }
@@ -353,11 +380,11 @@ mod test {
             .build();
 
         let m = &menu;
-        let m1 = match m.items[0].item {
+        let m1 = match m.items.item(0) {
             Item::Submenu(ref m1i) => m1i,
             _ => unreachable!(),
         };
-        let m2 = match m.items[1].item {
+        let m2 = match m.items.item(1) {
             Item::Submenu(ref m2i) => m2i,
             _ => unreachable!(),
         };
