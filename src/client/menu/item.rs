@@ -124,7 +124,7 @@ impl EnumItem {
 
 pub struct Slider {
     min: f32,
-    max: f32,
+    _max: f32,
     increment: f32,
     steps: usize,
 
@@ -149,7 +149,7 @@ impl Slider {
 
         Ok(Slider {
             min,
-            max,
+            _max: max,
             increment: (max - min) / (steps - 1) as f32,
             steps,
             selected: Cell::new(init),

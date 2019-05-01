@@ -27,10 +27,8 @@ use std::rc::Rc;
 
 use common::parse;
 
-use combine::easy::Stream;
 use combine::Parser;
 use failure::Error;
-use winit::VirtualKeyCode as Key;
 
 /// Stores console commands.
 pub struct CmdRegistry {

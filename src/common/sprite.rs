@@ -15,7 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::io::{BufReader, Cursor, Read, Seek};
+use std::io::{BufReader, Read, Seek};
 
 use common::engine;
 use common::model::SyncType;
@@ -83,7 +83,10 @@ pub struct SpriteGroup {
     frames: Vec<SpriteFrame>,
 }
 
-pub fn load<R>(data: R) -> SpriteModel where R: Read + Seek {
+pub fn load<R>(data: R) -> SpriteModel
+where
+    R: Read + Seek,
+{
     let mut reader = BufReader::new(data);
 
     let magic = reader.read_u32::<LittleEndian>().unwrap();
@@ -122,7 +125,7 @@ pub fn load<R>(data: R) -> SpriteModel where R: Read + Seek {
         c => c as usize,
     };
 
-    let beam_len = match reader.read_i32::<LittleEndian>().unwrap() {
+    let _beam_len = match reader.read_i32::<LittleEndian>().unwrap() {
         l if l < 0 => panic!("Negative beam length ({})", l),
         l => l as usize,
     };
@@ -132,7 +135,7 @@ pub fn load<R>(data: R) -> SpriteModel where R: Read + Seek {
         max_width, max_height, frame_count
     );
 
-    let sync_type = SyncType::from_i32(reader.read_i32::<LittleEndian>().unwrap()).unwrap();
+    let _sync_type = SyncType::from_i32(reader.read_i32::<LittleEndian>().unwrap()).unwrap();
 
     let mut frames = Vec::with_capacity(frame_count);
 

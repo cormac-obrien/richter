@@ -42,15 +42,20 @@ pub const GLOBAL_DYNAMIC_START: usize = 64;
 
 pub const GLOBAL_STATIC_COUNT: usize = GLOBAL_DYNAMIC_START - GLOBAL_STATIC_START;
 
+#[allow(dead_code)]
 pub const GLOBAL_ADDR_NULL: usize = 0;
 pub const GLOBAL_ADDR_RETURN: usize = 1;
 pub const GLOBAL_ADDR_ARG_0: usize = 4;
 pub const GLOBAL_ADDR_ARG_1: usize = 7;
 pub const GLOBAL_ADDR_ARG_2: usize = 10;
 pub const GLOBAL_ADDR_ARG_3: usize = 13;
+#[allow(dead_code)]
 pub const GLOBAL_ADDR_ARG_4: usize = 16;
+#[allow(dead_code)]
 pub const GLOBAL_ADDR_ARG_5: usize = 19;
+#[allow(dead_code)]
 pub const GLOBAL_ADDR_ARG_6: usize = 22;
+#[allow(dead_code)]
 pub const GLOBAL_ADDR_ARG_7: usize = 25;
 
 #[derive(Debug)]
@@ -349,7 +354,9 @@ impl Globals {
     pub fn get_string_id(&self, addr: i16) -> Result<StringId, GlobalsError> {
         self.type_check(addr as usize, Type::QString)?;
 
-        Ok(StringId(self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize))
+        Ok(StringId(
+            self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize
+        ))
     }
 
     /// Stores a `StringId` at the given virtual address.
@@ -407,7 +414,9 @@ impl Globals {
     /// Loads a `FunctionId` from the given virtual address.
     pub fn get_function_id(&self, addr: i16) -> Result<FunctionId, GlobalsError> {
         self.type_check(addr as usize, Type::QFunction)?;
-        Ok(FunctionId(self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize))
+        Ok(FunctionId(
+            self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize
+        ))
     }
 
     /// Stores a `FunctionId` at the given virtual address.

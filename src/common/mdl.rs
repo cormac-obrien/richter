@@ -15,7 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 
 use common::engine;
 use common::model::{ModelFlags, SyncType};
@@ -264,14 +264,27 @@ impl AliasModel {
     }
 }
 
-pub fn load<R>(data: R) -> Result<AliasModel, Error> where R: Read + Seek {
+pub fn load<R>(data: R) -> Result<AliasModel, Error>
+where
+    R: Read + Seek,
+{
     let mut reader = BufReader::new(data);
 
     let magic = reader.read_i32::<LittleEndian>()?;
-    ensure!(magic == MAGIC, "Bad MDL magic number (got {}, should be {})", magic, MAGIC);
+    ensure!(
+        magic == MAGIC,
+        "Bad MDL magic number (got {}, should be {})",
+        magic,
+        MAGIC
+    );
 
     let version = reader.read_i32::<LittleEndian>()?;
-    ensure!(version == VERSION, "Bad MDL version (got {}, should be {})", version, VERSION);
+    ensure!(
+        version == VERSION,
+        "Bad MDL version (got {}, should be {})",
+        version,
+        VERSION
+    );
 
     let scale = Vector3::new(
         reader.read_f32::<LittleEndian>()?,
@@ -287,7 +300,7 @@ pub fn load<R>(data: R) -> Result<AliasModel, Error> where R: Read + Seek {
 
     let radius = reader.read_f32::<LittleEndian>()?;
 
-    let eye_position = Vector3::new(
+    let _eye_position = Vector3::new(
         reader.read_f32::<LittleEndian>()?,
         reader.read_f32::<LittleEndian>()?,
         reader.read_f32::<LittleEndian>()?,
@@ -296,28 +309,51 @@ pub fn load<R>(data: R) -> Result<AliasModel, Error> where R: Read + Seek {
     let texture_count = reader.read_i32::<LittleEndian>()?;
 
     let texture_width = reader.read_i32::<LittleEndian>()?;
-    ensure!(texture_width > 0, "Texture width must be positive (got {})", texture_width);
+    ensure!(
+        texture_width > 0,
+        "Texture width must be positive (got {})",
+        texture_width
+    );
 
     let texture_height = reader.read_i32::<LittleEndian>()?;
-    ensure!(texture_height > 0, "Texture height must be positive (got {})", texture_height);
+    ensure!(
+        texture_height > 0,
+        "Texture height must be positive (got {})",
+        texture_height
+    );
 
     let vertex_count = reader.read_i32::<LittleEndian>()?;
-    ensure!(vertex_count > 0, "Vertex count must be positive (got {})", vertex_count);
+    ensure!(
+        vertex_count > 0,
+        "Vertex count must be positive (got {})",
+        vertex_count
+    );
 
     let poly_count = reader.read_i32::<LittleEndian>()?;
-    ensure!(poly_count > 0, "Poly count must be positive (got {})", poly_count);
+    ensure!(
+        poly_count > 0,
+        "Poly count must be positive (got {})",
+        poly_count
+    );
 
     let keyframe_count = reader.read_i32::<LittleEndian>()?;
-    ensure!(keyframe_count > 0, "Keyframe count must be positive (got {})", keyframe_count);
+    ensure!(
+        keyframe_count > 0,
+        "Keyframe count must be positive (got {})",
+        keyframe_count
+    );
 
-    let sync_type = SyncType::from_i32(reader.read_i32::<LittleEndian>()?);
+    let _sync_type = SyncType::from_i32(reader.read_i32::<LittleEndian>()?);
 
     let flags_bits = reader.read_i32::<LittleEndian>()?;
     ensure!(flags_bits >= 0, "Invalid flag bits for alias model");
-    ensure!(flags_bits < ::std::u8::MAX as i32, "Invalid flag bits for alias model");
+    ensure!(
+        flags_bits < ::std::u8::MAX as i32,
+        "Invalid flag bits for alias model"
+    );
     let flags = ModelFlags::from_bits(flags_bits as u8).unwrap();
 
-    let size = match reader.read_i32::<LittleEndian>()? {
+    let _size = match reader.read_i32::<LittleEndian>()? {
         s if s < 0 => panic!("Negative size ({})", s),
         s => s,
     };
@@ -334,7 +370,8 @@ pub fn load<R>(data: R) -> Result<AliasModel, Error> where R: Read + Seek {
         let texture = match reader.read_i32::<LittleEndian>()? {
             // Static
             0 => {
-                let mut indices: Vec<u8> = Vec::with_capacity((texture_width * texture_height) as usize);
+                let mut indices: Vec<u8> =
+                    Vec::with_capacity((texture_width * texture_height) as usize);
                 (&mut reader)
                     .take((texture_width * texture_height) as u64)
                     .read_to_end(&mut indices)?;
@@ -357,7 +394,8 @@ pub fn load<R>(data: R) -> Result<AliasModel, Error> where R: Read + Seek {
 
                 let mut frames = Vec::with_capacity(texture_frame_count);
                 for frame_id in 0..texture_frame_count {
-                    let mut indices: Vec<u8> = Vec::with_capacity((texture_width * texture_height) as usize);
+                    let mut indices: Vec<u8> =
+                        Vec::with_capacity((texture_width * texture_height) as usize);
                     (&mut reader)
                         .take((texture_width * texture_height) as u64)
                         .read_to_end(&mut indices)?;

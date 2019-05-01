@@ -33,7 +33,7 @@ use std::io::BufReader;
 use std::ops::DerefMut;
 use std::rc::Rc;
 
-use client::{Client, ClientEntity};
+use client::ClientEntity;
 use common::console::Console;
 use common::model::{Model, ModelKind};
 use common::vfs::Vfs;
@@ -61,7 +61,6 @@ use self::alias::AliasRenderer;
 use self::brush::BrushRenderer;
 use self::console::ConsoleRenderer;
 use self::glyph::GlyphRenderer;
-use self::menu::MenuRenderer;
 use self::world::WorldRenderer;
 
 const PALETTE_SIZE: usize = 768;
@@ -584,67 +583,6 @@ impl SceneRenderer {
     }
 }
 
-pub struct UiRenderer {
-    pipeline:
-        PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
-    glyph_renderer: Rc<GlyphRenderer>,
-}
-
-impl UiRenderer {
-    pub fn new(
-        gfx_wad: &Wad,
-        palette: &Palette,
-        factory: &mut Factory,
-        console: Rc<RefCell<Console>>,
-    ) -> Result<UiRenderer, Error> {
-        use gfx::traits::FactoryExt;
-        let shader_set = factory
-            .create_shader_set(VERTEX_SHADER_2D_GLSL, FRAGMENT_SHADER_2D_GLSL)
-            .unwrap();
-
-        let rasterizer = gfx::state::Rasterizer {
-            front_face: gfx::state::FrontFace::Clockwise,
-            cull_face: gfx::state::CullFace::Back,
-            method: gfx::state::RasterMethod::Fill,
-            offset: None,
-            samples: Some(gfx::state::MultiSample),
-        };
-
-        let pipeline = factory.create_pipeline_state(
-            &shader_set,
-            gfx::Primitive::TriangleList,
-            rasterizer,
-            pipeline2d::new(),
-        )?;
-
-        let glyph_renderer = Rc::new(GlyphRenderer::new(
-            factory,
-            &gfx_wad.open_conchars()?,
-            palette,
-        )?);
-
-        Ok(UiRenderer {
-            pipeline,
-            glyph_renderer,
-        })
-    }
-
-    pub fn render<C>(
-        &mut self,
-        factory: &mut Factory,
-        encoder: &mut gfx::Encoder<Resources, C>,
-        user_data: &mut pipeline2d::Data<Resources>,
-        client: &Client,
-        display_width: u32,
-        display_height: u32,
-    ) -> Result<(), Error>
-    where
-        C: gfx::CommandBuffer<Resources>,
-    {
-        Ok(())
-    }
-}
-
 pub struct Palette {
     rgb: [[u8; 3]; 256],
 }
@@ -677,7 +615,7 @@ impl Palette {
         for index in indices {
             match *index {
                 0xFF => {
-                    for i in 0..4 {
+                    for _ in 0..4 {
                         rgba.push(0);
                         fullbright.push(0);
                     }

@@ -112,11 +112,11 @@ use std::rc::Rc;
 
 use common::console::CvarRegistry;
 use common::vfs::Vfs;
-use server::Server;
-use server::world::FieldAddrFloat;
 use server::world::EntityError;
 use server::world::EntityTypeDef;
+use server::world::FieldAddrFloat;
 use server::world::World;
+use server::Server;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
@@ -124,14 +124,13 @@ use cgmath::Vector3;
 use num::FromPrimitive;
 use rand;
 
-use self::ops::Opcode;
 use self::functions::BuiltinFunctionId;
 use self::functions::FunctionDef;
 pub use self::functions::FunctionId;
 use self::functions::FunctionKind;
 pub use self::functions::Functions;
-use self::functions::MAX_ARGS;
 use self::functions::Statement;
+use self::functions::MAX_ARGS;
 pub use self::globals::GlobalAddrEntity;
 pub use self::globals::GlobalAddrFloat;
 pub use self::globals::GlobalAddrFunction;
@@ -145,6 +144,7 @@ use self::globals::GLOBAL_ADDR_ARG_3;
 use self::globals::GLOBAL_ADDR_RETURN;
 use self::globals::GLOBAL_STATIC_COUNT;
 use self::globals::GLOBAL_STATIC_START;
+use self::ops::Opcode;
 
 const VERSION: i32 = 6;
 const CRC: i32 = 5927;
@@ -916,8 +916,9 @@ impl ExecutionContext {
                             }
 
                             Remove => {
-                                world
-                                    .remove_entity(globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?)?;
+                                world.remove_entity(
+                                    globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?,
+                                )?;
                             }
                             TraceLine => unimplemented!(),
                             CheckClient => unimplemented!(),
@@ -1032,13 +1033,13 @@ impl ExecutionContext {
                             }
                             CenterPrint => unimplemented!(),
                             AmbientSound => {
-                                let pos = globals.get_vector(GLOBAL_ADDR_ARG_0 as i16)?;
+                                let _pos = globals.get_vector(GLOBAL_ADDR_ARG_0 as i16)?;
                                 let name = globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
-                                let volume = globals.get_float(GLOBAL_ADDR_ARG_2 as i16)?;
-                                let attenuation = globals.get_float(GLOBAL_ADDR_ARG_3 as i16)?;
+                                let _volume = globals.get_float(GLOBAL_ADDR_ARG_2 as i16)?;
+                                let _attenuation = globals.get_float(GLOBAL_ADDR_ARG_3 as i16)?;
 
                                 // TODO: replace with `?` syntax once `server` has a proper error type
-                                let sound_index = match server.sound_precache_lookup(name) {
+                                let _sound_index = match server.sound_precache_lookup(name) {
                                     Ok(i) => i,
                                     Err(_) => {
                                         return Err(ProgsError::with_msg("sound not precached"))

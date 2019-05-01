@@ -20,7 +20,7 @@
 
 mod item;
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 
 use failure::Error;
 
@@ -39,9 +39,9 @@ pub enum MenuState {
 }
 
 struct Layout {
-    gfx_name: String,
+    _gfx_name: String,
     items: Vec<NamedMenuItem>,
-    cursor_pos: Vec<(u32, u32)>,
+    _cursor_pos: Vec<(u32, u32)>,
 }
 
 enum Items {
@@ -326,7 +326,7 @@ impl NamedMenuItem {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
     fn is_inactive(state: &MenuState) -> bool {

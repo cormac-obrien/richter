@@ -18,7 +18,6 @@
 use std::fs::File;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 
 use common::pak::Pak;
 
@@ -40,25 +39,37 @@ impl Vfs {
         }
     }
 
-    pub fn add_pakfile<P>(&mut self, path: P) -> Result<(), Error> where P: AsRef<Path> {
+    pub fn add_pakfile<P>(&mut self, path: P) -> Result<(), Error>
+    where
+        P: AsRef<Path>,
+    {
         self.components.push(VfsComponent::Pak(Pak::new(path)?));
 
         Ok(())
     }
 
-    pub fn add_directory<P>(&mut self, path: P) -> Result<(), Error> where P: AsRef<Path> {
-        self.components.push(VfsComponent::Directory(path.as_ref().to_path_buf()));
+    pub fn add_directory<P>(&mut self, path: P) -> Result<(), Error>
+    where
+        P: AsRef<Path>,
+    {
+        self.components
+            .push(VfsComponent::Directory(path.as_ref().to_path_buf()));
 
         Ok(())
     }
 
-    pub fn open<S>(&self, virtual_path: S) -> Result<VirtualFile, Error> where S: AsRef<str> {
+    pub fn open<S>(&self, virtual_path: S) -> Result<VirtualFile, Error>
+    where
+        S: AsRef<str>,
+    {
         for c in self.components.iter().rev() {
             let vp = virtual_path.as_ref();
 
             match c {
-                VfsComponent::Pak(pak) => if let Ok(f) = pak.open(vp) {
-                    return Ok(VirtualFile::PakBacked(Cursor::new(f)));
+                VfsComponent::Pak(pak) => {
+                    if let Ok(f) = pak.open(vp) {
+                        return Ok(VirtualFile::PakBacked(Cursor::new(f)));
+                    }
                 }
 
                 VfsComponent::Directory(path) => {

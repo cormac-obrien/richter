@@ -28,7 +28,6 @@ pub use self::cvars::register_cvars;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fmt;
 use std::io::{BufReader, Read};
 use std::net::ToSocketAddrs;
 use std::rc::Rc;
@@ -243,10 +242,12 @@ impl Mixer {
                     // TODO: don't clobber player sounds with monster sounds
 
                     // keep track of which sound started the earliest
-                    if chan.start_time < match self.channels[oldest] {
-                        Some(ref o) => o.start_time,
-                        None => Duration::zero(),
-                    } {
+                    if chan.start_time
+                        < match self.channels[oldest] {
+                            Some(ref o) => o.start_time,
+                            None => Duration::zero(),
+                        }
+                    {
                         oldest = i;
                     }
                 }
@@ -1117,14 +1118,14 @@ impl Client {
                     entity_id,
                     channel,
                     sound_id,
-                    position,
+                    position: _,
                 } => {
                     println!(
                         "starting sound with id {} on entity {} channel {}",
                         sound_id, entity_id, channel
                     );
-                    let volume = volume.unwrap_or(DEFAULT_SOUND_PACKET_VOLUME);
-                    let attenuation = attenuation.unwrap_or(DEFAULT_SOUND_PACKET_ATTENUATION);
+                    let _volume = volume.unwrap_or(DEFAULT_SOUND_PACKET_VOLUME);
+                    let _attenuation = attenuation.unwrap_or(DEFAULT_SOUND_PACKET_ATTENUATION);
                     // TODO: apply volume, attenuation, spatialization
                     self.state.mixer.start_sound(
                         self.state.sounds[sound_id as usize].clone(),
@@ -1507,7 +1508,7 @@ impl Client {
                 continue;
             }
 
-            let old_origin = ent.origin;
+            let _old_origin = ent.origin;
 
             if ent.force_link {
                 debug!("force link on entity {}", ent_id);
@@ -1568,7 +1569,8 @@ impl Client {
                     percent: 50,
                 });
             }),
-        ).unwrap();
+        )
+        .unwrap();
 
         let vfs = self.vfs.clone();
         let console = self.console.clone();
@@ -1595,10 +1597,11 @@ impl Client {
                     _ => println!("exec (filename): execute a script file"),
                 }
             }),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
-    pub fn spawn_temp_entity(&self, temp_entity: &TempEntity) {
+    pub fn spawn_temp_entity(&self, _temp_entity: &TempEntity) {
         warn!("Temporary entities not yet implemented!");
     }
 

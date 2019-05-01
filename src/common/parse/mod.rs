@@ -18,16 +18,12 @@
 pub mod console;
 pub mod map;
 
-use std::collections::HashMap;
-
 use cgmath::Vector3;
-use combine::char::{alpha_num, space, string};
-use combine::parser::repeat::skip_until;
+use combine::char::{alpha_num, string};
 use combine::{
-    any, between, choice, eof, many, many1, one_of, optional, satisfy, skip_many, token,
-    unexpected, value, ParseError, Parser, Stream,
+    between, choice, many, one_of, satisfy, skip_many, token, unexpected, value, ParseError,
+    Parser, Stream,
 };
-use nom::is_alphabetic;
 use winit::ElementState;
 
 pub use self::console::commands;

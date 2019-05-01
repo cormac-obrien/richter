@@ -18,9 +18,9 @@
 use common::bsp::BspModel;
 use common::mdl;
 use common::mdl::AliasModel;
-use common::vfs::Vfs;
 use common::sprite;
 use common::sprite::SpriteModel;
+use common::vfs::Vfs;
 
 use cgmath::Vector3;
 use failure::Error;
@@ -172,9 +172,9 @@ impl Model {
             ModelKind::None => panic!("Attempted to take sync_type() of NULL model"),
             ModelKind::Brush(_) => SyncType::Sync,
             // TODO: expose sync_type in Sprite and reflect it here
-            ModelKind::Sprite(ref smodel) => SyncType::Sync,
+            ModelKind::Sprite(ref _smodel) => SyncType::Sync,
             // TODO: expose sync_type in Mdl and reflect it here
-            ModelKind::Alias(ref amodel) => SyncType::Sync,
+            ModelKind::Alias(ref _amodel) => SyncType::Sync,
         }
     }
 

@@ -21,12 +21,11 @@ use std::rc::Rc;
 use std::str::FromStr;
 use std::string::ToString;
 
-use common::console::{CmdRegistry, Console, CvarRegistry};
+use common::console::{CmdRegistry, Console};
 use common::parse;
 
 use combine::Parser;
 use failure::Error;
-use nom::IResult;
 use winit::dpi::LogicalPosition;
 use winit::{
     DeviceEvent, ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta,

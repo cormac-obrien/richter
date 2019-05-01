@@ -19,9 +19,8 @@ use common::parse::{line_ending, newline, non_newline_space, non_newline_spaces,
 
 use combine::char::string;
 use combine::parser::repeat::{skip_many, skip_until};
-use combine::parser::sequence::skip;
 use combine::{
-    choice, many, many1, not_followed_by, optional, satisfy, token, try, ParseError, Parser, Stream,
+    attempt, choice, many, many1, not_followed_by, optional, satisfy, ParseError, Parser, Stream,
 };
 
 pub fn is_line_ending(c: char) -> bool {
@@ -48,7 +47,8 @@ where
         optional(skip_many(non_newline_space())),
         optional(line_comment().map(|_| ())),
         line_ending(),
-    ).map(|_| ())
+    )
+        .map(|_| ())
         .message("in empty_line")
 }
 
@@ -62,7 +62,8 @@ where
     (
         not_followed_by(string("//")),
         many1(satisfy(|c: char| !c.is_whitespace() && !is_line_ending(c))),
-    ).map(|(_, s)| s)
+    )
+        .map(|(_, s)| s)
         .message("in basic_arg")
 }
 
@@ -88,11 +89,14 @@ where
                 arg(),
                 // skip following spaces
                 optional(non_newline_spaces()),
-            ).map(|(a, _)| a),
-        ).skip(optional(line_comment()))
-            .skip(line_ending())
-            .message("in command"),
-    ).map(|(_, args)| args)
+            )
+                .map(|(a, _)| a),
+        )
+        .skip(optional(line_comment()))
+        .skip(line_ending())
+        .message("in command"),
+    )
+        .map(|(_, args)| args)
 }
 
 pub fn commands<I>() -> impl Parser<Input = I, Output = Vec<Vec<String>>>
@@ -102,16 +106,18 @@ where
 {
     (
         // skip leading empty lines
-        skip_many(try(empty_line())),
+        skip_many(attempt(empty_line())),
         many(
             (
                 // parse command
                 command(),
                 // then any trailing empty lines
-                skip_many(try(empty_line())),
-            ).map(|(c, _)| c),
+                skip_many(attempt(empty_line())),
+            )
+                .map(|(c, _)| c),
         ),
-    ).map(|(_, cs)| cs)
+    )
+        .map(|(_, cs)| cs)
         .message("in commands")
 }
 

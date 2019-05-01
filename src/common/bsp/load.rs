@@ -15,12 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::io::BufRead;
-use std::io::BufReader;
-use std::io::Cursor;
-use std::io::Read;
-use std::io::Seek;
-use std::io::SeekFrom;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::rc::Rc;
 
 use common::bsp::BspCollisionHull;
@@ -49,9 +44,9 @@ use common::model::Model;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
-use chrono::Duration;
 use cgmath::InnerSpace;
 use cgmath::Vector3;
+use chrono::Duration;
 use failure::Error;
 use failure::ResultExt;
 use num::FromPrimitive;
@@ -130,7 +125,11 @@ struct BspLump {
 
 impl BspLump {
     fn from_i32s(offset: i32, size: i32) -> Result<BspLump, Error> {
-        ensure!(offset >= 0, "Lump offset must not be negative (was {})", offset);
+        ensure!(
+            offset >= 0,
+            "Lump offset must not be negative (was {})",
+            offset
+        );
         ensure!(size >= 0, "Lump size must not be negative (was {})", size);
 
         Ok(BspLump {
@@ -169,7 +168,7 @@ where
             Axis::X => Hyperplane::axis_x(dist),
             Axis::Y => Hyperplane::axis_y(dist),
             Axis::Z => Hyperplane::axis_z(dist),
-        }
+        },
 
         None => Hyperplane::new(normal, dist),
     };
@@ -221,7 +220,7 @@ where
 
 fn load_render_node<R>(reader: &mut R) -> Result<BspRenderNode, Error>
 where
-    R: ReadBytesExt
+    R: ReadBytesExt,
 {
     let plane_id = reader.read_i32::<LittleEndian>()?;
     if plane_id < 0 {
@@ -275,7 +274,7 @@ where
 
 fn load_texinfo<R>(reader: &mut R, texture_count: usize) -> Result<BspTexInfo, Error>
 where
-    R: ReadBytesExt
+    R: ReadBytesExt,
 {
     let s_vector = Vector3::new(
         reader.read_f32::<LittleEndian>()?,
@@ -317,11 +316,19 @@ where
 
 /// Load a BSP file, returning the models it contains and a `String` describing the entities
 /// it contains.
-pub fn load<R>(data: R) -> Result<(Vec<Model>, String), Error> where R: Read + Seek {
+pub fn load<R>(data: R) -> Result<(Vec<Model>, String), Error>
+where
+    R: Read + Seek,
+{
     let mut reader = BufReader::new(data);
 
     let version = reader.read_i32::<LittleEndian>()?;
-    ensure!(version == VERSION, "Bad version number (found {}, should be {})", version, VERSION);
+    ensure!(
+        version == VERSION,
+        "Bad version number (found {}, should be {})",
+        version,
+        VERSION
+    );
 
     let mut lumps = Vec::with_capacity(BspLumpId::Count as usize);
     for l in 0..(BspLumpId::Count as usize) {
@@ -364,14 +371,29 @@ pub fn load<R>(data: R) -> Result<(Vec<Model>, String), Error> where R: Read + S
     // check that lump sizes make sense for their types
     ensure!(plane_lump.size % PLANE_SIZE == 0, "Bad plane lump size");
     ensure!(vert_lump.size % VERTEX_SIZE == 0, "Bad vertex lump size");
-    ensure!(render_node_lump.size % RENDER_NODE_SIZE == 0, "Bad render node lump size");
-    ensure!(texinfo_lump.size % TEXINFO_SIZE == 0, "Bad texinfo lump size");
+    ensure!(
+        render_node_lump.size % RENDER_NODE_SIZE == 0,
+        "Bad render node lump size"
+    );
+    ensure!(
+        texinfo_lump.size % TEXINFO_SIZE == 0,
+        "Bad texinfo lump size"
+    );
     ensure!(face_lump.size % FACE_SIZE == 0, "Bad face lump size");
-    ensure!(collision_node_lump.size % COLLISION_NODE_SIZE == 0, "Bad collision node lump size");
+    ensure!(
+        collision_node_lump.size % COLLISION_NODE_SIZE == 0,
+        "Bad collision node lump size"
+    );
     ensure!(leaf_lump.size % LEAF_SIZE == 0, "Bad leaf lump size");
-    ensure!(facelist_lump.size % FACELIST_SIZE == 0, "Bad facelist lump size");
+    ensure!(
+        facelist_lump.size % FACELIST_SIZE == 0,
+        "Bad facelist lump size"
+    );
     ensure!(edge_lump.size % EDGE_SIZE == 0, "Bad edge lump size");
-    ensure!(edgelist_lump.size % EDGELIST_SIZE == 0, "Bad edgelist lump size");
+    ensure!(
+        edgelist_lump.size % EDGELIST_SIZE == 0,
+        "Bad edgelist lump size"
+    );
     ensure!(model_lump.size % MODEL_SIZE == 0, "Bad model lump size");
 
     let plane_count = plane_lump.size / PLANE_SIZE;
@@ -388,23 +410,41 @@ pub fn load<R>(data: R) -> Result<(Vec<Model>, String), Error> where R: Read + S
 
     // check limits
     ensure!(plane_count <= MAX_PLANES, "Plane count exceeds MAX_PLANES");
-    ensure!(vert_count <= MAX_VERTICES, "Vertex count exceeds MAX_VERTICES");
-    ensure!(vis_lump.size <= MAX_VISLIST, "Visibility data size exceeds MAX_VISLIST");
-    ensure!(render_node_count <= MAX_RENDER_NODES, "Render node count exceeds MAX_RENDER_NODES");
+    ensure!(
+        vert_count <= MAX_VERTICES,
+        "Vertex count exceeds MAX_VERTICES"
+    );
+    ensure!(
+        vis_lump.size <= MAX_VISLIST,
+        "Visibility data size exceeds MAX_VISLIST"
+    );
+    ensure!(
+        render_node_count <= MAX_RENDER_NODES,
+        "Render node count exceeds MAX_RENDER_NODES"
+    );
     ensure!(
         collision_node_count <= MAX_COLLISION_NODES,
         "Collision node count exceeds MAX_COLLISION_NODES"
     );
     ensure!(leaf_count <= MAX_LEAVES, "Leaf count exceeds MAX_LEAVES");
     ensure!(edge_count <= MAX_EDGES, "Edge count exceeds MAX_EDGES");
-    ensure!(edgelist_count <= MAX_EDGELIST, "Edge list count exceeds MAX_EDGELIST");
-    ensure!(model_count > 0, "No brush models (need at least 1 for worldmodel)");
+    ensure!(
+        edgelist_count <= MAX_EDGELIST,
+        "Edge list count exceeds MAX_EDGELIST"
+    );
+    ensure!(
+        model_count > 0,
+        "No brush models (need at least 1 for worldmodel)"
+    );
     ensure!(model_count <= MAX_MODELS, "Model count exceeds MAX_MODELS");
 
     reader.seek(SeekFrom::Start(ent_lump.offset))?;
     let mut ent_data = Vec::with_capacity(MAX_ENTSTRING);
     reader.read_until(0x00, &mut ent_data)?;
-    ensure!(ent_data.len() <= MAX_ENTSTRING, "Entity data exceeds MAX_ENTSTRING");
+    ensure!(
+        ent_data.len() <= MAX_ENTSTRING,
+        "Entity data exceeds MAX_ENTSTRING"
+    );
     let ent_string =
         String::from_utf8(ent_data).context("Failed to create string from entity data")?;
     check_alignment(&mut reader, ent_lump.offset + ent_lump.size as u64)?;
@@ -422,7 +462,10 @@ pub fn load<R>(data: R) -> Result<(Vec<Model>, String), Error> where R: Read + S
     // load textures
     reader.seek(SeekFrom::Start(tex_lump.offset))?;
     let tex_count = reader.read_i32::<LittleEndian>()?;
-    ensure!(tex_count >= 0 && tex_count as usize <= MAX_TEXTURES, "Invalid texture count");
+    ensure!(
+        tex_count >= 0 && tex_count as usize <= MAX_TEXTURES,
+        "Invalid texture count"
+    );
     let tex_count = tex_count as usize;
 
     let mut tex_offsets = Vec::with_capacity(tex_count);
@@ -590,7 +633,9 @@ pub fn load<R>(data: R) -> Result<(Vec<Model>, String), Error> where R: Read + S
 
     // visibility data
     let mut vis_data = Vec::with_capacity(vis_lump.size);
-    (&mut reader).take(vis_lump.size as u64).read_to_end(&mut vis_data)?;
+    (&mut reader)
+        .take(vis_lump.size as u64)
+        .read_to_end(&mut vis_data)?;
     check_alignment(&mut reader, vis_lump.offset + vis_lump.size as u64)?;
 
     // render nodes
@@ -600,7 +645,10 @@ pub fn load<R>(data: R) -> Result<(Vec<Model>, String), Error> where R: Read + S
     for _ in 0..render_node_count {
         render_nodes.push(load_render_node(&mut reader)?);
     }
-    check_alignment(&mut reader, render_node_lump.offset + render_node_lump.size as u64)?;
+    check_alignment(
+        &mut reader,
+        render_node_lump.offset + render_node_lump.size as u64,
+    )?;
 
     // texinfo
     reader.seek(SeekFrom::Start(texinfo_lump.offset))?;
@@ -669,10 +717,12 @@ pub fn load<R>(data: R) -> Result<(Vec<Model>, String), Error> where R: Read + S
     (&mut reader)
         .take(lightmap_lump.size as u64)
         .read_to_end(&mut lightmaps)?;
-    check_alignment(&mut reader, lightmap_lump.offset + lightmap_lump.size as u64)?;
+    check_alignment(
+        &mut reader,
+        lightmap_lump.offset + lightmap_lump.size as u64,
+    )?;
 
     reader.seek(SeekFrom::Start(collision_node_lump.offset))?;
-
 
     let mut collision_nodes = Vec::with_capacity(collision_node_count);
     for _ in 0..collision_node_count {
@@ -726,12 +776,12 @@ pub fn load<R>(data: R) -> Result<(Vec<Model>, String), Error> where R: Read + S
     if reader.seek(SeekFrom::Current(0))?
         != reader.seek(SeekFrom::Start(
             collision_node_lump.offset + collision_node_lump.size as u64,
-        ))? {
+        ))?
+    {
         bail!("BSP read data misaligned");
     }
 
     reader.seek(SeekFrom::Start(leaf_lump.offset))?;
-
 
     let mut leaves = Vec::with_capacity(leaf_count);
 
@@ -787,7 +837,8 @@ pub fn load<R>(data: R) -> Result<(Vec<Model>, String), Error> where R: Read + S
     if reader.seek(SeekFrom::Current(0))?
         != reader.seek(SeekFrom::Start(
             facelist_lump.offset + facelist_lump.size as u64,
-        ))? {
+        ))?
+    {
         bail!("BSP read data misaligned");
     }
 
@@ -823,7 +874,8 @@ pub fn load<R>(data: R) -> Result<(Vec<Model>, String), Error> where R: Read + S
     if reader.seek(SeekFrom::Current(0))?
         != reader.seek(SeekFrom::Start(
             edgelist_lump.offset + edgelist_lump.size as u64,
-        ))? {
+        ))?
+    {
         bail!("BSP read data misaligned");
     }
 
@@ -858,7 +910,12 @@ pub fn load<R>(data: R) -> Result<(Vec<Model>, String), Error> where R: Read + S
             face.extents[i] = (b_maxs[i] - b_mins[i]) as i16 * 16;
 
             if !texinfo.special && face.extents[i] > 2000 {
-                bail!("Bad face extents: face {}, texture {}: {:?}", face_id, textures[texinfo.tex_id].name, face.extents);
+                bail!(
+                    "Bad face extents: face {}, texture {}: {:?}",
+                    face_id,
+                    textures[texinfo.tex_id].name,
+                    face.extents
+                );
             }
         }
     }

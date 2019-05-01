@@ -21,18 +21,16 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use client::Client;
-use client::render::{self, GraphicsPackage, Palette, PipelineData2d, PipelineState2d, Vertex2d};
 use client::render::bitmap::BitmapTexture;
 use client::render::glyph::GlyphRendererCommand;
-use client::render::pipeline2d;
-use common::net::{ClientStat, ItemFlags, MAX_ITEMS};
+use client::render::{self, GraphicsPackage, PipelineData2d, Vertex2d};
+use client::Client;
+use common::net::{ClientStat, ItemFlags};
 
 use chrono::Duration;
 use flame;
-use gfx::{CommandBuffer, Encoder, Factory, IndexBuffer, Slice};
-use gfx::handle::{Buffer, ShaderResourceView, Texture};
-use gfx::pso::{PipelineData, PipelineState};
+use gfx::handle::Buffer;
+use gfx::{CommandBuffer, Encoder};
 use gfx_device_gl::Resources;
 
 use failure::Error;
@@ -96,12 +94,16 @@ impl HudRenderer {
         let mut alt_digits = Vec::new();
 
         // just to make the following code a bit less painful
-        let mut qpic_to_bitmap = |name: &str| -> Result<BitmapTexture, Error> {
+        let qpic_to_bitmap = |name: &str| -> Result<BitmapTexture, Error> {
             let pkg = gfx_pkg.clone();
             let qpic = pkg.borrow().gfx_wad().open_qpic(name)?;
             let pkg_mut = pkg.borrow_mut();
             use std::ops::DerefMut;
-            let tex = BitmapTexture::from_qpic(pkg_mut.factory_mut().deref_mut(), &qpic, pkg_mut.palette())?;
+            let tex = BitmapTexture::from_qpic(
+                pkg_mut.factory_mut().deref_mut(),
+                &qpic,
+                pkg_mut.palette(),
+            )?;
             Ok(tex)
         };
 
@@ -116,13 +118,7 @@ impl HudRenderer {
         let slash = qpic_to_bitmap("NUM_SLASH")?;
 
         let weapon_names = vec![
-            "SHOTGUN",
-            "SSHOTGUN",
-            "NAILGUN",
-            "SNAILGUN",
-            "RLAUNCH",
-            "SRLAUNCH",
-            "LIGHTNG"
+            "SHOTGUN", "SSHOTGUN", "NAILGUN", "SNAILGUN", "RLAUNCH", "SRLAUNCH", "LIGHTNG",
         ];
 
         let weapon_prefixes = vec!["", "2", "A1", "A2", "A3", "A4", "A5"];
@@ -218,14 +214,19 @@ impl HudRenderer {
         display_height: u32,
         position_x: i32,
         position_y: i32,
-    )
-    where
+    ) where
         C: CommandBuffer<Resources>,
     {
         user_data.vertex_buffer = self.vertex_buffer.clone();
-        user_data.transform = bitmap.transform(display_width, display_height, position_x, position_y).into();
+        user_data.transform = bitmap
+            .transform(display_width, display_height, position_x, position_y)
+            .into();
         user_data.sampler.0 = bitmap.view();
-        encoder.draw(&render::QUAD_SLICE, &self.gfx_pkg.borrow().pipeline_2d(), user_data);
+        encoder.draw(
+            &render::QUAD_SLICE,
+            &self.gfx_pkg.borrow().pipeline_2d(),
+            user_data,
+        );
     }
 
     pub fn render_number<C>(
@@ -239,8 +240,7 @@ impl HudRenderer {
         display_height: u32,
         position_x: i32,
         position_y: i32,
-    )
-    where
+    ) where
         C: CommandBuffer<Resources>,
     {
         let number_str = format!("{}", number);
@@ -257,7 +257,13 @@ impl HudRenderer {
         for (chr_id, chr) in number_chars.into_iter().skip(skip).enumerate() {
             self.render_bitmap(
                 match chr {
-                    '-' => if alt_color { &self.alt_minus } else { &self.minus },
+                    '-' => {
+                        if alt_color {
+                            &self.alt_minus
+                        } else {
+                            &self.minus
+                        }
+                    }
                     '0'..='9' => {
                         let index = chr as usize - '0' as usize;
                         if alt_color {
@@ -302,7 +308,15 @@ impl HudRenderer {
         let ibar_x = sbar_x;
         let ibar_y = sbar_y + self.sbar.height() as i32;
 
-        self.render_bitmap(&self.sbar, encoder, &mut user_data, display_width, display_height, sbar_x, sbar_y);
+        self.render_bitmap(
+            &self.sbar,
+            encoder,
+            &mut user_data,
+            display_width,
+            display_height,
+            sbar_x,
+            sbar_y,
+        );
         self.render_bitmap(
             &self.ibar,
             encoder,
@@ -315,7 +329,10 @@ impl HudRenderer {
 
         // weapons
         for i in 0..8 {
-            if client.items().contains(ItemFlags::from_bits(ItemFlags::SHOTGUN.bits() << i).unwrap()) {
+            if client
+                .items()
+                .contains(ItemFlags::from_bits(ItemFlags::SHOTGUN.bits() << i).unwrap())
+            {
                 let get_time = client.item_get_time()[i];
                 let delta = client.time() - get_time;
                 let flash_on = if delta >= Duration::milliseconds(100) {
@@ -335,7 +352,7 @@ impl HudRenderer {
                     display_width,
                     display_height,
                     sbar_x + 24 * i as i32,
-                    sbar_y + self.sbar.height() as i32
+                    sbar_y + self.sbar.height() as i32,
                 );
             }
         }
@@ -362,9 +379,12 @@ impl HudRenderer {
         }
 
         for i in 0..6 {
-            if client.items().contains(ItemFlags::from_bits(ItemFlags::KEY_1.bits() << i).unwrap()) {
+            if client
+                .items()
+                .contains(ItemFlags::from_bits(ItemFlags::KEY_1.bits() << i).unwrap())
+            {
                 let get_time = client.item_get_time()[17 + i];
-                let delta = client.time() - get_time;
+                let _delta = client.time() - get_time;
 
                 // TODO: add !hipnotic as a condition
                 if i > 1 {
@@ -382,8 +402,11 @@ impl HudRenderer {
         }
 
         for i in 0..4 {
-            if client.items().contains(ItemFlags::from_bits(ItemFlags::SIGIL_1.bits() << i).unwrap()) {
-                let get_time = client.item_get_time()[28 + i];
+            if client
+                .items()
+                .contains(ItemFlags::from_bits(ItemFlags::SIGIL_1.bits() << i).unwrap())
+            {
+                let _get_time = client.item_get_time()[28 + i];
                 self.render_bitmap(
                     &self.sigils[i],
                     encoder,
@@ -409,7 +432,7 @@ impl HudRenderer {
                 sbar_x + 24,
                 sbar_y,
             );
-            // TODO: draw_disc
+        // TODO: draw_disc
         } else {
             let armor = client.stats()[ClientStat::Armor as usize];
             self.render_number(

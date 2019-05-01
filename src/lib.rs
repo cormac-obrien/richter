@@ -36,7 +36,6 @@ extern crate glutin;
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
-#[macro_use]
 extern crate nom;
 extern crate num;
 #[macro_use]

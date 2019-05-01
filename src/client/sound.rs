@@ -19,7 +19,6 @@
 // SOFTWARE.
 
 use std::cell::RefCell;
-use std::fmt;
 use std::io::{BufReader, Cursor, Read};
 use std::rc::Rc;
 
@@ -27,9 +26,8 @@ use common::vfs::Vfs;
 
 use cgmath::Vector3;
 use failure::Error;
-use rodio::{Decoder, Endpoint, Sink, Source};
-use rodio::decoder::DecoderError;
 use rodio::source::{Buffered, SamplesConverter};
+use rodio::{Decoder, Endpoint, Sink, Source};
 
 #[derive(Clone)]
 pub struct AudioSource(Buffered<SamplesConverter<Decoder<BufReader<Cursor<Vec<u8>>>>, f32>>);
@@ -67,7 +65,7 @@ impl StaticSound {
         volume: u8,
         attenuation: u8,
     ) -> StaticSound {
-        let mut sink = Sink::new(endpoint);
+        let sink = Sink::new(endpoint);
         let infinite = src.0.clone().repeat_infinite();
         sink.append(infinite);
         // TODO: set volume, attenuation and spatialize

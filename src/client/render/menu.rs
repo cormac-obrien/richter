@@ -22,9 +22,8 @@ use std::rc::Rc;
 
 use client::menu::Menu;
 use client::render::bitmap::BitmapTexture;
-use client::render::glyph::{GlyphRenderer, GlyphRendererCommand, GLYPH_HEIGHT, GLYPH_WIDTH};
 use client::render::pipeline2d;
-use client::render::{self, GraphicsPackage, Palette, Vertex2d};
+use client::render::{self, GraphicsPackage, Vertex2d};
 use common::vfs::Vfs;
 use common::wad::QPic;
 
@@ -32,7 +31,7 @@ use failure::Error;
 use gfx::handle::Buffer;
 use gfx::pso::{PipelineData, PipelineState};
 use gfx::traits::FactoryExt;
-use gfx::{CommandBuffer, Encoder, Factory, Slice};
+use gfx::{CommandBuffer, Encoder, Slice};
 use gfx_device_gl::Resources;
 
 pub struct MenuRenderer {
@@ -85,6 +84,20 @@ impl MenuRenderer {
         }
 
         let tex_cache = RefCell::new(HashMap::new());
+
+        let mut _tex_names = vec![
+            "gfx/box_tl.lmp",
+            "gfx/box_ml.lmp",
+            "gfx/box_bl.lmp",
+            "gfx/box_tm.lmp",
+            "gfx/box_mm.lmp",
+            "gfx/box_mm2.lmp",
+            "gfx/box_bm.lmp",
+            "gfx/box_tr.lmp",
+            "gfx/box_mr.lmp",
+            "gfx/box_br.lmp",
+            "gfx/ttl_main.lmp",
+        ];
 
         // TODO: walk the entire menu and load all needed textures
 
