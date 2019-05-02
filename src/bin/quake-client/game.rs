@@ -154,13 +154,7 @@ impl Game {
         input.borrow().register_cmds(&mut cmds.borrow_mut());
 
         println!("Building menu renderer...");
-        let menu_renderer = MenuRenderer::new(
-            &vfs,
-            menu.clone(),
-            gfx_pkg.clone(),
-        )
-        .unwrap();
-
+        let menu_renderer = MenuRenderer::new(vfs.clone(), menu.clone(), gfx_pkg.clone()).unwrap();
         Ok(Game {
             vfs,
             cvars,

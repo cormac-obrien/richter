@@ -38,46 +38,25 @@ pub enum MenuState {
     InSubMenu { index: usize },
 }
 
-struct Layout {
-    _gfx_name: String,
-    items: Vec<NamedMenuItem>,
-    _cursor_pos: Vec<(u32, u32)>,
-}
-
-enum Items {
-    List(Vec<NamedMenuItem>),
-    Layout(Layout),
-}
-
-impl Items {
-    pub fn item(&self, i: usize) -> &Item {
-        match self {
-            Items::List(ref list) => &list[i].item,
-            Items::Layout(ref layout) => &layout.items[i].item,
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        match self {
-            Items::List(ref list) => list.len(),
-            Items::Layout(ref layout) => layout.items.len(),
-        }
-    }
-}
-
 pub struct Menu {
-    items: Items,
+    // TODO: replace with an enum of some sort
+    gfx_name: Option<String>,
+    items: Vec<NamedMenuItem>,
     state: RefCell<MenuState>,
 }
 
 impl Menu {
+    pub fn gfx_name(&self) -> &Option<String> {
+        &self.gfx_name
+    }
+
     /// Returns a reference to the active submenu of this menu and its parent.
     fn active_submenu_and_parent(&self) -> Result<(&Menu, Option<&Menu>), Error> {
         let mut m = self;
         let mut m_parent = None;
 
         while let MenuState::InSubMenu { index } = *m.state.borrow() {
-            match m.items.item(index) {
+            match m.items[index].item {
                 Item::Submenu(ref s) => {
                     m_parent = Some(m);
                     m = s;
@@ -140,7 +119,7 @@ impl Menu {
         let m = self.active_submenu()?;
 
         if let MenuState::Active { index } = *m.state.borrow() {
-            return Ok(&m.items.item(index));
+            return Ok(&m.items[index].item);
         } else {
             bail!("Active menu in invalid state (invariant violation)")
         }
@@ -159,7 +138,7 @@ impl Menu {
 
         let s = m.state.borrow().clone();
         if let MenuState::Active { index } = s {
-            match m.items.item(index) {
+            match m.items[index].item {
                 Item::Submenu(ref submenu) => {
                     m.state.replace(MenuState::InSubMenu { index });
                     submenu.state.replace(MenuState::Active { index: 0 });
@@ -206,12 +185,16 @@ impl Menu {
 }
 
 pub struct MenuBuilder {
+    gfx_name: Option<String>,
     items: Vec<NamedMenuItem>,
 }
 
 impl MenuBuilder {
     pub fn new() -> MenuBuilder {
-        MenuBuilder { items: Vec::new() }
+        MenuBuilder {
+            gfx_name: None,
+            items: Vec::new(),
+        }
     }
 
     pub fn build(self) -> Menu {
@@ -223,9 +206,18 @@ impl MenuBuilder {
         }
 
         Menu {
-            items: Items::List(self.items),
+            gfx_name: self.gfx_name,
+            items: self.items,
             state: RefCell::new(MenuState::Active { index: 0 }),
         }
+    }
+
+    pub fn with_gfx<S>(mut self, name: S) -> MenuBuilder
+    where
+        S: AsRef<str>,
+    {
+        self.gfx_name = Some(name.as_ref().to_owned());
+        self
     }
 
     pub fn add_submenu<S>(mut self, name: S, submenu: Menu) -> MenuBuilder
@@ -380,11 +372,11 @@ mod test {
             .build();
 
         let m = &menu;
-        let m1 = match m.items.item(0) {
+        let m1 = match m.items[0].item {
             Item::Submenu(ref m1i) => m1i,
             _ => unreachable!(),
         };
-        let m2 = match m.items.item(1) {
+        let m2 = match m.items[1].item {
             Item::Submenu(ref m2i) => m2i,
             _ => unreachable!(),
         };

@@ -302,7 +302,7 @@ impl HudRenderer {
 
         let _guard = flame::start_guard("HudRenderer::render");
 
-        let sbar_x = (display_width - self.sbar.width()) as i32 / 2;
+        let sbar_x = (display_width as i32 - self.sbar.width() as i32) / 2;
         let sbar_y = 0i32;
 
         let ibar_x = sbar_x;

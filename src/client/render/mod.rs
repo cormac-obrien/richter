@@ -37,7 +37,7 @@ use client::ClientEntity;
 use common::console::Console;
 use common::model::{Model, ModelKind};
 use common::vfs::Vfs;
-use common::wad::Wad;
+use common::wad::{QPic, Wad};
 
 use byteorder::ReadBytesExt;
 use cgmath::{Deg, Euler, Matrix3, Matrix4, SquareMatrix, Vector3, Zero};
@@ -58,6 +58,7 @@ pub use gfx::format::DepthStencil as DepthFormat;
 pub use gfx::format::Srgba8 as ColorFormat;
 
 use self::alias::AliasRenderer;
+use self::bitmap::BitmapTexture;
 use self::brush::BrushRenderer;
 use self::console::ConsoleRenderer;
 use self::glyph::GlyphRenderer;
@@ -220,6 +221,18 @@ impl GraphicsPackage {
             sampler,
             pipeline_2d,
         }
+    }
+
+    pub fn texture_from_qpic<S>(&self, vfs: &Vfs, name: S) -> BitmapTexture
+    where
+        S: AsRef<str>,
+    {
+        BitmapTexture::from_qpic(
+            self.factory.borrow_mut().deref_mut(),
+            &QPic::load(vfs.open(name).unwrap()).unwrap(),
+            &self.palette,
+        )
+        .unwrap()
     }
 
     pub fn palette(&self) -> &Palette {

@@ -24,6 +24,7 @@ use failure::Error;
 
 pub fn build_main_menu() -> Result<Menu, Error> {
     Ok(MenuBuilder::new()
+        .with_gfx("gfx/mainmenu.lmp")
         .add_submenu("Single Player", build_menu_sp()?)
         .add_submenu("Multiplayer", build_menu_mp()?)
         .add_submenu("Options", build_menu_options()?)
