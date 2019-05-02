@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="">
+    
+<link rel="stylesheet" href="http:&#x2F;&#x2F;c-obrien.org&#x2F;richter&#x2F;blog-post.css" />
+
+    <title>Complications with Cross-Platform Input Handling – Richter</title>
+    
+  </head>
+  <body>
+    <header></header>
+    <main>
+<h4>2018-07-20</h4>
+<h2>Complications with Cross-Platform Input Handling</h2>
+<p>It was bound to happen eventually, but the input handling module is the first
+part of the project to display different behavior across platforms. <a href="https://github.com/tomaka/winit/">winit</a>
+provides a fairly solid basis for input handling, but Windows and Linux differ
+in terms of what sort of event is delivered to the program.</p>
+<p>Initially, I used <code>WindowEvent</code>s for everything. This works perfectly well for
+keystrokes and mouse clicks, but mouse movement may still have acceleration
+applied, which is undesirable for camera control. <code>winit</code> also offers
+<code>DeviceEvent</code>s for this purpose. I tried just handling mouse movement with raw
+input, keeping all other inputs in <code>WindowEvent</code>s, but it seems that handling
+<code>DeviceEvent</code>s on Linux causes the <code>WindowEvent</code>s to be eaten.</p>
+<p>The next obvious solution is to simply handle everything with <code>DeviceEvent</code>s,
+but this presents additional problems. First, Windows doesn't seem to even
+deliver keyboard input as a <code>DeviceEvent</code> -- keyboard input still needs to be
+polled as a <code>WindowEvent</code>. It also means that window focus has to be handled
+manually, since <code>DeviceEvent</code>s are delivered regardless of whether the window
+is focused or not.</p>
+<p>To add to the complexity of this problem, apparently not all window managers
+are well-behaved when it comes to determining focus. I run <a href="https://i3wm.org/">i3wm</a> on my
+Linux install, and it doesn't deliver <code>WindowEvent::Focused</code> events when
+toggling focus or switching workspaces. This will have to remain an unsolved
+problem for the time being.</p>
+
+</main>
+
+    <footer>
+      
+      <p>
+        Copyright © 2018 Cormac O'Brien.
+        <br />
+        This work is licensed under a
+        <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">
+          Creative Commons Attribution-ShareAlike 4.0 International License
+        </a>.
+      </p>
+
+      
+    </footer>
+  </body>
+</html>

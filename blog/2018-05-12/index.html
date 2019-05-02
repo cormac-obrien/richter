@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="">
+    
+<link rel="stylesheet" href="http:&#x2F;&#x2F;c-obrien.org&#x2F;richter&#x2F;blog-post.css" />
+
+    <title>Shared Ownership of Rendering Resources – Richter</title>
+    
+  </head>
+  <body>
+    <header></header>
+    <main>
+<h4>2018-05-12</h4>
+<h2>Shared Ownership of Rendering Resources</h2>
+<p>Among the most challenging design decisions in writing the rendering code has been the issue of
+ownership. In order to avoid linking the rendering logic too closely with the data, most of the
+rendering is done by separate <code>Renderer</code> objects (i.e., to render an <code>AliasModel</code>, one must first
+create an <code>AliasRenderer</code>).</p>
+<p>The process of converting on-disk model data to renderable format is fairly complex. Brush models
+are stored in a format designed for the Quake software renderer (which Michael Abrash explained
+<a href="https://www.bluesnews.com/abrash/">quite nicely</a>), while alias models have texture oddities that make it difficult to render them
+from a vertex buffer. In addition, all textures are composed of 8-bit indices into <code>gfx/palette.lmp</code>
+and must be converted to RGB in order to upload them to the GPU. Richter interleaves the position
+and texture coordinate data before upload.</p>
+<p>The real challenge is in determining where to store the objects for resource creation (e.g.
+<code>gfx::Factory</code>) and the resource handles (e.g. <code>gfx::handle::ShaderResourceView</code>). Some of these
+objects are model-specific -- a particular texture might belong to one model, and thus can be stored
+in that model's <code>Renderer</code> -- but others need to be more widely available.</p>
+<p>The most obvious example of this is the vertex buffer used for rendering quads. This is conceptually
+straightforward, but there are several layers of a renderer that might need this functionality.
+The <code>ConsoleRenderer</code> needs it in order to render the console background, but also needs a
+<code>GlyphRenderer</code> to render console output -- and the <code>GlyphRenderer</code> needs to be able to render
+textured quads. The <code>ConsoleRenderer</code> could own the <code>GlyphRenderer</code>, but the <code>HudRenderer</code> also
+needs access to render ammo counts.</p>
+<p>This leads to a rather complex network of <code>Rc</code>s, where many different objects own the basic building
+blocks that make up the rendering system. It isn't bad design <em>per se</em>, but it's a little difficult
+to follow, and I'm hoping that once I have the renderer fully completed I can refine the architecture
+to something more elegant.</p>
+
+</main>
+
+    <footer>
+      
+      <p>
+        Copyright © 2018 Cormac O'Brien.
+        <br />
+        This work is licensed under a
+        <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">
+          Creative Commons Attribution-ShareAlike 4.0 International License
+        </a>.
+      </p>
+
+      
+    </footer>
+  </body>
+</html>

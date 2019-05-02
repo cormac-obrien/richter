@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="">
+    
+<link rel="stylesheet" href="http:&#x2F;&#x2F;c-obrien.org&#x2F;richter&#x2F;blog-post.css" />
+
+    <title>HUD Updates and Timing Bugs – Richter</title>
+    
+  </head>
+  <body>
+    <header></header>
+    <main>
+<h4>2018-04-26</h4>
+<h2>HUD Updates and Timing Bugs</h2>
+<p><img src="http://c-obrien.org/richter/blog/2018-04-26/hud-screenshot.png" alt="HUD Screenshot" /></p>
+<p>The HUD now renders armor, health and current ammo counts in addition to the
+per-ammo type display at the top. The latter uses <a href="https://quakewiki.org/wiki/Quake_font">conchars</a>, which, as the
+name suggests, are used for rendering text to the in-game console. Now that I
+can load and display these I can start working on the console, which ought to
+make debugging a great deal easier.</p>
+<p>Unfortunately, the client is still plagued by a bug with position lerping that
+causes the geometry to jitter back and forth. This is most likely caused by bad
+time delta calculations in <code>Client::update_time()</code> (<a href="https://github.com/cormac-obrien/richter/blob/12b1d9448cf9c3cfed013108fe0866cb78755902/src/client/mod.rs#L1499-L1552">Github</a>), but I haven't
+been able to pinpoint the exact problem -- only that the lerp factor seems to go
+out of the expected range of <code>[0, 1)</code> once per server frame. I'll keep an eye on
+it.</p>
+
+</main>
+
+    <footer>
+      
+      <p>
+        Copyright © 2018 Cormac O'Brien.
+        <br />
+        This work is licensed under a
+        <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">
+          Creative Commons Attribution-ShareAlike 4.0 International License
+        </a>.
+      </p>
+
+      
+    </footer>
+  </body>
+</html>

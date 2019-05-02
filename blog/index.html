@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="">
+    
+<link rel="stylesheet" href="http:&#x2F;&#x2F;c-obrien.org&#x2F;richter&#x2F;blog.css" />
+
+    <title>Blog – Richter</title>
+    
+  </head>
+  <body>
+    <header></header>
+    <main>
+<h1>Blog</h1>
+<h2 id="musings-about-the-project-and-my-experience-with-it">Musings about the project and my experience with it.</h2>
+<hr />
+
+
+<div class="post">
+  <h3><a href="http:&#x2F;&#x2F;c-obrien.org&#x2F;richter&#x2F;blog&#x2F;2018-07-20&#x2F;">Complications with Cross-Platform Input Handling</a></h3>
+  <h4>2018-07-20</h4>
+  <p>It was bound to happen eventually, but the input handling module is the first
+part of the project to display different behavior across platforms. <a href="https://github.com/tomaka/winit/">winit</a>
+provides a fairly solid basis for input handling, but Windows and Linux differ
+in terms of what sort of event is delivered to the program.</p>
+<p>Initially, I used <code>WindowEvent</code>s for everything. This works perfectly well for
+keystrokes and mouse clicks, but mouse movement may still have acceleration
+applied, which is undesirable for camera control. <code>winit</code> also offers
+<code>DeviceEvent</code>s for this purpose. I tried just handling mouse movement with raw
+input, keeping all other inputs in <code>WindowEvent</code>s, but it seems that handling
+<code>DeviceEvent</code>s on Linux causes the <code>WindowEvent</code>s to be eaten.</p>
+<p>The next obvious solution is to simply handle everything with <code>DeviceEvent</code>s,
+but this presents additional problems. First, Windows doesn't seem to even
+deliver keyboard input as a <code>DeviceEvent</code> -- keyboard input still needs to be
+polled as a <code>WindowEvent</code>. It also means that window focus has to be handled
+manually, since <code>DeviceEvent</code>s are delivered regardless of whether the window
+is focused or not.</p>
+<p>To add to the complexity of this problem, apparently not all window managers
+are well-behaved when it comes to determining focus. I run <a href="https://i3wm.org/">i3wm</a> on my
+Linux install, and it doesn't deliver <code>WindowEvent::Focused</code> events when
+toggling focus or switching workspaces. This will have to remain an unsolved
+problem for the time being.</p>
+
+</div>
+
+<div class="post">
+  <h3><a href="http:&#x2F;&#x2F;c-obrien.org&#x2F;richter&#x2F;blog&#x2F;2018-05-12&#x2F;">Shared Ownership of Rendering Resources</a></h3>
+  <h4>2018-05-12</h4>
+  <p>Among the most challenging design decisions in writing the rendering code has been the issue of
+ownership. In order to avoid linking the rendering logic too closely with the data, most of the
+rendering is done by separate <code>Renderer</code> objects (i.e., to render an <code>AliasModel</code>, one must first
+create an <code>AliasRenderer</code>).</p>
+<p>The process of converting on-disk model data to renderable format is fairly complex. Brush models
+are stored in a format designed for the Quake software renderer (which Michael Abrash explained
+<a href="https://www.bluesnews.com/abrash/">quite nicely</a>), while alias models have texture oddities that make it difficult to render them
+from a vertex buffer. In addition, all textures are composed of 8-bit indices into <code>gfx/palette.lmp</code>
+and must be converted to RGB in order to upload them to the GPU. Richter interleaves the position
+and texture coordinate data before upload.</p>
+<p>The real challenge is in determining where to store the objects for resource creation (e.g.
+<code>gfx::Factory</code>) and the resource handles (e.g. <code>gfx::handle::ShaderResourceView</code>). Some of these
+objects are model-specific -- a particular texture might belong to one model, and thus can be stored
+in that model's <code>Renderer</code> -- but others need to be more widely available.</p>
+<p>The most obvious example of this is the vertex buffer used for rendering quads. This is conceptually
+straightforward, but there are several layers of a renderer that might need this functionality.
+The <code>ConsoleRenderer</code> needs it in order to render the console background, but also needs a
+<code>GlyphRenderer</code> to render console output -- and the <code>GlyphRenderer</code> needs to be able to render
+textured quads. The <code>ConsoleRenderer</code> could own the <code>GlyphRenderer</code>, but the <code>HudRenderer</code> also
+needs access to render ammo counts.</p>
+<p>This leads to a rather complex network of <code>Rc</code>s, where many different objects own the basic building
+blocks that make up the rendering system. It isn't bad design <em>per se</em>, but it's a little difficult
+to follow, and I'm hoping that once I have the renderer fully completed I can refine the architecture
+to something more elegant.</p>
+
+</div>
+
+<div class="post">
+  <h3><a href="http:&#x2F;&#x2F;c-obrien.org&#x2F;richter&#x2F;blog&#x2F;2018-04-26&#x2F;">HUD Updates and Timing Bugs</a></h3>
+  <h4>2018-04-26</h4>
+  <p><img src="http://c-obrien.org/richter/blog/2018-04-26/hud-screenshot.png" alt="HUD Screenshot" /></p>
+<p>The HUD now renders armor, health and current ammo counts in addition to the
+per-ammo type display at the top. The latter uses <a href="https://quakewiki.org/wiki/Quake_font">conchars</a>, which, as the
+name suggests, are used for rendering text to the in-game console. Now that I
+can load and display these I can start working on the console, which ought to
+make debugging a great deal easier.</p>
+<p>Unfortunately, the client is still plagued by a bug with position lerping that
+causes the geometry to jitter back and forth. This is most likely caused by bad
+time delta calculations in <code>Client::update_time()</code> (<a href="https://github.com/cormac-obrien/richter/blob/12b1d9448cf9c3cfed013108fe0866cb78755902/src/client/mod.rs#L1499-L1552">Github</a>), but I haven't
+been able to pinpoint the exact problem -- only that the lerp factor seems to go
+out of the expected range of <code>[0, 1)</code> once per server frame. I'll keep an eye on
+it.</p>
+
+</div>
+
+<div class="post">
+  <h3><a href="http:&#x2F;&#x2F;c-obrien.org&#x2F;richter&#x2F;blog&#x2F;2018-04-24&#x2F;">The New Site and the Way Forward</a></h3>
+  <h4>2018-04-24</h4>
+  <p>I've started rebuilding the site with <a href="https://www.getgutenberg.io/">Gutenberg</a>
+now that I actually have something to show for the past couple years (!) of
+on-and-off work. I figure a dev blog will be good to have when I look back on
+this project, even if I don't update it that often (the blog, not the project).
+It'll probably take me a while to get the site in order since my HTML/CSS skills
+are rusty, but the old site was impossible to maintain so this ought to make
+things easier.</p>
+<p>As for the project itself, the client is coming along nicely -- I'm hoping to
+reach a playable state by the end of the year, even if there are still some
+graphical bugs. Now that the infrastructure is there for networking, input,
+rendering, and sound, I can start work on the little things. The devil is in the
+details, etc.</p>
+<p>Defining the ultimate scope of the first alpha release is probably going to be
+one of the biggest challenges. There are so many features I could add to the
+engine, and I suspect many of them are far more complicated than they seem on
+the surface. Failed past projects have taught me to be wary of feature creep,
+so the alpha will most likely just be a working client and server -- no tools,
+no installers, no plugin support or anything like that. With any luck I'll be
+there soon.</p>
+
+</div>
+
+</main>
+
+    <footer>
+      
+      <p>
+        Copyright © 2018 Cormac O'Brien.
+        <br />
+        This work is licensed under a
+        <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">
+          Creative Commons Attribution-ShareAlike 4.0 International License
+        </a>.
+      </p>
+
+      
+    </footer>
+  </body>
+</html>
