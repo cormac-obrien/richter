@@ -17,8 +17,8 @@
 
 use std::rc::Rc;
 
-use client::render::{self, Camera, ColorFormat, DepthFormat, Palette};
-use common::bsp::{BspData, BspFace, BspModel, BspTexInfo, BspTextureMipmap, MIPLEVELS};
+use crate::client::render::{self, Camera, ColorFormat, DepthFormat, Palette};
+use crate::common::bsp::{BspData, BspFace, BspModel, BspTexInfo, BspTextureMipmap, MIPLEVELS};
 
 use cgmath::{Deg, Euler, InnerSpace, Matrix4, SquareMatrix, Vector3};
 use chrono::Duration;

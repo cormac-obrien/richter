@@ -20,7 +20,7 @@
 
 use std::cell::Cell;
 
-use client::menu::Menu;
+use crate::client::menu::Menu;
 
 use failure::Error;
 

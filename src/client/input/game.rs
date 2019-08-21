@@ -21,8 +21,8 @@ use std::rc::Rc;
 use std::str::FromStr;
 use std::string::ToString;
 
-use common::console::{CmdRegistry, Console};
-use common::parse;
+use crate::common::console::{CmdRegistry, Console};
+use crate::common::parse;
 
 use combine::Parser;
 use failure::Error;

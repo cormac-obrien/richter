@@ -19,7 +19,7 @@ use std::fs::File;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use common::pak::Pak;
+use crate::common::pak::Pak;
 
 use failure::Error;
 

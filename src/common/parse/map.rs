@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 
-use common::parse::quoted;
+use crate::common::parse::quoted;
 
 use combine::char::string;
 use combine::{between, many, token, ParseError, Parser, Stream};

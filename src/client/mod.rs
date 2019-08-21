@@ -32,18 +32,18 @@ use std::io::{BufReader, Read};
 use std::net::ToSocketAddrs;
 use std::rc::Rc;
 
-use client::input::game::{Action, GameInput};
-use client::sound::{AudioSource, Channel, StaticSound};
-use common::bsp;
-use common::console::{CmdRegistry, Console, CvarRegistry};
-use common::engine;
-use common::model::{Model, ModelFlags, ModelKind, SyncType};
-use common::net::connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION};
-use common::net::{
+use crate::client::input::game::{Action, GameInput};
+use crate::client::sound::{AudioSource, Channel, StaticSound};
+use crate::common::bsp;
+use crate::common::console::{CmdRegistry, Console, CvarRegistry};
+use crate::common::engine;
+use crate::common::model::{Model, ModelFlags, ModelKind, SyncType};
+use crate::common::net::connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION};
+use crate::common::net::{
     self, BlockingMode, ButtonFlags, ClientCmd, ClientStat, ColorShift, EntityEffects, EntityState,
     GameType, ItemFlags, NetError, PlayerColor, QSocket, ServerCmd, SignOnStage, TempEntity,
 };
-use common::vfs::Vfs;
+use crate::common::vfs::Vfs;
 
 use cgmath::Angle;
 use cgmath::Deg;

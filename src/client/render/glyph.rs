@@ -15,9 +15,9 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use client::render::{self, Palette, Vertex2d};
-use client::render::pipeline2d;
-use common::wad::QPic;
+use crate::client::render::{self, Palette, Vertex2d};
+use crate::client::render::pipeline2d;
+use crate::common::wad::QPic;
 
 use failure::Error;
 use gfx::{CommandBuffer, Encoder, Factory, IndexBuffer, Slice};

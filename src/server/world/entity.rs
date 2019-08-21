@@ -20,15 +20,15 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
-use common::net::EntityState;
-use server::progs::EntityId;
-use server::progs::FieldDef;
-use server::progs::FunctionId;
-use server::progs::ProgsError;
-use server::progs::StringId;
-use server::progs::StringTable;
-use server::progs::Type;
-use server::world::phys::MoveKind;
+use crate::common::net::EntityState;
+use crate::server::progs::EntityId;
+use crate::server::progs::FieldDef;
+use crate::server::progs::FunctionId;
+use crate::server::progs::ProgsError;
+use crate::server::progs::StringId;
+use crate::server::progs::StringTable;
+use crate::server::progs::Type;
+use crate::server::world::phys::MoveKind;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;

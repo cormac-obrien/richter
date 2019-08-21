@@ -22,8 +22,8 @@ pub mod menu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use client::menu::Menu;
-use common::console::{CmdRegistry, Console};
+use crate::client::menu::Menu;
+use crate::common::console::{CmdRegistry, Console};
 
 use failure::Error;
 use winit::{Event, WindowEvent};

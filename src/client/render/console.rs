@@ -18,13 +18,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use client::render::{self, Palette, Vertex2d};
-use client::render::bitmap::BitmapTexture;
-use client::render::glyph::{GLYPH_HEIGHT, GlyphRenderer, GlyphRendererCommand, GLYPH_WIDTH};
-use client::render::pipeline2d;
-use common::console::Console;
-use common::vfs::Vfs;
-use common::wad::QPic;
+use crate::client::render::{self, Palette, Vertex2d};
+use crate::client::render::bitmap::BitmapTexture;
+use crate::client::render::glyph::{GLYPH_HEIGHT, GlyphRenderer, GlyphRendererCommand, GLYPH_WIDTH};
+use crate::client::render::pipeline2d;
+use crate::common::console::Console;
+use crate::common::vfs::Vfs;
+use crate::common::wad::QPic;
 
 use failure::Error;
 use gfx::{CommandBuffer, Encoder, Factory, Slice};

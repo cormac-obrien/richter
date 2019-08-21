@@ -20,13 +20,13 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
-use server::progs::EntityId;
-use server::progs::FieldAddr;
-use server::progs::FunctionId;
-use server::progs::GlobalDef;
-use server::progs::StringId;
-use server::progs::StringTable;
-use server::progs::Type;
+use crate::server::progs::EntityId;
+use crate::server::progs::FieldAddr;
+use crate::server::progs::FunctionId;
+use crate::server::progs::GlobalDef;
+use crate::server::progs::StringId;
+use crate::server::progs::StringTable;
+use crate::server::progs::Type;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;

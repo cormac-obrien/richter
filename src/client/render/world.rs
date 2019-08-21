@@ -17,10 +17,10 @@
 
 use std::rc::Rc;
 
-use client::render::{self, Camera, ColorFormat, DepthFormat, Palette};
-use client::render::brush::{self, BrushPipelineData, BrushPipelineState, BrushRenderFace,
+use crate::client::render::{self, Camera, ColorFormat, DepthFormat, Palette};
+use crate::client::render::brush::{self, BrushPipelineData, BrushPipelineState, BrushRenderFace,
     BrushVertex, pipe_brush};
-use common::bsp::{BspData, BspModel, BspTextureMipmap, MIPLEVELS};
+use crate::common::bsp::{BspData, BspModel, BspTextureMipmap, MIPLEVELS};
 
 use cgmath::{Deg, Euler, Vector3, Matrix4, SquareMatrix};
 use chrono::Duration;

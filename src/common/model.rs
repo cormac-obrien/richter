@@ -15,12 +15,12 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use common::bsp::BspModel;
-use common::mdl;
-use common::mdl::AliasModel;
-use common::sprite;
-use common::sprite::SpriteModel;
-use common::vfs::Vfs;
+use crate::common::bsp::BspModel;
+use crate::common::mdl;
+use crate::common::mdl::AliasModel;
+use crate::common::sprite;
+use crate::common::sprite::SpriteModel;
+use crate::common::vfs::Vfs;
 
 use cgmath::Vector3;
 use failure::Error;

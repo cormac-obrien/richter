@@ -25,7 +25,7 @@ use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
 
-use common::util;
+use crate::common::util;
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;

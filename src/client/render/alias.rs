@@ -15,14 +15,14 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use client::render::Camera;
-use client::render::ColorFormat;
-use client::render::Palette;
-use client::render::Vertex;
-use client::render::pipe;
-use common::mdl::AliasModel;
-use common::mdl::Keyframe;
-use common::mdl::Texture;
+use crate::client::render::Camera;
+use crate::client::render::ColorFormat;
+use crate::client::render::Palette;
+use crate::client::render::Vertex;
+use crate::client::render::pipe;
+use crate::common::mdl::AliasModel;
+use crate::common::mdl::Keyframe;
+use crate::common::mdl::Texture;
 
 use cgmath::Deg;
 use cgmath::Euler;

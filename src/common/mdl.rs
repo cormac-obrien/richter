@@ -17,8 +17,8 @@
 
 use std::io::{BufReader, Read, Seek, SeekFrom};
 
-use common::engine;
-use common::model::{ModelFlags, SyncType};
+use crate::common::engine;
+use crate::common::model::{ModelFlags, SyncType};
 
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;

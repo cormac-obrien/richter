@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use common::console::CvarRegistry;
+use crate::common::console::CvarRegistry;
 
 pub fn register_cvars(cvars: &CvarRegistry) {
     cvars.register("cl_anglespeedkey", "1.5").unwrap();

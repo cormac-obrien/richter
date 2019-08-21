@@ -33,11 +33,11 @@ use std::io::BufReader;
 use std::ops::DerefMut;
 use std::rc::Rc;
 
-use client::ClientEntity;
-use common::console::Console;
-use common::model::{Model, ModelKind};
-use common::vfs::Vfs;
-use common::wad::{QPic, Wad};
+use crate::client::ClientEntity;
+use crate::common::console::Console;
+use crate::common::model::{Model, ModelKind};
+use crate::common::vfs::Vfs;
+use crate::common::wad::{QPic, Wad};
 
 use byteorder::ReadBytesExt;
 use cgmath::{Deg, Euler, Matrix3, Matrix4, SquareMatrix, Vector3, Zero};

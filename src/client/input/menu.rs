@@ -18,8 +18,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use client::menu::Menu;
-use common::console::Console;
+use crate::client::menu::Menu;
+use crate::common::console::Console;
 
 use failure::Error;
 use winit::{ElementState, Event, KeyboardInput, VirtualKeyCode as Key, WindowEvent};

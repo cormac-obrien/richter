@@ -25,7 +25,7 @@ use std::collections::VecDeque;
 use std::iter::FromIterator;
 use std::rc::Rc;
 
-use common::parse;
+use crate::common::parse;
 
 use combine::Parser;
 use failure::Error;

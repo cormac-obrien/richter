@@ -41,7 +41,7 @@ use std::path::Path;
 use std::process::exit;
 use std::rc::Rc;
 
-use richter::client::input::game::MouseWheel;
+
 use richter::client::input::{Input, InputFocus};
 use richter::client::menu::Menu;
 use richter::client::render::{self, GraphicsPackage};
@@ -51,13 +51,13 @@ use richter::common::console::{CmdRegistry, Console, CvarRegistry};
 use richter::common::host::{Host, Program};
 use richter::common::vfs::Vfs;
 
-use game::Game;
+use crate::game::Game;
 
 use cgmath::{Matrix4, SquareMatrix};
 use chrono::Duration;
 use gfx::Encoder;
 use gfx_device_gl::{CommandBuffer, Device, Resources};
-use glutin::{Event, EventsLoop, MouseCursor, WindowEvent, WindowedContext};
+use glutin::{Event, EventsLoop, WindowEvent, WindowedContext};
 use rodio::Endpoint;
 
 enum TitleState {

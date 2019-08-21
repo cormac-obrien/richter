@@ -15,7 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use common::parse::{line_ending, newline, non_newline_space, non_newline_spaces, quoted};
+use crate::common::parse::{line_ending, newline, non_newline_space, non_newline_spaces, quoted};
 
 use combine::char::string;
 use combine::parser::repeat::{skip_many, skip_until};

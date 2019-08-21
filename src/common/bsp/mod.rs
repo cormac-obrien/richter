@@ -123,14 +123,14 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
-use common::math::Hyperplane;
-use common::math::HyperplaneSide;
-use common::math::LinePlaneIntersect;
+use crate::common::math::Hyperplane;
+use crate::common::math::HyperplaneSide;
+use crate::common::math::LinePlaneIntersect;
 
 // TODO: Either Trace should be moved into common or the functions requiring it should be moved into server
-use server::world::Trace;
-use server::world::TraceStart;
-use server::world::TraceEnd;
+use crate::server::world::Trace;
+use crate::server::world::TraceStart;
+use crate::server::world::TraceEnd;
 
 use chrono::Duration;
 use cgmath::Vector3;

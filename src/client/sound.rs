@@ -22,7 +22,7 @@ use std::cell::RefCell;
 use std::io::{BufReader, Cursor, Read};
 use std::rc::Rc;
 
-use common::vfs::Vfs;
+use crate::common::vfs::Vfs;
 
 use cgmath::Vector3;
 use failure::Error;

@@ -19,15 +19,15 @@ mod layout;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ops::DerefMut;
+
 use std::rc::Rc;
 
-use client::menu::Menu;
-use client::render::bitmap::BitmapTexture;
-use client::render::pipeline2d;
-use client::render::{self, GraphicsPackage, Vertex2d};
-use common::vfs::Vfs;
-use common::wad::QPic;
+use crate::client::menu::Menu;
+use crate::client::render::bitmap::BitmapTexture;
+use crate::client::render::pipeline2d;
+use crate::client::render::{self, GraphicsPackage, Vertex2d};
+use crate::common::vfs::Vfs;
+
 
 use failure::Error;
 use gfx::handle::Buffer;

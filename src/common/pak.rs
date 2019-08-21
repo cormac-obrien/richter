@@ -38,21 +38,21 @@ impl Pak {
     {
         debug!("Opening {}", path.as_ref().to_str().unwrap());
 
-        let mut infile = try!(fs::File::open(path));
+        let mut infile = r#try!(fs::File::open(path));
 
         let mut magic = [0u8; 4];
-        try!(infile.read(&mut magic));
+        r#try!(infile.read(&mut magic));
 
         ensure!(magic == PAK_MAGIC, "Invalid magic number");
 
         // Locate the file table
 
-        let wad_offset = match try!(infile.read_i32::<LittleEndian>()) {
+        let wad_offset = match r#try!(infile.read_i32::<LittleEndian>()) {
             o if o <= 0 => bail!("Negative file table offset"),
             o => o as u32,
         };
 
-        let wad_size = match try!(infile.read_i32::<LittleEndian>()) {
+        let wad_size = match r#try!(infile.read_i32::<LittleEndian>()) {
             s if s <= 0 => bail!("Negative file table size"),
             s => s as u32,
         };

@@ -21,11 +21,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use client::render::bitmap::BitmapTexture;
-use client::render::glyph::GlyphRendererCommand;
-use client::render::{self, GraphicsPackage, PipelineData2d, Vertex2d};
-use client::Client;
-use common::net::{ClientStat, ItemFlags};
+use crate::client::render::bitmap::BitmapTexture;
+use crate::client::render::glyph::GlyphRendererCommand;
+use crate::client::render::{self, GraphicsPackage, PipelineData2d, Vertex2d};
+use crate::client::Client;
+use crate::common::net::{ClientStat, ItemFlags};
 
 use chrono::Duration;
 use flame;

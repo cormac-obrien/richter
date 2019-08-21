@@ -18,9 +18,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use client::render;
-use client::render::Palette;
-use common::wad::QPic;
+use crate::client::render;
+use crate::client::render::Palette;
+use crate::common::wad::QPic;
 
 use cgmath::Matrix4;
 use failure::Error;

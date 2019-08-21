@@ -318,7 +318,7 @@ impl NamedMenuItem {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::cell::{Cell, RefCell};
+    use std::cell::{Cell};
     use std::rc::Rc;
 
     fn is_inactive(state: &MenuState) -> bool {
@@ -347,7 +347,7 @@ mod test {
         let action_target = Rc::new(Cell::new(false));
         let action_target_handle = action_target.clone();
 
-        let m = MenuBuilder::new()
+        let _m = MenuBuilder::new()
             .add_action("action", Box::new(move || action_target_handle.set(true)))
             .build();
 

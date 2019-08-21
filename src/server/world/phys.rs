@@ -15,9 +15,9 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use common::bsp::BspLeafContents;
-use common::math::Hyperplane;
-use server::progs::EntityId;
+use crate::common::bsp::BspLeafContents;
+use crate::common::math::Hyperplane;
+use crate::server::progs::EntityId;
 
 use cgmath::Vector3;
 use cgmath::Zero;

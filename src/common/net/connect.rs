@@ -26,10 +26,10 @@ use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::net::UdpSocket;
 
-use common::net::MAX_MESSAGE;
-use common::net::NetError;
-use common::net::QSocket;
-use common::util;
+use crate::common::net::MAX_MESSAGE;
+use crate::common::net::NetError;
+use crate::common::net::QSocket;
+use crate::common::util;
 
 use byteorder::LittleEndian;
 use byteorder::NetworkEndian;
