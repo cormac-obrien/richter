@@ -1007,7 +1007,6 @@ impl Client {
                         );
 
                         // TODO: set player custom colormaps
-                        warn!("Player colormaps not yet implemented");
                     }
 
                     self.state.entities[ent_id].skin_id = skin_id
