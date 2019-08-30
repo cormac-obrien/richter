@@ -17,20 +17,21 @@
 
 use std::rc::Rc;
 
+use crate::client::render::brush::{
+    self, pipe_brush, BrushPipelineData, BrushPipelineState, BrushRenderFace, BrushVertex,
+};
 use crate::client::render::{self, Camera, ColorFormat, DepthFormat, Palette};
-use crate::client::render::brush::{self, BrushPipelineData, BrushPipelineState, BrushRenderFace,
-    BrushVertex, pipe_brush};
 use crate::common::bsp::{BspData, BspModel, BspTextureMipmap, MIPLEVELS};
 
-use cgmath::{Deg, Euler, Vector3, Matrix4, SquareMatrix};
+use cgmath::{Deg, Euler, Matrix4, SquareMatrix, Vector3};
 use chrono::Duration;
 use failure::Error;
 use flame;
-use gfx::{self, CommandBuffer, Encoder, Factory};
-use gfx::format::{R8, Unorm};
+use gfx::format::{Unorm, R8};
 use gfx::handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView};
 use gfx::texture;
 use gfx::traits::FactoryExt;
+use gfx::{self, CommandBuffer, Encoder, Factory};
 use gfx_device_gl::Resources;
 use num::FromPrimitive;
 
@@ -89,7 +90,7 @@ impl WorldRenderer {
                     &bsp_data,
                     face_id,
                     &mut vertices,
-                    &mut lightmap_views
+                    &mut lightmap_views,
                 )?);
             }
 
@@ -114,19 +115,22 @@ impl WorldRenderer {
 
             let (width, height) = tex.dimensions();
 
-            let (_, texture_view) = factory
-                .create_texture_immutable_u8::<ColorFormat>(
-                    texture::Kind::D2(width as u16, height as u16, texture::AaMode::Single),
-                    texture::Mipmap::Provided,
-                    &[&mipmaps[0], &mipmaps[1], &mipmaps[2], &mipmaps[3]],
-                )?;
+            let (_, texture_view) = factory.create_texture_immutable_u8::<ColorFormat>(
+                texture::Kind::D2(width as u16, height as u16, texture::AaMode::Single),
+                texture::Mipmap::Provided,
+                &[&mipmaps[0], &mipmaps[1], &mipmaps[2], &mipmaps[3]],
+            )?;
 
-            let (_, fullbright_view) = factory
-                .create_texture_immutable_u8::<(R8, Unorm)>(
-                    texture::Kind::D2(width as u16, height as u16, texture::AaMode::Single),
-                    texture::Mipmap::Provided,
-                    &[&fullbrights[0], &fullbrights[1], &fullbrights[2], &fullbrights[3]],
-                )?;
+            let (_, fullbright_view) = factory.create_texture_immutable_u8::<(R8, Unorm)>(
+                texture::Kind::D2(width as u16, height as u16, texture::AaMode::Single),
+                texture::Mipmap::Provided,
+                &[
+                    &fullbrights[0],
+                    &fullbrights[1],
+                    &fullbrights[2],
+                    &fullbrights[3],
+                ],
+            )?;
 
             texture_views.push(texture_view);
             fullbright_views.push(fullbright_view);
@@ -165,13 +169,15 @@ impl WorldRenderer {
         })
     }
 
-    fn create_pipeline_data(&self) -> Result<BrushPipelineData, Error>
-    {
+    fn create_pipeline_data(&self) -> Result<BrushPipelineData, Error> {
         let pipeline_data = pipe_brush::Data {
             vertex_buffer: self.vertex_buffer.clone(),
             transform: Matrix4::identity().into(),
             diffuse_sampler: (self.dummy_texture.clone(), self.diffuse_sampler.clone()),
-            fullbright_sampler: (self.dummy_fullbright.clone(), self.fullbright_sampler.clone()),
+            fullbright_sampler: (
+                self.dummy_fullbright.clone(),
+                self.fullbright_sampler.clone(),
+            ),
             lightmap_sampler: (self.dummy_lightmap.clone(), self.lightmap_sampler.clone()),
             lightstyle_value: [0.0; 4],
             out_color: self.color_target.clone(),
@@ -196,15 +202,20 @@ impl WorldRenderer {
         C: CommandBuffer<Resources>,
     {
         if leaf_id >= self.leaves.len() {
-            error!("leaf ID is out of bounds: the len is {} but the leaf ID is {}", self.leaves.len(), leaf_id);
+            error!(
+                "leaf ID is out of bounds: the len is {} but the leaf ID is {}",
+                self.leaves.len(),
+                leaf_id
+            );
             return;
         }
 
         for face in self.leaves[leaf_id].faces.iter() {
             let frame = self.bsp_data.texture_frame_for_time(face.tex_id, time);
 
-            let model_transform = Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
-                * Matrix4::from(Euler::new(angles.x, angles.y, angles.z));
+            let model_transform =
+                Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
+                    * Matrix4::from(Euler::new(angles.x, angles.y, angles.z));
             pipeline_data.vertex_buffer = self.vertex_buffer.clone();
             pipeline_data.transform = (camera.transform() * model_transform).into();
 

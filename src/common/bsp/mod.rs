@@ -129,11 +129,11 @@ use crate::common::math::LinePlaneIntersect;
 
 // TODO: Either Trace should be moved into common or the functions requiring it should be moved into server
 use crate::server::world::Trace;
-use crate::server::world::TraceStart;
 use crate::server::world::TraceEnd;
+use crate::server::world::TraceStart;
 
-use chrono::Duration;
 use cgmath::Vector3;
+use chrono::Duration;
 use flame;
 
 pub use self::load::load;
@@ -672,19 +672,19 @@ pub struct BspEdgeIndex {
 
 #[derive(Debug)]
 pub struct BspData {
-    planes: Rc<Box<[Hyperplane]>>,
-    textures: Box<[BspTexture]>,
-    vertices: Box<[Vector3<f32>]>,
-    visibility: Box<[u8]>,
-    render_nodes: Box<[BspRenderNode]>,
-    texinfo: Box<[BspTexInfo]>,
-    faces: Box<[BspFace]>,
-    lightmaps: Box<[u8]>,
-    leaves: Box<[BspLeaf]>,
-    facelist: Box<[usize]>,
-    edges: Box<[BspEdge]>,
-    edgelist: Box<[BspEdgeIndex]>,
-    hulls: [BspCollisionHull; MAX_HULLS],
+    pub(crate) planes: Rc<Box<[Hyperplane]>>,
+    pub(crate) textures: Box<[BspTexture]>,
+    pub(crate) vertices: Box<[Vector3<f32>]>,
+    pub(crate) visibility: Box<[u8]>,
+    pub(crate) render_nodes: Box<[BspRenderNode]>,
+    pub(crate) texinfo: Box<[BspTexInfo]>,
+    pub(crate) faces: Box<[BspFace]>,
+    pub(crate) lightmaps: Box<[u8]>,
+    pub(crate) leaves: Box<[BspLeaf]>,
+    pub(crate) facelist: Box<[usize]>,
+    pub(crate) edges: Box<[BspEdge]>,
+    pub(crate) edgelist: Box<[BspEdgeIndex]>,
+    pub(crate) hulls: [BspCollisionHull; MAX_HULLS],
 }
 
 impl BspData {
@@ -819,16 +819,18 @@ impl BspData {
                         // a zero byte signals the start of an RLE sequence
                         0 => visleaf += 8 * *it.next().unwrap() as usize,
 
-                        bits => for shift in 0..8 {
-                            if bits & 1 << shift != 0 {
-                                if visleaf >= leaf_count {
-                                    error!("Impossible visleaf in PVS: the len is {} but the leaf ID is {}", leaf_count, visleaf);
+                        bits => {
+                            for shift in 0..8 {
+                                if bits & 1 << shift != 0 {
+                                    if visleaf >= leaf_count {
+                                        error!("Impossible visleaf in PVS: the len is {} but the leaf ID is {}", leaf_count, visleaf);
+                                    }
+                                    visleaf_list.push(visleaf);
                                 }
-                                visleaf_list.push(visleaf);
-                            }
 
-                            visleaf += 1;
-                        },
+                                visleaf += 1;
+                            }
+                        }
                     }
                 }
 

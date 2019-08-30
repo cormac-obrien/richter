@@ -42,6 +42,7 @@ extern crate num;
 extern crate num_derive;
 extern crate rand;
 extern crate regex;
+extern crate rendy;
 extern crate rodio;
 extern crate winit;
 

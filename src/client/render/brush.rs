@@ -24,12 +24,12 @@ use cgmath::{Deg, Euler, InnerSpace, Matrix4, SquareMatrix, Vector3};
 use chrono::Duration;
 use failure::Error;
 use flame;
-use gfx::{self, CommandBuffer, Encoder, Factory, IndexBuffer, Slice};
-use gfx::format::{R8, Unorm};
+use gfx::format::{Unorm, R8};
 use gfx::handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView};
 use gfx::pso::{PipelineData, PipelineState};
 use gfx::texture;
 use gfx::traits::FactoryExt;
+use gfx::{self, CommandBuffer, Encoder, Factory, IndexBuffer, Slice};
 use gfx_device_gl::Resources;
 use num::FromPrimitive;
 
@@ -72,6 +72,7 @@ void main() {
     vec4 lightmap = texture(u_Lightmap, f_lightmapTexcoord);
 
     vec4 lightmapped_color = vec4(base_color.rgb * lightmap.rrr, 1.0);
+    // vec4 lightmapped_color = vec4(lightmap.rrr, 1.0);
 
     int lightstyle_count = 0;
     float light_factor = 0.0;
@@ -115,7 +116,8 @@ gfx_defines! {
 }
 
 /// A `PipelineState` object specific to the `brush` and `world` pipelines.
-pub type BrushPipelineState = PipelineState<Resources, <pipe_brush::Data<Resources> as PipelineData<Resources>>::Meta>;
+pub type BrushPipelineState =
+    PipelineState<Resources, <pipe_brush::Data<Resources> as PipelineData<Resources>>::Meta>;
 
 /// A `PipelineData` object specific to the `brush` and `world` pipelines.
 pub type BrushPipelineData = pipe_brush::Data<Resources>;
@@ -151,12 +153,10 @@ pub struct BrushRenderer {
 
 pub fn create_pipeline_state<F>(factory: &mut F) -> Result<BrushPipelineState, Error>
 where
-    F: Factory<Resources>
+    F: Factory<Resources>,
 {
-    let shader_set = &factory.create_shader_set(
-        BRUSH_VERTEX_SHADER_GLSL,
-        BRUSH_FRAGMENT_SHADER_GLSL
-    )?;
+    let shader_set =
+        &factory.create_shader_set(BRUSH_VERTEX_SHADER_GLSL, BRUSH_FRAGMENT_SHADER_GLSL)?;
 
     let pipeline = factory.create_pipeline_state(
         &shader_set,
@@ -181,11 +181,13 @@ fn calculate_lightmap_texcoords(
     texinfo: &BspTexInfo,
 ) -> [f32; 2] {
     let mut s = texinfo.s_vector.dot(position) + texinfo.s_offset;
-    s -= face.texture_mins[0] as f32;
+    s -= (face.texture_mins[0] as f32 / 16.0).floor() * 16.0;
+    s += 0.5;
     s /= face.extents[0] as f32;
 
     let mut t = texinfo.t_vector.dot(position) + texinfo.t_offset;
-    t -= face.texture_mins[1] as f32;
+    t -= (face.texture_mins[1] as f32 / 16.0).floor() * 16.0;
+    t += 0.5;
     t /= face.extents[1] as f32;
     [s, t]
 }
@@ -211,7 +213,8 @@ where
     let texinfo = &bsp_data.texinfo()[face.texinfo_id];
     let tex = &bsp_data.textures()[texinfo.tex_id];
     let face_edge_ids = &bsp_data.edgelist()[face.edge_id..face.edge_id + face.edge_count];
-    let base_vertex_id = bsp_data.edges()[face_edge_ids[0].index].vertex_ids[face_edge_ids[0].direction as usize];
+    let base_vertex_id =
+        bsp_data.edges()[face_edge_ids[0].index].vertex_ids[face_edge_ids[0].direction as usize];
     let base_position = bsp_data.vertices()[base_vertex_id as usize];
     let base_diffuse_texcoords = [
         (base_position.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32,
@@ -252,11 +255,16 @@ where
     let lightmap_id = if !texinfo.special {
         if let Some(ofs) = face.lightmap_id {
             let lightmap_data = &bsp_data.lightmaps()[ofs..ofs + lightmap_size as usize];
-            let (_lightmap_handle, lightmap_view) = factory.create_texture_immutable_u8::<(R8, Unorm)>(
-                texture::Kind::D2(lightmap_w as u16, lightmap_h as u16, texture::AaMode::Single),
-                texture::Mipmap::Allocated,
-                &[lightmap_data],
-            )?;
+            let (_lightmap_handle, lightmap_view) = factory
+                .create_texture_immutable_u8::<(R8, Unorm)>(
+                    texture::Kind::D2(
+                        lightmap_w as u16,
+                        lightmap_h as u16,
+                        texture::AaMode::Single,
+                    ),
+                    texture::Mipmap::Allocated,
+                    &[lightmap_data],
+                )?;
             let l_id = lightmap_views.len();
             lightmap_views.push(lightmap_view);
             Some(l_id)
@@ -308,7 +316,7 @@ impl BrushRenderer {
                 &bsp_data,
                 face_id,
                 &mut vertices,
-                &mut lightmap_views
+                &mut lightmap_views,
             )?);
         }
 
@@ -328,19 +336,22 @@ impl BrushRenderer {
 
             let (width, height) = tex.dimensions();
 
-            let (_, texture_view) = factory
-                .create_texture_immutable_u8::<ColorFormat>(
-                    texture::Kind::D2(width as u16, height as u16, texture::AaMode::Single),
-                    texture::Mipmap::Provided,
-                    &[&mipmaps[0], &mipmaps[1], &mipmaps[2], &mipmaps[3]],
-                )?;
+            let (_, texture_view) = factory.create_texture_immutable_u8::<ColorFormat>(
+                texture::Kind::D2(width as u16, height as u16, texture::AaMode::Single),
+                texture::Mipmap::Provided,
+                &[&mipmaps[0], &mipmaps[1], &mipmaps[2], &mipmaps[3]],
+            )?;
 
-            let (_, fullbright_view) = factory
-                .create_texture_immutable_u8::<(R8, Unorm)>(
-                    texture::Kind::D2(width as u16, height as u16, texture::AaMode::Single),
-                    texture::Mipmap::Provided,
-                    &[&fullbrights[0], &fullbrights[1], &fullbrights[2], &fullbrights[3]],
-                )?;
+            let (_, fullbright_view) = factory.create_texture_immutable_u8::<(R8, Unorm)>(
+                texture::Kind::D2(width as u16, height as u16, texture::AaMode::Single),
+                texture::Mipmap::Provided,
+                &[
+                    &fullbrights[0],
+                    &fullbrights[1],
+                    &fullbrights[2],
+                    &fullbrights[3],
+                ],
+            )?;
 
             texture_views.push(texture_view);
             fullbright_views.push(fullbright_view);
@@ -379,13 +390,15 @@ impl BrushRenderer {
         })
     }
 
-    fn create_pipeline_data(&self) -> Result<BrushPipelineData, Error>
-    {
+    fn create_pipeline_data(&self) -> Result<BrushPipelineData, Error> {
         let pipeline_data = pipe_brush::Data {
             vertex_buffer: self.vertex_buffer.clone(),
             transform: Matrix4::identity().into(),
             diffuse_sampler: (self.dummy_texture.clone(), self.diffuse_sampler.clone()),
-            fullbright_sampler: (self.dummy_fullbright.clone(), self.fullbright_sampler.clone()),
+            fullbright_sampler: (
+                self.dummy_fullbright.clone(),
+                self.fullbright_sampler.clone(),
+            ),
             lightmap_sampler: (self.dummy_lightmap.clone(), self.lightmap_sampler.clone()),
             lightstyle_value: [0.0; 4],
             out_color: self.color_target.clone(),
@@ -413,8 +426,9 @@ impl BrushRenderer {
         for face in self.faces.iter() {
             let frame = self.bsp_data.texture_frame_for_time(face.tex_id, time);
 
-            let model_transform = Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
-                * Matrix4::from(Euler::new(angles.x, angles.y, angles.z));
+            let model_transform =
+                Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
+                    * Matrix4::from(Euler::new(angles.x, angles.y, angles.z));
             pipeline_data.vertex_buffer = self.vertex_buffer.clone();
             pipeline_data.transform = (camera.transform() * model_transform).into();
 

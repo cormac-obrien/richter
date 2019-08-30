@@ -25,6 +25,7 @@ pub mod console;
 pub mod glyph;
 pub mod hud;
 pub mod menu;
+pub mod rendy;
 pub mod world;
 
 use std::cell::{Ref, RefCell, RefMut};

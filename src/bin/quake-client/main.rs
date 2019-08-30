@@ -41,7 +41,6 @@ use std::path::Path;
 use std::process::exit;
 use std::rc::Rc;
 
-
 use richter::client::input::{Input, InputFocus};
 use richter::client::menu::Menu;
 use richter::client::render::{self, GraphicsPackage};
@@ -122,7 +121,11 @@ impl ClientProgram {
         let console = Rc::new(RefCell::new(Console::new(cmds.clone(), cvars.clone())));
         let menu = Rc::new(RefCell::new(menu::build_main_menu().unwrap()));
 
-        let input = Rc::new(RefCell::new(Input::new(InputFocus::Game, console.clone(), menu.clone())));
+        let input = Rc::new(RefCell::new(Input::new(
+            InputFocus::Game,
+            console.clone(),
+            menu.clone(),
+        )));
         input.borrow_mut().bind_defaults();
 
         let events_loop = glutin::EventsLoop::new();
@@ -130,7 +133,7 @@ impl ClientProgram {
             .with_title("Richter client")
             .with_dimensions((1600, 900).into());
         let context_builder = glutin::ContextBuilder::new()
-            .with_gl(glutin::GlRequest::Specific(glutin::Api::OpenGl, (3, 3)))
+            .with_gl(glutin::GlRequest::Specific(glutin::Api::OpenGl, (4, 3)))
             .with_vsync(false);
 
         let (windowed_context, device, mut factory, color, depth) =
