@@ -949,7 +949,25 @@ impl Client {
                     let mut force_link = false;
 
                     let ent_id = ent_id as usize;
-                    self.check_entity_id(ent_id)?;
+                    if ent_id >= self.state.entities.len() {
+                        self.spawn_entities(
+                            ent_id as u16,
+                            model_id.unwrap_or(0),
+                            frame_id.unwrap_or(0),
+                            colormap.unwrap_or(0),
+                            skin_id.unwrap_or(0),
+                            Vector3::new(
+                                origin_x.unwrap_or(0.0),
+                                origin_y.unwrap_or(0.0),
+                                origin_z.unwrap_or(0.0),
+                            ),
+                            Vector3::new(
+                                pitch.unwrap_or(Deg(0.0)),
+                                yaw.unwrap_or(Deg(0.0)),
+                                roll.unwrap_or(Deg(0.0)),
+                            ),
+                        )?;
+                    }
 
                     // did we get an update for this entity last frame?
                     if self.state.entities[ent_id].msg_time != self.state.msg_times[1] {
