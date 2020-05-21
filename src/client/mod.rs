@@ -799,7 +799,11 @@ impl Client {
 
         while let Some(cmd) = ServerCmd::deserialize(&mut reader)? {
             match cmd {
+                // TODO: have an error for this instead of panicking
+                // once all other commands have placeholder handlers, just error
+                // in the wildcard branch
                 ServerCmd::Bad => panic!("Invalid command from server"),
+
                 ServerCmd::NoOp => (),
 
                 ServerCmd::CdTrack { .. } => {
@@ -1078,7 +1082,7 @@ impl Client {
                 }
 
                 ServerCmd::LightStyle { id, value } => {
-                    debug!("Inserting light style {} with value {}", id, &value);
+                    trace!("Inserting light style {} with value {}", id, &value);
                     let _ = self.state.light_styles.insert(id, value);
                 }
 
@@ -1204,7 +1208,7 @@ impl Client {
 
                     match self.state.player_info[player_id] {
                         Some(ref mut info) => {
-                            debug!(
+                            trace!(
                                 "Player {} (ID {}) colors: {:?} -> {:?}",
                                 info.name, player_id, info.colors, new_colors,
                             );
@@ -1213,7 +1217,7 @@ impl Client {
 
                         None => {
                             error!(
-                                "Attempted to set colors on nonexistant player with ID {}",
+                                "Attempted to set colors on nonexistent player with ID {}",
                                 player_id
                             );
                         }
@@ -1229,7 +1233,7 @@ impl Client {
 
                     match self.state.player_info[player_id] {
                         Some(ref mut info) => {
-                            debug!(
+                            trace!(
                                 "Player {} (ID {}) frags: {} -> {}",
                                 &info.name, player_id, info.frags, new_frags
                             );
@@ -1237,7 +1241,7 @@ impl Client {
                         }
                         None => {
                             error!(
-                                "Attempted to set frags on nonexistant player with ID {}",
+                                "Attempted to set frags on nonexistent player with ID {}",
                                 player_id
                             );
                         }
@@ -1267,7 +1271,7 @@ impl Client {
                 }
 
                 ServerCmd::UpdateStat { stat, value } => {
-                    debug!(
+                    trace!(
                         "{:?}: {} -> {}",
                         stat, self.state.stats[stat as usize], value
                     );
@@ -1276,6 +1280,12 @@ impl Client {
 
                 ServerCmd::Version { version } => {
                     if version != net::PROTOCOL_VERSION as i32 {
+                        // TODO: handle with an error
+                        error!(
+                            "Incompatible server version: server's is {}, client's is {}",
+                            version,
+                            net::PROTOCOL_VERSION,
+                        );
                         panic!("bad version number");
                     }
                 }
