@@ -1082,6 +1082,11 @@ impl Client {
                     let _ = self.state.light_styles.insert(id, value);
                 }
 
+                ServerCmd::Particle { .. } => {
+                    // TODO: spawn particle effects
+                    warn!("Particle effects not implemented!");
+                }
+
                 ServerCmd::Print { text } => {
                     // TODO: print to in-game console
                     println!("{}", text);
