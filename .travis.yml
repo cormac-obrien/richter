@@ -1,9 +1,16 @@
-branches:
-  only:
-    - staging
-    - trying
-
+sudo: false
 language: rust
+cache:
+  directories:
+    - $HOME/.cargo
+before-cache:
+  - rm -rf $HOME/.cargo/registry
+
+branches:
+  except:
+    - gh-pages
+    - staging.tmp
+    - trying.tmp
 
 rust:
   - nightly
