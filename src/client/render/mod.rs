@@ -27,42 +27,46 @@ pub mod hud;
 pub mod menu;
 pub mod world;
 
-use std::cell::{Ref, RefCell, RefMut};
-use std::collections::HashMap;
-use std::io::BufReader;
-use std::ops::DerefMut;
-use std::rc::Rc;
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
+    io::BufReader,
+    ops::DerefMut,
+    rc::Rc,
+};
 
-use crate::client::ClientEntity;
-use crate::common::console::Console;
-use crate::common::model::{Model, ModelKind};
-use crate::common::vfs::Vfs;
-use crate::common::wad::{QPic, Wad};
+use crate::{
+    client::ClientEntity,
+    common::{
+        console::Console,
+        model::{Model, ModelKind},
+        vfs::Vfs,
+        wad::{QPic, Wad},
+    },
+};
 
 use byteorder::ReadBytesExt;
 use cgmath::{Deg, Euler, Matrix3, Matrix4, SquareMatrix, Vector3, Zero};
 use chrono::Duration;
 use failure::Error;
 use flame;
-use gfx::format::{Unorm, R8, R8_G8_B8_A8};
-use gfx::handle::{
-    Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView, Texture,
+use gfx::{
+    self,
+    format::{Unorm, R8, R8_G8_B8_A8},
+    handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView, Texture},
+    pso::{PipelineData, PipelineState},
+    texture::{self, SamplerInfo},
+    traits::FactoryExt,
+    IndexBuffer, Slice,
 };
-use gfx::pso::{PipelineData, PipelineState};
-use gfx::texture::{self, SamplerInfo};
-use gfx::traits::FactoryExt;
-use gfx::{self, IndexBuffer, Slice};
 use gfx_device_gl::{Factory, Resources};
 
-pub use gfx::format::DepthStencil as DepthFormat;
-pub use gfx::format::Srgba8 as ColorFormat;
+pub use gfx::format::{DepthStencil as DepthFormat, Srgba8 as ColorFormat};
 
-use self::alias::AliasRenderer;
-use self::bitmap::BitmapTexture;
-use self::brush::BrushRenderer;
-use self::console::ConsoleRenderer;
-use self::glyph::GlyphRenderer;
-use self::world::WorldRenderer;
+use self::{
+    alias::AliasRenderer, bitmap::BitmapTexture, brush::BrushRenderer, console::ConsoleRenderer,
+    glyph::GlyphRenderer, world::WorldRenderer,
+};
 
 const PALETTE_SIZE: usize = 768;
 
@@ -180,8 +184,7 @@ impl GraphicsPackage {
 
         let (_handle, dummy_diffuse_texture) = create_dummy_texture(&mut factory).unwrap();
 
-        use gfx::texture::WrapMode;
-        use gfx::Factory;
+        use gfx::{texture::WrapMode, Factory};
         let sampler = factory.create_sampler(SamplerInfo::new(
             gfx::texture::FilterMethod::Scale,
             WrapMode::Tile,

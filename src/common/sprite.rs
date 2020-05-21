@@ -17,11 +17,9 @@
 
 use std::io::{BufReader, Read, Seek};
 
-use crate::common::engine;
-use crate::common::model::SyncType;
+use crate::common::{engine, model::SyncType};
 
-use byteorder::LittleEndian;
-use byteorder::ReadBytesExt;
+use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::Vector3;
 use chrono::Duration;
 use num::FromPrimitive;

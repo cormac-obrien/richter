@@ -15,21 +15,24 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
-use std::rc::Rc;
-use std::str::FromStr;
-use std::string::ToString;
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+    str::FromStr,
+    string::ToString,
+};
 
-use crate::common::console::{CmdRegistry, Console};
-use crate::common::parse;
+use crate::common::{
+    console::{CmdRegistry, Console},
+    parse,
+};
 
 use combine::Parser;
 use failure::Error;
-use winit::dpi::LogicalPosition;
 use winit::{
-    DeviceEvent, ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta,
-    VirtualKeyCode as Key, WindowEvent,
+    dpi::LogicalPosition, DeviceEvent, ElementState, Event, KeyboardInput, MouseButton,
+    MouseScrollDelta, VirtualKeyCode as Key, WindowEvent,
 };
 
 const ACTION_COUNT: usize = 19;

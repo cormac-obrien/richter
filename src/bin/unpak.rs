@@ -20,14 +20,13 @@ extern crate richter;
 #[macro_use]
 extern crate serde_derive;
 
+use std::{
+    fs,
+    fs::File,
+    io::{BufWriter, Write},
+};
 
-use std::fs;
-use std::fs::File;
-use std::io::BufWriter;
-use std::io::Write;
-
-use std::path::PathBuf;
-use std::process::exit;
+use std::{path::PathBuf, process::exit};
 
 use richter::common::pak::Pak;
 

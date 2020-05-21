@@ -18,16 +18,20 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::cell::RefCell;
-use std::io::{BufReader, Cursor, Read};
-use std::rc::Rc;
+use std::{
+    cell::RefCell,
+    io::{BufReader, Cursor, Read},
+    rc::Rc,
+};
 
 use crate::common::vfs::Vfs;
 
 use cgmath::Vector3;
 use failure::Error;
-use rodio::source::{Buffered, SamplesConverter};
-use rodio::{Decoder, Endpoint, Sink, Source};
+use rodio::{
+    source::{Buffered, SamplesConverter},
+    Decoder, Endpoint, Sink, Source,
+};
 
 #[derive(Clone)]
 pub struct AudioSource(Buffered<SamplesConverter<Decoder<BufReader<Cursor<Vec<u8>>>>, f32>>);

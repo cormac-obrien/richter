@@ -18,19 +18,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
-use crate::client::render::bitmap::BitmapTexture;
-use crate::client::render::glyph::GlyphRendererCommand;
-use crate::client::render::{self, GraphicsPackage, PipelineData2d, Vertex2d};
-use crate::client::Client;
-use crate::common::net::{ClientStat, ItemFlags};
+use crate::{
+    client::{
+        render::{
+            self, bitmap::BitmapTexture, glyph::GlyphRendererCommand, GraphicsPackage,
+            PipelineData2d, Vertex2d,
+        },
+        Client,
+    },
+    common::net::{ClientStat, ItemFlags},
+};
 
 use chrono::Duration;
 use flame;
-use gfx::handle::Buffer;
-use gfx::{CommandBuffer, Encoder};
+use gfx::{handle::Buffer, CommandBuffer, Encoder};
 use gfx_device_gl::Resources;
 
 use failure::Error;

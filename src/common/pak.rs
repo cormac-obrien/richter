@@ -17,11 +17,12 @@
 
 //! Quake PAK archive manipulation.
 
-use std::collections::hash_map::Iter;
-use std::collections::HashMap;
-use std::fs;
-use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
+use std::{
+    collections::{hash_map::Iter, HashMap},
+    fs,
+    io::{Read, Seek, SeekFrom},
+    path::Path,
+};
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use failure::Error;
@@ -89,7 +90,9 @@ impl Pak {
             infile.seek(SeekFrom::Start(file_offset as u64))?;
 
             let mut data: Vec<u8> = Vec::with_capacity(file_size as usize);
-            (&mut infile).take(file_size as u64).read_to_end(&mut data)?;
+            (&mut infile)
+                .take(file_size as u64)
+                .read_to_end(&mut data)?;
 
             map.insert(path, data.into_boxed_slice());
         }

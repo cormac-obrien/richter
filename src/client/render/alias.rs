@@ -15,31 +15,20 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use crate::client::render::Camera;
-use crate::client::render::ColorFormat;
-use crate::client::render::Palette;
-use crate::client::render::Vertex;
-use crate::client::render::pipe;
-use crate::common::mdl::AliasModel;
-use crate::common::mdl::Keyframe;
-use crate::common::mdl::Texture;
+use crate::{
+    client::render::{pipe, Camera, ColorFormat, Palette, Vertex},
+    common::mdl::{AliasModel, Keyframe, Texture},
+};
 
-use cgmath::Deg;
-use cgmath::Euler;
-use cgmath::Matrix4;
-use cgmath::Vector3;
+use cgmath::{Deg, Euler, Matrix4, Vector3};
 use chrono::Duration;
 use failure::Error;
-use gfx;
-use gfx::CommandBuffer;
-use gfx::Encoder;
-use gfx::Factory;
-use gfx::IndexBuffer;
-use gfx::Slice;
-use gfx::handle::Buffer;
-use gfx::handle::ShaderResourceView;
-use gfx::pso::PipelineData;
-use gfx::pso::PipelineState;
+use gfx::{
+    self,
+    handle::{Buffer, ShaderResourceView},
+    pso::{PipelineData, PipelineState},
+    CommandBuffer, Encoder, Factory, IndexBuffer, Slice,
+};
 use gfx_device_gl::Resources;
 
 pub struct AliasRenderStaticTexture {
@@ -49,7 +38,7 @@ pub struct AliasRenderStaticTexture {
 pub struct AliasRenderAnimatedTexture {
     total_duration: Duration,
     durations: Box<[Duration]>,
-    views: Box<[ShaderResourceView<Resources, [f32; 4]>]>
+    views: Box<[ShaderResourceView<Resources, [f32; 4]>]>,
 }
 
 pub enum AliasRenderTexture {
@@ -64,7 +53,7 @@ pub struct AliasRenderStaticKeyframe {
 pub struct AliasRenderAnimatedKeyframe {
     total_duration: Duration,
     durations: Box<[Duration]>,
-    slices: Box<[Slice<Resources>]>
+    slices: Box<[Slice<Resources>]>,
 }
 
 pub enum AliasRenderKeyframe {
@@ -79,9 +68,13 @@ pub struct AliasRenderer {
 }
 
 impl AliasRenderer {
-    pub fn new<F>(alias_model: &AliasModel, palette: &Palette, factory: &mut F) -> Result<AliasRenderer, Error>
+    pub fn new<F>(
+        alias_model: &AliasModel,
+        palette: &Palette,
+        factory: &mut F,
+    ) -> Result<AliasRenderer, Error>
     where
-        F: Factory<Resources>
+        F: Factory<Resources>,
     {
         let w = alias_model.texture_width();
         let h = alias_model.texture_height();
@@ -183,12 +176,11 @@ impl AliasRenderer {
             match *texture {
                 Texture::Static(ref static_texture) => {
                     let (rgba, _fullbright) = palette.translate(static_texture.indices());
-                    let (_, view) = factory
-                        .create_texture_immutable_u8::<ColorFormat>(
-                            gfx::texture::Kind::D2(w as u16, h as u16, gfx::texture::AaMode::Single),
-                            gfx::texture::Mipmap::Allocated,
-                            &[&rgba],
-                        )?;
+                    let (_, view) = factory.create_texture_immutable_u8::<ColorFormat>(
+                        gfx::texture::Kind::D2(w as u16, h as u16, gfx::texture::AaMode::Single),
+                        gfx::texture::Mipmap::Allocated,
+                        &[&rgba],
+                    )?;
 
                     textures.push(AliasRenderTexture::Static(AliasRenderStaticTexture {
                         view,
@@ -203,12 +195,15 @@ impl AliasRenderer {
                         durations.push(frame.duration());
 
                         let (rgba, _fullbright) = palette.translate(frame.indices());
-                        let (_, view) = factory
-                            .create_texture_immutable_u8::<ColorFormat>(
-                                gfx::texture::Kind::D2(w as u16, h as u16, gfx::texture::AaMode::Single),
-                                gfx::texture::Mipmap::Allocated,
-                                &[&rgba],
-                            )?;
+                        let (_, view) = factory.create_texture_immutable_u8::<ColorFormat>(
+                            gfx::texture::Kind::D2(
+                                w as u16,
+                                h as u16,
+                                gfx::texture::AaMode::Single,
+                            ),
+                            gfx::texture::Mipmap::Allocated,
+                            &[&rgba],
+                        )?;
 
                         views.push(view);
                     }
@@ -249,11 +244,20 @@ impl AliasRenderer {
     where
         C: CommandBuffer<Resources>,
     {
-        ensure!(keyframe_id < self.keyframes.len(), "Keyframe ID out of range: {}", keyframe_id);
-        ensure!(texture_id < self.textures.len(), "Texture ID out of range: {}", texture_id);
+        ensure!(
+            keyframe_id < self.keyframes.len(),
+            "Keyframe ID out of range: {}",
+            keyframe_id
+        );
+        ensure!(
+            texture_id < self.textures.len(),
+            "Texture ID out of range: {}",
+            texture_id
+        );
 
-        let model_transform = Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
-            * Matrix4::from(Euler::new(angles.x, angles.y, angles.z));
+        let model_transform =
+            Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
+                * Matrix4::from(Euler::new(angles.x, angles.y, angles.z));
 
         user_data.vertex_buffer = self.vertex_buffer.clone();
         user_data.transform = (camera.transform() * model_transform).into();
@@ -267,7 +271,8 @@ impl AliasRenderer {
                 // pick a fallback texture
                 user_data.sampler.0 = animated_texture.views[0].clone();
 
-                let mut time_ms = time.num_milliseconds() % animated_texture.total_duration.num_milliseconds();
+                let mut time_ms =
+                    time.num_milliseconds() % animated_texture.total_duration.num_milliseconds();
 
                 for (frame_id, frame_duration) in animated_texture.durations.iter().enumerate() {
                     time_ms -= frame_duration.num_milliseconds();
@@ -288,7 +293,8 @@ impl AliasRenderer {
                 // pick a fallback slice
                 let mut slice = &animated_keyframe.slices[0];
 
-                let mut time_ms = time.num_milliseconds() % animated_keyframe.total_duration.num_milliseconds();
+                let mut time_ms =
+                    time.num_milliseconds() % animated_keyframe.total_duration.num_milliseconds();
                 for (frame_id, frame_duration) in animated_keyframe.durations.iter().enumerate() {
                     time_ms -= frame_duration.num_milliseconds();
                     if time_ms <= 0 {

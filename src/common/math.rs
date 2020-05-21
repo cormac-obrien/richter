@@ -17,11 +17,7 @@
 
 use std::ops::Neg;
 
-use cgmath::Angle;
-use cgmath::Deg;
-use cgmath::InnerSpace;
-use cgmath::Vector3;
-use cgmath::Zero;
+use cgmath::{Angle, Deg, InnerSpace, Vector3, Zero};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum HyperplaneSide {
@@ -255,7 +251,7 @@ pub fn fov_x_to_fov_y(fov_x: Deg<f32>, aspect: f32) -> Option<Deg<f32>> {
         // TODO: genericize over cgmath::Angle
         f if f < Deg(0.0) => None,
         f if f > Deg(360.0) => None,
-        f => Some(Deg::atan((f / 2.0).tan() / aspect) * 2.0)
+        f => Some(Deg::atan((f / 2.0).tan() / aspect) * 2.0),
     }
 }
 

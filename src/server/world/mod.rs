@@ -18,56 +18,43 @@
 mod entity;
 mod phys;
 
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::rc::Rc;
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
-use self::entity::Entity;
-use self::entity::EntityFlags;
-use self::entity::EntitySolid;
-use self::phys::Collide;
-use self::phys::CollideKind;
-use self::phys::MoveKind;
-pub use self::phys::Trace;
-pub use self::phys::TraceEnd;
-pub use self::phys::TraceStart;
-pub use self::entity::EntityError;
-pub use self::entity::EntityTypeDef;
-pub use self::entity::FieldAddrEntityId;
-pub use self::entity::FieldAddrFloat;
-pub use self::entity::FieldAddrFunctionId;
-pub use self::entity::FieldAddrStringId;
-pub use self::entity::FieldAddrVector;
+use self::{
+    entity::{Entity, EntityFlags, EntitySolid},
+    phys::{Collide, CollideKind, MoveKind},
+};
+pub use self::{
+    entity::{
+        EntityError, EntityTypeDef, FieldAddrEntityId, FieldAddrFloat, FieldAddrFunctionId,
+        FieldAddrStringId, FieldAddrVector,
+    },
+    phys::{Trace, TraceEnd, TraceStart},
+};
 
-use crate::common::bsp;
-use crate::common::bsp::BspCollisionHull;
-use crate::common::bsp::BspLeafContents;
-use crate::common::console::CvarRegistry;
-use crate::common::engine;
-use crate::common::mdl;
-use crate::common::model::Model;
-use crate::common::model::ModelKind;
-use crate::common::vfs::Vfs;
-use crate::common::parse;
-use crate::common::sprite;
-use crate::server::progs::EntityFieldAddr;
-use crate::server::progs::EntityId;
-use crate::server::progs::ExecutionContext;
-use crate::server::progs::FieldAddr;
-use crate::server::progs::FieldDef;
-use crate::server::progs::GlobalAddrEntity;
-use crate::server::progs::GlobalAddrFloat;
-use crate::server::progs::GlobalAddrFunction;
-use crate::server::progs::Globals;
-use crate::server::progs::ProgsError;
-use crate::server::progs::StringId;
-use crate::server::progs::StringTable;
-use crate::server::progs::Type;
-use crate::server::Server;
+use crate::{
+    common::{
+        bsp,
+        bsp::{BspCollisionHull, BspLeafContents},
+        console::CvarRegistry,
+        engine, mdl,
+        model::{Model, ModelKind},
+        parse, sprite,
+        vfs::Vfs,
+    },
+    server::{
+        progs::{
+            EntityFieldAddr, EntityId, ExecutionContext, FieldAddr, FieldDef, GlobalAddrEntity,
+            GlobalAddrFloat, GlobalAddrFunction, Globals, ProgsError, StringId, StringTable, Type,
+        },
+        Server,
+    },
+};
 
-use cgmath::InnerSpace;
-use cgmath::Vector3;
-use cgmath::Zero;
+use cgmath::{InnerSpace, Vector3, Zero};
 use chrono::Duration;
 
 const AREA_DEPTH: usize = 4;
@@ -327,7 +314,8 @@ impl World {
     {
         let name = name.as_ref();
 
-        match self.type_def
+        match self
+            .type_def
             .field_defs()
             .iter()
             .find(|def| self.string_table.get(def.name_id).unwrap() == name)
@@ -881,7 +869,8 @@ impl World {
                 let hull = BspCollisionHull::for_bounds(
                     self.try_get_entity(e_id)?.min()?,
                     self.try_get_entity(e_id)?.max()?,
-                ).unwrap();
+                )
+                .unwrap();
                 let offset = self.try_get_entity(e_id)?.origin()?;
 
                 Ok((hull, offset))
@@ -1083,7 +1072,8 @@ impl World {
 
             // select bounding boxes based on whether or not candidate is a monster
             let tmp_trace;
-            if self.try_get_entity(*touch)?
+            if self
+                .try_get_entity(*touch)?
                 .flags()?
                 .contains(EntityFlags::MONSTER)
             {
@@ -1146,7 +1136,8 @@ impl World {
             hull.contents_at_point(start).unwrap()
         );
 
-        Ok(hull.trace(start - offset, end - offset)
+        Ok(hull
+            .trace(start - offset, end - offset)
             .unwrap()
             .adjust(offset))
     }

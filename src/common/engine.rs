@@ -15,11 +15,9 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::fs::File;
-use std::io::Read;
+use std::{fs::File, io::Read};
 
-use cgmath::Deg;
-use cgmath::Vector3;
+use cgmath::{Deg, Vector3};
 use chrono::Duration;
 
 // TODO: the palette should be host-specific and loaded alongside pak0.pak (or the latest PAK with a

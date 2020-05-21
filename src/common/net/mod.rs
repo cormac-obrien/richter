@@ -22,27 +22,18 @@
 
 pub mod connect;
 
-use std::collections::VecDeque;
-use std::error::Error;
-use std::fmt;
-use std::io::BufRead;
-use std::io::BufReader;
-use std::io::Cursor;
-use std::io::Read;
-use std::io::Write;
-use std::net::SocketAddr;
-use std::net::UdpSocket;
+use std::{
+    collections::VecDeque,
+    error::Error,
+    fmt,
+    io::{BufRead, BufReader, Cursor, Read, Write},
+    net::{SocketAddr, UdpSocket},
+};
 
-use crate::common::engine;
-use crate::common::util;
+use crate::common::{engine, util};
 
-use byteorder::LittleEndian;
-use byteorder::NetworkEndian;
-use byteorder::ReadBytesExt;
-use byteorder::WriteBytesExt;
-use cgmath::Deg;
-use cgmath::Vector3;
-use cgmath::Zero;
+use byteorder::{LittleEndian, NetworkEndian, ReadBytesExt, WriteBytesExt};
+use cgmath::{Deg, Vector3, Zero};
 use chrono::Duration;
 use num::FromPrimitive;
 
@@ -2067,12 +2058,16 @@ impl QSocket {
 
         // empty messages are an error
         if msg.len() == 0 {
-            return Err(NetError::with_msg("begin_send_msg: Input data has zero length"));
+            return Err(NetError::with_msg(
+                "begin_send_msg: Input data has zero length",
+            ));
         }
 
         // check upper message length bound
         if msg.len() > MAX_MESSAGE {
-            return Err(NetError::with_msg("begin_send_msg: Input data exceeds MAX_MESSAGE"));
+            return Err(NetError::with_msg(
+                "begin_send_msg: Input data exceeds MAX_MESSAGE",
+            ));
         }
 
         // split the message into chunks and enqueue them
@@ -2102,7 +2097,8 @@ impl QSocket {
     /// Send the next segment of a reliable message.
     pub fn send_msg_next(&mut self) -> Result<(), NetError> {
         // grab the first chunk in the queue
-        let content = self.send_queue
+        let content = self
+            .send_queue
             .pop_front()
             .expect("Send queue is empty (this is a bug)");
 
@@ -2713,8 +2709,7 @@ mod test {
 
         let message = String::from("test message").into_bytes();
         src.begin_send_msg(&message).unwrap();
-        let received = dst.recv_msg(BlockingMode::Blocking)
-            .unwrap();
+        let received = dst.recv_msg(BlockingMode::Blocking).unwrap();
         assert_eq!(message, received);
 
         // TODO: assert can_send == true, send_next == false, etc
@@ -2726,8 +2721,7 @@ mod test {
 
         let message = String::from("test message").into_bytes();
         src.send_msg_unreliable(&message).unwrap();
-        let received = dst.recv_msg(BlockingMode::Blocking)
-            .unwrap();
+        let received = dst.recv_msg(BlockingMode::Blocking).unwrap();
         assert_eq!(message, received);
     }
 

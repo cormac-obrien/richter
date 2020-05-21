@@ -19,18 +19,21 @@ pub mod console;
 pub mod game;
 pub mod menu;
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
-use crate::client::menu::Menu;
-use crate::common::console::{CmdRegistry, Console};
+use crate::{
+    client::menu::Menu,
+    common::console::{CmdRegistry, Console},
+};
 
 use failure::Error;
 use winit::{Event, WindowEvent};
 
-use self::console::ConsoleInput;
-use self::game::{BindInput, BindTarget, GameInput};
-use self::menu::MenuInput;
+use self::{
+    console::ConsoleInput,
+    game::{BindInput, BindTarget, GameInput},
+    menu::MenuInput,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub enum InputFocus {

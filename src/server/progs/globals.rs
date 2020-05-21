@@ -15,27 +15,14 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::convert::TryInto;
-use std::error::Error;
-use std::fmt;
-use std::rc::Rc;
+use std::{convert::TryInto, error::Error, fmt, rc::Rc};
 
-use crate::server::progs::EntityId;
-use crate::server::progs::FieldAddr;
-use crate::server::progs::FunctionId;
-use crate::server::progs::GlobalDef;
-use crate::server::progs::StringId;
-use crate::server::progs::StringTable;
-use crate::server::progs::Type;
+use crate::server::progs::{
+    EntityId, FieldAddr, FunctionId, GlobalDef, StringId, StringTable, Type,
+};
 
-use byteorder::LittleEndian;
-use byteorder::ReadBytesExt;
-use byteorder::WriteBytesExt;
-use cgmath::Deg;
-use cgmath::Euler;
-use cgmath::InnerSpace;
-use cgmath::Matrix3;
-use cgmath::Vector3;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use cgmath::{Deg, Euler, InnerSpace, Matrix3, Vector3};
 
 pub const GLOBAL_STATIC_START: usize = 28;
 pub const GLOBAL_DYNAMIC_START: usize = 64;

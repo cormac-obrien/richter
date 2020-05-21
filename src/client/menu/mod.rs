@@ -318,8 +318,7 @@ impl NamedMenuItem {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::cell::{Cell};
-    use std::rc::Rc;
+    use std::{cell::Cell, rc::Rc};
 
     fn is_inactive(state: &MenuState) -> bool {
         match state {

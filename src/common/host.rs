@@ -20,9 +20,7 @@
 
 use crate::common::engine;
 
-use chrono::DateTime;
-use chrono::Duration;
-use chrono::Utc;
+use chrono::{DateTime, Duration, Utc};
 
 // TODO: replace with cvar
 const FPS_MAX: f32 = 144.0;

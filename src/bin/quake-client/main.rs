@@ -33,22 +33,23 @@ extern crate rodio;
 mod game;
 mod menu;
 
-use std::cell::RefCell;
-use std::env;
-use std::fs::File;
-use std::net::ToSocketAddrs;
-use std::path::Path;
-use std::process::exit;
-use std::rc::Rc;
+use std::{cell::RefCell, env, fs::File, net::ToSocketAddrs, path::Path, process::exit, rc::Rc};
 
-use richter::client::input::{Input, InputFocus};
-use richter::client::menu::Menu;
-use richter::client::render::{self, GraphicsPackage};
-use richter::client::{self, Client};
-use richter::common;
-use richter::common::console::{CmdRegistry, Console, CvarRegistry};
-use richter::common::host::{Host, Program};
-use richter::common::vfs::Vfs;
+use richter::{
+    client::{
+        self,
+        input::{Input, InputFocus},
+        menu::Menu,
+        render::{self, GraphicsPackage},
+        Client,
+    },
+    common,
+    common::{
+        console::{CmdRegistry, Console, CvarRegistry},
+        host::{Host, Program},
+        vfs::Vfs,
+    },
+};
 
 use crate::game::Game;
 
@@ -144,8 +145,7 @@ impl ClientProgram {
             )
             .unwrap();
 
-        use gfx::traits::FactoryExt;
-        use gfx::Factory;
+        use gfx::{traits::FactoryExt, Factory};
         let (_, dummy_texture) = factory
             .create_texture_immutable_u8::<render::ColorFormat>(
                 gfx::texture::Kind::D2(1, 1, gfx::texture::AaMode::Single),

@@ -18,19 +18,27 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
-use richter::client::input::{Input, InputFocus};
-use richter::client::menu::Menu;
-use richter::client::render::hud::HudRenderer;
-use richter::client::render::menu::MenuRenderer;
-use richter::client::render::{self, pipe, GraphicsPackage, SceneRenderer};
-use richter::client::Client;
-use richter::common::console::{CmdRegistry, CvarRegistry};
-use richter::common::math;
-use richter::common::net::SignOnStage;
-use richter::common::vfs::Vfs;
+use richter::{
+    client::{
+        input::{Input, InputFocus},
+        menu::Menu,
+        render::{
+            self, hud::HudRenderer, menu::MenuRenderer, pipe, GraphicsPackage, SceneRenderer,
+        },
+        Client,
+    },
+    common::{
+        console::{CmdRegistry, CvarRegistry},
+        math,
+        net::SignOnStage,
+        vfs::Vfs,
+    },
+};
 
 use cgmath;
 use chrono::Duration;

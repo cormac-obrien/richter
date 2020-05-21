@@ -17,10 +17,12 @@
 
 use crate::common::parse::{line_ending, newline, non_newline_space, non_newline_spaces, quoted};
 
-use combine::char::string;
-use combine::parser::repeat::{skip_many, skip_until};
 use combine::{
-    attempt, choice, many, many1, not_followed_by, optional, satisfy, ParseError, Parser, Stream,
+    attempt,
+    char::string,
+    choice, many, many1, not_followed_by, optional,
+    parser::repeat::{skip_many, skip_until},
+    satisfy, ParseError, Parser, Stream,
 };
 
 pub fn is_line_ending(c: char) -> bool {

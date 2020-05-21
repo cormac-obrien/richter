@@ -15,40 +15,26 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
-use std::rc::Rc;
+use std::{
+    io::{BufRead, BufReader, Read, Seek, SeekFrom},
+    rc::Rc,
+};
 
-use crate::common::bsp::BspCollisionHull;
-use crate::common::bsp::BspCollisionNode;
-use crate::common::bsp::BspCollisionNodeChild;
-use crate::common::bsp::BspData;
-use crate::common::bsp::BspEdge;
-use crate::common::bsp::BspEdgeDirection;
-use crate::common::bsp::BspEdgeIndex;
-use crate::common::bsp::BspFace;
-use crate::common::bsp::BspFaceSide;
-use crate::common::bsp::BspLeaf;
-use crate::common::bsp::BspLeafContents;
-use crate::common::bsp::BspModel;
-use crate::common::bsp::BspRenderNode;
-use crate::common::bsp::BspRenderNodeChild;
-use crate::common::bsp::BspTexInfo;
-use crate::common::bsp::BspTexture;
-use crate::common::bsp::BspTextureAnimation;
-use crate::common::bsp::MAX_HULLS;
-use crate::common::bsp::MAX_LIGHTSTYLES;
-use crate::common::bsp::MIPLEVELS;
-use crate::common::math::Axis;
-use crate::common::math::Hyperplane;
-use crate::common::model::Model;
+use crate::common::{
+    bsp::{
+        BspCollisionHull, BspCollisionNode, BspCollisionNodeChild, BspData, BspEdge,
+        BspEdgeDirection, BspEdgeIndex, BspFace, BspFaceSide, BspLeaf, BspLeafContents, BspModel,
+        BspRenderNode, BspRenderNodeChild, BspTexInfo, BspTexture, BspTextureAnimation, MAX_HULLS,
+        MAX_LIGHTSTYLES, MIPLEVELS,
+    },
+    math::{Axis, Hyperplane},
+    model::Model,
+};
 
-use byteorder::LittleEndian;
-use byteorder::ReadBytesExt;
-use cgmath::InnerSpace;
-use cgmath::Vector3;
+use byteorder::{LittleEndian, ReadBytesExt};
+use cgmath::{InnerSpace, Vector3};
 use chrono::Duration;
-use failure::Error;
-use failure::ResultExt;
+use failure::{Error, ResultExt};
 use num::FromPrimitive;
 
 const VERSION: i32 = 29;

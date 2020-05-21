@@ -118,19 +118,12 @@
 
 mod load;
 
-use std::collections::HashSet;
-use std::error::Error;
-use std::fmt;
-use std::rc::Rc;
+use std::{collections::HashSet, error::Error, fmt, rc::Rc};
 
-use crate::common::math::Hyperplane;
-use crate::common::math::HyperplaneSide;
-use crate::common::math::LinePlaneIntersect;
+use crate::common::math::{Hyperplane, HyperplaneSide, LinePlaneIntersect};
 
 // TODO: Either Trace should be moved into common or the functions requiring it should be moved into server
-use crate::server::world::Trace;
-use crate::server::world::TraceEnd;
-use crate::server::world::TraceStart;
+use crate::server::world::{Trace, TraceEnd, TraceStart};
 
 use cgmath::Vector3;
 use chrono::Duration;

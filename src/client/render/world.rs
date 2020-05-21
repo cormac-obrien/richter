@@ -17,21 +17,29 @@
 
 use std::rc::Rc;
 
-use crate::client::render::brush::{
-    self, pipe_brush, BrushPipelineData, BrushPipelineState, BrushRenderFace, BrushVertex,
+use crate::{
+    client::render::{
+        self,
+        brush::{
+            self, pipe_brush, BrushPipelineData, BrushPipelineState, BrushRenderFace, BrushVertex,
+        },
+        Camera, ColorFormat, DepthFormat, Palette,
+    },
+    common::bsp::{BspData, BspModel, BspTextureMipmap, MIPLEVELS},
 };
-use crate::client::render::{self, Camera, ColorFormat, DepthFormat, Palette};
-use crate::common::bsp::{BspData, BspModel, BspTextureMipmap, MIPLEVELS};
 
 use cgmath::{Deg, Euler, Matrix4, SquareMatrix, Vector3};
 use chrono::Duration;
 use failure::Error;
 use flame;
-use gfx::format::{Unorm, R8};
-use gfx::handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView};
-use gfx::texture;
-use gfx::traits::FactoryExt;
-use gfx::{self, CommandBuffer, Encoder, Factory};
+use gfx::{
+    self,
+    format::{Unorm, R8},
+    handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView},
+    texture,
+    traits::FactoryExt,
+    CommandBuffer, Encoder, Factory,
+};
 use gfx_device_gl::Resources;
 use num::FromPrimitive;
 

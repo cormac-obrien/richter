@@ -17,23 +17,25 @@
 
 mod layout;
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap};
 
 use std::rc::Rc;
 
-use crate::client::menu::Menu;
-use crate::client::render::bitmap::BitmapTexture;
-use crate::client::render::pipeline2d;
-use crate::client::render::{self, GraphicsPackage, Vertex2d};
-use crate::common::vfs::Vfs;
-
+use crate::{
+    client::{
+        menu::Menu,
+        render::{self, bitmap::BitmapTexture, pipeline2d, GraphicsPackage, Vertex2d},
+    },
+    common::vfs::Vfs,
+};
 
 use failure::Error;
-use gfx::handle::Buffer;
-use gfx::pso::{PipelineData, PipelineState};
-use gfx::traits::FactoryExt;
-use gfx::{CommandBuffer, Encoder, Slice};
+use gfx::{
+    handle::Buffer,
+    pso::{PipelineData, PipelineState},
+    traits::FactoryExt,
+    CommandBuffer, Encoder, Slice,
+};
 use gfx_device_gl::Resources;
 
 use self::layout::{Layout, LayoutElement, Position};

@@ -19,11 +19,12 @@
 
 // TODO: have console commands take an IntoIter<AsRef<str>> instead of a Vec<String>
 
-use std::cell::{Ref, RefCell};
-use std::collections::HashMap;
-use std::collections::VecDeque;
-use std::iter::FromIterator;
-use std::rc::Rc;
+use std::{
+    cell::{Ref, RefCell},
+    collections::{HashMap, VecDeque},
+    iter::FromIterator,
+    rc::Rc,
+};
 
 use crate::common::parse;
 

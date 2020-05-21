@@ -278,8 +278,7 @@ impl TextField {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    use std::{cell::RefCell, rc::Rc};
 
     #[test]
     fn test_toggle() {

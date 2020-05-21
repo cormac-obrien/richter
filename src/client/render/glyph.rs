@@ -15,14 +15,17 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use crate::client::render::{self, Palette, Vertex2d};
-use crate::client::render::pipeline2d;
-use crate::common::wad::QPic;
+use crate::{
+    client::render::{self, pipeline2d, Palette, Vertex2d},
+    common::wad::QPic,
+};
 
 use failure::Error;
-use gfx::{CommandBuffer, Encoder, Factory, IndexBuffer, Slice};
-use gfx::handle::{Buffer, ShaderResourceView};
-use gfx::pso::{PipelineData, PipelineState};
+use gfx::{
+    handle::{Buffer, ShaderResourceView},
+    pso::{PipelineData, PipelineState},
+    CommandBuffer, Encoder, Factory, IndexBuffer, Slice,
+};
 use gfx_device_gl::Resources;
 
 pub const GLYPH_WIDTH: usize = 8;
@@ -36,17 +39,9 @@ const GLYPH_WIDTH_TEXCOORD: f32 = 1.0 / GLYPH_COLS as f32;
 const GLYPH_HEIGHT_TEXCOORD: f32 = 1.0 / GLYPH_ROWS as f32;
 
 pub enum GlyphRendererCommand {
-    Glyph {
-        glyph_id: u8,
-        x: i32,
-        y: i32,
-    },
+    Glyph { glyph_id: u8, x: i32, y: i32 },
 
-    Text {
-        text: String,
-        x: i32,
-        y: i32,
-    }
+    Text { text: String, x: i32, y: i32 },
 }
 
 impl GlyphRendererCommand {
@@ -68,13 +63,22 @@ pub struct GlyphRenderer {
 impl GlyphRenderer {
     pub fn new<F>(factory: &mut F, qpic: &QPic, palette: &Palette) -> Result<GlyphRenderer, Error>
     where
-        F: Factory<Resources>
+        F: Factory<Resources>,
     {
-        ensure!(qpic.width() as usize == GLYPH_COLS * GLYPH_WIDTH, "bad width for glyph atlas ({})", qpic.width());
-        ensure!(qpic.height() as usize == GLYPH_ROWS * GLYPH_HEIGHT, "bad height for glyph atlas ({})", qpic.height());
+        ensure!(
+            qpic.width() as usize == GLYPH_COLS * GLYPH_WIDTH,
+            "bad width for glyph atlas ({})",
+            qpic.width()
+        );
+        ensure!(
+            qpic.height() as usize == GLYPH_ROWS * GLYPH_HEIGHT,
+            "bad height for glyph atlas ({})",
+            qpic.height()
+        );
 
         // conchars use index 0 (black) for transparency, so substitute index 0xFF
-        let indices: Vec<u8> = qpic.indices()
+        let indices: Vec<u8> = qpic
+            .indices()
             .iter()
             .map(|i| if *i == 0 { 0xFF } else { *i })
             .collect();
@@ -127,7 +131,10 @@ impl GlyphRenderer {
     pub fn render_command<C>(
         &self,
         encoder: &mut Encoder<Resources, C>,
-        pso: &PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
+        pso: &PipelineState<
+            Resources,
+            <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta,
+        >,
         user_data: &mut pipeline2d::Data<Resources>,
         display_width: u32,
         display_height: u32,
@@ -148,7 +155,8 @@ impl GlyphRenderer {
                     GLYPH_HEIGHT as u32,
                     x,
                     y,
-                ).into();
+                )
+                .into();
                 let slice = self.slice_for_glyph(glyph_id);
                 encoder.draw(&slice, pso, user_data);
             }
@@ -169,7 +177,8 @@ impl GlyphRenderer {
                         GLYPH_HEIGHT as u32,
                         abs_x,
                         y,
-                    ).into();
+                    )
+                    .into();
 
                     // TODO: check ASCII -> conchar mapping
                     let slice = self.slice_for_glyph(chr as u8);

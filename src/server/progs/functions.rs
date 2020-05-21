@@ -15,13 +15,9 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use crate::server::progs::ProgsError;
-use crate::server::progs::StringId;
-use crate::server::progs::StringTable;
-use crate::server::progs::ops::Opcode;
+use crate::server::progs::{ops::Opcode, ProgsError, StringId, StringTable};
 
-use std::convert::TryInto;
-use std::rc::Rc;
+use std::{convert::TryInto, rc::Rc};
 
 use num::FromPrimitive;
 

@@ -19,8 +19,7 @@ use std::collections::HashMap;
 
 use crate::common::parse::quoted;
 
-use combine::char::string;
-use combine::{between, many, token, ParseError, Parser, Stream};
+use combine::{between, char::string, many, token, ParseError, Parser, Stream};
 
 // "name" "value"\n
 pub fn entity_attribute<I>() -> impl Parser<Input = I, Output = (String, String)>

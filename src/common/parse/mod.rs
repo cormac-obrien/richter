@@ -19,15 +19,14 @@ pub mod console;
 pub mod map;
 
 use cgmath::Vector3;
-use combine::char::{alpha_num, string};
 use combine::{
-    between, choice, many, one_of, satisfy, skip_many, token, unexpected, value, ParseError,
-    Parser, Stream,
+    between,
+    char::{alpha_num, string},
+    choice, many, one_of, satisfy, skip_many, token, unexpected, value, ParseError, Parser, Stream,
 };
 use winit::ElementState;
 
-pub use self::console::commands;
-pub use self::map::entities;
+pub use self::{console::commands, map::entities};
 
 fn is_escape(c: char) -> bool {
     match c {

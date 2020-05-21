@@ -18,17 +18,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::collections::HashMap;
-use std::io::BufReader;
-use std::io::Cursor;
-use std::io::Read;
-use std::io::Seek;
-use std::io::SeekFrom;
+use std::{
+    collections::HashMap,
+    io::{BufReader, Cursor, Read, Seek, SeekFrom},
+};
 
 use crate::common::util;
 
-use byteorder::LittleEndian;
-use byteorder::ReadBytesExt;
+use byteorder::{LittleEndian, ReadBytesExt};
 use failure::Error;
 
 // see definition of lumpinfo_t:
@@ -43,14 +40,19 @@ pub struct QPic {
 }
 
 impl QPic {
-    pub fn load<R>(data: R) -> Result<QPic, Error> where R: Read + Seek {
+    pub fn load<R>(data: R) -> Result<QPic, Error>
+    where
+        R: Read + Seek,
+    {
         let mut reader = BufReader::new(data);
 
         let width = reader.read_u32::<LittleEndian>()?;
         let height = reader.read_u32::<LittleEndian>()?;
 
         let mut indices = Vec::new();
-        (&mut reader).take((width * height) as u64).read_to_end(&mut indices)?;
+        (&mut reader)
+            .take((width * height) as u64)
+            .read_to_end(&mut indices)?;
 
         Ok(QPic {
             width,
@@ -83,11 +85,19 @@ pub struct Wad {
 }
 
 impl Wad {
-    pub fn load<R>(data: R) -> Result <Wad, Error> where R: Read + Seek {
+    pub fn load<R>(data: R) -> Result<Wad, Error>
+    where
+        R: Read + Seek,
+    {
         let mut reader = BufReader::new(data);
 
         let magic = reader.read_u32::<LittleEndian>()?;
-        ensure!(magic == MAGIC, "Bad magic number for WAD: got {}, should be {}", magic, MAGIC);
+        ensure!(
+            magic == MAGIC,
+            "Bad magic number for WAD: got {}, should be {}",
+            magic,
+            MAGIC
+        );
 
         let lump_count = reader.read_u32::<LittleEndian>()?;
         let lumpinfo_ofs = reader.read_u32::<LittleEndian>()?;
@@ -110,11 +120,7 @@ impl Wad {
             debug!("name: {}", name_lossy);
             let name = util::read_cstring(&mut BufReader::new(Cursor::new(name_bytes)))?;
 
-            lump_infos.push(LumpInfo {
-                offset,
-                size,
-                name
-            });
+            lump_infos.push(LumpInfo { offset, size, name });
         }
 
         let mut files = HashMap::new();
@@ -122,7 +128,9 @@ impl Wad {
         for lump_info in lump_infos {
             let mut data = Vec::with_capacity(lump_info.size as usize);
             reader.seek(SeekFrom::Start(lump_info.offset as u64))?;
-            (&mut reader).take(lump_info.size as u64).read_to_end(&mut data)?;
+            (&mut reader)
+                .take(lump_info.size as u64)
+                .read_to_end(&mut data)?;
             files.insert(lump_info.name.to_owned(), data.into_boxed_slice());
         }
 
@@ -147,7 +155,10 @@ impl Wad {
         }
     }
 
-    pub fn open_qpic<S>(&self, name: S) -> Result<QPic, Error> where S: AsRef<str> {
+    pub fn open_qpic<S>(&self, name: S) -> Result<QPic, Error>
+    where
+        S: AsRef<str>,
+    {
         if name.as_ref() == "CONCHARS" {
             bail!("conchars must be opened with open_conchars()");
         }
@@ -158,4 +169,3 @@ impl Wad {
         }
     }
 }
-

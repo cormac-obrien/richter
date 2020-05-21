@@ -26,30 +26,36 @@ pub mod sound;
 mod cvars;
 pub use self::cvars::register_cvars;
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::io::{BufReader, Read};
-use std::net::ToSocketAddrs;
-use std::rc::Rc;
-
-use crate::client::input::game::{Action, GameInput};
-use crate::client::sound::{AudioSource, Channel, StaticSound};
-use crate::common::bsp;
-use crate::common::console::{CmdRegistry, Console, CvarRegistry};
-use crate::common::engine;
-use crate::common::model::{Model, ModelFlags, ModelKind, SyncType};
-use crate::common::net::connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION};
-use crate::common::net::{
-    self, BlockingMode, ButtonFlags, ClientCmd, ClientStat, ColorShift, EntityEffects, EntityState,
-    GameType, ItemFlags, NetError, PlayerColor, QSocket, ServerCmd, SignOnStage, TempEntity,
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    io::{BufReader, Read},
+    net::ToSocketAddrs,
+    rc::Rc,
 };
-use crate::common::vfs::Vfs;
 
-use cgmath::Angle;
-use cgmath::Deg;
-use cgmath::InnerSpace;
-use cgmath::Vector3;
-use cgmath::Zero;
+use crate::{
+    client::{
+        input::game::{Action, GameInput},
+        sound::{AudioSource, Channel, StaticSound},
+    },
+    common::{
+        bsp,
+        console::{CmdRegistry, Console, CvarRegistry},
+        engine,
+        model::{Model, ModelFlags, ModelKind, SyncType},
+        net::{
+            self,
+            connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION},
+            BlockingMode, ButtonFlags, ClientCmd, ClientStat, ColorShift, EntityEffects,
+            EntityState, GameType, ItemFlags, NetError, PlayerColor, QSocket, ServerCmd,
+            SignOnStage, TempEntity,
+        },
+        vfs::Vfs,
+    },
+};
+
+use cgmath::{Angle, Deg, InnerSpace, Vector3, Zero};
 use chrono::Duration;
 use failure::Error;
 use flame;
@@ -1210,7 +1216,10 @@ impl Client {
                         Some(ref mut info) => {
                             trace!(
                                 "Player {} (ID {}) colors: {:?} -> {:?}",
-                                info.name, player_id, info.colors, new_colors,
+                                info.name,
+                                player_id,
+                                info.colors,
+                                new_colors,
                             );
                             info.colors = new_colors;
                         }
@@ -1235,7 +1244,10 @@ impl Client {
                         Some(ref mut info) => {
                             trace!(
                                 "Player {} (ID {}) frags: {} -> {}",
-                                &info.name, player_id, info.frags, new_frags
+                                &info.name,
+                                player_id,
+                                info.frags,
+                                new_frags
                             );
                             info.frags = new_frags as i32;
                         }
@@ -1273,7 +1285,9 @@ impl Client {
                 ServerCmd::UpdateStat { stat, value } => {
                     trace!(
                         "{:?}: {} -> {}",
-                        stat, self.state.stats[stat as usize], value
+                        stat,
+                        self.state.stats[stat as usize],
+                        value
                     );
                     self.state.stats[stat as usize] = value;
                 }

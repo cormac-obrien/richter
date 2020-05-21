@@ -15,9 +15,11 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::fs::File;
-use std::io::{Cursor, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::{
+    fs::File,
+    io::{Cursor, Read, Seek, SeekFrom},
+    path::{Path, PathBuf},
+};
 
 use crate::common::pak::Pak;
 

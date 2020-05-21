@@ -97,54 +97,44 @@ mod functions;
 mod globals;
 mod ops;
 
-use std::cell::Cell;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::convert::TryInto;
-use std::error::Error;
-use std::fmt;
-use std::io::BufReader;
-use std::io::Cursor;
-use std::io::Read;
-use std::io::Seek;
-use std::io::SeekFrom;
-use std::rc::Rc;
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    convert::TryInto,
+    error::Error,
+    fmt,
+    io::{BufReader, Cursor, Read, Seek, SeekFrom},
+    rc::Rc,
+};
 
-use crate::common::console::CvarRegistry;
-use crate::common::vfs::Vfs;
-use crate::server::world::EntityError;
-use crate::server::world::EntityTypeDef;
-use crate::server::world::FieldAddrFloat;
-use crate::server::world::World;
-use crate::server::Server;
+use crate::{
+    common::{console::CvarRegistry, vfs::Vfs},
+    server::{
+        world::{EntityError, EntityTypeDef, FieldAddrFloat, World},
+        Server,
+    },
+};
 
-use byteorder::LittleEndian;
-use byteorder::ReadBytesExt;
+use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::Vector3;
 use num::FromPrimitive;
 use rand;
 
-use self::functions::BuiltinFunctionId;
-use self::functions::FunctionDef;
-pub use self::functions::FunctionId;
-use self::functions::FunctionKind;
-pub use self::functions::Functions;
-use self::functions::Statement;
-use self::functions::MAX_ARGS;
-pub use self::globals::GlobalAddrEntity;
-pub use self::globals::GlobalAddrFloat;
-pub use self::globals::GlobalAddrFunction;
-pub use self::globals::GlobalAddrVector;
-pub use self::globals::Globals;
-pub use self::globals::GlobalsError;
-use self::globals::GLOBAL_ADDR_ARG_0;
-use self::globals::GLOBAL_ADDR_ARG_1;
-use self::globals::GLOBAL_ADDR_ARG_2;
-use self::globals::GLOBAL_ADDR_ARG_3;
-use self::globals::GLOBAL_ADDR_RETURN;
-use self::globals::GLOBAL_STATIC_COUNT;
-use self::globals::GLOBAL_STATIC_START;
-use self::ops::Opcode;
+use self::{
+    functions::{BuiltinFunctionId, FunctionDef, FunctionKind, Statement, MAX_ARGS},
+    globals::{
+        GLOBAL_ADDR_ARG_0, GLOBAL_ADDR_ARG_1, GLOBAL_ADDR_ARG_2, GLOBAL_ADDR_ARG_3,
+        GLOBAL_ADDR_RETURN, GLOBAL_STATIC_COUNT, GLOBAL_STATIC_START,
+    },
+    ops::Opcode,
+};
+pub use self::{
+    functions::{FunctionId, Functions},
+    globals::{
+        GlobalAddrEntity, GlobalAddrFloat, GlobalAddrFunction, GlobalAddrVector, Globals,
+        GlobalsError,
+    },
+};
 
 const VERSION: i32 = 6;
 const CRC: i32 = 5927;

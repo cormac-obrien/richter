@@ -17,11 +17,12 @@
 
 use std::io::{BufReader, Read, Seek, SeekFrom};
 
-use crate::common::engine;
-use crate::common::model::{ModelFlags, SyncType};
+use crate::common::{
+    engine,
+    model::{ModelFlags, SyncType},
+};
 
-use byteorder::LittleEndian;
-use byteorder::ReadBytesExt;
+use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::Vector3;
 use chrono::Duration;
 use failure::Error;

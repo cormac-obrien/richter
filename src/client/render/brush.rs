@@ -17,19 +17,24 @@
 
 use std::rc::Rc;
 
-use crate::client::render::{self, Camera, ColorFormat, DepthFormat, Palette};
-use crate::common::bsp::{BspData, BspFace, BspModel, BspTexInfo, BspTextureMipmap, MIPLEVELS};
+use crate::{
+    client::render::{self, Camera, ColorFormat, DepthFormat, Palette},
+    common::bsp::{BspData, BspFace, BspModel, BspTexInfo, BspTextureMipmap, MIPLEVELS},
+};
 
 use cgmath::{Deg, Euler, InnerSpace, Matrix4, SquareMatrix, Vector3};
 use chrono::Duration;
 use failure::Error;
 use flame;
-use gfx::format::{Unorm, R8};
-use gfx::handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView};
-use gfx::pso::{PipelineData, PipelineState};
-use gfx::texture;
-use gfx::traits::FactoryExt;
-use gfx::{self, CommandBuffer, Encoder, Factory, IndexBuffer, Slice};
+use gfx::{
+    self,
+    format::{Unorm, R8},
+    handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView},
+    pso::{PipelineData, PipelineState},
+    texture,
+    traits::FactoryExt,
+    CommandBuffer, Encoder, Factory, IndexBuffer, Slice,
+};
 use gfx_device_gl::Resources;
 use num::FromPrimitive;
 

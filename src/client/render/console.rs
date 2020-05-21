@@ -15,21 +15,24 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
-use crate::client::render::{self, Palette, Vertex2d};
-use crate::client::render::bitmap::BitmapTexture;
-use crate::client::render::glyph::{GLYPH_HEIGHT, GlyphRenderer, GlyphRendererCommand, GLYPH_WIDTH};
-use crate::client::render::pipeline2d;
-use crate::common::console::Console;
-use crate::common::vfs::Vfs;
-use crate::common::wad::QPic;
+use crate::{
+    client::render::{
+        self,
+        bitmap::BitmapTexture,
+        glyph::{GlyphRenderer, GlyphRendererCommand, GLYPH_HEIGHT, GLYPH_WIDTH},
+        pipeline2d, Palette, Vertex2d,
+    },
+    common::{console::Console, vfs::Vfs, wad::QPic},
+};
 
 use failure::Error;
-use gfx::{CommandBuffer, Encoder, Factory, Slice};
-use gfx::handle::Buffer;
-use gfx::pso::{PipelineData, PipelineState};
+use gfx::{
+    handle::Buffer,
+    pso::{PipelineData, PipelineState},
+    CommandBuffer, Encoder, Factory, Slice,
+};
 use gfx_device_gl::Resources;
 
 const PAD_LEFT: i32 = GLYPH_WIDTH as i32;
@@ -51,9 +54,15 @@ impl ConsoleRenderer {
         console: Rc<RefCell<Console>>,
         glyph_renderer: Rc<GlyphRenderer>,
     ) -> Result<ConsoleRenderer, Error>
-    where F: Factory<Resources> {
+    where
+        F: Factory<Resources>,
+    {
         let slice = Slice::new_match_vertex_buffer(&vertex_buffer);
-        let conback = BitmapTexture::from_qpic(factory, &QPic::load(vfs.open("gfx/conback.lmp").unwrap())?, palette)?;
+        let conback = BitmapTexture::from_qpic(
+            factory,
+            &QPic::load(vfs.open("gfx/conback.lmp").unwrap())?,
+            palette,
+        )?;
         Ok(ConsoleRenderer {
             console,
             glyph_renderer,
@@ -66,7 +75,10 @@ impl ConsoleRenderer {
     pub fn render<C>(
         &self,
         encoder: &mut Encoder<Resources, C>,
-        pso: &PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>,
+        pso: &PipelineState<
+            Resources,
+            <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta,
+        >,
         user_data: &mut pipeline2d::Data<Resources>,
         display_width: u32,
         display_height: u32,
@@ -74,10 +86,16 @@ impl ConsoleRenderer {
         alpha: f32,
     ) -> Result<(), Error>
     where
-        C: CommandBuffer<Resources>
+        C: CommandBuffer<Resources>,
     {
-        ensure!(proportion >= 0.0 && proportion <= 1.0, "proportion must be between 0 and 1");
-        ensure!(alpha >= 0.0 && alpha <= 1.0, "alpha must be between 0 and 1");
+        ensure!(
+            proportion >= 0.0 && proportion <= 1.0,
+            "proportion must be between 0 and 1"
+        );
+        ensure!(
+            alpha >= 0.0 && alpha <= 1.0,
+            "alpha must be between 0 and 1"
+        );
 
         // TODO: replace with cvar scr_conscale
         let display_width = display_width / 2;
@@ -94,8 +112,9 @@ impl ConsoleRenderer {
             display_width,
             display_height,
             0,
-            y_min
-        ).into();
+            y_min,
+        )
+        .into();
         user_data.sampler.0 = self.conback.view();
         encoder.draw(&self.slice, pso, user_data);
 
@@ -107,11 +126,15 @@ impl ConsoleRenderer {
         commands.push(GlyphRendererCommand::text(
             version_string.to_owned(),
             display_width as i32 - (version_string.len() * GLYPH_WIDTH) as i32,
-            y_min
+            y_min,
         ));
 
         // draw input line
-        commands.push(GlyphRendererCommand::glyph(']' as u8, PAD_LEFT as i32, y_min + GLYPH_HEIGHT as i32));
+        commands.push(GlyphRendererCommand::glyph(
+            ']' as u8,
+            PAD_LEFT as i32,
+            y_min + GLYPH_HEIGHT as i32,
+        ));
         commands.push(GlyphRendererCommand::text(
             self.console.borrow().get_string(),
             PAD_LEFT as i32 + GLYPH_WIDTH as i32,
@@ -132,7 +155,10 @@ impl ConsoleRenderer {
                 let mut c = *chr;
 
                 if c as u32 > ::std::u8::MAX as u32 {
-                    warn!("char \"{}\" (U+{:4}) cannot be displayed in the console", c, c as u32);
+                    warn!(
+                        "char \"{}\" (U+{:4}) cannot be displayed in the console",
+                        c, c as u32
+                    );
                     continue;
                 }
 

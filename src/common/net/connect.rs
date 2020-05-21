@@ -18,23 +18,18 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::io::BufReader;
-use std::io::Cursor;
-use std::io::ErrorKind;
-use std::mem::size_of;
-use std::net::SocketAddr;
-use std::net::ToSocketAddrs;
-use std::net::UdpSocket;
+use std::{
+    io::{BufReader, Cursor, ErrorKind},
+    mem::size_of,
+    net::{SocketAddr, ToSocketAddrs, UdpSocket},
+};
 
-use crate::common::net::MAX_MESSAGE;
-use crate::common::net::NetError;
-use crate::common::net::QSocket;
-use crate::common::util;
+use crate::common::{
+    net::{NetError, QSocket, MAX_MESSAGE},
+    util,
+};
 
-use byteorder::LittleEndian;
-use byteorder::NetworkEndian;
-use byteorder::ReadBytesExt;
-use byteorder::WriteBytesExt;
+use byteorder::{LittleEndian, NetworkEndian, ReadBytesExt, WriteBytesExt};
 use chrono::Duration;
 use num::FromPrimitive;
 

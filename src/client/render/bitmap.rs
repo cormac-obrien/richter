@@ -18,16 +18,18 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::client::render;
-use crate::client::render::Palette;
-use crate::common::wad::QPic;
+use crate::{
+    client::{render, render::Palette},
+    common::wad::QPic,
+};
 
 use cgmath::Matrix4;
 use failure::Error;
-use gfx::Factory;
-use gfx::format::R8_G8_B8_A8;
-use gfx::handle::ShaderResourceView;
-use gfx::handle::Texture;
+use gfx::{
+    format::R8_G8_B8_A8,
+    handle::{ShaderResourceView, Texture},
+    Factory,
+};
 use gfx_device_gl::Resources;
 
 #[derive(Clone, Debug)]
@@ -39,7 +41,12 @@ pub struct BitmapTexture {
 }
 
 impl BitmapTexture {
-    pub fn new<F>(factory: &mut F, width: u32, height: u32, rgba: Box<[u8]>) -> Result<BitmapTexture, Error>
+    pub fn new<F>(
+        factory: &mut F,
+        width: u32,
+        height: u32,
+        rgba: Box<[u8]>,
+    ) -> Result<BitmapTexture, Error>
     where
         F: Factory<Resources>,
     {
@@ -53,13 +60,22 @@ impl BitmapTexture {
         })
     }
 
-    pub fn from_qpic<F>(factory: &mut F, qpic: &QPic, palette: &Palette) -> Result<BitmapTexture, Error>
+    pub fn from_qpic<F>(
+        factory: &mut F,
+        qpic: &QPic,
+        palette: &Palette,
+    ) -> Result<BitmapTexture, Error>
     where
         F: Factory<Resources>,
     {
         let (rgba, _fullbright) = palette.translate(qpic.indices());
 
-        BitmapTexture::new(factory, qpic.width(), qpic.height(), rgba.into_boxed_slice())
+        BitmapTexture::new(
+            factory,
+            qpic.width(),
+            qpic.height(),
+            rgba.into_boxed_slice(),
+        )
     }
 
     pub fn width(&self) -> u32 {

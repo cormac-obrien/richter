@@ -15,24 +15,17 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::convert::TryInto;
-use std::error::Error;
-use std::fmt;
-use std::rc::Rc;
+use std::{convert::TryInto, error::Error, fmt, rc::Rc};
 
-use crate::common::net::EntityState;
-use crate::server::progs::EntityId;
-use crate::server::progs::FieldDef;
-use crate::server::progs::FunctionId;
-use crate::server::progs::ProgsError;
-use crate::server::progs::StringId;
-use crate::server::progs::StringTable;
-use crate::server::progs::Type;
-use crate::server::world::phys::MoveKind;
+use crate::{
+    common::net::EntityState,
+    server::{
+        progs::{EntityId, FieldDef, FunctionId, ProgsError, StringId, StringTable, Type},
+        world::phys::MoveKind,
+    },
+};
 
-use byteorder::LittleEndian;
-use byteorder::ReadBytesExt;
-use byteorder::WriteBytesExt;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use cgmath::Vector3;
 use num::FromPrimitive;
 
@@ -335,7 +328,8 @@ impl Entity {
     }
 
     pub fn type_check(&self, addr: usize, type_: Type) -> Result<(), EntityError> {
-        match self.type_def
+        match self
+            .type_def
             .field_defs
             .iter()
             .find(|def| def.type_ != Type::QVoid && def.offset as usize == addr)
@@ -474,7 +468,9 @@ impl Entity {
     pub fn get_string_id(&self, addr: i16) -> Result<StringId, EntityError> {
         self.type_check(addr as usize, Type::QString)?;
 
-        Ok(StringId(self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize))
+        Ok(StringId(
+            self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize
+        ))
     }
 
     /// Stores a `StringId` at the given virtual address.
@@ -508,7 +504,9 @@ impl Entity {
     /// Loads a `FunctionId` from the given virtual address.
     pub fn get_function_id(&self, addr: i16) -> Result<FunctionId, EntityError> {
         self.type_check(addr as usize, Type::QFunction)?;
-        Ok(FunctionId(self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize))
+        Ok(FunctionId(
+            self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize
+        ))
     }
 
     /// Stores a `FunctionId` at the given virtual address.
