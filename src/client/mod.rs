@@ -64,8 +64,8 @@ use rodio::Endpoint;
 // connections are tried 3 times, see
 // https://github.com/id-Software/Quake/blob/master/WinQuake/net_dgrm.c#L1248
 const MAX_CONNECT_ATTEMPTS: usize = 3;
-
 const MAX_STATS: usize = 32;
+const MAX_STATIC_ENTITIES: usize = 128;
 
 const DEFAULT_SOUND_PACKET_VOLUME: u8 = 255;
 const DEFAULT_SOUND_PACKET_ATTENUATION: f32 = 1.0;
@@ -300,7 +300,11 @@ struct ClientState {
     // ambient sounds (infinite looping, static position)
     static_sounds: Vec<StaticSound>,
 
+    // client-side entities
     entities: Vec<ClientEntity>,
+
+    // static entities
+    static_entities: Vec<ClientEntity>,
 
     light_styles: HashMap<u8, String>,
 
@@ -360,6 +364,7 @@ impl ClientState {
             sounds: vec![AudioSource::load(&vfs, "misc/null.wav").unwrap()],
             static_sounds: Vec::new(),
             entities: Vec::new(),
+            static_entities: Vec::new(),
             light_styles: HashMap::new(),
             stats: [0; MAX_STATS],
             max_players: 0,
@@ -1231,6 +1236,19 @@ impl Client {
                     self.spawn_entities(
                         ent_id, model_id, frame_id, colormap, skin_id, origin, angles,
                     )?;
+                }
+
+                ServerCmd::SpawnStatic { model_id, frame_id, colormap, skin_id, origin, angles } => {
+                    ensure!(self.state.static_entities.len() < MAX_STATIC_ENTITIES, "too many static entities");
+                    self.state.static_entities.push(ClientEntity::from_baseline(EntityState {
+                        origin,
+                        angles,
+                        model_id: model_id as usize,
+                        frame_id: frame_id as usize,
+                        colormap,
+                        skin_id: skin_id as usize,
+                        effects: EntityEffects::empty(),
+                    }));
                 }
 
                 ServerCmd::SpawnStaticSound {
