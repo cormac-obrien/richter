@@ -94,6 +94,7 @@ struct ClientView {
 
     ideal_pitch: Deg<f32>,
     punch_angle: Vector3<Deg<f32>>,
+    dmg_angle: Vector3<Deg<f32>>,
     view_height: f32,
 }
 
@@ -108,6 +109,7 @@ impl ClientView {
             view_angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
             ideal_pitch: Deg(0.0),
             punch_angle: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            dmg_angle: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
             view_height: 0.0,
         }
     }
@@ -930,6 +932,56 @@ impl Client {
                         self.state.stats[ClientStat::ActiveWeapon as usize] = active_weapon as i32;
                         // TODO: update status bar
                     }
+                }
+
+                ServerCmd::Damage {
+                    armor,
+                    blood,
+                    source,
+                } => {
+                    let count = match armor / 2 + blood / 2 {
+                        c if c <= 10 => 10,
+                        c => c,
+                    };
+
+                    // TODO: face animation
+                    // self.face_anim_time += Duration::from_millis(200);
+
+                    let mut cshift =
+                        self.state.color_shifts[ColorShiftCode::Damage as usize].borrow_mut();
+                    cshift.percent += 3 * count as i32;
+                    cshift.percent = cshift.percent.clamp(0, 150);
+
+                    if armor > blood {
+                        cshift.dest_color = [200, 100, 100];
+                    } else if armor > 0 {
+                        cshift.dest_color = [220, 50, 50];
+                    } else {
+                        cshift.dest_color = [255, 0, 0];
+                    }
+
+                    let v_ent = &self.state.entities[self.state.view.ent_id];
+
+                    // unit vector of damage direction
+                    let dirn = (source - v_ent.origin).normalize();
+
+                    let [pitch, yaw, roll]: [Deg<f32>; 3] = *v_ent.angles.as_ref();
+
+                    // player's forward and right vectors
+                    let forward = Vector3::new(yaw.sin(), yaw.cos(), -pitch.sin());
+                    let right = Vector3::new(
+                        -(pitch.sin() * yaw.cos() * roll.sin() + roll.cos() * -yaw.sin()),
+                        -(pitch.sin() * yaw.sin() * roll.sin() + roll.cos() * yaw.cos()),
+                        -(pitch.cos() * roll.sin()),
+                    );
+
+                    // update damage angles
+                    self.state.view.dmg_angle[0] = Deg(count as f32
+                        * dirn.dot(forward)
+                        * self.cvars.borrow().get_value("v_kickpitch").unwrap());
+                    self.state.view.dmg_angle[2] = Deg(count as f32
+                        * dirn.dot(right)
+                        * self.cvars.borrow().get_value("v_kickroll").unwrap());
                 }
 
                 ServerCmd::Disconnect => self.disconnect(),

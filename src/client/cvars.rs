@@ -43,4 +43,6 @@ pub fn register_cvars(cvars: &CvarRegistry) {
     cvars.register("fov", "90").unwrap();
     cvars.register_archive("m_pitch", "0.022").unwrap();
     cvars.register_archive("m_yaw", "0.022").unwrap();
+    cvars.register("v_kickpitch", "0.6").unwrap();
+    cvars.register("v_kickroll", "0.6").unwrap();
 }

@@ -248,7 +248,7 @@ impl ::std::convert::From<u8> for PlayerColor {
 
 pub struct ColorShift {
     pub dest_color: [u8; 3],
-    pub percent: u8,
+    pub percent: i32,
 }
 
 #[derive(FromPrimitive)]
