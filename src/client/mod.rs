@@ -59,7 +59,7 @@ use cgmath::{Angle, Deg, InnerSpace, Vector3, Zero};
 use chrono::Duration;
 use failure::Error;
 use flame;
-use rodio::Endpoint;
+use rodio::Device;
 
 // connections are tried 3 times, see
 // https://github.com/id-Software/Quake/blob/master/WinQuake/net_dgrm.c#L1248
@@ -209,13 +209,13 @@ struct ClientChannel {
 }
 
 struct Mixer {
-    endpoint: Rc<Endpoint>,
+    audio_device: Rc<rodio::Device>,
     // TODO: replace with an array once const type parameters are implemented
     channels: Box<[Option<ClientChannel>]>,
 }
 
 impl Mixer {
-    pub fn new(endpoint: Rc<Endpoint>) -> Mixer {
+    pub fn new(audio_device: Rc<rodio::Device>) -> Mixer {
         let mut channel_vec = Vec::new();
 
         for _ in 0..MAX_CHANNELS {
@@ -223,7 +223,7 @@ impl Mixer {
         }
 
         Mixer {
-            endpoint,
+            audio_device,
             channels: channel_vec.into_boxed_slice(),
         }
     }
@@ -276,7 +276,7 @@ impl Mixer {
         ent_channel: i8,
     ) {
         let chan_id = self.find_free_channel(ent_id, ent_channel);
-        let new_channel = Channel::new(self.endpoint.clone());
+        let new_channel = Channel::new(self.audio_device.clone());
         new_channel.play(src.clone());
         self.channels[chan_id] = Some(ClientChannel {
             start_time: time,
@@ -357,7 +357,7 @@ struct ClientState {
 
 impl ClientState {
     // TODO: add parameter for number of player slots and reserve them in entity list
-    pub fn new(vfs: Rc<Vfs>, endpoint: Rc<Endpoint>) -> ClientState {
+    pub fn new(vfs: Rc<Vfs>, audio_device: Rc<rodio::Device>) -> ClientState {
         ClientState {
             vfs: vfs.clone(),
             models: vec![Model::none()],
@@ -436,7 +436,7 @@ impl ClientState {
             velocity: Vector3::zero(),
             on_ground: false,
             in_water: false,
-            mixer: Mixer::new(endpoint.clone()),
+            mixer: Mixer::new(audio_device.clone()),
         }
     }
 }
@@ -446,7 +446,7 @@ pub struct Client {
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
     console: Rc<RefCell<Console>>,
-    endpoint: Rc<Endpoint>,
+    audio_device: Rc<rodio::Device>,
 
     qsock: QSocket,
     compose: Vec<u8>,
@@ -462,7 +462,7 @@ impl Client {
         cvars: Rc<RefCell<CvarRegistry>>,
         cmds: Rc<RefCell<CmdRegistry>>,
         console: Rc<RefCell<Console>>,
-        endpoint: Rc<Endpoint>,
+        audio_device: Rc<rodio::Device>,
     ) -> Result<Client, Error>
     where
         A: ToSocketAddrs,
@@ -544,11 +544,11 @@ impl Client {
             cvars,
             cmds,
             console,
-            endpoint: endpoint.clone(),
+            audio_device: audio_device.clone(),
             qsock,
             compose: Vec::new(),
             signon: SignOnStage::Not,
-            state: ClientState::new(vfs.clone(), endpoint.clone()),
+            state: ClientState::new(vfs.clone(), audio_device.clone()),
         })
     }
 
@@ -1258,7 +1258,7 @@ impl Client {
                     attenuation,
                 } => {
                     self.state.static_sounds.push(StaticSound::new(
-                        &self.endpoint,
+                        &self.audio_device,
                         origin,
                         self.state.sounds[sound_id as usize].clone(),
                         volume,
@@ -1430,7 +1430,7 @@ impl Client {
         model_precache: Vec<String>,
         sound_precache: Vec<String>,
     ) -> Result<(), Error> {
-        let mut new_client_state = ClientState::new(self.vfs.clone(), self.endpoint.clone());
+        let mut new_client_state = ClientState::new(self.vfs.clone(), self.audio_device.clone());
 
         // check protocol version
         ensure!(

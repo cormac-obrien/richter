@@ -58,7 +58,6 @@ use chrono::Duration;
 use gfx::Encoder;
 use gfx_device_gl::{CommandBuffer, Device, Resources};
 use glutin::{Event, EventsLoop, WindowEvent, WindowedContext};
-use rodio::Endpoint;
 
 enum TitleState {
     Menu,
@@ -85,7 +84,7 @@ struct ClientProgram {
     encoder: RefCell<Encoder<Resources, CommandBuffer>>,
     data: RefCell<render::pipe::Data<Resources>>,
 
-    endpoint: Rc<Endpoint>,
+    audio_device: Rc<rodio::Device>,
 
     state: RefCell<ProgramState>,
     input: Rc<RefCell<Input>>,
@@ -169,7 +168,7 @@ impl ClientProgram {
 
         let encoder = factory.create_command_buffer().into();
 
-        let endpoint = Rc::new(rodio::get_endpoints_list().next().unwrap());
+        let audio_device = Rc::new(rodio::default_output_device().unwrap());
 
         let gfx_pkg = Rc::new(RefCell::new(GraphicsPackage::new(
             &vfs,
@@ -194,7 +193,7 @@ impl ClientProgram {
             device: RefCell::new(device),
             encoder: RefCell::new(encoder),
             data: RefCell::new(data),
-            endpoint,
+            audio_device,
             state: RefCell::new(ProgramState::Title),
             input,
         }
@@ -210,7 +209,7 @@ impl ClientProgram {
             self.cvars.clone(),
             self.cmds.clone(),
             self.console.clone(),
-            self.endpoint.clone(),
+            self.audio_device.clone(),
         )
         .unwrap();
 

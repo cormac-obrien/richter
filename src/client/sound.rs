@@ -20,7 +20,7 @@
 
 use std::{
     cell::RefCell,
-    io::{BufReader, Cursor, Read},
+    io::{BufReader, BufWriter, Cursor, Read},
     rc::Rc,
 };
 
@@ -28,9 +28,10 @@ use crate::common::vfs::Vfs;
 
 use cgmath::Vector3;
 use failure::Error;
+use hound::{WavReader, WavSpec, WavWriter};
 use rodio::{
     source::{Buffered, SamplesConverter},
-    Decoder, Endpoint, Sink, Source,
+    Decoder, Device, Sink, Source,
 };
 
 #[derive(Clone)]
@@ -45,6 +46,34 @@ impl AudioSource {
         let mut file = vfs.open(&full_path)?;
         let mut data = Vec::new();
         file.read_to_end(&mut data)?;
+
+        let spec = {
+            let wav_reader = WavReader::new(Cursor::new(&mut data))?;
+            wav_reader.spec()
+        };
+
+        // have to convert from 8- to 16-bit here because rodio chokes on 8-bit PCM
+        // TODO: file an issue with rodio
+        if spec.bits_per_sample == 8 {
+            let mut wav_reader = WavReader::new(Cursor::new(&mut data))?;
+            let len = wav_reader.len();
+            let mut data_16bit: Vec<i16> = Vec::with_capacity(len as usize);
+            for sample in wav_reader.samples::<i8>() {
+                data_16bit.push(sample.unwrap() as i16 * 256);
+            }
+
+            data.clear();
+            let w = BufWriter::new(Cursor::new(&mut data));
+            let mut spec16 = spec;
+            spec16.bits_per_sample = 16;
+            let mut wav_writer = WavWriter::new(w, spec16)?;
+            let mut i16_writer = wav_writer.get_i16_writer(len);
+            for s in data_16bit {
+                i16_writer.write_sample(s);
+            }
+            i16_writer.flush()?;
+        }
+
         let src = Decoder::new(BufReader::new(Cursor::new(data)))?
             .convert_samples()
             .buffered();
@@ -63,13 +92,13 @@ pub struct StaticSound {
 
 impl StaticSound {
     pub fn new(
-        endpoint: &Endpoint,
+        device: &Device,
         origin: Vector3<f32>,
         src: AudioSource,
         volume: u8,
         attenuation: u8,
     ) -> StaticSound {
-        let sink = Sink::new(endpoint);
+        let sink = Sink::new(device);
         let infinite = src.0.clone().repeat_infinite();
         sink.append(infinite);
         // TODO: set volume, attenuation and spatialize
@@ -86,15 +115,15 @@ impl StaticSound {
 
 /// Represents a single audio channel, capable of playing one sound at a time.
 pub struct Channel {
-    endpoint: Rc<Endpoint>,
+    device: Rc<Device>,
     sink: RefCell<Option<Sink>>,
 }
 
 impl Channel {
-    /// Create a new `Channel` backed by the given `Endpoint`.
-    pub fn new(endpoint: Rc<Endpoint>) -> Channel {
+    /// Create a new `Channel` backed by the given `Device`.
+    pub fn new(device: Rc<Device>) -> Channel {
         Channel {
-            endpoint,
+            device,
             sink: RefCell::new(None),
         }
     }
@@ -105,9 +134,9 @@ impl Channel {
         self.sink.replace(None);
 
         // start the new sound
-        let mut new_sink = Sink::new(&self.endpoint);
+        let mut new_sink = Sink::new(&self.device);
         new_sink.append(src.0);
-        new_sink.set_volume(8.0);
+        new_sink.set_volume(1.0);
 
         self.sink.replace(Some(new_sink));
     }
