@@ -20,8 +20,7 @@ edition = "2018"
 "log" = "0.4.1"
 "rand" = "0.4.2"
 "regex" = "0.2.6"
-"rendy" = "0.3.2"
-"rodio" = "0.6.0"
+"rodio" = "0.11.0"
 
 # gfx pre-ll deps
 #
@@ -37,6 +36,7 @@ edition = "2018"
 "docopt" = "0.8"
 "serde" = "1.0"
 "serde_derive" = "1.0"
+hound = "3.4.0"
 
 [dependencies.shaderc]
 features = ["build-from-source"]

@@ -37,7 +37,7 @@ use std::{
 use crate::{
     client::{
         input::game::{Action, GameInput},
-        sound::{AudioSource, Channel, StaticSound},
+        sound::{AudioSource, Channel, Listener, StaticSound},
     },
     common::{
         bsp,
@@ -55,11 +55,10 @@ use crate::{
     },
 };
 
-use cgmath::{Angle, Deg, InnerSpace, Vector3, Zero};
+use cgmath::{Angle, Deg, Euler, InnerSpace, Matrix4, Vector3, Zero};
 use chrono::Duration;
 use failure::Error;
 use flame;
-use rodio::Endpoint;
 
 // connections are tried 3 times, see
 // https://github.com/id-Software/Quake/blob/master/WinQuake/net_dgrm.c#L1248
@@ -209,13 +208,13 @@ struct ClientChannel {
 }
 
 struct Mixer {
-    endpoint: Rc<Endpoint>,
+    audio_device: Rc<rodio::Device>,
     // TODO: replace with an array once const type parameters are implemented
     channels: Box<[Option<ClientChannel>]>,
 }
 
 impl Mixer {
-    pub fn new(endpoint: Rc<Endpoint>) -> Mixer {
+    pub fn new(audio_device: Rc<rodio::Device>) -> Mixer {
         let mut channel_vec = Vec::new();
 
         for _ in 0..MAX_CHANNELS {
@@ -223,7 +222,7 @@ impl Mixer {
         }
 
         Mixer {
-            endpoint,
+            audio_device,
             channels: channel_vec.into_boxed_slice(),
         }
     }
@@ -274,10 +273,21 @@ impl Mixer {
         time: Duration,
         ent_id: usize,
         ent_channel: i8,
+        volume: f32,
+        attenuation: f32,
+        ents: &[ClientEntity],
+        listener: &Listener,
     ) {
         let chan_id = self.find_free_channel(ent_id, ent_channel);
-        let new_channel = Channel::new(self.endpoint.clone());
-        new_channel.play(src.clone());
+        let new_channel = Channel::new(self.audio_device.clone());
+
+        new_channel.play(
+            src.clone(),
+            ents[ent_id].origin,
+            listener,
+            volume,
+            attenuation,
+        );
         self.channels[chan_id] = Some(ClientChannel {
             start_time: time,
             ent_id,
@@ -353,11 +363,12 @@ struct ClientState {
 
     // worldmodel: Model,
     mixer: Mixer,
+    listener: Listener,
 }
 
 impl ClientState {
     // TODO: add parameter for number of player slots and reserve them in entity list
-    pub fn new(vfs: Rc<Vfs>, endpoint: Rc<Endpoint>) -> ClientState {
+    pub fn new(vfs: Rc<Vfs>, audio_device: Rc<rodio::Device>) -> ClientState {
         ClientState {
             vfs: vfs.clone(),
             models: vec![Model::none()],
@@ -436,7 +447,50 @@ impl ClientState {
             velocity: Vector3::zero(),
             on_ground: false,
             in_water: false,
-            mixer: Mixer::new(endpoint.clone()),
+            mixer: Mixer::new(audio_device.clone()),
+            listener: Listener::new(),
+        }
+    }
+
+    fn update_listener(&self) {
+        let view_origin = self.entities[self.view.ent_id].origin;
+        let world_translate = Matrix4::from_translation(view_origin);
+
+        let left_base = Vector3::new(0.0, 4.0, self.view.view_height);
+        let right_base = Vector3::new(0.0, -4.0, self.view.view_height);
+
+        // transformations take place in Quake's left-handed coordinate space: X is
+        // forward, Y is *left* and Z is up.
+        let rotate = Matrix4::from(Euler::new(
+            self.view.view_angles[2],
+            -self.view.view_angles[0],
+            self.view.view_angles[1],
+        ));
+
+        let left = (world_translate * rotate * left_base.extend(1.0)).truncate();
+        let right = (world_translate * rotate * right_base.extend(1.0)).truncate();
+
+        self.listener.set_origin(view_origin);
+        self.listener.set_left_ear(left);
+        self.listener.set_right_ear(right);
+    }
+
+    fn update_sound_spatialization(&self) {
+        self.update_listener();
+
+        // update entity sounds
+        for opt_chan in self.mixer.channels.iter() {
+            if let Some(ref chan) = opt_chan {
+                if chan.channel.in_use() {
+                    chan.channel
+                        .update(self.entities[chan.ent_id].origin, &self.listener);
+                }
+            }
+        }
+
+        // update static sounds
+        for ss in self.static_sounds.iter() {
+            ss.update(&self.listener);
         }
     }
 }
@@ -446,7 +500,7 @@ pub struct Client {
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
     console: Rc<RefCell<Console>>,
-    endpoint: Rc<Endpoint>,
+    audio_device: Rc<rodio::Device>,
 
     qsock: QSocket,
     compose: Vec<u8>,
@@ -462,7 +516,7 @@ impl Client {
         cvars: Rc<RefCell<CvarRegistry>>,
         cmds: Rc<RefCell<CmdRegistry>>,
         console: Rc<RefCell<Console>>,
-        endpoint: Rc<Endpoint>,
+        audio_device: Rc<rodio::Device>,
     ) -> Result<Client, Error>
     where
         A: ToSocketAddrs,
@@ -544,11 +598,11 @@ impl Client {
             cvars,
             cmds,
             console,
-            endpoint: endpoint.clone(),
+            audio_device: audio_device.clone(),
             qsock,
             compose: Vec::new(),
             signon: SignOnStage::Not,
-            state: ClientState::new(vfs.clone(), endpoint.clone()),
+            state: ClientState::new(vfs.clone(), audio_device.clone()),
         })
     }
 
@@ -1209,18 +1263,33 @@ impl Client {
                     sound_id,
                     position: _,
                 } => {
-                    println!(
+                    trace!(
                         "starting sound with id {} on entity {} channel {}",
-                        sound_id, entity_id, channel
+                        sound_id,
+                        entity_id,
+                        channel
                     );
-                    let _volume = volume.unwrap_or(DEFAULT_SOUND_PACKET_VOLUME);
-                    let _attenuation = attenuation.unwrap_or(DEFAULT_SOUND_PACKET_ATTENUATION);
+
+                    if entity_id as usize >= self.state.entities.len() {
+                        warn!(
+                            "server tried to start sound on nonexistent entity {}",
+                            entity_id
+                        );
+                        break;
+                    }
+
+                    let volume = volume.unwrap_or(DEFAULT_SOUND_PACKET_VOLUME);
+                    let attenuation = attenuation.unwrap_or(DEFAULT_SOUND_PACKET_ATTENUATION);
                     // TODO: apply volume, attenuation, spatialization
                     self.state.mixer.start_sound(
                         self.state.sounds[sound_id as usize].clone(),
                         self.state.msg_times[0],
                         entity_id as usize,
                         channel,
+                        volume as f32 / 255.0,
+                        attenuation,
+                        &self.state.entities,
+                        &self.state.listener,
                     );
                 }
 
@@ -1238,17 +1307,29 @@ impl Client {
                     )?;
                 }
 
-                ServerCmd::SpawnStatic { model_id, frame_id, colormap, skin_id, origin, angles } => {
-                    ensure!(self.state.static_entities.len() < MAX_STATIC_ENTITIES, "too many static entities");
-                    self.state.static_entities.push(ClientEntity::from_baseline(EntityState {
-                        origin,
-                        angles,
-                        model_id: model_id as usize,
-                        frame_id: frame_id as usize,
-                        colormap,
-                        skin_id: skin_id as usize,
-                        effects: EntityEffects::empty(),
-                    }));
+                ServerCmd::SpawnStatic {
+                    model_id,
+                    frame_id,
+                    colormap,
+                    skin_id,
+                    origin,
+                    angles,
+                } => {
+                    ensure!(
+                        self.state.static_entities.len() < MAX_STATIC_ENTITIES,
+                        "too many static entities"
+                    );
+                    self.state
+                        .static_entities
+                        .push(ClientEntity::from_baseline(EntityState {
+                            origin,
+                            angles,
+                            model_id: model_id as usize,
+                            frame_id: frame_id as usize,
+                            colormap,
+                            skin_id: skin_id as usize,
+                            effects: EntityEffects::empty(),
+                        }));
                 }
 
                 ServerCmd::SpawnStaticSound {
@@ -1258,11 +1339,12 @@ impl Client {
                     attenuation,
                 } => {
                     self.state.static_sounds.push(StaticSound::new(
-                        &self.endpoint,
+                        &self.audio_device,
                         origin,
                         self.state.sounds[sound_id as usize].clone(),
-                        volume,
-                        attenuation,
+                        volume as f32 / 255.0,
+                        attenuation as f32 / 64.0,
+                        &self.state.listener,
                     ));
                 }
 
@@ -1430,7 +1512,7 @@ impl Client {
         model_precache: Vec<String>,
         sound_precache: Vec<String>,
     ) -> Result<(), Error> {
-        let mut new_client_state = ClientState::new(self.vfs.clone(), self.endpoint.clone());
+        let mut new_client_state = ClientState::new(self.vfs.clone(), self.audio_device.clone());
 
         // check protocol version
         ensure!(
@@ -1601,7 +1683,6 @@ impl Client {
 
         // TODO: if we're in demo playback, interpolate the view angles
 
-        use cgmath::Angle;
         let obj_rotate = Deg(100.0 * engine::duration_to_f32(self.state.time)).normalize();
 
         // in the extremely unlikely event that there's only a world entity and nothing else, just
@@ -1670,6 +1751,11 @@ impl Client {
         self.send()?;
         self.parse_server_msg()?;
         self.relink_entities();
+
+        if self.signon == SignOnStage::Done {
+            self.state.update_listener();
+            self.state.update_sound_spatialization();
+        }
         // TODO: CL_UpdateTEnts
 
         Ok(())
