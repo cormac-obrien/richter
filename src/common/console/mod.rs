@@ -15,9 +15,8 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-// TODO: implement proper Error types
-
-// TODO: have console commands take an IntoIter<AsRef<str>> instead of a Vec<String>
+mod error;
+pub use self::error::{ConsoleError, ConsoleErrorKind};
 
 use std::{
     cell::{Ref, RefCell},
@@ -29,11 +28,11 @@ use std::{
 use crate::common::parse;
 
 use combine::Parser;
-use failure::Error;
+use failure::{Error, ResultExt};
 
 /// Stores console commands.
 pub struct CmdRegistry {
-    cmds: HashMap<String, Box<Fn(&[&str])>>,
+    cmds: HashMap<String, Box<dyn Fn(&[&str])>>,
 }
 
 impl CmdRegistry {
@@ -46,15 +45,14 @@ impl CmdRegistry {
     /// Registers a new command with the given name.
     ///
     /// Returns an error if a command with the specified name already exists.
-    pub fn insert<S>(&mut self, name: S, cmd: Box<Fn(&[&str])>) -> Result<(), ()>
+    pub fn insert<S>(&mut self, name: S, cmd: Box<dyn Fn(&[&str])>) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
         match self.cmds.get(name.as_ref()) {
-            Some(_) => {
-                error!("Command \"{}\" already registered.", name.as_ref());
-                return Err(());
-            }
+            Some(_) => Err(ConsoleErrorKind::DuplicateCommand {
+                name: name.as_ref().to_string(),
+            })?,
             None => {
                 self.cmds.insert(name.as_ref().to_owned(), cmd);
             }
@@ -64,7 +62,11 @@ impl CmdRegistry {
     }
 
     /// Registers a new command with the given name, or replaces one if the name is in use.
-    pub fn insert_or_replace<S>(&mut self, name: S, cmd: Box<Fn(&[&str])>) -> Result<(), ()>
+    pub fn insert_or_replace<S>(
+        &mut self,
+        name: S,
+        cmd: Box<dyn Fn(&[&str])>,
+    ) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
@@ -75,17 +77,17 @@ impl CmdRegistry {
     /// Executes a command.
     ///
     /// Returns an error if no command with the specified name exists.
-    pub fn exec<S>(&mut self, name: S, args: &[&str]) -> Result<(), ()>
+    pub fn exec<S>(&mut self, name: S, args: &[&str]) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
-        let name = name.as_ref().to_owned();
-
-        match self.cmds.get(&name) {
-            Some(cmd) => cmd(args),
-            None => return Err(()),
-        }
-
+        let cmd = self
+            .cmds
+            .get(name.as_ref())
+            .ok_or(ConsoleErrorKind::NoSuchCommand {
+                name: name.as_ref().to_owned(),
+            })?;
+        cmd(args);
         Ok(())
     }
 
@@ -128,7 +130,13 @@ impl CvarRegistry {
         }
     }
 
-    fn register_impl<S>(&self, name: S, default: S, archive: bool, notify: bool) -> Result<(), ()>
+    fn register_impl<S>(
+        &self,
+        name: S,
+        default: S,
+        archive: bool,
+        notify: bool,
+    ) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
@@ -137,7 +145,9 @@ impl CvarRegistry {
 
         let mut cvars = self.cvars.borrow_mut();
         match cvars.get(name) {
-            Some(_) => return Err(()),
+            Some(_) => Err(ConsoleErrorKind::DuplicateCvar {
+                name: name.to_owned(),
+            })?,
             None => {
                 cvars.insert(
                     name.to_owned(),
@@ -155,7 +165,7 @@ impl CvarRegistry {
     }
 
     /// Register a new `Cvar` with the given name.
-    pub fn register<S>(&self, name: S, default: S) -> Result<(), ()>
+    pub fn register<S>(&self, name: S, default: S) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
@@ -166,7 +176,7 @@ impl CvarRegistry {
     ///
     /// The value of this `Cvar` should be written to `vars.rc` whenever the game is closed or
     /// `host_writeconfig` is issued.
-    pub fn register_archive<S>(&self, name: S, default: S) -> Result<(), ()>
+    pub fn register_archive<S>(&self, name: S, default: S) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
@@ -178,7 +188,7 @@ impl CvarRegistry {
     /// When this `Cvar` is set:
     /// - If the host is a server, broadcast that the variable has been changed to all clients.
     /// - If the host is a client, update the clientinfo string.
-    pub fn register_notify<S>(&self, name: S, default: S) -> Result<(), ()>
+    pub fn register_notify<S>(&self, name: S, default: S) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
@@ -193,52 +203,66 @@ impl CvarRegistry {
     /// Additionally, when this `Cvar` is set:
     /// - If the host is a server, broadcast that the variable has been changed to all clients.
     /// - If the host is a client, update the clientinfo string.
-    pub fn register_archive_notify<S>(&mut self, name: S, default: S) -> Result<(), ()>
+    pub fn register_archive_notify<S>(&mut self, name: S, default: S) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
         self.register_impl(name, default, true, true)
     }
 
-    pub fn get<S>(&self, name: S) -> Result<String, ()>
+    pub fn get<S>(&self, name: S) -> Result<String, ConsoleError>
     where
         S: AsRef<str>,
     {
-        match self.cvars.borrow().get(name.as_ref()) {
-            Some(s) => Ok(s.val.to_owned()),
-            None => Err(()),
-        }
+        Ok(self
+            .cvars
+            .borrow()
+            .get(name.as_ref())
+            .ok_or(ConsoleErrorKind::NoSuchCvar {
+                name: name.as_ref().to_owned(),
+            })?
+            .val
+            .clone())
     }
 
-    pub fn get_value<S>(&self, name: S) -> Result<f32, ()>
+    pub fn get_value<S>(&self, name: S) -> Result<f32, ConsoleError>
     where
         S: AsRef<str>,
     {
-        match self.cvars.borrow().get(name.as_ref()) {
-            Some(s) => match s.val.parse() {
-                Ok(f) => Ok(f),
-                Err(_) => Err(()),
-            },
-            None => Err(()),
-        }
+        let name = name.as_ref();
+        let cvars = self.cvars.borrow();
+        let cvar = cvars.get(name).ok_or(ConsoleErrorKind::NoSuchCvar {
+            name: name.to_owned(),
+        })?;
+        let val = cvar
+            .val
+            .parse::<f32>()
+            .context(ConsoleErrorKind::CvarParseFailed {
+                name: name.to_owned(),
+                value: cvar.val.clone(),
+            })?;
+
+        Ok(val)
     }
 
-    pub fn set<S>(&self, name: S, value: S) -> Result<(), ()>
+    pub fn set<S>(&self, name: S, value: S) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
-        debug!("cvar assignment: {} {}", name.as_ref(), value.as_ref());
-        match self.cvars.borrow_mut().get_mut(name.as_ref()) {
-            Some(s) => {
-                s.val = value.as_ref().to_owned();
-                if s.notify {
-                    // TODO: update userinfo/serverinfo
-                    unimplemented!();
-                }
-                Ok(())
-            }
-            None => Err(()),
+        trace!("cvar assignment: {} {}", name.as_ref(), value.as_ref());
+        let mut cvars = self.cvars.borrow_mut();
+        let mut cvar = cvars
+            .get_mut(name.as_ref())
+            .ok_or(ConsoleErrorKind::NoSuchCvar {
+                name: name.as_ref().to_owned(),
+            })?;
+        cvar.val = value.as_ref().to_owned();
+        if cvar.notify {
+            // TODO: update userinfo/serverinfo
+            unimplemented!();
         }
+
+        Ok(())
     }
 
     pub fn contains<S>(&self, name: S) -> bool
