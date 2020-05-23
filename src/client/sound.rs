@@ -19,20 +19,80 @@
 // SOFTWARE.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     io::{BufReader, BufWriter, Cursor, Read},
     rc::Rc,
 };
 
 use crate::common::vfs::Vfs;
 
-use cgmath::Vector3;
+use cgmath::{InnerSpace, Vector3};
 use failure::Error;
-use hound::{WavReader, WavSpec, WavWriter};
+use hound::{WavReader, WavWriter};
 use rodio::{
     source::{Buffered, SamplesConverter},
     Decoder, Device, Sink, Source,
 };
+
+pub const DISTANCE_ATTENUATION_FACTOR: f32 = 0.001;
+
+/// Data needed for sound spatialization.
+///
+/// This struct is updated every frame.
+#[derive(Debug)]
+pub struct Listener {
+    origin: Cell<Vector3<f32>>,
+    left_ear: Cell<Vector3<f32>>,
+    right_ear: Cell<Vector3<f32>>,
+}
+
+impl Listener {
+    pub fn new() -> Listener {
+        Listener {
+            origin: Cell::new(Vector3::new(0.0, 0.0, 0.0)),
+            left_ear: Cell::new(Vector3::new(0.0, 0.0, 0.0)),
+            right_ear: Cell::new(Vector3::new(0.0, 0.0, 0.0)),
+        }
+    }
+
+    pub fn origin(&self) -> Vector3<f32> {
+        self.origin.get()
+    }
+
+    pub fn left_ear(&self) -> Vector3<f32> {
+        self.left_ear.get()
+    }
+
+    pub fn right_ear(&self) -> Vector3<f32> {
+        self.right_ear.get()
+    }
+
+    pub fn set_origin(&self, new_origin: Vector3<f32>) {
+        self.origin.set(new_origin);
+    }
+
+    pub fn set_left_ear(&self, new_origin: Vector3<f32>) {
+        self.left_ear.set(new_origin);
+    }
+
+    pub fn set_right_ear(&self, new_origin: Vector3<f32>) {
+        self.right_ear.set(new_origin);
+    }
+
+    pub fn attenuate(
+        &self,
+        emitter_origin: Vector3<f32>,
+        base_volume: f32,
+        attenuation: f32,
+    ) -> f32 {
+        let dist = (emitter_origin - self.origin.get()).magnitude();
+        let decay = (emitter_origin - self.origin.get()).magnitude()
+            * attenuation
+            * DISTANCE_ATTENUATION_FACTOR;
+        let volume = ((1.0 - decay) * base_volume).max(0.0);
+        volume
+    }
+}
 
 #[derive(Clone)]
 pub struct AudioSource(Buffered<SamplesConverter<Decoder<BufReader<Cursor<Vec<u8>>>>, f32>>);
@@ -84,10 +144,9 @@ impl AudioSource {
 
 pub struct StaticSound {
     origin: Vector3<f32>,
-    src: AudioSource,
-    sink: Sink,
-    volume: u8,
-    attenuation: u8,
+    sink: RefCell<Sink>,
+    volume: f32,
+    attenuation: f32,
 }
 
 impl StaticSound {
@@ -95,21 +154,27 @@ impl StaticSound {
         device: &Device,
         origin: Vector3<f32>,
         src: AudioSource,
-        volume: u8,
-        attenuation: u8,
+        volume: f32,
+        attenuation: f32,
+        listener: &Listener,
     ) -> StaticSound {
         let sink = Sink::new(device);
         let infinite = src.0.clone().repeat_infinite();
         sink.append(infinite);
-        // TODO: set volume, attenuation and spatialize
+        sink.set_volume(listener.attenuate(origin, volume, attenuation));
 
         StaticSound {
             origin,
-            src,
-            sink,
+            sink: RefCell::new(sink),
             volume,
             attenuation,
         }
+    }
+
+    pub fn update(&self, listener: &Listener) {
+        let sink = self.sink.borrow_mut();
+
+        sink.set_volume(listener.attenuate(self.origin, self.volume, self.attenuation));
     }
 }
 
@@ -117,6 +182,8 @@ impl StaticSound {
 pub struct Channel {
     device: Rc<Device>,
     sink: RefCell<Option<Sink>>,
+    master_vol: Cell<f32>,
+    attenuation: Cell<f32>,
 }
 
 impl Channel {
@@ -125,20 +192,47 @@ impl Channel {
         Channel {
             device,
             sink: RefCell::new(None),
+            master_vol: Cell::new(0.0),
+            attenuation: Cell::new(0.0),
         }
     }
 
     /// Play a new sound on this channel, cutting off any sound that was previously playing.
-    pub fn play(&self, src: AudioSource) {
+    pub fn play(
+        &self,
+        src: AudioSource,
+        ent_pos: Vector3<f32>,
+        listener: &Listener,
+        volume: f32,
+        attenuation: f32,
+    ) {
+        self.master_vol.set(volume);
+        self.attenuation.set(attenuation);
+
         // stop the old sound
         self.sink.replace(None);
 
         // start the new sound
-        let mut new_sink = Sink::new(&self.device);
+        let new_sink = Sink::new(&self.device);
         new_sink.append(src.0);
-        new_sink.set_volume(1.0);
+        new_sink.set_volume(listener.attenuate(
+            ent_pos,
+            self.master_vol.get(),
+            self.attenuation.get(),
+        ));
 
         self.sink.replace(Some(new_sink));
+    }
+
+    pub fn update(&self, ent_pos: Vector3<f32>, listener: &Listener) {
+        if let Some(ref sink) = *self.sink.borrow_mut() {
+            // attenuate using quake coordinates since distance is the same either way
+            sink.set_volume(listener.attenuate(
+                ent_pos,
+                self.master_vol.get(),
+                self.attenuation.get(),
+            ));
+        };
     }
 
     /// Stop the sound currently playing on this channel, if there is one.
