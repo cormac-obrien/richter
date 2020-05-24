@@ -16,6 +16,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use std::{
+    convert::From,
+    fmt::{self, Display},
     fs::File,
     io::{Cursor, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -23,7 +25,56 @@ use std::{
 
 use crate::common::pak::Pak;
 
-use failure::Error;
+use failure::{Backtrace, Context, Error, Fail, ResultExt};
+
+#[derive(Debug)]
+pub struct VfsError {
+    inner: Context<VfsErrorKind>,
+}
+
+impl VfsError {
+    pub fn kind(&self) -> VfsErrorKind {
+        self.inner.get_context().clone()
+    }
+}
+
+impl From<VfsErrorKind> for VfsError {
+    fn from(kind: VfsErrorKind) -> Self {
+        VfsError {
+            inner: Context::new(kind),
+        }
+    }
+}
+
+impl From<Context<VfsErrorKind>> for VfsError {
+    fn from(inner: Context<VfsErrorKind>) -> Self {
+        VfsError { inner }
+    }
+}
+
+impl Fail for VfsError {
+    fn cause(&self) -> Option<&dyn Fail> {
+        self.inner.cause()
+    }
+
+    fn backtrace(&self) -> Option<&Backtrace> {
+        self.inner.backtrace()
+    }
+}
+
+impl Display for VfsError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Display::fmt(&self.inner, f)
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Fail)]
+pub enum VfsErrorKind {
+    #[fail(display = "Couldn't load pakfile: {}", path)]
+    PakfileNotLoaded { path: String },
+    #[fail(display = "File does not exist: {}", path)]
+    NoSuchFile { path: String },
+}
 
 enum VfsComponent {
     Pak(Pak),
@@ -41,16 +92,23 @@ impl Vfs {
         }
     }
 
-    pub fn add_pakfile<P>(&mut self, path: P) -> Result<(), Error>
+    pub fn add_pakfile<P>(&mut self, path: P) -> Result<(), VfsError>
     where
         P: AsRef<Path>,
     {
-        self.components.push(VfsComponent::Pak(Pak::new(path)?));
+        let path = path.as_ref();
+
+        self.components
+            .push(VfsComponent::Pak(Pak::new(path).context(
+                VfsErrorKind::PakfileNotLoaded {
+                    path: path.to_string_lossy().into_owned(),
+                },
+            )?));
 
         Ok(())
     }
 
-    pub fn add_directory<P>(&mut self, path: P) -> Result<(), Error>
+    pub fn add_directory<P>(&mut self, path: P) -> Result<(), VfsError>
     where
         P: AsRef<Path>,
     {
@@ -60,12 +118,14 @@ impl Vfs {
         Ok(())
     }
 
-    pub fn open<S>(&self, virtual_path: S) -> Result<VirtualFile, Error>
+    pub fn open<S>(&self, virtual_path: S) -> Result<VirtualFile, VfsError>
     where
         S: AsRef<str>,
     {
+        let vp = virtual_path.as_ref();
+
+        // iterate in reverse so later PAKs overwrite earlier ones
         for c in self.components.iter().rev() {
-            let vp = virtual_path.as_ref();
 
             match c {
                 VfsComponent::Pak(pak) => {
@@ -85,7 +145,7 @@ impl Vfs {
             }
         }
 
-        bail!("File not found.");
+        Err(VfsErrorKind::NoSuchFile { path: vp.to_owned() })?
     }
 }
 
