@@ -18,6 +18,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+mod error;
+pub use self::error::{SoundError, SoundErrorKind};
+
 use std::{
     cell::{Cell, RefCell},
     io::{BufReader, BufWriter, Cursor, Read},
@@ -25,6 +28,8 @@ use std::{
 };
 
 use crate::common::vfs::Vfs;
+
+use failure::ResultExt;
 
 use cgmath::{InnerSpace, Vector3};
 use failure::Error;
@@ -85,7 +90,6 @@ impl Listener {
         base_volume: f32,
         attenuation: f32,
     ) -> f32 {
-        let dist = (emitter_origin - self.origin.get()).magnitude();
         let decay = (emitter_origin - self.origin.get()).magnitude()
             * attenuation
             * DISTANCE_ATTENUATION_FACTOR;
@@ -98,24 +102,31 @@ impl Listener {
 pub struct AudioSource(Buffered<SamplesConverter<Decoder<BufReader<Cursor<Vec<u8>>>>, f32>>);
 
 impl AudioSource {
-    pub fn load<S>(vfs: &Vfs, name: S) -> Result<AudioSource, Error>
+    pub fn load<S>(vfs: &Vfs, name: S) -> Result<AudioSource, SoundError>
     where
         S: AsRef<str>,
     {
-        let full_path = "sound/".to_owned() + name.as_ref();
-        let mut file = vfs.open(&full_path)?;
+        let name = name.as_ref();
+        let full_path = "sound/".to_owned() + name;
+        let mut file = vfs.open(&full_path).context(SoundErrorKind::Io { name: name.to_owned() })?;
         let mut data = Vec::new();
-        file.read_to_end(&mut data)?;
+        file.read_to_end(&mut data).context(SoundErrorKind::Io { name: name.to_owned() })?;
 
         let spec = {
-            let wav_reader = WavReader::new(Cursor::new(&mut data))?;
+            let wav_reader =
+                WavReader::new(Cursor::new(&mut data)).context(SoundErrorKind::WavReadFailed {
+                    name: name.to_owned(),
+                })?;
             wav_reader.spec()
         };
 
         // have to convert from 8- to 16-bit here because rodio chokes on 8-bit PCM
         // TODO: file an issue with rodio
         if spec.bits_per_sample == 8 {
-            let mut wav_reader = WavReader::new(Cursor::new(&mut data))?;
+            let mut wav_reader =
+                WavReader::new(Cursor::new(&mut data)).context(SoundErrorKind::WavReadFailed {
+                    name: name.to_owned(),
+                })?;
             let len = wav_reader.len();
             let mut data_16bit: Vec<i16> = Vec::with_capacity(len as usize);
             for sample in wav_reader.samples::<i8>() {
@@ -126,15 +137,23 @@ impl AudioSource {
             let w = BufWriter::new(Cursor::new(&mut data));
             let mut spec16 = spec;
             spec16.bits_per_sample = 16;
-            let mut wav_writer = WavWriter::new(w, spec16)?;
+            let mut wav_writer =
+                WavWriter::new(w, spec16).context(SoundErrorKind::WavWriteFailed {
+                    name: name.to_owned(),
+                })?;
             let mut i16_writer = wav_writer.get_i16_writer(len);
             for s in data_16bit {
                 i16_writer.write_sample(s);
             }
-            i16_writer.flush()?;
+            i16_writer.flush().context(SoundErrorKind::WavWriteFailed {
+                name: name.to_owned(),
+            })?;
         }
 
-        let src = Decoder::new(BufReader::new(Cursor::new(data)))?
+        let src = Decoder::new(BufReader::new(Cursor::new(data)))
+            .context(SoundErrorKind::DecodeFailed {
+                name: name.to_owned(),
+            })?
             .convert_samples()
             .buffered();
 
