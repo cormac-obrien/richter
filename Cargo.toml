@@ -38,6 +38,4 @@ edition = "2018"
 "serde_derive" = "1.0"
 hound = "3.4.0"
 wgpu = "0.5.0"
-
-[dependencies.shaderc]
-features = ["build-from-source"]
+shaderc = "0.6.2"
