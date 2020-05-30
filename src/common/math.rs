@@ -255,6 +255,41 @@ pub fn fov_x_to_fov_y(fov_x: Deg<f32>, aspect: f32) -> Option<Deg<f32>> {
     }
 }
 
+// see https://github.com/id-Software/Quake/blob/master/WinQuake/gl_rsurf.c#L1544
+const COLLINEAR_EPSILON: f32 = 0.001;
+
+/// Determines if the given points are collinear.
+///
+/// A set of points V is considered collinear if
+/// norm(V<sub>1</sub> &minus; V<sub>0</sub>) &equals;
+/// norm(V<sub>2</sub> &minus; V<sub>1</sub>) &equals;
+/// .&nbsp;.&nbsp;. &equals;
+/// norm(V<sub>k &minus; 1</sub> &minus; V<sub>k</sub>).
+///
+/// Special cases:
+/// - If `vs.len() < 2`, always returns `false`.
+/// - If `vs.len() == 2`, always returns `true`.
+pub fn collinear(vs: &[Vector3<f32>]) -> bool {
+    match vs.len() {
+        l if l < 2 => false,
+        2 => true,
+        _ => {
+            let init = (vs[1] - vs[0]).normalize();
+            for i in 2..vs.len() {
+                let norm = (vs[i] - vs[i - 1]).normalize();
+                if (norm[0] - init[0]).abs() > COLLINEAR_EPSILON
+                    || (norm[1] - init[1]).abs() > COLLINEAR_EPSILON
+                    || (norm[2] - init[2]).abs() > COLLINEAR_EPSILON
+                {
+                    return false;
+                }
+            }
+
+            true
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
