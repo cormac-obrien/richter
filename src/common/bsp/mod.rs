@@ -118,7 +118,7 @@
 
 mod load;
 
-use std::{collections::HashSet, error::Error, fmt, rc::Rc};
+use std::{collections::HashSet, error::Error, fmt, iter::Iterator, rc::Rc};
 
 use crate::common::math::{Hyperplane, HyperplaneSide, LinePlaneIntersect};
 
@@ -699,6 +699,23 @@ impl BspData {
 
     pub fn texinfo(&self) -> &[BspTexInfo] {
         &self.texinfo
+    }
+
+    pub fn face(&self, face_id: usize) -> &BspFace {
+        &self.faces[face_id]
+    }
+
+    pub fn face_iter_vertices(&self, face_id: usize) -> impl Iterator<Item = Vector3<f32>> + '_ {
+        let face = &self.faces[face_id];
+        self.edgelist[face.edge_id..face.edge_id + face.edge_count]
+            .iter()
+            .map(move |id| {
+                self.vertices[self.edges[id.index].vertex_ids[id.direction as usize] as usize]
+            })
+    }
+
+    pub fn face_texinfo(&self, face_id: usize) -> &BspTexInfo {
+        &self.texinfo[self.faces[face_id].texinfo_id]
     }
 
     pub fn faces(&self) -> &[BspFace] {
