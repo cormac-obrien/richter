@@ -25,6 +25,7 @@ pub mod console;
 pub mod glyph;
 pub mod hud;
 pub mod menu;
+pub mod wgpu;
 pub mod world;
 
 use std::{
@@ -46,7 +47,7 @@ use crate::{
 };
 
 use byteorder::ReadBytesExt;
-use cgmath::{Deg, Euler, Matrix3, Matrix4, SquareMatrix, Vector3, Zero};
+use cgmath::{Deg, Euler, Matrix3, Matrix4, SquareMatrix, Vector3, Vector4, Zero};
 use chrono::Duration;
 use failure::Error;
 use flame;
@@ -407,6 +408,10 @@ impl Camera {
         self.origin
     }
 
+    pub fn angles(&self) -> Vector3<Deg<f32>> {
+        self.angles
+    }
+
     pub fn transform(&self) -> Matrix4<f32> {
         self.transform
     }
@@ -546,11 +551,9 @@ impl SceneRenderer {
         for (ent_id, ent) in entities.iter().enumerate() {
             // draw viewmodel in first person perspective
             if ent_id == view_ent_id {
+                let mut angles = camera.angles();
+                angles.x = -angles.x;
                 if let Some(ref alias_renderer) = self.alias_renderers.get(&view_model_id) {
-                    let angles = ent.get_angles();
-                    let rotate: Matrix3<f32> = Euler::new(angles.x, angles.y, angles.z).into();
-                    let offset = rotate * Vector3::new(15.0, -10.0, 0.0);
-                    let position = ent.get_origin() + offset;
                     // TODO: need keyframe, texture ID
                     // also need to disable depth testing to stop viewmodel clipping into walls
                     alias_renderer.render(
@@ -559,8 +562,8 @@ impl SceneRenderer {
                         user_data,
                         time,
                         camera,
-                        position,
-                        angles,
+                        camera.origin(),
+                        camera.angles(),
                         0,
                         0,
                     )?;

@@ -20,7 +20,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{client::menu::Menu, common::console::Console};
 
 use failure::Error;
-use winit::{ElementState, Event, KeyboardInput, VirtualKeyCode as Key, WindowEvent};
+use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode as Key, WindowEvent};
 
 pub struct MenuInput {
     menu: Rc<RefCell<Menu>>,
@@ -32,7 +32,7 @@ impl MenuInput {
         MenuInput { menu, console }
     }
 
-    pub fn handle_event(&self, event: Event) -> Result<(), Error> {
+    pub fn handle_event<T>(&self, event: Event<T>) -> Result<(), Error> {
         match event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::ReceivedCharacter(_) => (),

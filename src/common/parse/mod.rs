@@ -24,7 +24,7 @@ use combine::{
     char::{alpha_num, string},
     choice, many, one_of, satisfy, skip_many, token, unexpected, value, ParseError, Parser, Stream,
 };
-use winit::ElementState;
+use winit::event::ElementState;
 
 pub use self::{console::commands, map::entities};
 

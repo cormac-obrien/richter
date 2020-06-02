@@ -27,7 +27,7 @@ use crate::{
 };
 
 use failure::Error;
-use winit::{Event, WindowEvent};
+use winit::event::{Event, WindowEvent};
 
 use self::{
     console::ConsoleInput,
@@ -35,7 +35,7 @@ use self::{
     menu::MenuInput,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputFocus {
     Game,
     Console,
@@ -67,7 +67,7 @@ impl Input {
         }
     }
 
-    pub fn handle_event(&mut self, event: Event) -> Result<(), Error> {
+    pub fn handle_event<T>(&mut self, event: Event<T>) -> Result<(), Error> {
         match event {
             // we're polling for hardware events, so we have to check window focus ourselves
             Event::WindowEvent {

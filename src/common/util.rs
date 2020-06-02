@@ -17,6 +17,10 @@
 
 use std::mem::size_of;
 
+/// A plain-old-data type.
+pub trait Pod: 'static + Copy + Sized + Send + Sync {}
+impl<T: 'static + Copy + Sized + Send + Sync> Pod for T {}
+
 /// Read a null-terminated sequence of bytes and convert it into a `String`.
 ///
 /// The zero byte is consumed.
@@ -33,10 +37,15 @@ where
     String::from_utf8(bytes)
 }
 
-pub unsafe fn any_as_bytes<T>(t: &T) -> &[u8] where T: Sized {
+pub unsafe fn any_as_bytes<T>(t: &T) -> &[u8] where T: Pod {
     std::slice::from_raw_parts((t as *const T) as *const u8, size_of::<T>())
 }
 
-pub unsafe fn any_slice_as_bytes<T>(t: &[T]) -> &[u8] where T: Sized {
+pub unsafe fn any_slice_as_bytes<T>(t: &[T]) -> &[u8] where T: Pod {
     std::slice::from_raw_parts(t.as_ptr() as *const u8, size_of::<T>() * t.len())
+}
+
+pub unsafe fn bytes_as_any<T>(bytes: &[u8]) -> T where T: Pod {
+    assert_eq!(bytes.len(), size_of::<T>());
+    std::ptr::read_unaligned(bytes.as_ptr() as *const T)
 }

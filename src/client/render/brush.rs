@@ -217,6 +217,36 @@ where
     let face_vert_id = vertices.len();
     let texinfo = &bsp_data.texinfo()[face.texinfo_id];
     let tex = &bsp_data.textures()[texinfo.tex_id];
+
+    let mut vert_iter = bsp_data.face_iter_vertices(face_id);
+
+    // expand the vertices into a triangle fan
+    //
+    // v1 is the base vertex, so it remains constant.
+    // v2 takes the previous value of v3.
+    // v3 is the newest vertex.
+    let v1 = vert_iter.next().unwrap();
+    let mut v2 = vert_iter.next().unwrap();
+    for v3 in vert_iter {
+        let tri = &[v1, v2, v3];
+
+        if !crate::common::math::collinear(tri) {
+            for vert in tri.iter() {
+                vertices.push(BrushVertex {
+                    position: (*vert).into(),
+                    diffuse_texcoord: [
+                        ((vert.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32),
+                        ((vert.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32),
+                    ],
+                    lightmap_texcoord: calculate_lightmap_texcoords((*vert).into(), face, texinfo),
+                });
+            }
+        }
+
+        v2 = v3;
+    }
+
+    /*
     let face_edge_ids = &bsp_data.edgelist()[face.edge_id..face.edge_id + face.edge_count];
     let base_vertex_id =
         bsp_data.edges()[face_edge_ids[0].index].vertex_ids[face_edge_ids[0].direction as usize];
@@ -225,6 +255,7 @@ where
         (base_position.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32,
         (base_position.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32,
     ];
+    println!("{:?}", base_diffuse_texcoords);
 
     // start at 1 since we've already calculated the base vertex
     // stop at len - 1 because we use two vertices per iteration
@@ -252,6 +283,7 @@ where
             })
         }
     }
+    */
 
     let lightmap_w = face.extents[0] / 16 + 1;
     let lightmap_h = face.extents[1] / 16 + 1;
