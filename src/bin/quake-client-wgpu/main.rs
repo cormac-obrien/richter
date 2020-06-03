@@ -76,6 +76,7 @@ struct ClientProgram<'a> {
     window: Window,
     window_dimensions_changed: Cell<bool>,
 
+    instance: wgpu::Instance,
     surface: wgpu::Surface,
     adapter: wgpu::Adapter,
     swap_chain: RefCell<wgpu::SwapChain>,
@@ -125,24 +126,30 @@ impl<'a> ClientProgram<'a> {
         )));
         input.borrow_mut().bind_defaults();
 
-        let surface = wgpu::Surface::create(&window);
-        let adapter = wgpu::Adapter::request(
-            &wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-            },
-            wgpu::BackendBit::PRIMARY,
-        )
-        .await
-        .unwrap();
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                extensions: wgpu::Extensions {
-                    anisotropic_filtering: false,
+        let instance = wgpu::Instance::new();
+        let surface = unsafe { instance.create_surface(&window) };
+        let adapter = instance
+            .request_adapter(
+                &wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: Some(&surface),
                 },
-                limits: wgpu::Limits::default(),
-            })
-            .await;
+                wgpu::BackendBit::PRIMARY,
+            )
+            .await
+            .unwrap();
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    extensions: wgpu::Extensions {
+                        anisotropic_filtering: false,
+                    },
+                    limits: wgpu::Limits::default(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
         let winit::dpi::PhysicalSize { width, height } = window.inner_size();
         let swap_chain = RefCell::new(device.create_swap_chain(
             &surface,
@@ -168,6 +175,7 @@ impl<'a> ClientProgram<'a> {
             menu,
             window,
             window_dimensions_changed: Cell::new(false),
+            instance,
             surface,
             adapter,
             swap_chain,
@@ -225,13 +233,13 @@ impl<'a> ClientProgram<'a> {
     }
 
     fn render(&mut self) {
-        let swap_chain_output = self.swap_chain.borrow_mut().get_next_texture().unwrap();
+        let swap_chain_output = self.swap_chain.borrow_mut().get_next_frame().unwrap();
 
         match *self.state.borrow_mut() {
             ProgramState::Title => unimplemented!(),
             ProgramState::Game(ref mut game) => {
                 let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
-                game.render(&swap_chain_output.view, width as f32 / height as f32);
+                game.render(&swap_chain_output.output.view, width as f32 / height as f32);
             }
         }
     }
@@ -242,11 +250,11 @@ impl<'a> Program for ClientProgram<'a> {
         &mut self,
         event: Event<T>,
         _target: &EventLoopWindowTarget<T>,
-        control_flow: &mut ControlFlow,
+        _control_flow: &mut ControlFlow,
     ) {
         match event {
             Event::WindowEvent {
-                event: WindowEvent::Resized(new_size),
+                event: WindowEvent::Resized(_),
                 ..
             } => {
                 self.window_dimensions_changed.set(true);
@@ -260,6 +268,7 @@ impl<'a> Program for ClientProgram<'a> {
         let _guard = flame::start_guard("ClientProgram::frame");
 
         if self.window_dimensions_changed.get() {
+            self.window_dimensions_changed.set(false);
             self.recreate_swap_chain(wgpu::PresentMode::Immediate);
 
             let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();

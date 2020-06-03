@@ -220,7 +220,8 @@ impl<'a> Game<'a> {
         self.input.borrow_mut().handle_event(event).unwrap();
     }
 
-    pub fn render<'b>(&'b mut self, color_attachment_view: &wgpu::TextureView, aspect_ratio: f32) {
+    pub fn render(&self, color_attachment_view: &wgpu::TextureView, aspect_ratio: f32) {
+        println!("rendering...");
         match self.state {
             // TODO: loading screen
             GameState::Loading => (),
@@ -237,18 +238,15 @@ impl<'a> Game<'a> {
                 );
 
                 // render world
-                futures::executor::block_on(async {
-                    state
-                        .renderer
-                        .render_pass(
-                            color_attachment_view,
-                            &camera,
-                            self.client.time(),
-                            self.client.iter_visible_entities(),
-                            self.client.lightstyle_values().unwrap().as_slice(),
-                        )
-                        .await
-                });
+                state
+                    .renderer
+                    .render_pass(
+                        color_attachment_view,
+                        &camera,
+                        self.client.time(),
+                        self.client.iter_visible_entities(),
+                        self.client.lightstyle_values().unwrap().as_slice(),
+                    );
 
                 // state
                 //     .hud_renderer

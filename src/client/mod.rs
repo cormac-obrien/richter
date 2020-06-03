@@ -302,40 +302,6 @@ impl Mixer {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct VisibleEntityIterator<'a> {
-    entities: &'a [ClientEntity],
-    visible_entity_ids: &'a [usize],
-    pos: usize,
-}
-
-impl<'a> VisibleEntityIterator<'a> {
-    pub fn new(
-        entities: &'a [ClientEntity],
-        visible_entity_ids: &'a [usize],
-    ) -> VisibleEntityIterator<'a> {
-        VisibleEntityIterator {
-            entities,
-            visible_entity_ids,
-            pos: 0,
-        }
-    }
-}
-
-impl<'a> Iterator for VisibleEntityIterator<'a> {
-    type Item = &'a ClientEntity;
-
-    fn next(&mut self) -> Option<&'a ClientEntity> {
-        if self.pos >= self.visible_entity_ids.len() {
-            None
-        } else {
-            let id = self.visible_entity_ids[self.pos];
-            self.pos += 1;
-            Some(&self.entities[id])
-        }
-    }
-}
-
 // client information regarding the current level
 struct ClientState {
     vfs: Rc<Vfs>,
@@ -1879,8 +1845,8 @@ impl Client {
         Ok(())
     }
 
-    pub fn iter_visible_entities<'a>(&'a self) -> VisibleEntityIterator<'a> {
-        VisibleEntityIterator::new(&self.state.entities, &self.state.visible_entity_ids)
+    pub fn iter_visible_entities(&self) -> impl Iterator<Item = &ClientEntity> + Clone {
+        self.state.visible_entity_ids.iter().map(move |i| &self.state.entities[*i])
     }
 
     pub fn register_cmds(&self, cmds: &mut CmdRegistry) {

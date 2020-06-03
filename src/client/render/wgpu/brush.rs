@@ -36,7 +36,11 @@ layout(location = 0) out vec2 f_diffuse;
 layout(location = 1) out vec2 f_lightmap;
 layout(location = 2) out uvec4 f_lightmap_anim;
 
-// set 0: per-entity
+layout(set = 0, binding = 0) uniform FrameUniforms {
+    float light_anim_frames[64];
+    float time;
+} frame_uniforms;
+
 layout(set = 1, binding = 0) uniform EntityUniforms {
     mat4 u_transform;
 } entity_uniforms;
@@ -63,15 +67,15 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     float time;
 } frame_uniforms;
 
-// set 0: per-entity
+// set 1: per-entity
 layout(set = 1, binding = 1) uniform sampler u_diffuse_sampler; // also used for fullbright
 layout(set = 1, binding = 2) uniform sampler u_lightmap_sampler;
 
-// set 1: per-texture chain
+// set 2: per-texture chain
 layout(set = 2, binding = 0) uniform texture2D u_diffuse_texture;
 layout(set = 2, binding = 1) uniform texture2D u_fullbright_texture;
 
-// set 2: per-face
+// set 3: per-face
 layout(set = 3, binding = 0) uniform texture2D u_lightmap_texture;
 
 layout(location = 0) out vec4 color_attachment;
@@ -463,16 +467,16 @@ impl<'a> BrushRendererBuilder<'a> {
         let layout = &self
             .gfx_pkg
             .brush_bind_group_layout(BindGroupLayoutId::PerEntity);
+        let ent_buf = self.gfx_pkg.entity_uniform_buffer();
         let desc = wgpu::BindGroupDescriptor {
             label: Some("per-entity bind group"),
             layout,
             bindings: &[
                 wgpu::Binding {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: self.gfx_pkg.entity_uniform_buffer().buffer(),
-                        range: 0..size_of::<Matrix4<f32>>() as wgpu::BufferAddress,
-                    },
+                    resource: wgpu::BindingResource::Buffer(
+                        ent_buf.buffer().slice(0..ent_buf.block_size().0),
+                    ),
                 },
                 wgpu::Binding {
                     binding: 1,
@@ -655,7 +659,7 @@ impl<'a> BrushRenderer<'a> {
         pvs: Option<HashSet<usize>>,
     ) {
         pass.set_pipeline(self.gfx_pkg.brush_pipeline());
-        pass.set_vertex_buffer(0, &self.vertex_buffer, 0, 0);
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
         pass.set_bind_group(
             BindGroupLayoutId::PerEntity as u32,
