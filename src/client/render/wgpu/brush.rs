@@ -8,9 +8,8 @@ use std::{
 
 use crate::{
     client::render::wgpu::{
-        Camera, DiffuseData, DynamicUniformBuffer, DynamicUniformBufferBlock, EntityUniforms,
-        FullbrightData, GraphicsPackage, LightmapData, LightstyleUniforms, TextureData,
-        COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT, PER_FRAME_BIND_GROUP_LAYOUT_DESCRIPTOR,
+        DynamicUniformBufferBlock, EntityUniforms, GraphicsPackage, LightmapData, TextureData,
+        COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
     },
     common::{
         bsp::{self, BspData, BspFace, BspModel, BspTexInfo, BspTextureMipmap},
@@ -19,8 +18,7 @@ use crate::{
     },
 };
 
-use cgmath::{Deg, Euler, InnerSpace, Matrix4, Vector3, Vector4};
-use chrono::Duration;
+use cgmath::{Deg, InnerSpace, Vector3};
 use failure::Error;
 use num::FromPrimitive;
 
@@ -212,18 +210,27 @@ const VERTEX_BUFFER_DESCRIPTOR: wgpu::VertexBufferDescriptor = wgpu::VertexBuffe
 
 pub fn create_render_pipeline(
     device: &wgpu::Device,
+    per_frame_bind_group_layout: &wgpu::BindGroupLayout,
 ) -> (wgpu::RenderPipeline, Vec<wgpu::BindGroupLayout>) {
-    let mut brush_bind_group_layouts = Vec::new();
-    brush_bind_group_layouts
-        .push(device.create_bind_group_layout(&PER_FRAME_BIND_GROUP_LAYOUT_DESCRIPTOR));
-    for desc in BIND_GROUP_LAYOUT_DESCRIPTORS.iter() {
-        brush_bind_group_layouts.push(device.create_bind_group_layout(desc));
-    }
+    let brush_bind_group_layout_descriptors: Vec<wgpu::BindGroupLayoutDescriptor> =
+        BIND_GROUP_LAYOUT_DESCRIPTORS.to_vec();
+
+    debug!(
+        "brush_bind_group_layout_descriptors = {:#?}",
+        &brush_bind_group_layout_descriptors
+    );
+
+    let brush_bind_group_layouts: Vec<wgpu::BindGroupLayout> = brush_bind_group_layout_descriptors
+        .iter()
+        .map(|desc| device.create_bind_group_layout(desc))
+        .collect();
 
     let brush_pipeline_layout = {
-        let bgls: Vec<&wgpu::BindGroupLayout> = brush_bind_group_layouts.iter().collect();
+        let layouts: Vec<&wgpu::BindGroupLayout> = std::iter::once(per_frame_bind_group_layout)
+            .chain(brush_bind_group_layouts.iter())
+            .collect();
         let desc = wgpu::PipelineLayoutDescriptor {
-            bind_group_layouts: &bgls,
+            bind_group_layouts: &layouts,
         };
         device.create_pipeline_layout(&desc)
     };
@@ -313,6 +320,7 @@ fn calculate_lightmap_texcoords(
 
 #[derive(Clone, Copy, Debug)]
 pub enum BindGroupLayoutId {
+    // starts at 1 because 0 is the per-frame group
     PerEntity = 1,
     PerTextureChain = 2,
     PerFace = 3,
@@ -469,7 +477,7 @@ impl<'a> BrushRendererBuilder<'a> {
             .brush_bind_group_layout(BindGroupLayoutId::PerEntity);
         let ent_buf = self.gfx_pkg.entity_uniform_buffer();
         let desc = wgpu::BindGroupDescriptor {
-            label: Some("per-entity bind group"),
+            label: Some("brush per-entity bind group"),
             layout,
             bindings: &[
                 wgpu::Binding {

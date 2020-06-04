@@ -1,7 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     marker::PhantomData,
-    mem::size_of,
+    mem::{align_of, size_of},
     rc::Rc,
 };
 
@@ -9,9 +9,11 @@ use crate::common::util::{any_as_bytes, Pod};
 
 use failure::Error;
 
-// this is the minimum required maximum size of a uniform buffer in Vulkan, see
 // https://www.khronos.org/registry/vulkan/specs/1.2-extensions/html/vkspec.html#limits-maxUniformBufferRange
 const DYNAMIC_UNIFORM_BUFFER_SIZE: wgpu::BufferAddress = 16384;
+
+// https://www.khronos.org/registry/vulkan/specs/1.2-extensions/html/vkspec.html#limits-minUniformBufferOffsetAlignment
+pub const DYNAMIC_UNIFORM_BUFFER_ALIGNMENT: usize = 256;
 
 /// A handle to a dynamic uniform buffer on the GPU.
 ///
@@ -37,6 +39,9 @@ where
     T: Pod,
 {
     pub fn new<'b>(device: &'b wgpu::Device) -> DynamicUniformBuffer<'a, T> {
+        // TODO: is this something we can enforce at compile time?
+        assert!(align_of::<T>() % DYNAMIC_UNIFORM_BUFFER_ALIGNMENT == 0);
+
         let inner = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("dynamic uniform buffer"),
             size: DYNAMIC_UNIFORM_BUFFER_SIZE,
@@ -57,7 +62,7 @@ where
     }
 
     pub fn block_size(&self) -> wgpu::BufferSize {
-        wgpu::BufferSize(size_of::<T>() as u64)
+        wgpu::BufferSize((DYNAMIC_UNIFORM_BUFFER_ALIGNMENT.max(size_of::<T>())) as u64)
     }
 
     /// Allocates a block of memory in this dynamic uniform buffer with the

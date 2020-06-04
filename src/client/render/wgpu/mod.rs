@@ -202,7 +202,7 @@ impl Camera {
     }
 }
 
-#[repr(C)]
+#[repr(C, align(256))]
 #[derive(Copy, Clone)]
 // TODO: derive Debug once const generics are stable
 pub struct FrameUniforms {
@@ -210,16 +210,10 @@ pub struct FrameUniforms {
     time: f32,
 }
 
-#[repr(C)]
+#[repr(C, align(256))]
 #[derive(Clone, Copy, Debug)]
 pub struct EntityUniforms {
     transform: Matrix4<f32>,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct LightstyleUniforms {
-    lightstyle_value: f32,
 }
 
 pub struct GraphicsPackage<'a> {
@@ -228,6 +222,8 @@ pub struct GraphicsPackage<'a> {
     depth_attachment: RefCell<wgpu::Texture>,
     frame_uniform_buffer: wgpu::Buffer,
     entity_uniform_buffer: RefCell<DynamicUniformBuffer<'a, EntityUniforms>>,
+    per_frame_bind_group: wgpu::BindGroup,
+    per_frame_bind_group_layout: wgpu::BindGroupLayout,
     brush_pipeline: wgpu::RenderPipeline,
     brush_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
     diffuse_sampler: wgpu::Sampler,
@@ -276,7 +272,20 @@ impl<'a> GraphicsPackage<'a> {
         });
         let entity_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
 
-        let (brush_pipeline, brush_bind_group_layouts) = brush::create_render_pipeline(&device);
+        let per_frame_bind_group_layout =
+            device.create_bind_group_layout(&PER_FRAME_BIND_GROUP_LAYOUT_DESCRIPTOR);
+
+        let per_frame_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("per-frame bind group"),
+            layout: &per_frame_bind_group_layout,
+            bindings: &[wgpu::Binding {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(frame_uniform_buffer.slice(..)),
+            }],
+        });
+
+        let (brush_pipeline, brush_bind_group_layouts) =
+            brush::create_render_pipeline(&device, &per_frame_bind_group_layout);
 
         let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: None,
@@ -354,6 +363,8 @@ impl<'a> GraphicsPackage<'a> {
             depth_attachment,
             frame_uniform_buffer,
             entity_uniform_buffer,
+            per_frame_bind_group_layout,
+            per_frame_bind_group,
             brush_pipeline,
             brush_bind_group_layouts,
             diffuse_sampler,
@@ -471,7 +482,7 @@ impl<'a> GraphicsPackage<'a> {
     }
 
     pub fn brush_bind_group_layout(&self, id: brush::BindGroupLayoutId) -> &wgpu::BindGroupLayout {
-        &self.brush_bind_group_layouts[id as usize]
+        &self.brush_bind_group_layouts[id as usize - 1]
     }
 
     pub fn brush_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
@@ -498,9 +509,6 @@ pub struct Renderer<'a> {
 
     world_uniform_block: DynamicUniformBufferBlock<'a, EntityUniforms>,
     entity_uniform_blocks: RefCell<Vec<DynamicUniformBufferBlock<'a, EntityUniforms>>>,
-
-    per_frame_bind_group_layout: wgpu::BindGroupLayout,
-    per_frame_bind_group: wgpu::BindGroup,
 }
 
 impl<'a> Renderer<'a> {
@@ -543,28 +551,10 @@ impl<'a> Renderer<'a> {
                     _ => {
                         warn!("Non-brush renderers not implemented!");
                         entity_renderers.push(EntityRenderer::None);
-                    }
-                    //_ => unimplemented!(),
+                    } //_ => unimplemented!(),
                 }
             }
         }
-
-        let per_frame_bind_group_layout = gfx_pkg
-            .device()
-            .create_bind_group_layout(&PER_FRAME_BIND_GROUP_LAYOUT_DESCRIPTOR);
-
-        let per_frame_bind_group = gfx_pkg
-            .device()
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("per-frame bind group"),
-                layout: &per_frame_bind_group_layout,
-                bindings: &[wgpu::Binding {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(
-                        gfx_pkg.frame_uniform_buffer().slice(..),
-                    ),
-                }],
-            });
 
         Renderer {
             gfx_pkg: gfx_pkg.clone(),
@@ -572,8 +562,6 @@ impl<'a> Renderer<'a> {
             entity_renderers,
             world_uniform_block,
             entity_uniform_blocks: RefCell::new(Vec::new()),
-            per_frame_bind_group_layout,
-            per_frame_bind_group,
         }
     }
 
@@ -692,10 +680,9 @@ impl<'a> Renderer<'a> {
                 }),
             });
 
-            pass.set_pipeline(self.gfx_pkg.brush_pipeline());
-            pass.set_bind_group(0, &self.per_frame_bind_group, &[]);
+            pass.set_bind_group(0, &self.gfx_pkg.per_frame_bind_group, &[]);
 
-            trace!("Drawing world");
+            info!("Drawing world");
             self.world_renderer
                 .record_draw(&mut pass, &self.world_uniform_block, None);
             for (ent_pos, ent) in entities.enumerate() {
@@ -725,8 +712,20 @@ impl<'a> Renderer<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod test {
     use super::*;
+    use crate::common::util::any_slice_as_bytes;
+
+    const TEST_VERTEX_BUFFER_DESCRIPTOR: wgpu::VertexBufferDescriptor =
+        wgpu::VertexBufferDescriptor {
+            stride: size_of::<Vector3<f32>>() as u64,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &[wgpu::VertexAttributeDescriptor {
+                offset: 0,
+                format: wgpu::VertexFormat::Float3,
+                shader_location: 0,
+            }],
+        };
 
     fn color_attachment(device: &wgpu::Device) -> wgpu::Texture {
         device.create_texture(&wgpu::TextureDescriptor {
@@ -744,57 +743,36 @@ mod tests {
         })
     }
 
-    fn depth_attachment(device: &wgpu::Device) -> wgpu::Texture {
-        device.create_texture(&wgpu::TextureDescriptor {
-            label: None,
-            size: wgpu::Extent3d {
-                width: 1024,
-                height: 768,
-                depth: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_ATTACHMENT_FORMAT,
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-        })
-    }
-
     fn palette() -> Palette {
         let rgb = [0u8; 768];
         Palette::new(&rgb)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn graphics_package<'a>() -> GraphicsPackage<'a> {
-        let instance = wgpu::Instance::new();
-        let adapter = instance
-            .request_adapter(
-                &wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::Default,
-                    compatible_surface: None,
-                },
-                wgpu::BackendBit::PRIMARY,
-            )
-            .await
-            .unwrap();
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    extensions: wgpu::Extensions {
-                        anisotropic_filtering: false,
-                    },
-                    limits: wgpu::Limits { max_bind_groups: 8 },
-                },
-                None,
-            )
-            .await
-            .unwrap();
+    #[test]
+    fn test_per_frame_bind_group() {
+        let vert_src = r#"
+#version 450
 
-        let mut vfs = Vfs::new();
-        // TODO don't require actual pakfiles for this test
-        vfs.add_pakfile("id1/pak0.pak").unwrap();
-        let gfx_pkg = GraphicsPackage::new(device, queue, 1366, 768, &vfs).unwrap();
-        gfx_pkg
+layout(location = 0) in vec3 position;
+
+layout(set = 0, binding = 0) uniform FrameUniforms {
+    float light_anim_frames[64];
+    float time;
+} frame_uniforms;
+
+void main() {
+    gl_Position = vec4(position, 1.0);
+}
+"#;
+
+        let frag_src = r#"
+#version 450
+
+layout(location = 0) out vec4 color_attachment;
+
+void main() {
+    color_attachment = vec4(1.0, 0.0, 1.0, 1.0);
+}
+"#;
     }
 }
