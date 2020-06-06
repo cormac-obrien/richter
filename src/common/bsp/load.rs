@@ -52,12 +52,12 @@ const MAX_RENDER_NODES: usize = 32767;
 const MAX_COLLISION_NODES: usize = 32767;
 const MAX_VERTICES: usize = 65535;
 const MAX_FACES: usize = 65535;
-const MAX_MARKTEXINFO: usize = 65535;
-const MAX_TEXINFO: usize = 4096;
+const _MAX_MARKTEXINFO: usize = 65535;
+const _MAX_TEXINFO: usize = 4096;
 const MAX_EDGES: usize = 256000;
 const MAX_EDGELIST: usize = 512000;
 const MAX_TEXTURES: usize = 0x200000;
-const MAX_LIGHTMAP: usize = 0x100000;
+const _MAX_LIGHTMAP: usize = 0x100000;
 const MAX_VISLIST: usize = 0x100000;
 
 const PLANE_SIZE: usize = 20;
@@ -576,7 +576,7 @@ where
         }
 
         for frame in 0..anim1_len {
-            let mut tex2 = match anim1[frame] {
+            let tex2 = match anim1[frame] {
                 Some(t2) => t2,
                 None => bail!("Missing frame {} of {}", frame, textures[t].name),
             };
@@ -590,7 +590,7 @@ where
         }
 
         for frame in 0..anim2_len {
-            let mut tex2 = match anim2[frame] {
+            let tex2 = match anim2[frame] {
                 Some(t2) => t2,
                 None => bail!("Missing frame {} of {}", frame, textures[t].name),
             };
@@ -770,6 +770,15 @@ where
     reader.seek(SeekFrom::Start(leaf_lump.offset))?;
 
     let mut leaves = Vec::with_capacity(leaf_count);
+    // leaves.push(BspLeaf {
+        // contents: BspLeafContents::Solid,
+        // vis_offset: None,
+        // min: [-32768, -32768, -32768],
+        // max: [32767, 32767, 32767],
+        // facelist_id: 0,
+        // facelist_count: 0,
+        // sounds: [0u8; NUM_AMBIENTS],
+    // });
 
     for _ in 0..leaf_count {
         // note the negation here (the constants are negative in the original engine to differentiate

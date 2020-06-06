@@ -531,7 +531,7 @@ impl<'a> Renderer<'a> {
                 match *model.kind() {
                     ModelKind::Brush(ref bmodel) => {
                         world_renderer = Some(
-                            BrushRendererBuilder::new(bmodel, gfx_pkg.clone())
+                            BrushRendererBuilder::new(bmodel, gfx_pkg.clone(), true)
                                 .build()
                                 .unwrap(),
                         );
@@ -542,7 +542,7 @@ impl<'a> Renderer<'a> {
                 match *model.kind() {
                     ModelKind::Brush(ref bmodel) => {
                         entity_renderers.push(EntityRenderer::Brush(
-                            BrushRendererBuilder::new(bmodel, gfx_pkg.clone())
+                            BrushRendererBuilder::new(bmodel, gfx_pkg.clone(), false)
                                 .build()
                                 .unwrap(),
                         ));
@@ -574,6 +574,8 @@ impl<'a> Renderer<'a> {
     ) where
         I: Iterator<Item = &'b ClientEntity>,
     {
+        let _guard = flame::start_guard("Renderer::update_uniform");
+
         let device = self.gfx_pkg.device();
 
         trace!("Updating frame uniform buffer");
@@ -643,6 +645,7 @@ impl<'a> Renderer<'a> {
     ) where
         I: Iterator<Item = &'b ClientEntity> + Clone,
     {
+        let _guard = flame::start_guard("Renderer::render_pass");
         let mut encoder = self
             .gfx_pkg
             .device()
@@ -684,7 +687,7 @@ impl<'a> Renderer<'a> {
 
             info!("Drawing world");
             self.world_renderer
-                .record_draw(&mut pass, &self.world_uniform_block, None);
+                .record_draw(&mut pass, &self.world_uniform_block, camera);
             for (ent_pos, ent) in entities.enumerate() {
                 let model_id = ent.get_model_id();
 
@@ -692,7 +695,7 @@ impl<'a> Renderer<'a> {
                     EntityRenderer::Brush(ref bmodel) => bmodel.record_draw(
                         &mut pass,
                         &self.entity_uniform_blocks.borrow()[ent_pos],
-                        None,
+                        camera,
                     ),
                     _ => warn!("non-brush renderers not implemented!"),
                     // _ => unimplemented!(),
@@ -701,8 +704,11 @@ impl<'a> Renderer<'a> {
         }
 
         let command_buffer = encoder.finish();
-        self.gfx_pkg.queue().submit(vec![command_buffer]);
-        self.gfx_pkg.device().poll(wgpu::Maintain::Wait);
+        {
+            let _submit_guard = flame::start_guard("Submit and poll");
+            self.gfx_pkg.queue().submit(vec![command_buffer]);
+            self.gfx_pkg.device().poll(wgpu::Maintain::Wait);
+        }
     }
 
     fn renderer_for_entity(&self, ent: &ClientEntity) -> &EntityRenderer<'a> {

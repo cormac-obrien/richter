@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    cell::Cell,
     collections::{HashMap, HashSet},
     mem::size_of,
     ops::Range,
@@ -8,11 +9,12 @@ use std::{
 
 use crate::{
     client::render::wgpu::{
+        Camera,
         DynamicUniformBufferBlock, EntityUniforms, GraphicsPackage, LightmapData, TextureData,
         COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
     },
     common::{
-        bsp::{self, BspData, BspFace, BspModel, BspTexInfo, BspTextureMipmap},
+        bsp::{self, BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTextureMipmap},
         math::collinear,
         util::{any_as_bytes, any_slice_as_bytes},
     },
@@ -347,12 +349,37 @@ struct BrushFace {
     texture_id: usize,
     lightmap_id: Option<usize>,
     light_styles: [u8; 4],
+
+    /// Indicates whether the face should be drawn this frame.
+    ///
+    /// This is set to false by default, and will be set to true if the model is
+    /// a worldmodel and the containing leaf is in the PVS. If the model is not
+    /// a worldmodel, this flag is ignored.
+    draw_flag: Cell<bool>,
+}
+
+struct BrushLeaf {
+    facelist_ids: Range<usize>,
+}
+
+impl<B> std::convert::From<B> for BrushLeaf
+where
+    B: std::borrow::Borrow<BspLeaf>,
+{
+    fn from(bsp_leaf: B) -> Self {
+        let bsp_leaf = bsp_leaf.borrow();
+        BrushLeaf {
+            facelist_ids: bsp_leaf.facelist_id..bsp_leaf.facelist_id + bsp_leaf.facelist_count,
+        }
+    }
 }
 
 pub struct BrushRendererBuilder<'a> {
     gfx_pkg: Rc<GraphicsPackage<'a>>,
     bsp_data: Rc<BspData>,
     face_range: Range<usize>,
+
+    leaves: Option<Vec<BrushLeaf>>,
 
     per_texture_chain_bind_groups: Vec<wgpu::BindGroup>,
     per_face_bind_groups: Vec<wgpu::BindGroup>,
@@ -369,11 +396,25 @@ pub struct BrushRendererBuilder<'a> {
 }
 
 impl<'a> BrushRendererBuilder<'a> {
-    pub fn new(bsp_model: &BspModel, gfx_pkg: Rc<GraphicsPackage<'a>>) -> BrushRendererBuilder<'a> {
+    pub fn new(
+        bsp_model: &BspModel,
+        gfx_pkg: Rc<GraphicsPackage<'a>>,
+        worldmodel: bool,
+    ) -> BrushRendererBuilder<'a> {
         BrushRendererBuilder {
             gfx_pkg,
             bsp_data: bsp_model.bsp_data().clone(),
             face_range: bsp_model.face_id..bsp_model.face_id + bsp_model.face_count,
+            leaves: if worldmodel {
+                Some(
+                    bsp_model
+                        .iter_leaves()
+                        .map(|leaf| BrushLeaf::from(leaf))
+                        .collect(),
+                )
+            } else {
+                None
+            },
             per_texture_chain_bind_groups: Vec::new(),
             per_face_bind_groups: Vec::new(),
             vertices: Vec::new(),
@@ -468,6 +509,7 @@ impl<'a> BrushRendererBuilder<'a> {
             texture_id: texinfo.tex_id as usize,
             lightmap_id,
             light_styles: face.light_styles,
+            draw_flag: Cell::new(true),
         }
     }
 
@@ -619,6 +661,7 @@ impl<'a> BrushRendererBuilder<'a> {
             gfx_pkg: self.gfx_pkg,
             bsp_data: self.bsp_data,
             vertex_buffer: vertex_buffer,
+            leaves: self.leaves,
             per_entity_bind_group: per_entity_bind_group,
             per_texture_chain_bind_groups: self.per_texture_chain_bind_groups,
             per_face_bind_groups: self.per_face_bind_groups,
@@ -637,6 +680,8 @@ impl<'a> BrushRendererBuilder<'a> {
 pub struct BrushRenderer<'a> {
     gfx_pkg: Rc<GraphicsPackage<'a>>,
     bsp_data: Rc<BspData>,
+
+    leaves: Option<Vec<BrushLeaf>>,
 
     vertex_buffer: wgpu::Buffer,
     per_entity_bind_group: wgpu::BindGroup,
@@ -664,8 +709,9 @@ impl<'a> BrushRenderer<'a> {
         &'b self,
         pass: &mut wgpu::RenderPass<'b>,
         entity_uniform_block: &DynamicUniformBufferBlock<'a, EntityUniforms>,
-        pvs: Option<HashSet<usize>>,
+        camera: &Camera,
     ) {
+        let _guard = flame::start_guard("BrushRenderer::record_draw");
         pass.set_pipeline(self.gfx_pkg.brush_pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
@@ -675,7 +721,22 @@ impl<'a> BrushRenderer<'a> {
             &[entity_uniform_block.offset()],
         );
 
+        // if this is a worldmodel, mark faces to be drawn
+        if let Some(ref leaves) = self.leaves {
+            let pvs = self
+                .bsp_data
+                .get_pvs(self.bsp_data.find_leaf(camera.origin), leaves.len());
+            for leaf_id in pvs {
+                for facelist_id in leaves[leaf_id].facelist_ids.clone() {
+                    self.faces[self.bsp_data.facelist()[facelist_id]]
+                        .draw_flag
+                        .set(true);
+                }
+            }
+        }
+
         for (tex_id, face_ids) in self.texture_chains.iter() {
+            let _tex_guard = flame::start_guard("texture chain");
             pass.set_bind_group(
                 BindGroupLayoutId::PerTextureChain as u32,
                 &self.per_texture_chain_bind_groups[*tex_id],
@@ -683,14 +744,13 @@ impl<'a> BrushRenderer<'a> {
             );
 
             for face_id in face_ids.iter() {
-                // if the face is not visible, don't draw it
-                if let Some(ref set) = pvs {
-                    if !set.contains(face_id) {
-                        continue;
-                    }
+                let face = &self.faces[*face_id];
+
+                // only skip the face if we have visibility data but it's not marked
+                if self.leaves.is_some() && !face.draw_flag.replace(false) {
+                    continue;
                 }
 
-                let face = &self.faces[*face_id];
                 pass.set_bind_group(
                     BindGroupLayoutId::PerFace as u32,
                     &self.per_face_bind_groups[*face_id],

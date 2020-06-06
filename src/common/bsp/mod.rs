@@ -832,9 +832,6 @@ impl BspData {
                         bits => {
                             for shift in 0..8 {
                                 if bits & 1 << shift != 0 {
-                                    if visleaf >= leaf_count {
-                                        error!("Impossible visleaf in PVS: the len is {} but the leaf ID is {}", leaf_count, visleaf);
-                                    }
                                     visleaf_list.push(visleaf);
                                 }
 
@@ -958,6 +955,17 @@ impl BspModel {
     /// Returns the origin of this BSP model.
     pub fn origin(&self) -> Vector3<f32> {
         self.origin
+    }
+
+    pub fn iter_leaves(&self) -> impl Iterator<Item = &BspLeaf> {
+        // add 1 to leaf_count because...??? TODO: figure out if this is documented anywhere
+        self.bsp_data.leaves[self.leaf_id..self.leaf_id + self.leaf_count + 1].iter()
+    }
+
+    pub fn iter_faces(&self) -> impl Iterator<Item = &BspFace> {
+        self.bsp_data.facelist[self.face_id..self.face_id + self.face_count]
+            .iter()
+            .map(move |face_id| &self.bsp_data.faces[*face_id])
     }
 
     pub fn face_list(&self) -> &[usize] {
