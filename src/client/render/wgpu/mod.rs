@@ -3,6 +3,7 @@ mod brush;
 mod error;
 mod palette;
 mod uniform;
+mod warp;
 
 pub use error::{RenderError, RenderErrorKind};
 pub use palette::Palette;
@@ -36,6 +37,7 @@ use cgmath::{Deg, Euler, Matrix4, SquareMatrix, Vector3, Vector4, Zero};
 use chrono::Duration;
 use failure::{Error, Fail};
 use shaderc::{CompileOptions, Compiler};
+use strum::IntoEnumIterator;
 
 pub const COLOR_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -202,11 +204,18 @@ impl Camera {
     }
 }
 
+// uniform float array elements are aligned as if they were vec4s
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug)]
+pub struct UniformArrayFloat {
+    value: f32,
+}
+
 #[repr(C, align(256))]
 #[derive(Copy, Clone)]
 // TODO: derive Debug once const generics are stable
 pub struct FrameUniforms {
-    lightmap_anim_frames: [f32; 64],
+    lightmap_anim_frames: [UniformArrayFloat; 64],
     time: f32,
 }
 
@@ -222,6 +231,8 @@ pub struct GraphicsPackage<'a> {
     depth_attachment: RefCell<wgpu::Texture>,
     frame_uniform_buffer: wgpu::Buffer,
     entity_uniform_buffer: RefCell<DynamicUniformBuffer<'a, EntityUniforms>>,
+    brush_texture_uniform_buffer: RefCell<DynamicUniformBuffer<'a, brush::TextureUniforms>>,
+    brush_texture_uniform_blocks: Vec<DynamicUniformBufferBlock<'a, brush::TextureUniforms>>,
     per_frame_bind_group: wgpu::BindGroup,
     per_frame_bind_group_layout: wgpu::BindGroupLayout,
     brush_pipeline: wgpu::RenderPipeline,
@@ -271,6 +282,16 @@ impl<'a> GraphicsPackage<'a> {
             mapped_at_creation: false,
         });
         let entity_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
+        let brush_texture_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
+        let brush_texture_uniform_blocks = brush::TextureKind::iter()
+            .map(|kind| {
+                debug!("Texture kind: {:?} ({})", kind, kind as u32);
+                brush_texture_uniform_buffer
+                    .borrow_mut()
+                    .allocate(brush::TextureUniforms { kind })
+            })
+            .collect();
+        brush_texture_uniform_buffer.borrow_mut().flush(&queue);
 
         let per_frame_bind_group_layout =
             device.create_bind_group_layout(&PER_FRAME_BIND_GROUP_LAYOUT_DESCRIPTOR);
@@ -363,6 +384,8 @@ impl<'a> GraphicsPackage<'a> {
             depth_attachment,
             frame_uniform_buffer,
             entity_uniform_buffer,
+            brush_texture_uniform_buffer,
+            brush_texture_uniform_blocks,
             per_frame_bind_group_layout,
             per_frame_bind_group,
             brush_pipeline,
@@ -463,6 +486,25 @@ impl<'a> GraphicsPackage<'a> {
 
     pub fn entity_uniform_buffer_mut(&self) -> RefMut<DynamicUniformBuffer<'a, EntityUniforms>> {
         self.entity_uniform_buffer.borrow_mut()
+    }
+
+    pub fn brush_texture_uniform_buffer(
+        &self,
+    ) -> Ref<DynamicUniformBuffer<'a, brush::TextureUniforms>> {
+        self.brush_texture_uniform_buffer.borrow()
+    }
+
+    pub fn brush_texture_uniform_buffer_mut(
+        &self,
+    ) -> RefMut<DynamicUniformBuffer<'a, brush::TextureUniforms>> {
+        self.brush_texture_uniform_buffer.borrow_mut()
+    }
+
+    pub fn brush_texture_uniform_block(
+        &self,
+        kind: brush::TextureKind,
+    ) -> &DynamicUniformBufferBlock<'a, brush::TextureUniforms> {
+        &self.brush_texture_uniform_blocks[kind as usize]
     }
 
     pub fn diffuse_sampler(&self) -> &wgpu::Sampler {
@@ -578,14 +620,17 @@ impl<'a> Renderer<'a> {
 
         let device = self.gfx_pkg.device();
 
+        println!("time = {:?}", engine::duration_to_f32(time));
         trace!("Updating frame uniform buffer");
         self.gfx_pkg
             .queue()
             .write_buffer(self.gfx_pkg.frame_uniform_buffer(), 0, unsafe {
                 any_as_bytes(&FrameUniforms {
                     lightmap_anim_frames: {
-                        let mut frames = [0.0; 64];
-                        frames.copy_from_slice(lightstyle_values);
+                        let mut frames = [UniformArrayFloat { value: 0.0 }; 64];
+                        for i in 0..64 {
+                            frames[i].value = lightstyle_values[i];
+                        }
                         frames
                     },
                     time: engine::duration_to_f32(time),

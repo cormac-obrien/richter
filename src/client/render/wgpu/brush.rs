@@ -1,28 +1,21 @@
-use std::{
-    borrow::Cow,
-    cell::Cell,
-    collections::{HashMap, HashSet},
-    mem::size_of,
-    ops::Range,
-    rc::Rc,
-};
+use std::{borrow::Cow, cell::Cell, collections::HashMap, mem::size_of, ops::Range, rc::Rc};
 
 use crate::{
     client::render::wgpu::{
-        Camera,
-        DynamicUniformBufferBlock, EntityUniforms, GraphicsPackage, LightmapData, TextureData,
-        COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
+        warp, Camera, DynamicUniformBufferBlock, EntityUniforms, GraphicsPackage, LightmapData,
+        TextureData, COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
     },
     common::{
         bsp::{self, BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTextureMipmap},
-        math::collinear,
-        util::{any_as_bytes, any_slice_as_bytes},
+        math,
+        util::any_slice_as_bytes,
     },
 };
 
 use cgmath::{Deg, InnerSpace, Vector3};
 use failure::Error;
 use num::FromPrimitive;
+use strum_macros::EnumIter;
 
 static VERTEX_SHADER_GLSL: &'static str = r#"
 #version 450
@@ -45,6 +38,10 @@ layout(set = 1, binding = 0) uniform EntityUniforms {
     mat4 u_transform;
 } entity_uniforms;
 
+layout(set = 2, binding = 2) uniform TextureUniforms {
+    uint kind;
+} texture_uniforms;
+
 void main() {
     f_diffuse = a_diffuse;
     f_lightmap = a_lightmap;
@@ -56,6 +53,14 @@ void main() {
 static FRAGMENT_SHADER_GLSL: &'static str = r#"
 #version 450
 #define LIGHTMAP_ANIM_END (255)
+
+const uint TEXTURE_KIND_NORMAL = 0;
+const uint TEXTURE_KIND_WARP = 1;
+const uint TEXTURE_KIND_SKY = 2;
+
+const float WARP_AMPLITUDE = 0.15;
+const float WARP_FREQUENCY = 0.25;
+const float WARP_SCALE = 1.0;
 
 layout(location = 0) in vec2 f_diffuse; // also used for fullbright
 layout(location = 1) in vec2 f_lightmap;
@@ -74,6 +79,9 @@ layout(set = 1, binding = 2) uniform sampler u_lightmap_sampler;
 // set 2: per-texture chain
 layout(set = 2, binding = 0) uniform texture2D u_diffuse_texture;
 layout(set = 2, binding = 1) uniform texture2D u_fullbright_texture;
+layout(set = 2, binding = 2) uniform TextureUniforms {
+    uint kind;
+} texture_uniforms;
 
 // set 3: per-face
 layout(set = 3, binding = 0) uniform texture2D u_lightmap_texture;
@@ -81,21 +89,37 @@ layout(set = 3, binding = 0) uniform texture2D u_lightmap_texture;
 layout(location = 0) out vec4 color_attachment;
 
 void main() {
-    vec4 base_color = texture(sampler2D(u_diffuse_texture, u_diffuse_sampler), f_diffuse);
-    if (texture(sampler2D(u_fullbright_texture, u_diffuse_sampler), f_diffuse).r == 1.0) {
-        color_attachment = base_color;
-        return;
+    switch (texture_uniforms.kind) {
+        case TEXTURE_KIND_NORMAL:
+            vec4 base_color = texture(sampler2D(u_diffuse_texture, u_diffuse_sampler), f_diffuse);
+            vec4 lightmap = texture(sampler2D(u_lightmap_texture, u_lightmap_sampler), f_lightmap);
+            float fullbright = texture(sampler2D(u_fullbright_texture, u_diffuse_sampler), f_diffuse).r;
+            vec4 lightmapped_color = vec4(base_color.rgb * max(lightmap.rrr, fullbright), 1.0);
+
+            // calculate lightmap
+            float lightmap_factor = 0.0;
+            for (int i = 0; i < f_lightmap_anim.length() && f_lightmap_anim[i] != LIGHTMAP_ANIM_END; i++) {
+                lightmap_factor += frame_uniforms.light_anim_frames[f_lightmap_anim[i]];
+            }
+
+            color_attachment = lightmapped_color * max(lightmap_factor, fullbright);
+            break;
+
+        case TEXTURE_KIND_WARP:
+            // note the texcoord transpose here
+            vec2 wave1 = 3.14159265359 * (WARP_SCALE * f_diffuse.ts + WARP_FREQUENCY * frame_uniforms.time);
+            vec2 warp_texcoord = f_diffuse.st + WARP_AMPLITUDE * vec2(sin(wave1.s), sin(wave1.t));
+            color_attachment = texture(sampler2D(u_diffuse_texture, u_diffuse_sampler), warp_texcoord);
+            break;
+
+        case TEXTURE_KIND_SKY:
+            color_attachment = texture(sampler2D(u_diffuse_texture, u_diffuse_sampler), f_diffuse);
+            break;
+
+        // not possible
+        default:
+            break;
     }
-
-    vec4 lightmap = texture(sampler2D(u_lightmap_texture, u_lightmap_sampler), f_lightmap);
-    vec4 lightmapped_color = vec4(base_color.rgb * lightmap.rrr, 1.0);
-
-    float lightmap_factor = 0.0;
-    for (int i = 0; i < f_lightmap_anim.length() && f_lightmap_anim[i] != LIGHTMAP_ANIM_END; i++) {
-        lightmap_factor += frame_uniforms.light_anim_frames[f_lightmap_anim[i]];
-    }
-
-    color_attachment = lightmapped_color * lightmap_factor;
 }
 "#;
 
@@ -155,6 +179,12 @@ const BIND_GROUP_LAYOUT_DESCRIPTORS: [wgpu::BindGroupLayoutDescriptor; 3] = [
                     component_type: wgpu::TextureComponentType::Float,
                     multisampled: false,
                 },
+            },
+            // texture kind
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStage::all(),
+                ty: wgpu::BindingType::UniformBuffer { dynamic: true },
             },
         ],
     },
@@ -343,6 +373,28 @@ struct BrushVertex {
     lightmap_anim: LightmapAnim,
 }
 
+#[repr(u32)]
+#[derive(EnumIter, Clone, Copy, Debug)]
+pub enum TextureKind {
+    Normal = 0,
+    Warp = 1,
+    Sky = 2,
+}
+
+#[repr(C, align(256))]
+#[derive(Clone, Copy, Debug)]
+pub struct TextureUniforms {
+    pub kind: TextureKind,
+}
+
+pub struct BrushTexture {
+    diffuse: wgpu::Texture,
+    fullbright: wgpu::Texture,
+    diffuse_view: wgpu::TextureView,
+    fullbright_view: wgpu::TextureView,
+    kind: TextureKind,
+}
+
 #[derive(Debug)]
 struct BrushFace {
     vertices: Range<u32>,
@@ -387,10 +439,7 @@ pub struct BrushRendererBuilder<'a> {
     vertices: Vec<BrushVertex>,
     faces: Vec<BrushFace>,
     texture_chains: HashMap<usize, Vec<usize>>,
-    diffuses: Vec<wgpu::Texture>,
-    diffuse_views: Vec<wgpu::TextureView>,
-    fullbrights: Vec<wgpu::Texture>,
-    fullbright_views: Vec<wgpu::TextureView>,
+    textures: Vec<BrushTexture>,
     lightmaps: Vec<wgpu::Texture>,
     lightmap_views: Vec<wgpu::TextureView>,
 }
@@ -420,10 +469,7 @@ impl<'a> BrushRendererBuilder<'a> {
             vertices: Vec::new(),
             faces: Vec::new(),
             texture_chains: HashMap::new(),
-            diffuses: Vec::new(),
-            diffuse_views: Vec::new(),
-            fullbrights: Vec::new(),
-            fullbright_views: Vec::new(),
+            textures: Vec::new(),
             lightmaps: Vec::new(),
             lightmap_views: Vec::new(),
         }
@@ -435,23 +481,41 @@ impl<'a> BrushRendererBuilder<'a> {
         let texinfo = &self.bsp_data.texinfo()[face.texinfo_id];
         let tex = &self.bsp_data.textures()[texinfo.tex_id];
 
-        let mut vert_iter = self.bsp_data.face_iter_vertices(face_id);
+        if tex.name().starts_with("*") {
+            // tessellate the surface so we can do texcoord warping
+            let verts = warp::subdivide(math::remove_collinear(
+                self.bsp_data.face_iter_vertices(face_id).collect(),
+            ));
+            for vert in verts.into_iter() {
+                self.vertices.push(BrushVertex {
+                    position: vert.into(),
+                    diffuse_texcoord: [
+                        ((vert.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32),
+                        ((vert.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32),
+                    ],
+                    lightmap_texcoord: calculate_lightmap_texcoords(vert.into(), face, texinfo),
+                    lightmap_anim: face.light_styles,
+                })
+            }
+        } else {
+            // expand the vertices into a triangle list.
+            // the vertices are guaranteed to be in valid triangle fan order (that's
+            // how GLQuake renders them) so we expand from triangle fan to triangle
+            // list order.
+            //
+            // v1 is the base vertex, so it remains constant.
+            // v2 takes the previous value of v3.
+            // v3 is the newest vertex.
+            let mut vert_iter =
+                math::remove_collinear(self.bsp_data.face_iter_vertices(face_id).collect())
+                    .into_iter();
 
-        // expand the vertices into a triangle list.
-        // the vertices are guaranteed to be in valid triangle fan order (that's
-        // how GLQuake renders them) so we expand from triangle fan to triangle
-        // list order.
-        //
-        // v1 is the base vertex, so it remains constant.
-        // v2 takes the previous value of v3.
-        // v3 is the newest vertex.
-        let v1 = vert_iter.next().unwrap();
-        let mut v2 = vert_iter.next().unwrap();
-        for v3 in vert_iter {
-            let tri = &[v1, v2, v3];
+            let v1 = vert_iter.next().unwrap();
+            let mut v2 = vert_iter.next().unwrap();
+            for v3 in vert_iter {
+                let tri = &[v1, v2, v3];
 
-            // skip collinear points
-            if !collinear(tri) {
+                // skip collinear points
                 for vert in tri.iter() {
                     self.vertices.push(BrushVertex {
                         position: (*vert).into(),
@@ -467,9 +531,9 @@ impl<'a> BrushRendererBuilder<'a> {
                         lightmap_anim: face.light_styles,
                     });
                 }
-            }
 
-            v2 = v3;
+                v2 = v3;
+            }
         }
 
         let lightmap_w = face.extents[0] / 16 + 1;
@@ -545,19 +609,23 @@ impl<'a> BrushRendererBuilder<'a> {
         let layout = &self
             .gfx_pkg
             .brush_bind_group_layout(BindGroupLayoutId::PerTextureChain);
+        let tex = &self.textures[texture_id];
+        let tex_unif_buf = self.gfx_pkg.brush_texture_uniform_buffer();
         let desc = wgpu::BindGroupDescriptor {
             label: Some("per-texture chain bind group"),
             layout,
             bindings: &[
                 wgpu::Binding {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.diffuse_views[texture_id]),
+                    resource: wgpu::BindingResource::TextureView(&tex.diffuse_view),
                 },
                 wgpu::Binding {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(
-                        &self.fullbright_views[texture_id],
-                    ),
+                    resource: wgpu::BindingResource::TextureView(&tex.fullbright_view),
+                },
+                wgpu::Binding {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(tex_unif_buf.buffer().slice(..)),
                 },
             ],
         };
@@ -619,12 +687,28 @@ impl<'a> BrushRendererBuilder<'a> {
                 &TextureData::Fullbright(fullbright_data),
             );
 
-            self.diffuses.push(diffuse);
-            self.diffuse_views
-                .push(self.diffuses[self.diffuses.len() - 1].create_default_view());
-            self.fullbrights.push(fullbright);
-            self.fullbright_views
-                .push(self.fullbrights[self.fullbrights.len() - 1].create_default_view());
+            let diffuse_view = diffuse.create_default_view();
+            let fullbright_view = fullbright.create_default_view();
+
+            let kind = if tex.name().starts_with("sky") {
+                debug!("sky texture");
+                TextureKind::Sky
+            } else if tex.name().starts_with("*") {
+                debug!("warp texture");
+                TextureKind::Warp
+            } else {
+                TextureKind::Normal
+            };
+
+            let texture = BrushTexture {
+                diffuse,
+                fullbright,
+                diffuse_view,
+                fullbright_view,
+                kind,
+            };
+
+            self.textures.push(texture);
 
             // generate texture bind group
             let per_texture_chain_bind_group = self.create_per_texture_chain_bind_group(tex_id);
@@ -667,10 +751,7 @@ impl<'a> BrushRendererBuilder<'a> {
             per_face_bind_groups: self.per_face_bind_groups,
             texture_chains: self.texture_chains,
             faces: self.faces,
-            diffuses: self.diffuses,
-            diffuse_views: self.diffuse_views,
-            fullbrights: self.fullbrights,
-            fullbright_views: self.fullbright_views,
+            textures: self.textures,
             lightmaps: self.lightmaps,
             lightmap_views: self.lightmap_views,
         })
@@ -692,10 +773,7 @@ pub struct BrushRenderer<'a> {
     // texture_chains maps texture ids to face ids
     texture_chains: HashMap<usize, Vec<usize>>,
     faces: Vec<BrushFace>,
-    diffuses: Vec<wgpu::Texture>,
-    diffuse_views: Vec<wgpu::TextureView>,
-    fullbrights: Vec<wgpu::Texture>,
-    fullbright_views: Vec<wgpu::TextureView>,
+    textures: Vec<BrushTexture>,
     lightmaps: Vec<wgpu::Texture>,
     lightmap_views: Vec<wgpu::TextureView>,
 }
@@ -740,7 +818,10 @@ impl<'a> BrushRenderer<'a> {
             pass.set_bind_group(
                 BindGroupLayoutId::PerTextureChain as u32,
                 &self.per_texture_chain_bind_groups[*tex_id],
-                &[],
+                &[self
+                    .gfx_pkg
+                    .brush_texture_uniform_block(self.textures[*tex_id].kind)
+                    .offset()],
             );
 
             for face_id in face_ids.iter() {

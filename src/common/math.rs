@@ -15,9 +15,9 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::ops::Neg;
+use std::{cmp::Ordering, ops::Neg};
 
-use cgmath::{Angle, Deg, InnerSpace, Vector3, Zero};
+use cgmath::{Angle, Deg, InnerSpace, Vector2, Vector3, Zero};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum HyperplaneSide {
@@ -290,6 +290,74 @@ pub fn collinear(vs: &[Vector3<f32>]) -> bool {
     }
 }
 
+pub fn remove_collinear(vs: Vec<Vector3<f32>>) -> Vec<Vector3<f32>> {
+    assert!(vs.len() >= 3);
+
+    let mut out = Vec::new();
+
+    let mut vs_iter = vs.into_iter().cycle();
+    let v_init = vs_iter.next().unwrap();
+    let mut v1 = v_init;
+    let mut v2 = vs_iter.next().unwrap();
+    out.push(v1);
+    for v3 in vs_iter {
+        let tri = &[v1, v2, v3];
+
+        if !collinear(tri) {
+            out.push(v2);
+        }
+
+        if v3 == v_init {
+            break;
+        }
+
+        v1 = v2;
+        v2 = v3;
+    }
+
+    out
+}
+
+pub fn bounds<'a, I>(points: I) -> (Vector3<f32>, Vector3<f32>)
+where
+    I: IntoIterator<Item = &'a Vector3<f32>>,
+{
+    let mut min = Vector3::new(32767.0, 32767.0, 32767.0);
+    let mut max = Vector3::new(-32768.0, -32768.0, -32768.0);
+    for p in points.into_iter() {
+        for c in 0..3 {
+            min[c] = p[c].min(min[c]);
+            max[c] = p[c].max(max[c]);
+        }
+    }
+    (min, max)
+}
+
+pub fn vec2_extend_n(v: Vector2<f32>, n: usize, val: f32) -> Vector3<f32> {
+    let mut ar = [0.0; 3];
+    for i in 0..3 {
+        match i.cmp(&n) {
+            Ordering::Less => ar[i] = v[i],
+            Ordering::Equal => ar[i] = val,
+            Ordering::Greater => ar[i] = v[i - 1],
+        }
+    }
+
+    ar.into()
+}
+
+pub fn vec3_truncate_n(v: Vector3<f32>, n: usize) -> Vector2<f32> {
+    let mut ar = [0.0; 2];
+    for i in 0..3 {
+        match i.cmp(&n) {
+            Ordering::Less => ar[i] = v[i],
+            Ordering::Equal => (),
+            Ordering::Greater => ar[i - 1] = v[i],
+        }
+    }
+    ar.into()
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -448,6 +516,87 @@ mod test {
                 assert_eq!(p_i.point(), Vector3::new(0.5, 0.5, 1.0));
             }
             _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_collinear() {
+        let cases = vec![
+            (
+                vec![Vector3::unit_x(), Vector3::unit_y(), Vector3::unit_z()],
+                false,
+            ),
+            (
+                vec![
+                    Vector3::unit_x(),
+                    Vector3::unit_x() * 2.0,
+                    Vector3::unit_x() * 3.0,
+                ],
+                true,
+            ),
+            (
+                vec![
+                    [1400.0, 848.0, -456.0].into(),
+                    [1352.0, 848.0, -456.0].into(),
+                    [1272.0, 848.0, -456.0].into(),
+                    [1256.0, 848.0, -456.0].into(),
+                    [1208.0, 848.0, -456.0].into(),
+                    [1192.0, 848.0, -456.0].into(),
+                    [1176.0, 848.0, -456.0].into(),
+                ],
+                true,
+            ),
+        ];
+
+        for (input, result) in cases.into_iter() {
+            assert_eq!(collinear(&input), result);
+        }
+    }
+
+    #[test]
+    fn test_remove_collinear() {
+        let cases = vec![
+            (
+                vec![
+                    [1176.0, 992.0, -456.0].into(),
+                    [1176.0, 928.0, -456.0].into(),
+                    [1176.0, 880.0, -456.0].into(),
+                    [1176.0, 864.0, -456.0].into(),
+                    [1176.0, 848.0, -456.0].into(),
+                    [1120.0, 848.0, -456.0].into(),
+                    [1120.0, 992.0, -456.0].into(),
+                ],
+                vec![
+                    [1176.0, 992.0, -456.0].into(),
+                    [1176.0, 848.0, -456.0].into(),
+                    [1120.0, 848.0, -456.0].into(),
+                    [1120.0, 992.0, -456.0].into(),
+                ],
+            ),
+            (
+                vec![
+                    [1400.0, 768.0, -456.0].into(),
+                    [1400.0, 848.0, -456.0].into(),
+                    [1352.0, 848.0, -456.0].into(),
+                    [1272.0, 848.0, -456.0].into(),
+                    [1256.0, 848.0, -456.0].into(),
+                    [1208.0, 848.0, -456.0].into(),
+                    [1192.0, 848.0, -456.0].into(),
+                    [1176.0, 848.0, -456.0].into(),
+                    [1120.0, 848.0, -456.0].into(),
+                    [1200.0, 768.0, -456.0].into(),
+                ],
+                vec![
+                    [1400.0, 768.0, -456.0].into(),
+                    [1400.0, 848.0, -456.0].into(),
+                    [1120.0, 848.0, -456.0].into(),
+                    [1200.0, 768.0, -456.0].into(),
+                ],
+            ),
+        ];
+
+        for (input, output) in cases.into_iter() {
+            assert_eq!(remove_collinear(input), output);
         }
     }
 }
