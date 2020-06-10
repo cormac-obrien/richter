@@ -216,6 +216,7 @@ pub struct UniformArrayFloat {
 // TODO: derive Debug once const generics are stable
 pub struct FrameUniforms {
     lightmap_anim_frames: [UniformArrayFloat; 64],
+    camera_pos: Vector4<f32>,
     time: f32,
 }
 
@@ -633,6 +634,7 @@ impl<'a> Renderer<'a> {
                         }
                         frames
                     },
+                    camera_pos: camera.origin.extend(1.0),
                     time: engine::duration_to_f32(time),
                 })
             });
@@ -797,33 +799,5 @@ pub mod test {
     fn palette() -> Palette {
         let rgb = [0u8; 768];
         Palette::new(&rgb)
-    }
-
-    #[test]
-    fn test_per_frame_bind_group() {
-        let vert_src = r#"
-#version 450
-
-layout(location = 0) in vec3 position;
-
-layout(set = 0, binding = 0) uniform FrameUniforms {
-    float light_anim_frames[64];
-    float time;
-} frame_uniforms;
-
-void main() {
-    gl_Position = vec4(position, 1.0);
-}
-"#;
-
-        let frag_src = r#"
-#version 450
-
-layout(location = 0) out vec4 color_attachment;
-
-void main() {
-    color_attachment = vec4(1.0, 0.0, 1.0, 1.0);
-}
-"#;
     }
 }

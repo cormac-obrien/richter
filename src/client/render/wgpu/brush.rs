@@ -20,6 +20,10 @@ use strum_macros::EnumIter;
 static VERTEX_SHADER_GLSL: &'static str = r#"
 #version 450
 
+const uint TEXTURE_KIND_NORMAL = 0;
+const uint TEXTURE_KIND_WARP = 1;
+const uint TEXTURE_KIND_SKY = 2;
+
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec2 a_diffuse;
 layout(location = 2) in vec2 a_lightmap;
@@ -31,6 +35,7 @@ layout(location = 2) out uvec4 f_lightmap_anim;
 
 layout(set = 0, binding = 0) uniform FrameUniforms {
     float light_anim_frames[64];
+    vec4 camera_pos;
     float time;
 } frame_uniforms;
 
@@ -43,10 +48,22 @@ layout(set = 2, binding = 2) uniform TextureUniforms {
 } texture_uniforms;
 
 void main() {
-    f_diffuse = a_diffuse;
+    if (texture_uniforms.kind == TEXTURE_KIND_SKY) {
+        vec3 dir = a_position - frame_uniforms.camera_pos.xyz;
+        dir.z *= 3.0;
+
+        // the coefficients here are magic taken from the Quake source
+        float len = 6.0 * 63.0 / length(dir);
+        dir = vec3(dir.xy * len, dir.z);
+        f_diffuse = (mod(8.0 * frame_uniforms.time, 128.0) + dir.xy) / 128.0;
+    } else {
+        f_diffuse = a_diffuse;
+    }
+
     f_lightmap = a_lightmap;
     f_lightmap_anim = a_lightmap_anim;
     gl_Position = entity_uniforms.u_transform * vec4(-a_position.y, a_position.z, -a_position.x, 1.0);
+
 }
 "#;
 
@@ -69,6 +86,7 @@ flat layout(location = 2) in uvec4 f_lightmap_anim;
 // set 0: per-frame
 layout(set = 0, binding = 0) uniform FrameUniforms {
     float light_anim_frames[64];
+    vec4 camera_pos;
     float time;
 } frame_uniforms;
 
@@ -113,7 +131,22 @@ void main() {
             break;
 
         case TEXTURE_KIND_SKY:
-            color_attachment = texture(sampler2D(u_diffuse_texture, u_diffuse_sampler), f_diffuse);
+            vec2 base = mod(f_diffuse + frame_uniforms.time, 1.0);
+            vec2 cloud_texcoord = vec2(base.s * 0.5, base.t);
+            vec2 sky_texcoord = vec2(base.s * 0.5 + 0.5, base.t);
+
+            vec4 sky_color = texture(sampler2D(u_diffuse_texture, u_diffuse_sampler), sky_texcoord);
+            vec4 cloud_color = texture(sampler2D(u_diffuse_texture, u_diffuse_sampler), cloud_texcoord);
+
+            // 0.0 if black, 1.0 otherwise
+            // float cloud_factor = ceil(max(max(cloud_color.r, cloud_color.g), cloud_color.b));
+            float cloud_factor;
+            if (cloud_color.r + cloud_color.g + cloud_color.b == 0.0) {
+                cloud_factor = 0.0;
+            } else {
+                cloud_factor = 1.0;
+            }
+            color_attachment = mix(sky_color, cloud_color, cloud_factor);
             break;
 
         // not possible
