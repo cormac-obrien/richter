@@ -110,17 +110,16 @@ void main() {
     switch (texture_uniforms.kind) {
         case TEXTURE_KIND_NORMAL:
             vec4 base_color = texture(sampler2D(u_diffuse_texture, u_diffuse_sampler), f_diffuse);
-            vec4 lightmap = texture(sampler2D(u_lightmap_texture, u_lightmap_sampler), f_lightmap);
             float fullbright = texture(sampler2D(u_fullbright_texture, u_diffuse_sampler), f_diffuse).r;
-            vec4 lightmapped_color = vec4(base_color.rgb * max(lightmap.rrr, fullbright), 1.0);
 
-            // calculate lightmap
-            float lightmap_factor = 0.0;
+            float lightmap = texture(sampler2D(u_lightmap_texture, u_lightmap_sampler), f_lightmap).r * 2.0;
+            float light = 0.0;
             for (int i = 0; i < f_lightmap_anim.length() && f_lightmap_anim[i] != LIGHTMAP_ANIM_END; i++) {
-                lightmap_factor += frame_uniforms.light_anim_frames[f_lightmap_anim[i]];
+                light += lightmap * frame_uniforms.light_anim_frames[f_lightmap_anim[i]];
             }
 
-            color_attachment = lightmapped_color * max(lightmap_factor, fullbright);
+            // FIXME
+            color_attachment = base_color * max(light, fullbright);
             break;
 
         case TEXTURE_KIND_WARP:

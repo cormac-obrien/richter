@@ -1,4 +1,5 @@
 // mod atlas;
+mod alias;
 mod brush;
 mod error;
 mod palette;
