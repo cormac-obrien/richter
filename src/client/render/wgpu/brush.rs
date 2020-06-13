@@ -2,8 +2,8 @@ use std::{borrow::Cow, cell::Cell, collections::HashMap, mem::size_of, ops::Rang
 
 use crate::{
     client::render::wgpu::{
-        warp, Camera, DynamicUniformBufferBlock, EntityUniforms, GraphicsPackage, LightmapData,
-        TextureData, COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
+        warp, BindGroupLayoutId, Camera, DynamicUniformBufferBlock, EntityUniforms, GraphicsState,
+        LightmapData, TextureData, COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
     },
     common::{
         bsp::{self, BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTextureMipmap},
@@ -94,7 +94,7 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
 layout(set = 1, binding = 1) uniform sampler u_diffuse_sampler; // also used for fullbright
 layout(set = 1, binding = 2) uniform sampler u_lightmap_sampler;
 
-// set 2: per-texture chain
+// set 2: per-texture
 layout(set = 2, binding = 0) uniform texture2D u_diffuse_texture;
 layout(set = 2, binding = 1) uniform texture2D u_fullbright_texture;
 layout(set = 2, binding = 2) uniform TextureUniforms {
@@ -158,39 +158,10 @@ void main() {
 // NOTE: if any of the binding indices are changed, they must also be changed in
 // the corresponding shaders and the BindGroupLayout generation functions.
 // TODO: move diffuse sampler into its own group
-const BIND_GROUP_LAYOUT_DESCRIPTORS: [wgpu::BindGroupLayoutDescriptor; 3] = [
-    // group 0: updated per-frame
-    // NOTE: we can't clone PER_FRAME_BIND_GROUP_LAYOUT_DESCRIPTOR here, but it
-    // should always be the first bind group layout.
-
-    // group 1: updated per-entity
+const BIND_GROUP_LAYOUT_DESCRIPTORS: [wgpu::BindGroupLayoutDescriptor; 2] = [
+    // group 2: updated per-texture
     wgpu::BindGroupLayoutDescriptor {
-        label: Some("brush per-entity bind group"),
-        bindings: &[
-            // transform matrix
-            // TODO: move this to push constants once they're exposed in wgpu
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStage::VERTEX,
-                ty: wgpu::BindingType::UniformBuffer { dynamic: true },
-            },
-            // diffuse and fullbright sampler
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::Sampler { comparison: false },
-            },
-            // lightmap sampler
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::Sampler { comparison: false },
-            },
-        ],
-    },
-    // group 2: updated per-texture chain
-    wgpu::BindGroupLayoutDescriptor {
-        label: Some("brush per-texture chain bind group"),
+        label: Some("brush per-texture bind group"),
         bindings: &[
             // diffuse texture, updated once per face
             wgpu::BindGroupLayoutEntry {
@@ -272,10 +243,13 @@ const VERTEX_BUFFER_DESCRIPTOR: wgpu::VertexBufferDescriptor = wgpu::VertexBuffe
     ],
 };
 
-pub fn create_render_pipeline(
+pub fn create_render_pipeline<'a, I>(
     device: &wgpu::Device,
-    per_frame_bind_group_layout: &wgpu::BindGroupLayout,
-) -> (wgpu::RenderPipeline, Vec<wgpu::BindGroupLayout>) {
+    bind_group_layouts: I,
+) -> (wgpu::RenderPipeline, Vec<wgpu::BindGroupLayout>)
+where
+    I: IntoIterator<Item = &'a wgpu::BindGroupLayout>,
+{
     let brush_bind_group_layout_descriptors: Vec<wgpu::BindGroupLayoutDescriptor> =
         BIND_GROUP_LAYOUT_DESCRIPTORS.to_vec();
 
@@ -290,7 +264,9 @@ pub fn create_render_pipeline(
         .collect();
 
     let brush_pipeline_layout = {
-        let layouts: Vec<&wgpu::BindGroupLayout> = std::iter::once(per_frame_bind_group_layout)
+        let layouts: Vec<&wgpu::BindGroupLayout> = bind_group_layouts
+            .into_iter()
+            .map(|layout| layout)
             .chain(brush_bind_group_layouts.iter())
             .collect();
         let desc = wgpu::PipelineLayoutDescriptor {
@@ -382,14 +358,6 @@ fn calculate_lightmap_texcoords(
     [s, t]
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum BindGroupLayoutId {
-    // starts at 1 because 0 is the per-frame group
-    PerEntity = 1,
-    PerTextureChain = 2,
-    PerFace = 3,
-}
-
 // these type aliases are here to aid readability of e.g. size_of::<Position>()
 type Position = [f32; 3];
 type DiffuseTexcoord = [f32; 2];
@@ -459,13 +427,13 @@ where
 }
 
 pub struct BrushRendererBuilder<'a> {
-    gfx_pkg: Rc<GraphicsPackage<'a>>,
+    state: Rc<GraphicsState<'a>>,
     bsp_data: Rc<BspData>,
     face_range: Range<usize>,
 
     leaves: Option<Vec<BrushLeaf>>,
 
-    per_texture_chain_bind_groups: Vec<wgpu::BindGroup>,
+    per_texture_bind_groups: Vec<wgpu::BindGroup>,
     per_face_bind_groups: Vec<wgpu::BindGroup>,
 
     vertices: Vec<BrushVertex>,
@@ -479,11 +447,11 @@ pub struct BrushRendererBuilder<'a> {
 impl<'a> BrushRendererBuilder<'a> {
     pub fn new(
         bsp_model: &BspModel,
-        gfx_pkg: Rc<GraphicsPackage<'a>>,
+        state: Rc<GraphicsState<'a>>,
         worldmodel: bool,
     ) -> BrushRendererBuilder<'a> {
         BrushRendererBuilder {
-            gfx_pkg,
+            state,
             bsp_data: bsp_model.bsp_data().clone(),
             face_range: bsp_model.face_id..bsp_model.face_id + bsp_model.face_count,
             leaves: if worldmodel {
@@ -496,7 +464,7 @@ impl<'a> BrushRendererBuilder<'a> {
             } else {
                 None
             },
-            per_texture_chain_bind_groups: Vec::new(),
+            per_texture_bind_groups: Vec::new(),
             per_face_bind_groups: Vec::new(),
             vertices: Vec::new(),
             faces: Vec::new(),
@@ -581,7 +549,7 @@ impl<'a> BrushRendererBuilder<'a> {
                     ),
                 });
 
-                let texture = self.gfx_pkg.create_texture(
+                let texture = self.state.create_texture(
                     None,
                     lightmap_w as u32,
                     lightmap_h as u32,
@@ -609,42 +577,14 @@ impl<'a> BrushRendererBuilder<'a> {
         }
     }
 
-    fn create_per_entity_bind_group(&self) -> wgpu::BindGroup {
+    fn create_per_texture_bind_group(&self, texture_id: usize) -> wgpu::BindGroup {
         let layout = &self
-            .gfx_pkg
-            .brush_bind_group_layout(BindGroupLayoutId::PerEntity);
-        let ent_buf = self.gfx_pkg.entity_uniform_buffer();
-        let desc = wgpu::BindGroupDescriptor {
-            label: Some("brush per-entity bind group"),
-            layout,
-            bindings: &[
-                wgpu::Binding {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(
-                        ent_buf.buffer().slice(0..ent_buf.block_size().0),
-                    ),
-                },
-                wgpu::Binding {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(self.gfx_pkg.diffuse_sampler()),
-                },
-                wgpu::Binding {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(self.gfx_pkg.lightmap_sampler()),
-                },
-            ],
-        };
-        self.gfx_pkg.device().create_bind_group(&desc)
-    }
-
-    fn create_per_texture_chain_bind_group(&self, texture_id: usize) -> wgpu::BindGroup {
-        let layout = &self
-            .gfx_pkg
-            .brush_bind_group_layout(BindGroupLayoutId::PerTextureChain);
+            .state
+            .brush_bind_group_layout(BindGroupLayoutId::PerTexture);
         let tex = &self.textures[texture_id];
-        let tex_unif_buf = self.gfx_pkg.brush_texture_uniform_buffer();
+        let tex_unif_buf = self.state.brush_texture_uniform_buffer();
         let desc = wgpu::BindGroupDescriptor {
-            label: Some("per-texture chain bind group"),
+            label: Some("per-texture bind group"),
             layout,
             bindings: &[
                 wgpu::Binding {
@@ -661,12 +601,12 @@ impl<'a> BrushRendererBuilder<'a> {
                 },
             ],
         };
-        self.gfx_pkg.device().create_bind_group(&desc)
+        self.state.device().create_bind_group(&desc)
     }
 
     fn create_per_face_bind_group(&self, face_id: usize) -> wgpu::BindGroup {
         let layout = &self
-            .gfx_pkg
+            .state
             .brush_bind_group_layout(BindGroupLayoutId::PerFace);
         let desc = wgpu::BindGroupDescriptor {
             label: Some("per-face bind group"),
@@ -676,24 +616,22 @@ impl<'a> BrushRendererBuilder<'a> {
                 resource: wgpu::BindingResource::TextureView(
                     match self.faces[face_id].lightmap_id {
                         Some(id) => &self.lightmap_views[id],
-                        None => self.gfx_pkg.default_lightmap_view(),
+                        None => self.state.default_lightmap_view(),
                     },
                 ),
             }],
         };
-        self.gfx_pkg.device().create_bind_group(&desc)
+        self.state.device().create_bind_group(&desc)
     }
 
     pub fn build(mut self) -> Result<BrushRenderer<'a>, Error> {
-        let per_entity_bind_group = self.create_per_entity_bind_group();
-
         // create the diffuse and fullbright textures
         for (tex_id, tex) in self.bsp_data.textures().iter().enumerate() {
             // let mut diffuses = Vec::new();
             // let mut fullbrights = Vec::new();
             // for i in 0..bsp::MIPLEVELS {
             //     let (diffuse_data, fullbright_data) = self
-            //         .gfx_pkg
+            //         .state
             //         .palette()
             //         .translate(tex.mipmap(BspTextureMipmap::from_usize(i).unwrap()));
             //     diffuses.push(diffuse_data);
@@ -701,18 +639,15 @@ impl<'a> BrushRendererBuilder<'a> {
             // }
 
             let (diffuse_data, fullbright_data) = self
-                .gfx_pkg
+                .state
                 .palette()
                 .translate(tex.mipmap(BspTextureMipmap::from_usize(0).unwrap()));
 
             let (width, height) = tex.dimensions();
-            let diffuse = self.gfx_pkg.create_texture(
-                None,
-                width,
-                height,
-                &TextureData::Diffuse(diffuse_data),
-            );
-            let fullbright = self.gfx_pkg.create_texture(
+            let diffuse =
+                self.state
+                    .create_texture(None, width, height, &TextureData::Diffuse(diffuse_data));
+            let fullbright = self.state.create_texture(
                 None,
                 width,
                 height,
@@ -743,9 +678,8 @@ impl<'a> BrushRendererBuilder<'a> {
             self.textures.push(texture);
 
             // generate texture bind group
-            let per_texture_chain_bind_group = self.create_per_texture_chain_bind_group(tex_id);
-            self.per_texture_chain_bind_groups
-                .push(per_texture_chain_bind_group);
+            let per_texture_bind_group = self.create_per_texture_bind_group(tex_id);
+            self.per_texture_bind_groups.push(per_texture_bind_group);
         }
 
         // generate faces, vertices and lightmaps
@@ -768,18 +702,17 @@ impl<'a> BrushRendererBuilder<'a> {
             self.per_face_bind_groups.push(per_face_bind_group);
         }
 
-        let vertex_buffer = self.gfx_pkg.device().create_buffer_with_data(
+        let vertex_buffer = self.state.device().create_buffer_with_data(
             unsafe { any_slice_as_bytes(self.vertices.as_slice()) },
             wgpu::BufferUsage::VERTEX,
         );
 
         Ok(BrushRenderer {
-            gfx_pkg: self.gfx_pkg,
+            state: self.state,
             bsp_data: self.bsp_data,
             vertex_buffer: vertex_buffer,
             leaves: self.leaves,
-            per_entity_bind_group: per_entity_bind_group,
-            per_texture_chain_bind_groups: self.per_texture_chain_bind_groups,
+            per_texture_bind_groups: self.per_texture_bind_groups,
             per_face_bind_groups: self.per_face_bind_groups,
             texture_chains: self.texture_chains,
             faces: self.faces,
@@ -791,14 +724,13 @@ impl<'a> BrushRendererBuilder<'a> {
 }
 
 pub struct BrushRenderer<'a> {
-    gfx_pkg: Rc<GraphicsPackage<'a>>,
+    state: Rc<GraphicsState<'a>>,
     bsp_data: Rc<BspData>,
 
     leaves: Option<Vec<BrushLeaf>>,
 
     vertex_buffer: wgpu::Buffer,
-    per_entity_bind_group: wgpu::BindGroup,
-    per_texture_chain_bind_groups: Vec<wgpu::BindGroup>,
+    per_texture_bind_groups: Vec<wgpu::BindGroup>,
     per_face_bind_groups: Vec<wgpu::BindGroup>,
 
     // faces are grouped by texture to reduce the number of texture rebinds
@@ -822,14 +754,8 @@ impl<'a> BrushRenderer<'a> {
         camera: &Camera,
     ) {
         let _guard = flame::start_guard("BrushRenderer::record_draw");
-        pass.set_pipeline(self.gfx_pkg.brush_pipeline());
+        pass.set_pipeline(self.state.brush_pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-
-        pass.set_bind_group(
-            BindGroupLayoutId::PerEntity as u32,
-            &self.per_entity_bind_group,
-            &[entity_uniform_block.offset()],
-        );
 
         // if this is a worldmodel, mark faces to be drawn
         if let Some(ref leaves) = self.leaves {
@@ -848,10 +774,10 @@ impl<'a> BrushRenderer<'a> {
         for (tex_id, face_ids) in self.texture_chains.iter() {
             let _tex_guard = flame::start_guard("texture chain");
             pass.set_bind_group(
-                BindGroupLayoutId::PerTextureChain as u32,
-                &self.per_texture_chain_bind_groups[*tex_id],
+                BindGroupLayoutId::PerTexture as u32,
+                &self.per_texture_bind_groups[*tex_id],
                 &[self
-                    .gfx_pkg
+                    .state
                     .brush_texture_uniform_block(self.textures[*tex_id].kind)
                     .offset()],
             );

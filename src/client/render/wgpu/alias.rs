@@ -2,8 +2,8 @@ use std::{borrow::Cow, cell::Cell, collections::HashMap, mem::size_of, ops::Rang
 
 use crate::{
     client::render::wgpu::{
-        warp, Camera, DynamicUniformBufferBlock, EntityUniforms, GraphicsPackage, LightmapData,
-        TextureData, COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
+        warp, BindGroupLayoutId, Camera, DynamicUniformBufferBlock, EntityUniforms, GraphicsState,
+        LightmapData, TextureData, COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
     },
     common::{
         math,
@@ -75,36 +75,7 @@ void main() {
 // NOTE: if any of the binding indices are changed, they must also be changed in
 // the corresponding shaders and the BindGroupLayout generation functions.
 // TODO: move diffuse sampler into its own group
-const BIND_GROUP_LAYOUT_DESCRIPTORS: [wgpu::BindGroupLayoutDescriptor; 2] = [
-    // group 0: updated per-frame
-    // NOTE: we can't clone PER_FRAME_BIND_GROUP_LAYOUT_DESCRIPTOR here, but it
-    // should always be the first bind group layout.
-
-    // group 1: updated per-entity
-    wgpu::BindGroupLayoutDescriptor {
-        label: Some("brush per-entity bind group"),
-        bindings: &[
-            // transform matrix
-            // TODO: move this to push constants once they're exposed in wgpu
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStage::VERTEX,
-                ty: wgpu::BindingType::UniformBuffer { dynamic: true },
-            },
-            // diffuse and fullbright sampler
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::Sampler { comparison: false },
-            },
-            // lightmap sampler
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::Sampler { comparison: false },
-            },
-        ],
-    },
+const BIND_GROUP_LAYOUT_DESCRIPTORS: [wgpu::BindGroupLayoutDescriptor; 1] = [
     // group 2: updated per-texture
     wgpu::BindGroupLayoutDescriptor {
         label: Some("brush per-texture chain bind group"),
@@ -143,10 +114,13 @@ const VERTEX_BUFFER_DESCRIPTOR: wgpu::VertexBufferDescriptor = wgpu::VertexBuffe
     ],
 };
 
-pub fn create_render_pipeline(
+pub fn create_render_pipeline<'a, I>(
     device: &wgpu::Device,
-    per_frame_bind_group_layout: &wgpu::BindGroupLayout,
-) -> (wgpu::RenderPipeline, Vec<wgpu::BindGroupLayout>) {
+    bind_group_layouts: I,
+) -> (wgpu::RenderPipeline, Vec<wgpu::BindGroupLayout>)
+where
+    I: IntoIterator<Item = &'a wgpu::BindGroupLayout>,
+{
     let alias_bind_group_layout_descriptors: Vec<wgpu::BindGroupLayoutDescriptor> =
         BIND_GROUP_LAYOUT_DESCRIPTORS.to_vec();
 
@@ -161,7 +135,9 @@ pub fn create_render_pipeline(
         .collect();
 
     let alias_pipeline_layout = {
-        let layouts: Vec<&wgpu::BindGroupLayout> = std::iter::once(per_frame_bind_group_layout)
+        let layouts: Vec<&wgpu::BindGroupLayout> = bind_group_layouts
+            .into_iter()
+            .map(|layout| layout)
             .chain(alias_bind_group_layouts.iter())
             .collect();
         let desc = wgpu::PipelineLayoutDescriptor {
@@ -236,13 +212,6 @@ pub fn create_render_pipeline(
     (alias_pipeline, alias_bind_group_layouts)
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum BindGroupLayoutId {
-    // starts at 1 because 0 is the per-frame group
-    PerEntity = 1,
-    PerTexture = 2,
-}
-
 // these type aliases are here to aid readability of e.g. size_of::<Position>()
 type Position = [f32; 3];
 type DiffuseTexcoord = [f32; 2];
@@ -293,24 +262,25 @@ enum Texture {
     Static {
         diffuse_texture: wgpu::Texture,
         diffuse_view: wgpu::TextureView,
+        bind_group: wgpu::BindGroup,
     },
     Animated {
         diffuse_textures: Vec<wgpu::Texture>,
         diffuse_views: Vec<wgpu::TextureView>,
+        bind_groups: Vec<wgpu::BindGroup>,
         total_duration: Duration,
         durations: Vec<Duration>,
     },
 }
 
 impl Texture {
-    fn animate(&self, time: Duration) -> &wgpu::TextureView {
+    fn animate(&self, time: Duration) -> &wgpu::BindGroup {
         match self {
-            Texture::Static {
-                ref diffuse_view, ..
-            } => diffuse_view,
+            Texture::Static { ref bind_group, .. } => bind_group,
             Texture::Animated {
                 diffuse_textures,
                 diffuse_views,
+                bind_groups,
                 total_duration,
                 durations,
             } => {
@@ -319,7 +289,7 @@ impl Texture {
                 for (frame_id, frame_duration) in durations.iter().enumerate() {
                     time_ms -= frame_duration.num_milliseconds();
                     if time_ms <= 0 {
-                        return &diffuse_views[frame_id];
+                        return &bind_groups[frame_id];
                     }
                 }
 
@@ -337,7 +307,7 @@ pub struct AliasRenderer {
 
 impl AliasRenderer {
     pub fn new<'a>(
-        gfx_pkg: Rc<GraphicsPackage<'a>>,
+        state: Rc<GraphicsState<'a>>,
         alias_model: &AliasModel,
     ) -> Result<AliasRenderer, Error> {
         let mut vertices = Vec::new();
@@ -414,7 +384,7 @@ impl AliasRenderer {
             }
         }
 
-        let vertex_buffer = gfx_pkg.device().create_buffer_with_data(
+        let vertex_buffer = state.device().create_buffer_with_data(
             unsafe { any_slice_as_bytes(vertices.as_slice()) },
             wgpu::BufferUsage::VERTEX,
         );
@@ -423,12 +393,24 @@ impl AliasRenderer {
         for texture in alias_model.textures() {
             match *texture {
                 mdl::Texture::Static(ref tex) => {
-                    let (diffuse_data, fullbright_data) = gfx_pkg.palette.translate(tex.indices());
-                    let diffuse_texture = gfx_pkg.create_texture(None, w, h, &TextureData::Diffuse(diffuse_data));
+                    let (diffuse_data, fullbright_data) = state.palette.translate(tex.indices());
+                    let diffuse_texture =
+                        state.create_texture(None, w, h, &TextureData::Diffuse(diffuse_data));
                     let diffuse_view = diffuse_texture.create_default_view();
+                    let bind_group = state
+                        .device()
+                        .create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: None,
+                            layout: &state.alias_bind_group_layout(BindGroupLayoutId::PerTexture),
+                            bindings: &[wgpu::Binding {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&diffuse_view),
+                            }],
+                        });
                     textures.push(Texture::Static {
                         diffuse_texture,
                         diffuse_view,
+                        bind_group,
                     });
                 }
                 mdl::Texture::Animated(ref tex) => {
@@ -436,23 +418,39 @@ impl AliasRenderer {
                     let mut durations = Vec::new();
                     let mut diffuse_textures = Vec::new();
                     let mut diffuse_views = Vec::new();
+                    let mut bind_groups = Vec::new();
 
                     for frame in tex.frames() {
                         total_duration = total_duration + frame.duration();
                         durations.push(frame.duration());
 
                         let (diffuse_data, fullbright_data) =
-                            gfx_pkg.palette.translate(frame.indices());
-                        let diffuse_texture = gfx_pkg.create_texture(None, w, h, &TextureData::Diffuse(diffuse_data));
+                            state.palette.translate(frame.indices());
+                        let diffuse_texture =
+                            state.create_texture(None, w, h, &TextureData::Diffuse(diffuse_data));
                         let diffuse_view = diffuse_texture.create_default_view();
+                        let bind_group =
+                            state
+                                .device()
+                                .create_bind_group(&wgpu::BindGroupDescriptor {
+                                    label: None,
+                                    layout: &state
+                                        .alias_bind_group_layout(BindGroupLayoutId::PerTexture),
+                                    bindings: &[wgpu::Binding {
+                                        binding: 0,
+                                        resource: wgpu::BindingResource::TextureView(&diffuse_view),
+                                    }],
+                                });
 
                         diffuse_textures.push(diffuse_texture);
                         diffuse_views.push(diffuse_view);
+                        bind_groups.push(bind_group);
                     }
 
                     textures.push(Texture::Animated {
                         diffuse_textures,
                         diffuse_views,
+                        bind_groups,
                         total_duration,
                         durations,
                     });
@@ -465,5 +463,29 @@ impl AliasRenderer {
             textures,
             vertex_buffer,
         })
+    }
+
+    pub fn record_draw<'a, 'b>(
+        &'b self,
+        state: &'b GraphicsState<'a>,
+        pass: &mut wgpu::RenderPass<'b>,
+        camera: &Camera,
+        time: Duration,
+        keyframe_id: usize,
+        texture_id: usize,
+    ) where
+        'a: 'b,
+    {
+        pass.set_pipeline(state.alias_pipeline());
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+
+        let diffuse_view = self.textures[texture_id].animate(time);
+
+        pass.set_bind_group(
+            BindGroupLayoutId::PerTexture as u32,
+            self.textures[texture_id].animate(time),
+            &[],
+        );
+        pass.draw(self.keyframes[keyframe_id].animate(time), 0..1)
     }
 }

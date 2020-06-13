@@ -20,6 +20,7 @@ use std::{
 use crate::{
     client::{
         render::wgpu::{
+            alias::AliasRenderer,
             brush::{BrushRenderer, BrushRendererBuilder},
             uniform::{DynamicUniformBuffer, DynamicUniformBufferBlock},
         },
@@ -46,7 +47,8 @@ const DIFFUSE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Un
 const FULLBRIGHT_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const LIGHTMAP_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
-const PER_FRAME_BIND_GROUP_LAYOUT_DESCRIPTOR: wgpu::BindGroupLayoutDescriptor =
+const BIND_GROUP_LAYOUT_DESCRIPTORS: [wgpu::BindGroupLayoutDescriptor; 2] = [
+    // group 0: updated per-frame
     wgpu::BindGroupLayoutDescriptor {
         label: Some("per-frame bind group"),
         bindings: &[wgpu::BindGroupLayoutEntry {
@@ -54,7 +56,33 @@ const PER_FRAME_BIND_GROUP_LAYOUT_DESCRIPTOR: wgpu::BindGroupLayoutDescriptor =
             visibility: wgpu::ShaderStage::all(),
             ty: wgpu::BindingType::UniformBuffer { dynamic: false },
         }],
-    };
+    },
+    // group 1: updated per-entity
+    wgpu::BindGroupLayoutDescriptor {
+        label: Some("brush per-entity bind group"),
+        bindings: &[
+            // transform matrix
+            // TODO: move this to push constants once they're exposed in wgpu
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: wgpu::BindingType::UniformBuffer { dynamic: true },
+            },
+            // diffuse and fullbright sampler
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::Sampler { comparison: false },
+            },
+            // lightmap sampler
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::Sampler { comparison: false },
+            },
+        ],
+    },
+];
 
 pub fn calculate_transform(
     camera: &Camera,
@@ -205,6 +233,14 @@ impl Camera {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum BindGroupLayoutId {
+    PerFrame = 0,
+    PerEntity = 1,
+    PerTexture = 2,
+    PerFace = 3,
+}
+
 // uniform float array elements are aligned as if they were vec4s
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug)]
@@ -227,20 +263,27 @@ pub struct EntityUniforms {
     transform: Matrix4<f32>,
 }
 
-pub struct GraphicsPackage<'a> {
+pub struct GraphicsState<'a> {
     device: wgpu::Device,
     queue: wgpu::Queue,
     depth_attachment: RefCell<wgpu::Texture>,
+
+    bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    bind_groups: Vec<wgpu::BindGroup>,
+
     frame_uniform_buffer: wgpu::Buffer,
+
     entity_uniform_buffer: RefCell<DynamicUniformBuffer<'a, EntityUniforms>>,
-    brush_texture_uniform_buffer: RefCell<DynamicUniformBuffer<'a, brush::TextureUniforms>>,
-    brush_texture_uniform_blocks: Vec<DynamicUniformBufferBlock<'a, brush::TextureUniforms>>,
-    per_frame_bind_group: wgpu::BindGroup,
-    per_frame_bind_group_layout: wgpu::BindGroupLayout,
-    brush_pipeline: wgpu::RenderPipeline,
-    brush_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
     diffuse_sampler: wgpu::Sampler,
     lightmap_sampler: wgpu::Sampler,
+
+    alias_pipeline: wgpu::RenderPipeline,
+    alias_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+
+    brush_pipeline: wgpu::RenderPipeline,
+    brush_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    brush_texture_uniform_buffer: RefCell<DynamicUniformBuffer<'a, brush::TextureUniforms>>,
+    brush_texture_uniform_blocks: Vec<DynamicUniformBufferBlock<'a, brush::TextureUniforms>>,
 
     default_diffuse: wgpu::Texture,
     default_diffuse_view: wgpu::TextureView,
@@ -252,14 +295,14 @@ pub struct GraphicsPackage<'a> {
     palette: Palette,
 }
 
-impl<'a> GraphicsPackage<'a> {
+impl<'a> GraphicsState<'a> {
     pub fn new<'b>(
         device: wgpu::Device,
         queue: wgpu::Queue,
         width: u32,
         height: u32,
         vfs: &'b Vfs,
-    ) -> Result<GraphicsPackage<'a>, Error> {
+    ) -> Result<GraphicsState<'a>, Error> {
         let palette = Palette::load(&vfs, "gfx/palette.lmp");
         let gfx_wad = Wad::load(vfs.open("gfx.wad")?).unwrap();
 
@@ -295,21 +338,6 @@ impl<'a> GraphicsPackage<'a> {
             .collect();
         brush_texture_uniform_buffer.borrow_mut().flush(&queue);
 
-        let per_frame_bind_group_layout =
-            device.create_bind_group_layout(&PER_FRAME_BIND_GROUP_LAYOUT_DESCRIPTOR);
-
-        let per_frame_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("per-frame bind group"),
-            layout: &per_frame_bind_group_layout,
-            bindings: &[wgpu::Binding {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(frame_uniform_buffer.slice(..)),
-            }],
-        });
-
-        let (brush_pipeline, brush_bind_group_layouts) =
-            brush::create_render_pipeline(&device, &per_frame_bind_group_layout);
-
         let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: None,
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -339,6 +367,49 @@ impl<'a> GraphicsPackage<'a> {
             compare: wgpu::CompareFunction::Undefined,
             anisotropy_clamp: 0,
         });
+
+        let bind_group_layouts: Vec<wgpu::BindGroupLayout> = BIND_GROUP_LAYOUT_DESCRIPTORS
+            .iter()
+            .map(|desc| device.create_bind_group_layout(desc))
+            .collect();
+        let bind_groups = vec![
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("per-frame bind group"),
+                layout: &bind_group_layouts[BindGroupLayoutId::PerFrame as usize],
+                bindings: &[wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(frame_uniform_buffer.slice(..)),
+                }],
+            }),
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("brush per-entity bind group"),
+                layout: &bind_group_layouts[BindGroupLayoutId::PerEntity as usize],
+                bindings: &[
+                    wgpu::Binding {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(
+                            entity_uniform_buffer
+                                .borrow()
+                                .buffer()
+                                .slice(0..entity_uniform_buffer.borrow().block_size().0),
+                        ),
+                    },
+                    wgpu::Binding {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
+                    },
+                    wgpu::Binding {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&lightmap_sampler),
+                    },
+                ],
+            }),
+        ];
+
+        let (alias_pipeline, alias_bind_group_layouts) =
+            alias::create_render_pipeline(&device, &bind_group_layouts);
+        let (brush_pipeline, brush_bind_group_layouts) =
+            brush::create_render_pipeline(&device, &bind_group_layouts);
 
         let default_diffuse = create_texture(
             &device,
@@ -380,18 +451,22 @@ impl<'a> GraphicsPackage<'a> {
         let default_fullbright_view = default_fullbright.create_default_view();
         let default_lightmap_view = default_lightmap.create_default_view();
 
-        Ok(GraphicsPackage {
+        Ok(GraphicsState {
             device,
             queue,
             depth_attachment,
             frame_uniform_buffer,
             entity_uniform_buffer,
-            brush_texture_uniform_buffer,
-            brush_texture_uniform_blocks,
-            per_frame_bind_group_layout,
-            per_frame_bind_group,
+
+            bind_group_layouts,
+            bind_groups,
+
+            alias_pipeline,
+            alias_bind_group_layouts,
             brush_pipeline,
             brush_bind_group_layouts,
+            brush_texture_uniform_buffer,
+            brush_texture_uniform_blocks,
             diffuse_sampler,
             lightmap_sampler,
             default_diffuse,
@@ -521,12 +596,24 @@ impl<'a> GraphicsPackage<'a> {
         &self.lightmap_sampler
     }
 
+    pub fn bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+        &self.bind_group_layouts
+    }
+
+    pub fn alias_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.alias_pipeline
+    }
+
+    pub fn alias_bind_group_layout(&self, id: BindGroupLayoutId) -> &wgpu::BindGroupLayout {
+        &self.alias_bind_group_layouts[id as usize - 2]
+    }
+
     pub fn brush_pipeline(&self) -> &wgpu::RenderPipeline {
         &self.brush_pipeline
     }
 
-    pub fn brush_bind_group_layout(&self, id: brush::BindGroupLayoutId) -> &wgpu::BindGroupLayout {
-        &self.brush_bind_group_layouts[id as usize - 1]
+    pub fn brush_bind_group_layout(&self, id: BindGroupLayoutId) -> &wgpu::BindGroupLayout {
+        &self.brush_bind_group_layouts[id as usize - 2]
     }
 
     pub fn brush_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
@@ -539,15 +626,15 @@ impl<'a> GraphicsPackage<'a> {
 }
 
 enum EntityRenderer<'a> {
+    Alias(AliasRenderer),
     Brush(BrushRenderer<'a>),
     None,
 }
 
 /// Top-level renderer.
 pub struct Renderer<'a> {
-    gfx_pkg: Rc<GraphicsPackage<'a>>,
+    state: Rc<GraphicsState<'a>>,
 
-    // TODO: make this a proper WorldRenderer with visibility rendering
     world_renderer: BrushRenderer<'a>,
     entity_renderers: Vec<EntityRenderer<'a>>,
 
@@ -559,23 +646,21 @@ impl<'a> Renderer<'a> {
     pub fn new(
         models: &[Model],
         worldmodel_id: usize,
-        gfx_pkg: Rc<GraphicsPackage<'a>>,
+        state: Rc<GraphicsState<'a>>,
     ) -> Renderer<'a> {
         let mut world_renderer = None;
         let mut entity_renderers = Vec::new();
 
-        let world_uniform_block = gfx_pkg
-            .entity_uniform_buffer_mut()
-            .allocate(EntityUniforms {
-                transform: Matrix4::identity(),
-            });
+        let world_uniform_block = state.entity_uniform_buffer_mut().allocate(EntityUniforms {
+            transform: Matrix4::identity(),
+        });
 
         for (i, model) in models.iter().enumerate() {
             if i == worldmodel_id {
                 match *model.kind() {
                     ModelKind::Brush(ref bmodel) => {
                         world_renderer = Some(
-                            BrushRendererBuilder::new(bmodel, gfx_pkg.clone(), true)
+                            BrushRendererBuilder::new(bmodel, state.clone(), true)
                                 .build()
                                 .unwrap(),
                         );
@@ -584,9 +669,13 @@ impl<'a> Renderer<'a> {
                 }
             } else {
                 match *model.kind() {
+                    ModelKind::Alias(ref amodel) => entity_renderers.push(EntityRenderer::Alias(
+                        AliasRenderer::new(state.clone(), amodel).unwrap(),
+                    )),
+
                     ModelKind::Brush(ref bmodel) => {
                         entity_renderers.push(EntityRenderer::Brush(
-                            BrushRendererBuilder::new(bmodel, gfx_pkg.clone(), false)
+                            BrushRendererBuilder::new(bmodel, state.clone(), false)
                                 .build()
                                 .unwrap(),
                         ));
@@ -601,7 +690,7 @@ impl<'a> Renderer<'a> {
         }
 
         Renderer {
-            gfx_pkg: gfx_pkg.clone(),
+            state: state.clone(),
             world_renderer: world_renderer.unwrap(),
             entity_renderers,
             world_uniform_block,
@@ -620,13 +709,13 @@ impl<'a> Renderer<'a> {
     {
         let _guard = flame::start_guard("Renderer::update_uniform");
 
-        let device = self.gfx_pkg.device();
+        let device = self.state.device();
 
         println!("time = {:?}", engine::duration_to_f32(time));
         trace!("Updating frame uniform buffer");
-        self.gfx_pkg
+        self.state
             .queue()
-            .write_buffer(self.gfx_pkg.frame_uniform_buffer(), 0, unsafe {
+            .write_buffer(self.state.frame_uniform_buffer(), 0, unsafe {
                 any_as_bytes(&FrameUniforms {
                     lightmap_anim_frames: {
                         let mut frames = [UniformArrayFloat { value: 0.0 }; 64];
@@ -641,7 +730,7 @@ impl<'a> Renderer<'a> {
             });
 
         trace!("Updating entity uniform buffer");
-        let queue = self.gfx_pkg.queue();
+        let queue = self.state.queue();
         let world_uniforms = EntityUniforms {
             transform: calculate_transform(
                 camera,
@@ -649,7 +738,7 @@ impl<'a> Renderer<'a> {
                 Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
             ),
         };
-        self.gfx_pkg
+        self.state
             .entity_uniform_buffer_mut()
             .write_block(&self.world_uniform_block, world_uniforms);
 
@@ -661,26 +750,25 @@ impl<'a> Renderer<'a> {
             if ent_pos >= self.entity_uniform_blocks.borrow().len() {
                 // if we don't have enough blocks, get a new one
                 let block = self
-                    .gfx_pkg
+                    .state
                     .entity_uniform_buffer_mut()
                     .allocate(ent_uniforms);
                 self.entity_uniform_blocks.borrow_mut().push(block);
             } else {
-                self.gfx_pkg
+                self.state
                     .entity_uniform_buffer_mut()
                     .write_block(&self.entity_uniform_blocks.borrow()[ent_pos], ent_uniforms);
             }
 
             // TODO: if entity renderers have uniform buffers, update them here
             match self.renderer_for_entity(ent) {
+                EntityRenderer::Alias(ref alias) => (),
                 EntityRenderer::Brush(ref brush) => (),
                 EntityRenderer::None => (),
             }
         }
 
-        self.gfx_pkg
-            .entity_uniform_buffer()
-            .flush(self.gfx_pkg.queue());
+        self.state.entity_uniform_buffer().flush(self.state.queue());
     }
 
     pub fn render_pass<'b, I>(
@@ -695,11 +783,11 @@ impl<'a> Renderer<'a> {
     {
         let _guard = flame::start_guard("Renderer::render_pass");
         let mut encoder = self
-            .gfx_pkg
+            .state
             .device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        let depth_view = self.gfx_pkg.depth_attachment().create_default_view();
+        let depth_view = self.state.depth_attachment().create_default_view();
         {
             info!("Updating uniform buffers");
             self.update_uniform_buffers(camera, time, entities.clone(), lightstyle_values);
@@ -731,19 +819,43 @@ impl<'a> Renderer<'a> {
                 }),
             });
 
-            pass.set_bind_group(0, &self.gfx_pkg.per_frame_bind_group, &[]);
+            pass.set_bind_group(
+                BindGroupLayoutId::PerFrame as u32,
+                &self.state.bind_groups[BindGroupLayoutId::PerFrame as usize],
+                &[],
+            );
 
-            info!("Drawing world");
+            pass.set_bind_group(
+                BindGroupLayoutId::PerEntity as u32,
+                &self.state.bind_groups[BindGroupLayoutId::PerEntity as usize],
+                &[self.world_uniform_block.offset()],
+            );
             self.world_renderer
                 .record_draw(&mut pass, &self.world_uniform_block, camera);
+
+            // draw entities
             for (ent_pos, ent) in entities.enumerate() {
                 let model_id = ent.get_model_id();
+
+                pass.set_bind_group(
+                    BindGroupLayoutId::PerEntity as u32,
+                    &self.state.bind_groups[BindGroupLayoutId::PerEntity as usize],
+                    &[self.entity_uniform_blocks.borrow()[ent_pos].offset()],
+                );
 
                 match self.renderer_for_entity(&ent) {
                     EntityRenderer::Brush(ref bmodel) => bmodel.record_draw(
                         &mut pass,
                         &self.entity_uniform_blocks.borrow()[ent_pos],
                         camera,
+                    ),
+                    EntityRenderer::Alias(ref alias) => alias.record_draw(
+                        &self.state,
+                        &mut pass,
+                        camera,
+                        time,
+                        ent.get_frame_id(),
+                        ent.get_skin_id(),
                     ),
                     _ => warn!("non-brush renderers not implemented!"),
                     // _ => unimplemented!(),
@@ -754,51 +866,13 @@ impl<'a> Renderer<'a> {
         let command_buffer = encoder.finish();
         {
             let _submit_guard = flame::start_guard("Submit and poll");
-            self.gfx_pkg.queue().submit(vec![command_buffer]);
-            self.gfx_pkg.device().poll(wgpu::Maintain::Wait);
+            self.state.queue().submit(vec![command_buffer]);
+            self.state.device().poll(wgpu::Maintain::Wait);
         }
     }
 
     fn renderer_for_entity(&self, ent: &ClientEntity) -> &EntityRenderer<'a> {
         // subtract 1 from index because world entity isn't counted
         &self.entity_renderers[ent.get_model_id() - 1]
-    }
-}
-
-#[cfg(test)]
-pub mod test {
-    use super::*;
-    use crate::common::util::any_slice_as_bytes;
-
-    const TEST_VERTEX_BUFFER_DESCRIPTOR: wgpu::VertexBufferDescriptor =
-        wgpu::VertexBufferDescriptor {
-            stride: size_of::<Vector3<f32>>() as u64,
-            step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &[wgpu::VertexAttributeDescriptor {
-                offset: 0,
-                format: wgpu::VertexFormat::Float3,
-                shader_location: 0,
-            }],
-        };
-
-    fn color_attachment(device: &wgpu::Device) -> wgpu::Texture {
-        device.create_texture(&wgpu::TextureDescriptor {
-            label: None,
-            size: wgpu::Extent3d {
-                width: 1024,
-                height: 768,
-                depth: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: COLOR_ATTACHMENT_FORMAT,
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-        })
-    }
-
-    fn palette() -> Palette {
-        let rgb = [0u8; 768];
-        Palette::new(&rgb)
     }
 }

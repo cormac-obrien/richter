@@ -40,7 +40,7 @@ use richter::{
         self,
         input::{Input, InputFocus},
         menu::Menu,
-        render::wgpu::{GraphicsPackage, COLOR_ATTACHMENT_FORMAT},
+        render::wgpu::{GraphicsState, COLOR_ATTACHMENT_FORMAT},
         Client,
     },
     common::{
@@ -80,7 +80,7 @@ struct ClientProgram<'a> {
     surface: wgpu::Surface,
     adapter: wgpu::Adapter,
     swap_chain: RefCell<wgpu::SwapChain>,
-    gfx_pkg: Rc<GraphicsPackage<'a>>,
+    gfx_state: Rc<GraphicsState<'a>>,
 
     audio_device: Rc<rodio::Device>,
 
@@ -162,7 +162,7 @@ impl<'a> ClientProgram<'a> {
             },
         ));
 
-        let gfx_pkg = Rc::new(GraphicsPackage::new(device, queue, width, height, &vfs).unwrap());
+        let gfx_state = Rc::new(GraphicsState::new(device, queue, width, height, &vfs).unwrap());
 
         // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
         console.borrow().stuff_text("exec quake.rc\n");
@@ -179,7 +179,7 @@ impl<'a> ClientProgram<'a> {
             surface,
             adapter,
             swap_chain,
-            gfx_pkg,
+            gfx_state,
             audio_device: Rc::new(audio_device),
             state: RefCell::new(ProgramState::Title),
             input,
@@ -208,7 +208,7 @@ impl<'a> ClientProgram<'a> {
                 self.cvars.clone(),
                 self.cmds.clone(),
                 self.menu.clone(),
-                self.gfx_pkg.clone(),
+                self.gfx_state.clone(),
                 self.input.clone(),
                 cl,
             )
@@ -219,7 +219,7 @@ impl<'a> ClientProgram<'a> {
     /// Builds a new swap chain with the specified present mode and the window's current dimensions.
     fn recreate_swap_chain(&self, present_mode: wgpu::PresentMode) {
         let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
-        let swap_chain = self.gfx_pkg.device().create_swap_chain(
+        let swap_chain = self.gfx_state.device().create_swap_chain(
             &self.surface,
             &wgpu::SwapChainDescriptor {
                 usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
@@ -272,7 +272,7 @@ impl<'a> Program for ClientProgram<'a> {
             self.recreate_swap_chain(wgpu::PresentMode::Immediate);
 
             let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
-            self.gfx_pkg.recreate_depth_attachment(width, height);
+            self.gfx_state.recreate_depth_attachment(width, height);
         }
 
         match *self.state.borrow_mut() {

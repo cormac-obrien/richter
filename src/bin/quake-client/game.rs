@@ -27,7 +27,7 @@ use richter::{
     client::{
         input::{Input, InputFocus},
         menu::Menu,
-        render::wgpu::{Camera, GraphicsPackage, Renderer},
+        render::wgpu::{Camera, GraphicsState, Renderer},
         Client,
     },
     common::{
@@ -136,7 +136,7 @@ pub struct Game<'a> {
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
     menu: Rc<RefCell<Menu>>,
-    gfx_pkg: Rc<GraphicsPackage<'a>>,
+    gfx_state: Rc<GraphicsState<'a>>,
     state: GameState<'a>,
     input: Rc<RefCell<Input>>,
     client: Client,
@@ -148,7 +148,7 @@ impl<'a> Game<'a> {
         cvars: Rc<RefCell<CvarRegistry>>,
         cmds: Rc<RefCell<CmdRegistry>>,
         menu: Rc<RefCell<Menu>>,
-        gfx_pkg: Rc<GraphicsPackage<'a>>,
+        gfx_state: Rc<GraphicsState<'a>>,
         input: Rc<RefCell<Input>>,
         client: Client,
     ) -> Result<Game, Error> {
@@ -159,7 +159,7 @@ impl<'a> Game<'a> {
             cvars,
             cmds,
             menu,
-            gfx_pkg,
+            gfx_state,
             state: GameState::Loading,
             input,
             client,
@@ -183,7 +183,7 @@ impl<'a> Game<'a> {
                 println!("finished loading");
                 // if we have, build renderers
                 let renderer =
-                    Renderer::new(self.client.models().unwrap(), 1, self.gfx_pkg.clone());
+                    Renderer::new(self.client.models().unwrap(), 1, self.gfx_state.clone());
 
                 self.state = GameState::InGame(InGameState::new(
                     self.cmds.clone(),
@@ -238,15 +238,13 @@ impl<'a> Game<'a> {
                 );
 
                 // render world
-                state
-                    .renderer
-                    .render_pass(
-                        color_attachment_view,
-                        &camera,
-                        self.client.time(),
-                        self.client.iter_visible_entities(),
-                        self.client.lightstyle_values().unwrap().as_slice(),
-                    );
+                state.renderer.render_pass(
+                    color_attachment_view,
+                    &camera,
+                    self.client.time(),
+                    self.client.iter_visible_entities(),
+                    self.client.lightstyle_values().unwrap().as_slice(),
+                );
 
                 // state
                 //     .hud_renderer
@@ -259,12 +257,12 @@ impl<'a> Game<'a> {
 
                     // render the console
                     InGameFocus::Console => {
-                        // self.gfx_pkg
+                        // self.state
                         //     .borrow()
                         //     .console_renderer()
                         //     .render(
                         //         encoder,
-                        //         self.gfx_pkg.borrow().pipeline_2d(),
+                        //         self.state.borrow().pipeline_2d(),
                         //         &mut data,
                         //         display_width,
                         //         display_height,
@@ -279,7 +277,7 @@ impl<'a> Game<'a> {
                         // self.menu_renderer
                         //     .render(
                         //         encoder,
-                        //         self.gfx_pkg.borrow().pipeline_2d(),
+                        //         self.state.borrow().pipeline_2d(),
                         //         &mut data,
                         //         display_width,
                         //         display_height,
