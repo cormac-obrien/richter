@@ -27,13 +27,22 @@ use num::FromPrimitive;
 const MAGIC: u32 = ('I' as u32) << 0 | ('D' as u32) << 8 | ('S' as u32) << 16 | ('P' as u32) << 24;
 const VERSION: u32 = 1;
 
+#[derive(Clone, Copy, Debug, Eq, FromPrimitive, PartialEq)]
+pub enum SpriteKind {
+    ViewPlaneParallelUpright = 0,
+    Upright = 1,
+    ViewPlaneParallel = 2,
+    Oriented = 3,
+    ViewPlaneParallelOriented = 4,
+}
+
 #[derive(Debug)]
 pub struct SpriteModel {
-    kind: i32,
+    kind: SpriteKind,
     max_width: usize,
     max_height: usize,
     radius: f32,
-    frames: Box<[SpriteFrameKind]>,
+    frames: Vec<SpriteFrame>,
 }
 
 impl SpriteModel {
@@ -56,29 +65,50 @@ impl SpriteModel {
     pub fn radius(&self) -> f32 {
         self.radius
     }
+
+    pub fn kind(&self) -> SpriteKind {
+        self.kind
+    }
+
+    pub fn frames(&self) -> &[SpriteFrame] {
+        &self.frames
+    }
 }
 
 #[derive(Debug)]
-pub enum SpriteFrameKind {
-    Single(SpriteFrame),
-    Group(SpriteGroup),
+pub enum SpriteFrame {
+    Static {
+        frame: SpriteSubframe,
+    },
+    Animated {
+        subframes: Vec<SpriteSubframe>,
+        durations: Vec<Duration>,
+    },
 }
 
 #[derive(Debug)]
-pub struct SpriteFrame {
+pub struct SpriteSubframe {
     width: u32,
     height: u32,
     up: f32,
     down: f32,
     left: f32,
     right: f32,
-    rgba: Box<[u8]>,
+    indexed: Vec<u8>,
 }
 
-#[derive(Debug)]
-pub struct SpriteGroup {
-    intervals: Vec<Duration>,
-    frames: Vec<SpriteFrame>,
+impl SpriteSubframe {
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn indexed(&self) -> &[u8] {
+        &self.indexed
+    }
 }
 
 pub fn load<R>(data: R) -> SpriteModel
@@ -104,7 +134,7 @@ where
     }
 
     // TODO: use an enum for this
-    let sprite_type = reader.read_i32::<LittleEndian>().unwrap();
+    let kind = SpriteKind::from_i32(reader.read_i32::<LittleEndian>().unwrap()).unwrap();
 
     let radius = reader.read_f32::<LittleEndian>().unwrap();
 
@@ -163,24 +193,26 @@ where
                 indices.push(reader.read_u8().unwrap());
             }
 
-            frames.push(SpriteFrameKind::Single(SpriteFrame {
-                width: width as u32,
-                height: height as u32,
-                up: origin_z as f32,
-                down: (origin_z - height) as f32,
-                left: origin_x as f32,
-                right: (width + origin_x) as f32,
-                rgba: engine::indexed_to_rgba(&indices).into_boxed_slice(),
-            }));
+            frames.push(SpriteFrame::Static {
+                frame: SpriteSubframe {
+                    width: width as u32,
+                    height: height as u32,
+                    up: origin_z as f32,
+                    down: (origin_z - height) as f32,
+                    left: origin_x as f32,
+                    right: (width + origin_x) as f32,
+                    indexed: indices,
+                },
+            });
         } else {
             let subframe_count = match reader.read_i32::<LittleEndian>().unwrap() {
                 c if c < 0 => panic!("Negative subframe count ({}) in frame {}", c, i),
                 c => c as usize,
             };
 
-            let mut intervals = Vec::with_capacity(subframe_count);
+            let mut durations = Vec::with_capacity(subframe_count);
             for _ in 0..subframe_count {
-                intervals.push(engine::duration_from_f32(
+                durations.push(engine::duration_from_f32(
                     reader.read_f32::<LittleEndian>().unwrap(),
                 ));
             }
@@ -206,28 +238,28 @@ where
                     indices.push(reader.read_u8().unwrap());
                 }
 
-                subframes.push(SpriteFrame {
+                subframes.push(SpriteSubframe {
                     width: width as u32,
                     height: height as u32,
                     up: origin_z as f32,
                     down: (origin_z - height) as f32,
                     left: origin_x as f32,
                     right: (width + origin_x) as f32,
-                    rgba: engine::indexed_to_rgba(&indices).into_boxed_slice(),
+                    indexed: indices,
                 });
             }
-            frames.push(SpriteFrameKind::Group(SpriteGroup {
-                intervals: intervals,
-                frames: subframes,
-            }));
+            frames.push(SpriteFrame::Animated {
+                durations,
+                subframes,
+            });
         }
     }
 
     SpriteModel {
-        kind: sprite_type,
+        kind,
         max_width,
         max_height,
         radius,
-        frames: frames.into_boxed_slice(),
+        frames,
     }
 }

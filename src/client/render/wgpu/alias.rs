@@ -469,7 +469,6 @@ impl AliasRenderer {
         &'b self,
         state: &'b GraphicsState<'a>,
         pass: &mut wgpu::RenderPass<'b>,
-        camera: &Camera,
         time: Duration,
         keyframe_id: usize,
         texture_id: usize,
@@ -478,8 +477,6 @@ impl AliasRenderer {
     {
         pass.set_pipeline(state.alias_pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-
-        let diffuse_view = self.textures[texture_id].animate(time);
 
         pass.set_bind_group(
             BindGroupLayoutId::PerTexture as u32,

@@ -3,6 +3,7 @@ mod alias;
 mod brush;
 mod error;
 mod palette;
+mod sprite;
 mod uniform;
 mod warp;
 
@@ -11,8 +12,7 @@ pub use palette::Palette;
 
 use std::{
     borrow::Cow,
-    cell::{Cell, Ref, RefCell, RefMut},
-    marker::PhantomData,
+    cell::{Ref, RefCell, RefMut},
     mem::size_of,
     rc::Rc,
 };
@@ -22,6 +22,7 @@ use crate::{
         render::wgpu::{
             alias::AliasRenderer,
             brush::{BrushRenderer, BrushRendererBuilder},
+            sprite::SpriteRenderer,
             uniform::{DynamicUniformBuffer, DynamicUniformBufferBlock},
         },
         ClientEntity,
@@ -29,7 +30,8 @@ use crate::{
     common::{
         engine,
         model::{Model, ModelKind},
-        util::{any_as_bytes, bytes_as_any},
+        sprite::SpriteKind,
+        util::{any_as_bytes, any_slice_as_bytes},
         vfs::Vfs,
         wad::{QPic, Wad},
     },
@@ -83,16 +85,6 @@ const BIND_GROUP_LAYOUT_DESCRIPTORS: [wgpu::BindGroupLayoutDescriptor; 2] = [
         ],
     },
 ];
-
-pub fn calculate_transform(
-    camera: &Camera,
-    origin: Vector3<f32>,
-    angles: Vector3<Deg<f32>>,
-) -> Matrix4<f32> {
-    camera.transform()
-        * Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
-        * Matrix4::from(Euler::new(angles.x, angles.y, angles.z))
-}
 
 /// Create a `wgpu::TextureDescriptor` appropriate for the provided texture data.
 pub fn texture_descriptor<'a>(
@@ -203,6 +195,7 @@ impl<'a> TextureData<'a> {
 
 pub struct Camera {
     origin: Vector3<f32>,
+    angles: Vector3<Deg<f32>>,
     transform: Matrix4<f32>,
 }
 
@@ -220,12 +213,17 @@ impl Camera {
 
         Camera {
             origin,
+            angles,
             transform: projection * rotation * translation,
         }
     }
 
     pub fn origin(&self) -> Vector3<f32> {
         self.origin
+    }
+
+    pub fn angles(&self) -> Vector3<Deg<f32>> {
+        self.angles
     }
 
     pub fn transform(&self) -> Matrix4<f32> {
@@ -284,6 +282,10 @@ pub struct GraphicsState<'a> {
     brush_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
     brush_texture_uniform_buffer: RefCell<DynamicUniformBuffer<'a, brush::TextureUniforms>>,
     brush_texture_uniform_blocks: Vec<DynamicUniformBufferBlock<'a, brush::TextureUniforms>>,
+
+    sprite_pipeline: wgpu::RenderPipeline,
+    sprite_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    sprite_vertex_buffer: wgpu::Buffer,
 
     default_diffuse: wgpu::Texture,
     default_diffuse_view: wgpu::TextureView,
@@ -410,6 +412,12 @@ impl<'a> GraphicsState<'a> {
             alias::create_render_pipeline(&device, &bind_group_layouts);
         let (brush_pipeline, brush_bind_group_layouts) =
             brush::create_render_pipeline(&device, &bind_group_layouts);
+        let (sprite_pipeline, sprite_bind_group_layouts) =
+            sprite::create_render_pipeline(&device, &bind_group_layouts);
+        let sprite_vertex_buffer = device.create_buffer_with_data(
+            unsafe { any_slice_as_bytes(&sprite::VERTICES) },
+            wgpu::BufferUsage::VERTEX,
+        );
 
         let default_diffuse = create_texture(
             &device,
@@ -467,6 +475,9 @@ impl<'a> GraphicsState<'a> {
             brush_bind_group_layouts,
             brush_texture_uniform_buffer,
             brush_texture_uniform_blocks,
+            sprite_pipeline,
+            sprite_bind_group_layouts,
+            sprite_vertex_buffer,
             diffuse_sampler,
             lightmap_sampler,
             default_diffuse,
@@ -487,40 +498,6 @@ impl<'a> GraphicsState<'a> {
         data: &TextureData,
     ) -> wgpu::Texture {
         create_texture(&self.device, &self.queue, label, width, height, data)
-    }
-
-    pub fn create_vertex_buffer<'b, V>(
-        &self,
-        label: Option<&'b str>,
-        vertices: &[V],
-    ) -> wgpu::Buffer {
-        let size = vertices.len() * size_of::<V>();
-        let bytes = unsafe { std::slice::from_raw_parts(vertices.as_ptr() as *const u8, size) };
-
-        let staging_buffer = self
-            .device
-            .create_buffer_with_data(bytes, wgpu::BufferUsage::COPY_SRC);
-        let vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label,
-            size: size as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::VERTEX,
-            mapped_at_creation: false,
-        });
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        encoder.copy_buffer_to_buffer(
-            &staging_buffer,
-            0,
-            &vertex_buffer,
-            0,
-            size as wgpu::BufferAddress,
-        );
-        let cmd_buffer = encoder.finish();
-        self.queue.submit(vec![cmd_buffer]);
-
-        vertex_buffer
     }
 
     /// Creates a new depth attachment with the specified dimensions, replacing the old one.
@@ -620,6 +597,22 @@ impl<'a> GraphicsState<'a> {
         &self.brush_bind_group_layouts
     }
 
+    pub fn sprite_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.sprite_pipeline
+    }
+
+    pub fn sprite_bind_group_layout(&self, id: BindGroupLayoutId) -> &wgpu::BindGroupLayout {
+        &self.sprite_bind_group_layouts[id as usize - 2]
+    }
+
+    pub fn sprite_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+        &self.sprite_bind_group_layouts
+    }
+
+    pub fn sprite_vertex_buffer(&self) -> &wgpu::Buffer {
+        &self.sprite_vertex_buffer
+    }
+
     pub fn palette(&self) -> &Palette {
         &self.palette
     }
@@ -628,6 +621,7 @@ impl<'a> GraphicsState<'a> {
 enum EntityRenderer<'a> {
     Alias(AliasRenderer),
     Brush(BrushRenderer<'a>),
+    Sprite(SpriteRenderer),
     None,
 }
 
@@ -681,10 +675,15 @@ impl<'a> Renderer<'a> {
                         ));
                     }
 
+                    ModelKind::Sprite(ref smodel) => {
+                        entity_renderers
+                            .push(EntityRenderer::Sprite(SpriteRenderer::new(&state, smodel)));
+                    }
+
                     _ => {
                         warn!("Non-brush renderers not implemented!");
                         entity_renderers.push(EntityRenderer::None);
-                    } //_ => unimplemented!(),
+                    }
                 }
             }
         }
@@ -732,11 +731,7 @@ impl<'a> Renderer<'a> {
         trace!("Updating entity uniform buffer");
         let queue = self.state.queue();
         let world_uniforms = EntityUniforms {
-            transform: calculate_transform(
-                camera,
-                Vector3::zero(),
-                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            ),
+            transform: camera.transform(),
         };
         self.state
             .entity_uniform_buffer_mut()
@@ -744,7 +739,7 @@ impl<'a> Renderer<'a> {
 
         for (ent_pos, ent) in entities.into_iter().enumerate() {
             let ent_uniforms = EntityUniforms {
-                transform: calculate_transform(camera, ent.origin, ent.angles),
+                transform: self.calculate_transform(camera, ent),
             };
 
             if ent_pos >= self.entity_uniform_blocks.borrow().len() {
@@ -758,13 +753,6 @@ impl<'a> Renderer<'a> {
                 self.state
                     .entity_uniform_buffer_mut()
                     .write_block(&self.entity_uniform_blocks.borrow()[ent_pos], ent_uniforms);
-            }
-
-            // TODO: if entity renderers have uniform buffers, update them here
-            match self.renderer_for_entity(ent) {
-                EntityRenderer::Alias(ref alias) => (),
-                EntityRenderer::Brush(ref brush) => (),
-                EntityRenderer::None => (),
             }
         }
 
@@ -852,11 +840,13 @@ impl<'a> Renderer<'a> {
                     EntityRenderer::Alias(ref alias) => alias.record_draw(
                         &self.state,
                         &mut pass,
-                        camera,
                         time,
                         ent.get_frame_id(),
                         ent.get_skin_id(),
                     ),
+                    EntityRenderer::Sprite(ref sprite) => {
+                        sprite.record_draw(&self.state, &mut pass, ent.get_frame_id(), time)
+                    }
                     _ => warn!("non-brush renderers not implemented!"),
                     // _ => unimplemented!(),
                 }
@@ -874,5 +864,28 @@ impl<'a> Renderer<'a> {
     fn renderer_for_entity(&self, ent: &ClientEntity) -> &EntityRenderer<'a> {
         // subtract 1 from index because world entity isn't counted
         &self.entity_renderers[ent.get_model_id() - 1]
+    }
+
+    fn calculate_transform(&self, camera: &Camera, entity: &ClientEntity) -> Matrix4<f32> {
+        let origin = entity.get_origin();
+        let angles = entity.get_angles();
+        let euler = match self.renderer_for_entity(entity) {
+            EntityRenderer::Sprite(ref sprite) => match sprite.kind() {
+                // used for decals
+                SpriteKind::Oriented => Euler::new(angles.x, angles.y, angles.z),
+
+                _ => {
+                    // keep sprite facing player, but preserve roll
+                    let inv_cam_angles = -camera.angles();
+                    Euler::new(inv_cam_angles.x, inv_cam_angles.y, angles.z)
+                }
+            },
+
+            _ => Euler::new(angles.x, angles.y, angles.z),
+        };
+
+        camera.transform()
+            * Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
+            * Matrix4::from(euler)
     }
 }
