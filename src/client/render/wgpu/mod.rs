@@ -86,6 +86,83 @@ const BIND_GROUP_LAYOUT_DESCRIPTORS: [wgpu::BindGroupLayoutDescriptor; 2] = [
     },
 ];
 
+pub fn create_render_pipeline<'a, I, S>(
+    device: &wgpu::Device,
+    compiler: &mut shaderc::Compiler,
+    name: S,
+    bind_group_layouts: I,
+    vertex_shader: S,
+    fragment_shader: S,
+    rasterization_state: Option<wgpu::RasterizationStateDescriptor>,
+    primitive_topology: wgpu::PrimitiveTopology,
+    color_states: &[wgpu::ColorStateDescriptor],
+    depth_stencil_state: Option<wgpu::DepthStencilStateDescriptor>,
+    vertex_buffer_descriptors: &[wgpu::VertexBufferDescriptor],
+) -> wgpu::RenderPipeline
+where
+    I: IntoIterator<Item = &'a wgpu::BindGroupLayout>,
+    S: AsRef<str>,
+{
+    let name = name.as_ref();
+
+    let pipeline_layout = {
+        let layouts: Vec<&wgpu::BindGroupLayout> = bind_group_layouts
+            .into_iter()
+            .map(|layout| layout)
+            .collect();
+        let desc = wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts: &layouts,
+        };
+        device.create_pipeline_layout(&desc)
+    };
+
+    let vertex_shader_spirv = compiler
+        .compile_into_spirv(
+            vertex_shader.as_ref(),
+            shaderc::ShaderKind::Vertex,
+            &format!("{}.vert", name),
+            "main",
+            None,
+        )
+        .unwrap();
+    let vertex_shader = device.create_shader_module(vertex_shader_spirv.as_binary());
+    let fragment_shader_spirv = compiler
+        .compile_into_spirv(
+            fragment_shader.as_ref(),
+            shaderc::ShaderKind::Fragment,
+            &format!("{}.frag", name),
+            "main",
+            None,
+        )
+        .unwrap();
+    let fragment_shader = device.create_shader_module(fragment_shader_spirv.as_binary());
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        layout: &pipeline_layout,
+        vertex_stage: wgpu::ProgrammableStageDescriptor {
+            module: &vertex_shader,
+            entry_point: "main",
+        },
+        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            module: &fragment_shader,
+            entry_point: "main",
+        }),
+        rasterization_state,
+        primitive_topology,
+        color_states,
+        depth_stencil_state,
+        vertex_state: wgpu::VertexStateDescriptor {
+            index_format: wgpu::IndexFormat::Uint32,
+            vertex_buffers: vertex_buffer_descriptors,
+        },
+        sample_count: 1,
+        sample_mask: !0,
+        alpha_to_coverage_enabled: false,
+    });
+
+    pipeline
+}
+
 /// Create a `wgpu::TextureDescriptor` appropriate for the provided texture data.
 pub fn texture_descriptor<'a>(
     label: Option<&'a str>,
@@ -250,6 +327,7 @@ pub struct UniformArrayFloat {
 #[derive(Copy, Clone)]
 // TODO: derive Debug once const generics are stable
 pub struct FrameUniforms {
+    // TODO: pack frame values into a [Vector4<f32>; 16],
     lightmap_anim_frames: [UniformArrayFloat; 64],
     camera_pos: Vector4<f32>,
     time: f32,
@@ -307,6 +385,7 @@ impl<'a> GraphicsState<'a> {
     ) -> Result<GraphicsState<'a>, Error> {
         let palette = Palette::load(&vfs, "gfx/palette.lmp");
         let gfx_wad = Wad::load(vfs.open("gfx.wad")?).unwrap();
+        let mut compiler = shaderc::Compiler::new().unwrap();
 
         let depth_attachment = RefCell::new(device.create_texture(&wgpu::TextureDescriptor {
             label: Some("depth attachment"),
@@ -408,12 +487,67 @@ impl<'a> GraphicsState<'a> {
             }),
         ];
 
-        let (alias_pipeline, alias_bind_group_layouts) =
-            alias::create_render_pipeline(&device, &bind_group_layouts);
-        let (brush_pipeline, brush_bind_group_layouts) =
-            brush::create_render_pipeline(&device, &bind_group_layouts);
-        let (sprite_pipeline, sprite_bind_group_layouts) =
-            sprite::create_render_pipeline(&device, &bind_group_layouts);
+        let alias_bind_group_layouts: Vec<wgpu::BindGroupLayout> =
+            alias::BIND_GROUP_LAYOUT_DESCRIPTORS
+                .iter()
+                .map(|desc| device.create_bind_group_layout(desc))
+                .collect();
+        let alias_pipeline = create_render_pipeline(
+            &device,
+            &mut compiler,
+            "alias",
+            bind_group_layouts
+                .iter()
+                .chain(alias_bind_group_layouts.iter()),
+            alias::VERTEX_SHADER_GLSL,
+            alias::FRAGMENT_SHADER_GLSL,
+            alias::RASTERIZATION_STATE_DESCRIPTOR,
+            alias::PRIMITIVE_TOPOLOGY,
+            &alias::COLOR_STATE_DESCRIPTORS,
+            alias::DEPTH_STENCIL_STATE_DESCRIPTOR,
+            &alias::VERTEX_BUFFER_DESCRIPTORS,
+        );
+
+        let brush_bind_group_layouts = brush::BIND_GROUP_LAYOUT_DESCRIPTORS
+            .iter()
+            .map(|desc| device.create_bind_group_layout(desc))
+            .collect::<Vec<_>>();
+
+        let brush_pipeline = create_render_pipeline(
+            &device,
+            &mut compiler,
+            "brush",
+            bind_group_layouts
+                .iter()
+                .chain(brush_bind_group_layouts.iter()),
+            brush::VERTEX_SHADER_GLSL,
+            brush::FRAGMENT_SHADER_GLSL,
+            brush::RASTERIZATION_STATE_DESCRIPTOR,
+            brush::PRIMITIVE_TOPOLOGY,
+            &brush::COLOR_STATE_DESCRIPTORS,
+            brush::DEPTH_STENCIL_STATE_DESCRIPTOR,
+            &brush::VERTEX_BUFFER_DESCRIPTORS,
+        );
+
+        let sprite_bind_group_layouts = sprite::BIND_GROUP_LAYOUT_DESCRIPTORS
+            .iter()
+            .map(|desc| device.create_bind_group_layout(desc))
+            .collect::<Vec<_>>();
+        let sprite_pipeline = create_render_pipeline(
+            &device,
+            &mut compiler,
+            "sprite",
+            bind_group_layouts
+                .iter()
+                .chain(sprite_bind_group_layouts.iter()),
+            sprite::VERTEX_SHADER_GLSL,
+            sprite::FRAGMENT_SHADER_GLSL,
+            sprite::RASTERIZATION_STATE_DESCRIPTOR,
+            sprite::PRIMITIVE_TOPOLOGY,
+            &sprite::COLOR_STATE_DESCRIPTORS,
+            sprite::DEPTH_STENCIL_STATE_DESCRIPTOR,
+            &sprite::VERTEX_BUFFER_DESCRIPTORS,
+        );
         let sprite_vertex_buffer = device.create_buffer_with_data(
             unsafe { any_slice_as_bytes(&sprite::VERTICES) },
             wgpu::BufferUsage::VERTEX,
