@@ -2,7 +2,9 @@
 mod alias;
 mod brush;
 mod error;
+mod glyph;
 mod palette;
+mod quad;
 mod sprite;
 mod uniform;
 mod warp;
@@ -22,6 +24,7 @@ use crate::{
         render::wgpu::{
             alias::AliasRenderer,
             brush::{BrushRenderer, BrushRendererBuilder},
+            glyph::{GlyphRenderer, GlyphRendererCommand, GlyphUniforms},
             sprite::SpriteRenderer,
             uniform::{DynamicUniformBuffer, DynamicUniformBufferBlock},
         },
@@ -49,42 +52,178 @@ const DIFFUSE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Un
 const FULLBRIGHT_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const LIGHTMAP_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
-const BIND_GROUP_LAYOUT_DESCRIPTORS: [wgpu::BindGroupLayoutDescriptor; 2] = [
-    // group 0: updated per-frame
-    wgpu::BindGroupLayoutDescriptor {
-        label: Some("per-frame bind group"),
-        bindings: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStage::all(),
-            ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-        }],
-    },
-    // group 1: updated per-entity
-    wgpu::BindGroupLayoutDescriptor {
-        label: Some("brush per-entity bind group"),
-        bindings: &[
+pub fn screen_space_vertex_transform(
+    display_w: u32,
+    display_h: u32,
+    quad_w: u32,
+    quad_h: u32,
+    pos_x: i32,
+    pos_y: i32,
+) -> Matrix4<f32> {
+    // rescale from [0, DISPLAY_*] to [-1, 1] (NDC)
+    let ndc_x = (pos_x * 2 - display_w as i32) as f32 / display_w as f32;
+    let ndc_y = (pos_y * 2 - display_h as i32) as f32 / display_h as f32;
+
+    let scale_x = (quad_w * 2) as f32 / display_w as f32;
+    let scale_y = (quad_h * 2) as f32 / display_h as f32;
+
+    Matrix4::from_translation([ndc_x, ndc_y, 0.0].into())
+        * Matrix4::from_nonuniform_scale(scale_x, scale_y, 1.0)
+}
+
+lazy_static! {
+    static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 2] = [
+        vec![
+            wgpu::BindGroupLayoutEntry::new(
+                0,
+                wgpu::ShaderStage::all(),
+                wgpu::BindingType::UniformBuffer {
+                    dynamic: false,
+                    min_binding_size: Some(
+                        std::num::NonZeroU64::new(size_of::<FrameUniforms>() as u64).unwrap(),
+                    ),
+                },
+            ),
+        ],
+        vec![
             // transform matrix
             // TODO: move this to push constants once they're exposed in wgpu
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStage::VERTEX,
-                ty: wgpu::BindingType::UniformBuffer { dynamic: true },
-            },
+            wgpu::BindGroupLayoutEntry::new(
+                0,
+                wgpu::ShaderStage::VERTEX,
+                wgpu::BindingType::UniformBuffer {
+                    dynamic: true,
+                    min_binding_size: Some(
+                        std::num::NonZeroU64::new(size_of::<EntityUniforms>() as u64)
+                            .unwrap(),
+                    ),
+                },
+            ),
             // diffuse and fullbright sampler
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::Sampler { comparison: false },
-            },
+            wgpu::BindGroupLayoutEntry::new(
+                1,
+                wgpu::ShaderStage::FRAGMENT,
+                wgpu::BindingType::Sampler { comparison: false },
+            ),
             // lightmap sampler
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::Sampler { comparison: false },
-            },
+            wgpu::BindGroupLayoutEntry::new(
+                2,
+                wgpu::ShaderStage::FRAGMENT,
+                wgpu::BindingType::Sampler { comparison: false },
+            ),
         ],
-    },
-];
+    ];
+
+    static ref BIND_GROUP_LAYOUT_DESCRIPTORS: [wgpu::BindGroupLayoutDescriptor<'static>; 2] = [
+        // group 0: updated per-frame
+        wgpu::BindGroupLayoutDescriptor {
+            label: Some("per-frame bind group"),
+            bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+        },
+        // group 1: updated per-entity
+        wgpu::BindGroupLayoutDescriptor {
+            label: Some("brush per-entity bind group"),
+            bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[1],
+        },
+    ];
+}
+
+pub trait Pipeline {
+    fn name() -> &'static str;
+    fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>>;
+    fn vertex_shader() -> &'static str;
+    fn fragment_shader() -> &'static str;
+    fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor>;
+    fn primitive_topology() -> wgpu::PrimitiveTopology;
+    fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor>;
+    fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor>;
+    fn vertex_buffer_descriptors() -> Vec<wgpu::VertexBufferDescriptor<'static>>;
+}
+
+// bind_group_layout_prefix is a set of bind group layouts to be prefixed onto
+// P::BIND_GROUP_LAYOUT_DESCRIPTORS in order to allow layout reuse between pipelines
+pub fn create_pipeline<'a, P>(
+    device: &wgpu::Device,
+    compiler: &mut shaderc::Compiler,
+    bind_group_layout_prefix: &[wgpu::BindGroupLayout],
+) -> (wgpu::RenderPipeline, Vec<wgpu::BindGroupLayout>)
+where
+    P: Pipeline,
+{
+    info!("Creating {} pipeline", P::name());
+    let bind_group_layouts = P::bind_group_layout_descriptors()
+        .iter()
+        .map(|desc| device.create_bind_group_layout(desc))
+        .collect::<Vec<_>>();
+    info!(
+        "{} layouts in prefix | {} specific to pipeline",
+        bind_group_layout_prefix.len(),
+        bind_group_layouts.len(),
+    );
+
+    let pipeline_layout = {
+        // add bind group layout prefix
+        let layouts: Vec<&wgpu::BindGroupLayout> = bind_group_layout_prefix
+            .iter()
+            .chain(bind_group_layouts.iter())
+            .collect();
+        info!("{} layouts total", layouts.len());
+        let desc = wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts: &layouts,
+        };
+        device.create_pipeline_layout(&desc)
+    };
+
+    let vertex_shader_spirv = compiler
+        .compile_into_spirv(
+            P::vertex_shader().as_ref(),
+            shaderc::ShaderKind::Vertex,
+            &format!("{}.vert", P::name()),
+            "main",
+            None,
+        )
+        .unwrap();
+    let vertex_shader = device.create_shader_module(wgpu::ShaderModuleSource::SpirV(
+        vertex_shader_spirv.as_binary(),
+    ));
+    let fragment_shader_spirv = compiler
+        .compile_into_spirv(
+            P::fragment_shader().as_ref(),
+            shaderc::ShaderKind::Fragment,
+            &format!("{}.frag", P::name()),
+            "main",
+            None,
+        )
+        .unwrap();
+    let fragment_shader = device.create_shader_module(wgpu::ShaderModuleSource::SpirV(
+        fragment_shader_spirv.as_binary(),
+    ));
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        layout: &pipeline_layout,
+        vertex_stage: wgpu::ProgrammableStageDescriptor {
+            module: &vertex_shader,
+            entry_point: "main",
+        },
+        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            module: &fragment_shader,
+            entry_point: "main",
+        }),
+        rasterization_state: P::rasterization_state_descriptor(),
+        primitive_topology: P::primitive_topology(),
+        color_states: &P::color_state_descriptors(),
+        depth_stencil_state: P::depth_stencil_state_descriptor(),
+        vertex_state: wgpu::VertexStateDescriptor {
+            index_format: wgpu::IndexFormat::Uint32,
+            vertex_buffers: &P::vertex_buffer_descriptors(),
+        },
+        sample_count: 1,
+        sample_mask: !0,
+        alpha_to_coverage_enabled: false,
+    });
+
+    (pipeline, bind_group_layouts)
+}
 
 pub fn create_render_pipeline<'a, I, S>(
     device: &wgpu::Device,
@@ -125,7 +264,9 @@ where
             None,
         )
         .unwrap();
-    let vertex_shader = device.create_shader_module(vertex_shader_spirv.as_binary());
+    let vertex_shader = device.create_shader_module(wgpu::ShaderModuleSource::SpirV(
+        vertex_shader_spirv.as_binary(),
+    ));
     let fragment_shader_spirv = compiler
         .compile_into_spirv(
             fragment_shader.as_ref(),
@@ -135,7 +276,9 @@ where
             None,
         )
         .unwrap();
-    let fragment_shader = device.create_shader_module(fragment_shader_spirv.as_binary());
+    let fragment_shader = device.create_shader_module(wgpu::ShaderModuleSource::SpirV(
+        fragment_shader_spirv.as_binary(),
+    ));
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         layout: &pipeline_layout,
@@ -361,6 +504,12 @@ pub struct GraphicsState<'a> {
     brush_texture_uniform_buffer: RefCell<DynamicUniformBuffer<'a, brush::TextureUniforms>>,
     brush_texture_uniform_blocks: Vec<DynamicUniformBufferBlock<'a, brush::TextureUniforms>>,
 
+    glyph_pipeline: wgpu::RenderPipeline,
+    glyph_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    glyph_uniform_buffer: RefCell<DynamicUniformBuffer<'a, glyph::GlyphUniforms>>,
+
+    quad_vertex_buffer: wgpu::Buffer,
+
     sprite_pipeline: wgpu::RenderPipeline,
     sprite_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
     sprite_vertex_buffer: wgpu::Buffer,
@@ -373,6 +522,7 @@ pub struct GraphicsState<'a> {
     default_lightmap_view: wgpu::TextureView,
 
     palette: Palette,
+    gfx_wad: Wad,
 }
 
 impl<'a> GraphicsState<'a> {
@@ -418,6 +568,7 @@ impl<'a> GraphicsState<'a> {
             })
             .collect();
         brush_texture_uniform_buffer.borrow_mut().flush(&queue);
+        let glyph_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
 
         let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: None,
@@ -430,8 +581,9 @@ impl<'a> GraphicsState<'a> {
             // TODO: these are the OpenGL defaults; see if there's a better choice for us
             lod_min_clamp: -1000.0,
             lod_max_clamp: 1000.0,
-            compare: wgpu::CompareFunction::Undefined,
-            anisotropy_clamp: 0,
+            compare: None,
+            anisotropy_clamp: None,
+            ..Default::default()
         });
 
         let lightmap_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -445,8 +597,9 @@ impl<'a> GraphicsState<'a> {
             // TODO: these are the OpenGL defaults; see if there's a better choice for us
             lod_min_clamp: -1000.0,
             lod_max_clamp: 1000.0,
-            compare: wgpu::CompareFunction::Undefined,
-            anisotropy_clamp: 0,
+            compare: None,
+            anisotropy_clamp: None,
+            ..Default::default()
         });
 
         let bind_group_layouts: Vec<wgpu::BindGroupLayout> = BIND_GROUP_LAYOUT_DESCRIPTORS
@@ -472,7 +625,7 @@ impl<'a> GraphicsState<'a> {
                             entity_uniform_buffer
                                 .borrow()
                                 .buffer()
-                                .slice(0..entity_uniform_buffer.borrow().block_size().0),
+                                .slice(0..entity_uniform_buffer.borrow().block_size().get()),
                         ),
                     },
                     wgpu::Binding {
@@ -487,71 +640,25 @@ impl<'a> GraphicsState<'a> {
             }),
         ];
 
-        let alias_bind_group_layouts: Vec<wgpu::BindGroupLayout> =
-            alias::BIND_GROUP_LAYOUT_DESCRIPTORS
-                .iter()
-                .map(|desc| device.create_bind_group_layout(desc))
-                .collect();
-        let alias_pipeline = create_render_pipeline(
-            &device,
-            &mut compiler,
-            "alias",
-            bind_group_layouts
-                .iter()
-                .chain(alias_bind_group_layouts.iter()),
-            alias::VERTEX_SHADER_GLSL,
-            alias::FRAGMENT_SHADER_GLSL,
-            alias::RASTERIZATION_STATE_DESCRIPTOR,
-            alias::PRIMITIVE_TOPOLOGY,
-            &alias::COLOR_STATE_DESCRIPTORS,
-            alias::DEPTH_STENCIL_STATE_DESCRIPTOR,
-            &alias::VERTEX_BUFFER_DESCRIPTORS,
-        );
-
-        let brush_bind_group_layouts = brush::BIND_GROUP_LAYOUT_DESCRIPTORS
-            .iter()
-            .map(|desc| device.create_bind_group_layout(desc))
-            .collect::<Vec<_>>();
-
-        let brush_pipeline = create_render_pipeline(
-            &device,
-            &mut compiler,
-            "brush",
-            bind_group_layouts
-                .iter()
-                .chain(brush_bind_group_layouts.iter()),
-            brush::VERTEX_SHADER_GLSL,
-            brush::FRAGMENT_SHADER_GLSL,
-            brush::RASTERIZATION_STATE_DESCRIPTOR,
-            brush::PRIMITIVE_TOPOLOGY,
-            &brush::COLOR_STATE_DESCRIPTORS,
-            brush::DEPTH_STENCIL_STATE_DESCRIPTOR,
-            &brush::VERTEX_BUFFER_DESCRIPTORS,
-        );
-
-        let sprite_bind_group_layouts = sprite::BIND_GROUP_LAYOUT_DESCRIPTORS
-            .iter()
-            .map(|desc| device.create_bind_group_layout(desc))
-            .collect::<Vec<_>>();
-        let sprite_pipeline = create_render_pipeline(
-            &device,
-            &mut compiler,
-            "sprite",
-            bind_group_layouts
-                .iter()
-                .chain(sprite_bind_group_layouts.iter()),
-            sprite::VERTEX_SHADER_GLSL,
-            sprite::FRAGMENT_SHADER_GLSL,
-            sprite::RASTERIZATION_STATE_DESCRIPTOR,
-            sprite::PRIMITIVE_TOPOLOGY,
-            &sprite::COLOR_STATE_DESCRIPTORS,
-            sprite::DEPTH_STENCIL_STATE_DESCRIPTOR,
-            &sprite::VERTEX_BUFFER_DESCRIPTORS,
-        );
+        let (alias_pipeline, alias_bind_group_layouts) =
+            create_pipeline::<alias::AliasPipeline>(&device, &mut compiler, &bind_group_layouts);
+        let (brush_pipeline, brush_bind_group_layouts) =
+            create_pipeline::<brush::BrushPipeline>(&device, &mut compiler, &bind_group_layouts);
+        let (sprite_pipeline, sprite_bind_group_layouts) =
+            create_pipeline::<sprite::SpritePipeline>(&device, &mut compiler, &bind_group_layouts);
         let sprite_vertex_buffer = device.create_buffer_with_data(
             unsafe { any_slice_as_bytes(&sprite::VERTICES) },
             wgpu::BufferUsage::VERTEX,
         );
+
+        // let (quad_pipeline, quad_bind_group_layouts) =
+        //     create_pipeline::<quad::QuadPipeline>(&device, &mut compiler, &bind_group_layouts);
+        let quad_vertex_buffer = device.create_buffer_with_data(
+            unsafe { any_slice_as_bytes(&quad::VERTICES) },
+            wgpu::BufferUsage::VERTEX,
+        );
+        let (glyph_pipeline, glyph_bind_group_layouts) =
+            create_pipeline::<glyph::GlyphPipeline>(&device, &mut compiler, &[]);
 
         let default_diffuse = create_texture(
             &device,
@@ -609,6 +716,10 @@ impl<'a> GraphicsState<'a> {
             brush_bind_group_layouts,
             brush_texture_uniform_buffer,
             brush_texture_uniform_blocks,
+            glyph_pipeline,
+            glyph_bind_group_layouts,
+            glyph_uniform_buffer,
+            quad_vertex_buffer,
             sprite_pipeline,
             sprite_bind_group_layouts,
             sprite_vertex_buffer,
@@ -621,6 +732,7 @@ impl<'a> GraphicsState<'a> {
             default_lightmap,
             default_lightmap_view,
             palette,
+            gfx_wad,
         })
     }
 
@@ -676,25 +788,6 @@ impl<'a> GraphicsState<'a> {
         self.entity_uniform_buffer.borrow_mut()
     }
 
-    pub fn brush_texture_uniform_buffer(
-        &self,
-    ) -> Ref<DynamicUniformBuffer<'a, brush::TextureUniforms>> {
-        self.brush_texture_uniform_buffer.borrow()
-    }
-
-    pub fn brush_texture_uniform_buffer_mut(
-        &self,
-    ) -> RefMut<DynamicUniformBuffer<'a, brush::TextureUniforms>> {
-        self.brush_texture_uniform_buffer.borrow_mut()
-    }
-
-    pub fn brush_texture_uniform_block(
-        &self,
-        kind: brush::TextureKind,
-    ) -> &DynamicUniformBufferBlock<'a, brush::TextureUniforms> {
-        &self.brush_texture_uniform_blocks[kind as usize]
-    }
-
     pub fn diffuse_sampler(&self) -> &wgpu::Sampler {
         &self.diffuse_sampler
     }
@@ -719,6 +812,8 @@ impl<'a> GraphicsState<'a> {
         &self.alias_bind_group_layouts[id as usize - 2]
     }
 
+    // brush pipeline
+
     pub fn brush_pipeline(&self) -> &wgpu::RenderPipeline {
         &self.brush_pipeline
     }
@@ -730,6 +825,53 @@ impl<'a> GraphicsState<'a> {
     pub fn brush_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
         &self.brush_bind_group_layouts
     }
+
+    pub fn brush_texture_uniform_buffer(
+        &self,
+    ) -> Ref<DynamicUniformBuffer<'a, brush::TextureUniforms>> {
+        self.brush_texture_uniform_buffer.borrow()
+    }
+
+    pub fn brush_texture_uniform_buffer_mut(
+        &self,
+    ) -> RefMut<DynamicUniformBuffer<'a, brush::TextureUniforms>> {
+        self.brush_texture_uniform_buffer.borrow_mut()
+    }
+
+    pub fn brush_texture_uniform_block(
+        &self,
+        kind: brush::TextureKind,
+    ) -> &DynamicUniformBufferBlock<'a, brush::TextureUniforms> {
+        &self.brush_texture_uniform_blocks[kind as usize]
+    }
+
+    // glyph pipeline
+
+    pub fn glyph_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.glyph_pipeline
+    }
+
+    pub fn glyph_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+        &self.glyph_bind_group_layouts
+    }
+
+    pub fn glyph_uniform_buffer(&self) -> Ref<DynamicUniformBuffer<'a, glyph::GlyphUniforms>> {
+        self.glyph_uniform_buffer.borrow()
+    }
+
+    pub fn glyph_uniform_buffer_mut(
+        &self,
+    ) -> RefMut<DynamicUniformBuffer<'a, glyph::GlyphUniforms>> {
+        self.glyph_uniform_buffer.borrow_mut()
+    }
+
+    // quad pipeline(s)
+
+    pub fn quad_vertex_buffer(&self) -> &wgpu::Buffer {
+        &self.quad_vertex_buffer
+    }
+
+    // sprite pipeline
 
     pub fn sprite_pipeline(&self) -> &wgpu::RenderPipeline {
         &self.sprite_pipeline
@@ -750,6 +892,10 @@ impl<'a> GraphicsState<'a> {
     pub fn palette(&self) -> &Palette {
         &self.palette
     }
+
+    pub fn gfx_wad(&self) -> &Wad {
+        &self.gfx_wad
+    }
 }
 
 enum EntityRenderer<'a> {
@@ -765,9 +911,11 @@ pub struct Renderer<'a> {
 
     world_renderer: BrushRenderer<'a>,
     entity_renderers: Vec<EntityRenderer<'a>>,
+    glyph_renderer: GlyphRenderer,
 
     world_uniform_block: DynamicUniformBufferBlock<'a, EntityUniforms>,
     entity_uniform_blocks: RefCell<Vec<DynamicUniformBufferBlock<'a, EntityUniforms>>>,
+    glyph_uniform_blocks: RefCell<Vec<DynamicUniformBufferBlock<'a, GlyphUniforms>>>,
 }
 
 impl<'a> Renderer<'a> {
@@ -826,14 +974,18 @@ impl<'a> Renderer<'a> {
             state: state.clone(),
             world_renderer: world_renderer.unwrap(),
             entity_renderers,
+            glyph_renderer: GlyphRenderer::new(&state),
             world_uniform_block,
             entity_uniform_blocks: RefCell::new(Vec::new()),
+            glyph_uniform_blocks: RefCell::new(Vec::new()),
         }
     }
 
     pub fn update_uniform_buffers<'b, I>(
         &'b self,
         camera: &Camera,
+        display_width: u32,
+        display_height: u32,
         time: Duration,
         entities: I,
         lightstyle_values: &[f32],
@@ -891,12 +1043,40 @@ impl<'a> Renderer<'a> {
         }
 
         self.state.entity_uniform_buffer().flush(self.state.queue());
+
+        trace!("Updating glyph uniform buffer");
+        // TODO: generate actual commands
+        let glyph_commands = vec![GlyphRendererCommand::Text {
+            text: "The Quick Brown Fox Jumps Over The Lazy Dog".to_string(),
+            x: 0,
+            y: 0,
+        }];
+
+        let glyph_uniforms =
+            self.glyph_renderer
+                .generate_uniforms(&glyph_commands, display_width, display_height);
+
+        self.glyph_uniform_blocks.borrow_mut().clear();
+        self.state.glyph_uniform_buffer_mut().clear().unwrap();
+        for (uni_id, uni) in glyph_uniforms.into_iter().enumerate() {
+            if uni_id >= self.glyph_uniform_blocks.borrow().len() {
+                let block = self.state.glyph_uniform_buffer_mut().allocate(uni);
+                self.glyph_uniform_blocks.borrow_mut().push(block);
+            } else {
+                self.state
+                    .glyph_uniform_buffer_mut()
+                    .write_block(&self.glyph_uniform_blocks.borrow()[uni_id], uni);
+            }
+        }
+        self.state.glyph_uniform_buffer_mut().flush(self.state.queue());
     }
 
     pub fn render_pass<'b, I>(
         &'b self,
         color_attachment_view: &wgpu::TextureView,
         camera: &Camera,
+        display_width: u32,
+        display_height: u32,
         time: Duration,
         entities: I,
         lightstyle_values: &[f32],
@@ -912,32 +1092,40 @@ impl<'a> Renderer<'a> {
         let depth_view = self.state.depth_attachment().create_default_view();
         {
             info!("Updating uniform buffers");
-            self.update_uniform_buffers(camera, time, entities.clone(), lightstyle_values);
+            self.update_uniform_buffers(
+                camera,
+                display_width,
+                display_height,
+                time,
+                entities.clone(),
+                lightstyle_values,
+            );
 
             info!("Beginning render pass");
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
                     attachment: color_attachment_view,
                     resolve_target: None,
-                    load_op: wgpu::LoadOp::Clear,
-                    store_op: wgpu::StoreOp::Store,
-                    clear_color: wgpu::Color {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 0.0,
-                        a: 1.0,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: true,
                     },
                 }],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
                     attachment: &depth_view,
-                    depth_load_op: wgpu::LoadOp::Clear,
-                    depth_store_op: wgpu::StoreOp::Store,
-                    depth_read_only: false,
-                    clear_depth: 1.0,
-                    stencil_load_op: wgpu::LoadOp::Load,
-                    stencil_store_op: wgpu::StoreOp::Store,
-                    stencil_read_only: false,
-                    clear_stencil: 0,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: true,
+                    }),
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: true,
+                    }),
                 }),
             });
 
@@ -947,6 +1135,8 @@ impl<'a> Renderer<'a> {
                 &[],
             );
 
+            // draw world
+            info!("Drawing world");
             pass.set_bind_group(
                 BindGroupLayoutId::PerEntity as u32,
                 &self.state.bind_groups[BindGroupLayoutId::PerEntity as usize],
@@ -956,6 +1146,7 @@ impl<'a> Renderer<'a> {
                 .record_draw(&mut pass, &self.world_uniform_block, camera);
 
             // draw entities
+            info!("Drawing entities");
             for (ent_pos, ent) in entities.enumerate() {
                 let model_id = ent.get_model_id();
 
@@ -985,6 +1176,14 @@ impl<'a> Renderer<'a> {
                     // _ => unimplemented!(),
                 }
             }
+
+            // draw text
+            info!("Drawing text");
+            self.glyph_renderer.record_draw(
+                &self.state,
+                &mut pass,
+                &self.glyph_uniform_blocks.borrow(),
+            );
         }
 
         let command_buffer = encoder.finish();

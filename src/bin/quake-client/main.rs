@@ -126,7 +126,7 @@ impl<'a> ClientProgram<'a> {
         )));
         input.borrow_mut().bind_defaults();
 
-        let instance = wgpu::Instance::new();
+        let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
         let surface = unsafe { instance.create_surface(&window) };
         let adapter = instance
             .request_adapter(
@@ -134,17 +134,16 @@ impl<'a> ClientProgram<'a> {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: Some(&surface),
                 },
-                wgpu::BackendBit::PRIMARY,
+                wgpu::UnsafeExtensions::disallow(),
             )
             .await
             .unwrap();
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    extensions: wgpu::Extensions {
-                        anisotropic_filtering: false,
-                    },
+                    extensions: wgpu::Extensions::empty(),
                     limits: wgpu::Limits::default(),
+                    shader_validation: true,
                 },
                 None,
             )
@@ -239,7 +238,7 @@ impl<'a> ClientProgram<'a> {
             ProgramState::Title => unimplemented!(),
             ProgramState::Game(ref mut game) => {
                 let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
-                game.render(&swap_chain_output.output.view, width as f32 / height as f32);
+                game.render(&swap_chain_output.output.view, width, height);
             }
         }
     }

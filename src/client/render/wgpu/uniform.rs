@@ -33,7 +33,7 @@ where
     _phantom: PhantomData<&'a [T]>,
 
     inner: wgpu::Buffer,
-    allocated: Cell<wgpu::BufferSize>,
+    allocated: Cell<u64>,
     update_buf: Vec<u8>,
 }
 
@@ -59,13 +59,14 @@ where
             _rc: RefCell::new(Rc::new(())),
             _phantom: PhantomData,
             inner,
-            allocated: Cell::new(wgpu::BufferSize(0)),
+            allocated: Cell::new(0),
             update_buf,
         }
     }
 
     pub fn block_size(&self) -> wgpu::BufferSize {
-        wgpu::BufferSize((DYNAMIC_UNIFORM_BUFFER_ALIGNMENT.max(size_of::<T>())) as u64)
+        std::num::NonZeroU64::new((DYNAMIC_UNIFORM_BUFFER_ALIGNMENT.max(size_of::<T>())) as u64)
+            .unwrap()
     }
 
     /// Allocates a block of memory in this dynamic uniform buffer with the
@@ -73,8 +74,8 @@ where
     #[must_use]
     pub fn allocate(&mut self, val: T) -> DynamicUniformBufferBlock<'a, T> {
         trace!("Allocating dynamic uniform block");
-        let allocated = self.allocated.get().0;
-        let size = self.block_size().0;
+        let allocated = self.allocated.get();
+        let size = self.block_size().get();
         if allocated + size > DYNAMIC_UNIFORM_BUFFER_SIZE {
             panic!(
                 "Not enough space to allocate {} bytes in dynamic uniform buffer",
@@ -83,7 +84,7 @@ where
         }
 
         let addr = allocated;
-        self.allocated.set(wgpu::BufferSize(allocated + size));
+        self.allocated.set(allocated + size);
 
         let block = DynamicUniformBufferBlock {
             _rc: self._rc.borrow().clone(),
@@ -97,7 +98,7 @@ where
 
     pub fn write_block(&mut self, block: &DynamicUniformBufferBlock<'a, T>, val: T) {
         let start = block.addr as usize;
-        let end = start + self.block_size().0 as usize;
+        let end = start + self.block_size().get() as usize;
         let mut slice = &mut self.update_buf[start..end];
         slice.copy_from_slice(unsafe { any_as_bytes(&val) });
     }
@@ -111,7 +112,7 @@ where
         match Rc::try_unwrap(out) {
             // no outstanding blocks
             Ok(()) => {
-                self.allocated.set(wgpu::BufferSize(0));
+                self.allocated.set(0);
                 Ok(())
             }
             Err(rc) => {

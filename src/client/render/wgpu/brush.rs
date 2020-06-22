@@ -3,7 +3,7 @@ use std::{borrow::Cow, cell::Cell, collections::HashMap, mem::size_of, ops::Rang
 use crate::{
     client::render::wgpu::{
         warp, BindGroupLayoutId, Camera, DynamicUniformBufferBlock, EntityUniforms, GraphicsState,
-        LightmapData, TextureData, COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
+        LightmapData, Pipeline, TextureData, COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
     },
     common::{
         bsp::{self, BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTextureMipmap},
@@ -17,7 +17,69 @@ use failure::Error;
 use num::FromPrimitive;
 use strum_macros::EnumIter;
 
-pub static VERTEX_SHADER_GLSL: &'static str = r#"
+lazy_static! {
+    static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 2] = [
+        vec![
+            // diffuse texture, updated once per face
+            wgpu::BindGroupLayoutEntry::new(
+                0,
+                wgpu::ShaderStage::FRAGMENT,
+                wgpu::BindingType::SampledTexture {
+                    dimension: wgpu::TextureViewDimension::D2,
+                    component_type: wgpu::TextureComponentType::Float,
+                    multisampled: false,
+                },
+            ),
+            // fullbright texture
+            wgpu::BindGroupLayoutEntry::new(
+                1,
+                wgpu::ShaderStage::FRAGMENT,
+                wgpu::BindingType::SampledTexture {
+                    dimension: wgpu::TextureViewDimension::D2,
+                    component_type: wgpu::TextureComponentType::Float,
+                    multisampled: false,
+                },
+            ),
+            // texture kind
+            wgpu::BindGroupLayoutEntry::new(
+                2,
+                wgpu::ShaderStage::all(),
+                wgpu::BindingType::UniformBuffer {
+                    dynamic: true,
+                    min_binding_size:
+                        Some(
+                            std::num::NonZeroU64::new(
+                                size_of::<TextureUniforms>() as u64
+                            )
+                            .unwrap(),
+                        ),
+                },
+            ),
+        ],
+        vec![
+            // lightmap texture
+            wgpu::BindGroupLayoutEntry::new(
+                0,
+                wgpu::ShaderStage::FRAGMENT,
+                wgpu::BindingType::SampledTexture {
+                    dimension: wgpu::TextureViewDimension::D2,
+                    component_type: wgpu::TextureComponentType::Float,
+                    multisampled: false,
+                },
+            ),
+        ],
+    ];
+}
+
+pub struct BrushPipeline;
+
+impl Pipeline for BrushPipeline {
+    fn name() -> &'static str {
+        "brush"
+    }
+
+    fn vertex_shader() -> &'static str {
+        r#"
 #version 450
 
 const uint TEXTURE_KIND_NORMAL = 0;
@@ -65,9 +127,11 @@ void main() {
     gl_Position = entity_uniforms.u_transform * vec4(-a_position.y, a_position.z, -a_position.x, 1.0);
 
 }
-"#;
+"#
+    }
 
-pub static FRAGMENT_SHADER_GLSL: &'static str = r#"
+    fn fragment_shader() -> &'static str {
+        r#"
 #version 450
 #define LIGHTMAP_ANIM_END (255)
 
@@ -153,122 +217,98 @@ void main() {
             break;
     }
 }
-"#;
+"#
+    }
 
-// NOTE: if any of the binding indices are changed, they must also be changed in
-// the corresponding shaders and the BindGroupLayout generation functions.
-// TODO: move diffuse sampler into its own group
-pub const BIND_GROUP_LAYOUT_DESCRIPTORS: [wgpu::BindGroupLayoutDescriptor; 2] = [
-    // group 2: updated per-texture
-    wgpu::BindGroupLayoutDescriptor {
-        label: Some("brush per-texture bind group"),
-        bindings: &[
-            // diffuse texture, updated once per face
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::SampledTexture {
-                    dimension: wgpu::TextureViewDimension::D2,
-                    component_type: wgpu::TextureComponentType::Float,
-                    multisampled: false,
-                },
+    // NOTE: if any of the binding indices are changed, they must also be changed in
+    // the corresponding shaders and the BindGroupLayout generation functions.
+    // TODO: move diffuse sampler into its own group
+    fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
+        vec![
+            // group 2: updated per-texture
+            wgpu::BindGroupLayoutDescriptor {
+                label: Some("brush per-texture bind group"),
+                bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
             },
-            // fullbright texture
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::SampledTexture {
-                    dimension: wgpu::TextureViewDimension::D2,
-                    component_type: wgpu::TextureComponentType::Float,
-                    multisampled: false,
-                },
+            // group 3: updated per-face
+            wgpu::BindGroupLayoutDescriptor {
+                label: Some("brush per-face bind group"),
+                bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[1],
             },
-            // texture kind
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStage::all(),
-                ty: wgpu::BindingType::UniformBuffer { dynamic: true },
-            },
-        ],
-    },
-    // group 3: updated per-face
-    wgpu::BindGroupLayoutDescriptor {
-        label: Some("brush per-face bind group"),
-        bindings: &[
-            // lightmap texture
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::SampledTexture {
-                    dimension: wgpu::TextureViewDimension::D2,
-                    component_type: wgpu::TextureComponentType::Float,
-                    multisampled: false,
-                },
-            },
-        ],
-    },
-];
+        ]
+    }
 
-pub const RASTERIZATION_STATE_DESCRIPTOR: Option<wgpu::RasterizationStateDescriptor> =
-    Some(wgpu::RasterizationStateDescriptor {
-        front_face: wgpu::FrontFace::Cw,
-        cull_mode: wgpu::CullMode::Back,
-        depth_bias: 0,
-        depth_bias_slope_scale: 0.0,
-        depth_bias_clamp: 0.0,
-    });
-pub const PRIMITIVE_TOPOLOGY: wgpu::PrimitiveTopology = wgpu::PrimitiveTopology::TriangleList;
-pub const COLOR_STATE_DESCRIPTORS: [wgpu::ColorStateDescriptor; 1] = [wgpu::ColorStateDescriptor {
-    format: COLOR_ATTACHMENT_FORMAT,
-    alpha_blend: wgpu::BlendDescriptor::REPLACE,
-    color_blend: wgpu::BlendDescriptor::REPLACE,
-    write_mask: wgpu::ColorWrite::ALL,
-}];
-pub const DEPTH_STENCIL_STATE_DESCRIPTOR: Option<wgpu::DepthStencilStateDescriptor> =
-    Some(wgpu::DepthStencilStateDescriptor {
-        format: DEPTH_ATTACHMENT_FORMAT,
-        depth_write_enabled: true,
-        depth_compare: wgpu::CompareFunction::LessEqual,
-        stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-        stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-        stencil_read_mask: 0,
-        stencil_write_mask: 0,
-    });
+    fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {
+        Some(wgpu::RasterizationStateDescriptor {
+            front_face: wgpu::FrontFace::Cw,
+            cull_mode: wgpu::CullMode::Back,
+            depth_bias: 0,
+            depth_bias_slope_scale: 0.0,
+            depth_bias_clamp: 0.0,
+        })
+    }
 
-// NOTE: if the vertex format is changed, this descriptor must also be changed accordingly.
-pub const VERTEX_BUFFER_DESCRIPTORS: [wgpu::VertexBufferDescriptor; 1] =
-    [wgpu::VertexBufferDescriptor {
-        stride: size_of::<BrushVertex>() as u64,
-        step_mode: wgpu::InputStepMode::Vertex,
-        attributes: &[
-            // position
-            wgpu::VertexAttributeDescriptor {
-                offset: 0,
-                format: wgpu::VertexFormat::Float3,
-                shader_location: 0,
-            },
-            // diffuse texcoord
-            wgpu::VertexAttributeDescriptor {
-                offset: size_of::<Position>() as u64,
-                format: wgpu::VertexFormat::Float2,
-                shader_location: 1,
-            },
-            // lightmap texcoord
-            wgpu::VertexAttributeDescriptor {
-                offset: (size_of::<Position>() + size_of::<DiffuseTexcoord>()) as u64,
-                format: wgpu::VertexFormat::Float2,
-                shader_location: 2,
-            },
-            // lightmap animation id(s)
-            wgpu::VertexAttributeDescriptor {
-                offset: (size_of::<Position>()
-                    + size_of::<DiffuseTexcoord>()
-                    + size_of::<LightmapTexcoord>()) as u64,
-                format: wgpu::VertexFormat::Uchar4,
-                shader_location: 3,
-            },
-        ],
-    }];
+    fn primitive_topology() -> wgpu::PrimitiveTopology {
+        wgpu::PrimitiveTopology::TriangleList
+    }
+
+    fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
+        vec![wgpu::ColorStateDescriptor {
+            format: COLOR_ATTACHMENT_FORMAT,
+            alpha_blend: wgpu::BlendDescriptor::REPLACE,
+            color_blend: wgpu::BlendDescriptor::REPLACE,
+            write_mask: wgpu::ColorWrite::ALL,
+        }]
+    }
+
+    fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
+        Some(wgpu::DepthStencilStateDescriptor {
+            format: DEPTH_ATTACHMENT_FORMAT,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+            stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+            stencil_read_mask: 0,
+            stencil_write_mask: 0,
+        })
+    }
+
+    // NOTE: if the vertex format is changed, this descriptor must also be changed accordingly.
+    fn vertex_buffer_descriptors() -> Vec<wgpu::VertexBufferDescriptor<'static>> {
+        vec![wgpu::VertexBufferDescriptor {
+            stride: size_of::<BrushVertex>() as u64,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &[
+                // position
+                wgpu::VertexAttributeDescriptor {
+                    offset: 0,
+                    format: wgpu::VertexFormat::Float3,
+                    shader_location: 0,
+                },
+                // diffuse texcoord
+                wgpu::VertexAttributeDescriptor {
+                    offset: size_of::<Position>() as u64,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 1,
+                },
+                // lightmap texcoord
+                wgpu::VertexAttributeDescriptor {
+                    offset: (size_of::<Position>() + size_of::<DiffuseTexcoord>()) as u64,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 2,
+                },
+                // lightmap animation id(s)
+                wgpu::VertexAttributeDescriptor {
+                    offset: (size_of::<Position>()
+                        + size_of::<DiffuseTexcoord>()
+                        + size_of::<LightmapTexcoord>()) as u64,
+                    format: wgpu::VertexFormat::Uchar4,
+                    shader_location: 3,
+                },
+            ],
+        }]
+    }
+}
 
 fn calculate_lightmap_texcoords(
     position: Vector3<f32>,

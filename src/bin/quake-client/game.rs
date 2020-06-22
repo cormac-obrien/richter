@@ -170,12 +170,6 @@ impl<'a> Game<'a> {
     pub fn frame(&mut self, frame_duration: Duration) {
         self.client.frame(frame_duration).unwrap();
 
-        if let Some(ref mut game_input) = self.input.borrow_mut().game_input_mut() {
-            self.client
-                .handle_input(game_input, frame_duration)
-                .unwrap();
-        }
-
         if let GameState::Loading = self.state {
             println!("loading...");
             // check if we've finished getting server info yet
@@ -192,9 +186,8 @@ impl<'a> Game<'a> {
                 ));
             }
         }
-    }
 
-    pub fn handle_input<T>(&mut self, event: Event<T>) {
+        // update input focus
         match self.state {
             // ignore inputs during loading
             GameState::Loading => return,
@@ -217,16 +210,21 @@ impl<'a> Game<'a> {
             }
         }
 
-        self.input.borrow_mut().handle_event(event).unwrap();
+        if let Some(ref mut game_input) = self.input.borrow_mut().game_input_mut() {
+            self.client
+                .handle_input(game_input, frame_duration)
+                .unwrap();
+        }
     }
 
-    pub fn render(&self, color_attachment_view: &wgpu::TextureView, aspect_ratio: f32) {
+    pub fn render(&self, color_attachment_view: &wgpu::TextureView, width: u32, height: u32) {
         println!("rendering...");
         match self.state {
             // TODO: loading screen
             GameState::Loading => (),
 
             GameState::InGame(ref state) => {
+                let aspect_ratio = width as f32 / height as f32;
                 let fov_x = self.cvars.borrow().get_value("fov").unwrap();
                 let fov_y = math::fov_x_to_fov_y(cgmath::Deg(fov_x), aspect_ratio).unwrap();
                 let perspective = cgmath::perspective(fov_y, aspect_ratio, 4.0, 4096.0);
@@ -241,6 +239,8 @@ impl<'a> Game<'a> {
                 state.renderer.render_pass(
                     color_attachment_view,
                     &camera,
+                    width,
+                    height,
                     self.client.time(),
                     self.client.iter_visible_entities(),
                     self.client.lightstyle_values().unwrap().as_slice(),
