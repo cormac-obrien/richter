@@ -18,6 +18,23 @@ const DYNAMIC_UNIFORM_BUFFER_SIZE: wgpu::BufferAddress = 65536;
 // https://www.khronos.org/registry/vulkan/specs/1.2-extensions/html/vkspec.html#limits-minUniformBufferOffsetAlignment
 pub const DYNAMIC_UNIFORM_BUFFER_ALIGNMENT: usize = 256;
 
+// uniform float array elements are aligned as if they were vec4s
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug)]
+pub struct UniformArrayFloat {
+    value: f32,
+}
+
+impl UniformArrayFloat {
+    pub fn new(value: f32) -> UniformArrayFloat {
+        UniformArrayFloat { value }
+    }
+
+    pub fn get(&self) -> f32 {
+        self.value
+    }
+}
+
 /// A handle to a dynamic uniform buffer on the GPU.
 ///
 /// Allows allocation and updating of individual blocks of memory.
@@ -144,4 +161,25 @@ impl<'a, T> DynamicUniformBufferBlock<'a, T> {
     pub fn offset(&self) -> wgpu::DynamicOffset {
         self.addr as wgpu::DynamicOffset
     }
+}
+
+pub fn clear_and_rewrite<'a, T>(
+    queue: &wgpu::Queue,
+    buffer: &mut DynamicUniformBuffer<'a, T>,
+    blocks: &mut Vec<DynamicUniformBufferBlock<'a, T>>,
+    uniforms: &[T],
+) where
+    T: Pod,
+{
+    blocks.clear();
+    buffer.clear().unwrap();
+    for (uni_id, uni) in uniforms.iter().enumerate() {
+        if uni_id >= blocks.len() {
+            let block = buffer.allocate(*uni);
+            blocks.push(block);
+        } else {
+            buffer.write_block(&blocks[uni_id], *uni);
+        }
+    }
+    buffer.flush(queue);
 }

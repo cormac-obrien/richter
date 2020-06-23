@@ -142,6 +142,30 @@ void main() {
 }
 "#;
 
+pub fn screen_space_vertex_transform(
+    display_w: u32,
+    display_h: u32,
+    quad_w: u32,
+    quad_h: u32,
+    pos_x: i32,
+    pos_y: i32,
+) -> Matrix4<f32> {
+    // find center
+    let center_x = pos_x + quad_w as i32 / 2;
+    let center_y = pos_y + quad_h as i32 / 2;
+
+    // rescale from [0, DISPLAY_*] to [-1, 1] (NDC)
+    // TODO: this may break on APIs other than OpenGL
+    let ndc_x = (center_x * 2 - display_w as i32) as f32 / display_w as f32;
+    let ndc_y = (center_y * 2 - display_h as i32) as f32 / display_h as f32;
+
+    let scale_x = quad_w as f32 / display_w as f32;
+    let scale_y = quad_h as f32 / display_h as f32;
+
+    Matrix4::from_translation([ndc_x, ndc_y, 0.0].into())
+        * Matrix4::from_nonuniform_scale(scale_x, scale_y, 1.0)
+}
+
 /// Shared resources between different renderers.
 pub struct GraphicsPackage {
     palette: Palette,
@@ -738,28 +762,4 @@ where
     )?;
 
     Ok(ret)
-}
-
-pub fn screen_space_vertex_transform(
-    display_w: u32,
-    display_h: u32,
-    quad_w: u32,
-    quad_h: u32,
-    pos_x: i32,
-    pos_y: i32,
-) -> Matrix4<f32> {
-    // find center
-    let center_x = pos_x + quad_w as i32 / 2;
-    let center_y = pos_y + quad_h as i32 / 2;
-
-    // rescale from [0, DISPLAY_*] to [-1, 1] (NDC)
-    // TODO: this may break on APIs other than OpenGL
-    let ndc_x = (center_x * 2 - display_w as i32) as f32 / display_w as f32;
-    let ndc_y = (center_y * 2 - display_h as i32) as f32 / display_h as f32;
-
-    let scale_x = quad_w as f32 / display_w as f32;
-    let scale_y = quad_h as f32 / display_h as f32;
-
-    Matrix4::from_translation([ndc_x, ndc_y, 0.0].into())
-        * Matrix4::from_nonuniform_scale(scale_x, scale_y, 1.0)
 }

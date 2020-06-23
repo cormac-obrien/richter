@@ -27,11 +27,11 @@ use richter::{
     client::{
         input::{Input, InputFocus},
         menu::Menu,
-        render::wgpu::{Camera, GraphicsState, Renderer},
+        render::wgpu::{Camera, GraphicsState, UiOverlay, UiRenderer, UiState, WorldRenderer},
         Client,
     },
     common::{
-        console::{CmdRegistry, CvarRegistry},
+        console::{CmdRegistry, Console, CvarRegistry},
         math,
         net::SignOnStage,
         vfs::Vfs,
@@ -41,7 +41,7 @@ use richter::{
 use cgmath;
 use chrono::Duration;
 use failure::Error;
-use winit::event::Event;
+use log::info;
 
 #[derive(Clone, Copy)]
 enum InGameFocus {
@@ -57,17 +57,18 @@ enum InGameFocus {
 
 struct InGameState<'a> {
     cmds: Rc<RefCell<CmdRegistry>>,
-    renderer: Renderer<'a>,
-    // hud_renderer: HudRenderer,
+    world_renderer: WorldRenderer<'a>,
+    ui_renderer: Rc<UiRenderer<'a>>,
     focus: Rc<Cell<InGameFocus>>,
 }
 
 impl<'a> InGameState<'a> {
     pub fn new(
         cmds: Rc<RefCell<CmdRegistry>>,
-        renderer: Renderer<'a>,
+        world_renderer: WorldRenderer<'a>,
+        ui_renderer: Rc<UiRenderer<'a>>,
         focus: InGameFocus,
-    ) -> InGameState {
+    ) -> InGameState<'a> {
         let focus_rc = Rc::new(Cell::new(focus));
         let toggleconsole_focus = focus_rc.clone();
 
@@ -111,7 +112,8 @@ impl<'a> InGameState<'a> {
 
         InGameState {
             cmds,
-            renderer,
+            world_renderer,
+            ui_renderer,
             focus: focus_rc,
         }
     }
@@ -137,6 +139,7 @@ pub struct Game<'a> {
     cmds: Rc<RefCell<CmdRegistry>>,
     menu: Rc<RefCell<Menu>>,
     gfx_state: Rc<GraphicsState<'a>>,
+    ui_renderer: Rc<UiRenderer<'a>>,
     state: GameState<'a>,
     input: Rc<RefCell<Input>>,
     client: Client,
@@ -149,9 +152,10 @@ impl<'a> Game<'a> {
         cmds: Rc<RefCell<CmdRegistry>>,
         menu: Rc<RefCell<Menu>>,
         gfx_state: Rc<GraphicsState<'a>>,
+        ui_renderer: Rc<UiRenderer<'a>>,
         input: Rc<RefCell<Input>>,
         client: Client,
-    ) -> Result<Game, Error> {
+    ) -> Result<Game<'a>, Error> {
         input.borrow().register_cmds(&mut cmds.borrow_mut());
 
         Ok(Game {
@@ -160,6 +164,7 @@ impl<'a> Game<'a> {
             cmds,
             menu,
             gfx_state,
+            ui_renderer,
             state: GameState::Loading,
             input,
             client,
@@ -176,12 +181,13 @@ impl<'a> Game<'a> {
             if self.client.signon_stage() == SignOnStage::Done {
                 println!("finished loading");
                 // if we have, build renderers
-                let renderer =
-                    Renderer::new(self.client.models().unwrap(), 1, self.gfx_state.clone());
+                let world_renderer =
+                    WorldRenderer::new(self.client.models().unwrap(), 1, self.gfx_state.clone());
 
                 self.state = GameState::InGame(InGameState::new(
                     self.cmds.clone(),
-                    renderer,
+                    world_renderer,
+                    self.ui_renderer.clone(),
                     InGameFocus::Game,
                 ));
             }
@@ -217,7 +223,14 @@ impl<'a> Game<'a> {
         }
     }
 
-    pub fn render(&self, color_attachment_view: &wgpu::TextureView, width: u32, height: u32) {
+    pub fn render(
+        &self,
+        color_attachment_view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        console: &Console,
+        menu: &Menu,
+    ) {
         println!("rendering...");
         match self.state {
             // TODO: loading screen
@@ -235,56 +248,87 @@ impl<'a> Game<'a> {
                     perspective,
                 );
 
-                // render world
-                state.renderer.render_pass(
-                    color_attachment_view,
-                    &camera,
-                    width,
-                    height,
-                    self.client.time(),
-                    self.client.iter_visible_entities(),
-                    self.client.lightstyle_values().unwrap().as_slice(),
-                );
+                info!("Beginning render pass");
+                let mut encoder = self
+                    .gfx_state
+                    .device()
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-                // state
-                //     .hud_renderer
-                //     .render(encoder, &self.client, display_width, display_height)
-                //     .unwrap();
+                let depth_view = self.gfx_state.depth_attachment().create_default_view();
 
-                match state.focus.get() {
-                    // don't need to render anything else
-                    InGameFocus::Game => (),
+                {
+                    // quad_commands must outlive pass
+                    let mut quad_commands = Vec::new();
+                    let mut glyph_commands = Vec::new();
 
-                    // render the console
-                    InGameFocus::Console => {
-                        // self.state
-                        //     .borrow()
-                        //     .console_renderer()
-                        //     .render(
-                        //         encoder,
-                        //         self.state.borrow().pipeline_2d(),
-                        //         &mut data,
-                        //         display_width,
-                        //         display_height,
-                        //         0.5,
-                        //         1.0,
-                        //     )
-                        //     .unwrap();
-                    }
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                            attachment: color_attachment_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    r: 0.0,
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 1.0,
+                                }),
+                                store: true,
+                            },
+                        }],
+                        depth_stencil_attachment: Some(
+                            wgpu::RenderPassDepthStencilAttachmentDescriptor {
+                                attachment: &depth_view,
+                                depth_ops: Some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(1.0),
+                                    store: true,
+                                }),
+                                stencil_ops: Some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Load,
+                                    store: true,
+                                }),
+                            },
+                        ),
+                    });
 
-                    // render the menu
-                    InGameFocus::Menu => {
-                        // self.menu_renderer
-                        //     .render(
-                        //         encoder,
-                        //         self.state.borrow().pipeline_2d(),
-                        //         &mut data,
-                        //         display_width,
-                        //         display_height,
-                        //         0.5,
-                        //     )
-                        //     .unwrap();
-                    }
+                    // render world
+                    state.world_renderer.render_pass(
+                        &mut pass,
+                        &camera,
+                        self.client.time(),
+                        self.client.iter_visible_entities(),
+                        self.client.lightstyle_values().unwrap().as_slice(),
+                    );
+
+                    // state
+                    //     .hud_renderer
+                    //     .render(encoder, &self.client, display_width, display_height)
+                    //     .unwrap();
+
+                    let overlay = match state.focus.get() {
+                        InGameFocus::Game => None,
+                        InGameFocus::Console => Some(UiOverlay::Console(console)),
+                        InGameFocus::Menu => Some(UiOverlay::Menu(menu)),
+                    };
+
+                    let ui_state = UiState::InGame { overlay };
+
+                    self.ui_renderer.render_pass(
+                        &self.gfx_state,
+                        &mut pass,
+                        width,
+                        height,
+                        self.client.time(),
+                        ui_state,
+                        &mut quad_commands,
+                        &mut glyph_commands,
+                    );
+                }
+
+                let command_buffer = encoder.finish();
+                {
+                    let _submit_guard = flame::start_guard("Submit and poll");
+                    self.gfx_state.queue().submit(vec![command_buffer]);
+                    self.gfx_state.device().poll(wgpu::Maintain::Wait);
                 }
             }
         }

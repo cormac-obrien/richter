@@ -2,8 +2,9 @@ use std::{borrow::Cow, cell::Cell, collections::HashMap, mem::size_of, ops::Rang
 
 use crate::{
     client::render::wgpu::{
-        warp, BindGroupLayoutId, Camera, DynamicUniformBufferBlock, EntityUniforms, GraphicsState,
-        LightmapData, Pipeline, TextureData, COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
+        warp, world::BindGroupLayoutId, Camera, DynamicUniformBufferBlock, EntityUniforms,
+        GraphicsState, LightmapData, Pipeline, TextureData, COLOR_ATTACHMENT_FORMAT,
+        DEPTH_ATTACHMENT_FORMAT,
     },
     common::{
         bsp::{self, BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTextureMipmap},
@@ -713,13 +714,9 @@ pub struct BrushRenderer<'a> {
 
 impl<'a> BrushRenderer<'a> {
     /// Record the draw commands for this brush model to the given `wgpu::RenderPass`.
-    ///
-    /// If `pvs` is `Some(set)`, then `set` contains the ids of leaves in the
-    /// Potentially Visible Set, and only those leaves will be drawn.
     pub fn record_draw<'b>(
         &'b self,
         pass: &mut wgpu::RenderPass<'b>,
-        entity_uniform_block: &DynamicUniformBufferBlock<'a, EntityUniforms>,
         camera: &Camera,
     ) {
         let _guard = flame::start_guard("BrushRenderer::record_draw");

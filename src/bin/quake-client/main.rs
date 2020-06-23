@@ -40,7 +40,7 @@ use richter::{
         self,
         input::{Input, InputFocus},
         menu::Menu,
-        render::wgpu::{GraphicsState, COLOR_ATTACHMENT_FORMAT},
+        render::wgpu::{GraphicsState, UiRenderer, COLOR_ATTACHMENT_FORMAT},
         Client,
     },
     common::{
@@ -81,6 +81,7 @@ struct ClientProgram<'a> {
     adapter: wgpu::Adapter,
     swap_chain: RefCell<wgpu::SwapChain>,
     gfx_state: Rc<GraphicsState<'a>>,
+    ui_renderer: Rc<UiRenderer<'a>>,
 
     audio_device: Rc<rodio::Device>,
 
@@ -161,13 +162,17 @@ impl<'a> ClientProgram<'a> {
             },
         ));
 
-        let gfx_state = Rc::new(GraphicsState::new(device, queue, width, height, &vfs).unwrap());
+        let vfs = Rc::new(vfs);
+
+        let gfx_state =
+            Rc::new(GraphicsState::new(device, queue, width, height, vfs.clone()).unwrap());
+        let ui_renderer = Rc::new(UiRenderer::new(&gfx_state));
 
         // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
         console.borrow().stuff_text("exec quake.rc\n");
 
         ClientProgram {
-            vfs: Rc::new(vfs),
+            vfs,
             cvars,
             cmds,
             console,
@@ -179,6 +184,7 @@ impl<'a> ClientProgram<'a> {
             adapter,
             swap_chain,
             gfx_state,
+            ui_renderer,
             audio_device: Rc::new(audio_device),
             state: RefCell::new(ProgramState::Title),
             input,
@@ -208,6 +214,7 @@ impl<'a> ClientProgram<'a> {
                 self.cmds.clone(),
                 self.menu.clone(),
                 self.gfx_state.clone(),
+                self.ui_renderer.clone(),
                 self.input.clone(),
                 cl,
             )
@@ -238,7 +245,13 @@ impl<'a> ClientProgram<'a> {
             ProgramState::Title => unimplemented!(),
             ProgramState::Game(ref mut game) => {
                 let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
-                game.render(&swap_chain_output.output.view, width, height);
+                game.render(
+                    &swap_chain_output.output.view,
+                    width,
+                    height,
+                    &self.console.borrow(),
+                    &self.menu.borrow(),
+                );
             }
         }
     }
