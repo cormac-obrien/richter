@@ -25,12 +25,9 @@ use crate::{
         world::{alias, brush, sprite, EntityUniforms},
     },
     common::{
-        console::Console,
-        engine,
-        sprite::SpriteKind,
-        util::{any_as_bytes, any_slice_as_bytes},
+        util::any_slice_as_bytes,
         vfs::Vfs,
-        wad::{QPic, Wad},
+        wad::Wad,
     },
 };
 
@@ -273,7 +270,7 @@ pub struct GraphicsState<'a> {
 
     glyph_pipeline: wgpu::RenderPipeline,
     glyph_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    glyph_uniform_buffer: RefCell<DynamicUniformBuffer<'a, glyph::GlyphUniforms>>,
+    glyph_instance_buffer: wgpu::Buffer,
 
     quad_pipeline: wgpu::RenderPipeline,
     quad_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
@@ -339,7 +336,6 @@ impl<'a> GraphicsState<'a> {
             })
             .collect();
         brush_texture_uniform_buffer.borrow_mut().flush(&queue);
-        let glyph_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
         let quad_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
 
         let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -439,8 +435,15 @@ impl<'a> GraphicsState<'a> {
             unsafe { any_slice_as_bytes(&quad::VERTICES) },
             wgpu::BufferUsage::VERTEX,
         );
+
         let (glyph_pipeline, glyph_bind_group_layouts) =
             create_pipeline::<glyph::GlyphPipeline>(&device, &mut compiler, &[]);
+        let glyph_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("quad instance buffer"),
+            size: (glyph::GLYPH_MAX_INSTANCES * size_of::<glyph::GlyphInstance>()) as u64,
+            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         let default_diffuse = create_texture(
             &device,
@@ -500,7 +503,7 @@ impl<'a> GraphicsState<'a> {
             brush_texture_uniform_blocks,
             glyph_pipeline,
             glyph_bind_group_layouts,
-            glyph_uniform_buffer,
+            glyph_instance_buffer,
             quad_pipeline,
             quad_bind_group_layouts,
             quad_vertex_buffer,
@@ -645,14 +648,8 @@ impl<'a> GraphicsState<'a> {
         &self.glyph_bind_group_layouts
     }
 
-    pub fn glyph_uniform_buffer(&self) -> Ref<DynamicUniformBuffer<'a, glyph::GlyphUniforms>> {
-        self.glyph_uniform_buffer.borrow()
-    }
-
-    pub fn glyph_uniform_buffer_mut(
-        &self,
-    ) -> RefMut<DynamicUniformBuffer<'a, glyph::GlyphUniforms>> {
-        self.glyph_uniform_buffer.borrow_mut()
+    pub fn glyph_instance_buffer(&self) -> &wgpu::Buffer {
+        &self.glyph_instance_buffer
     }
 
     // quad pipeline(s)

@@ -11,18 +11,43 @@ use crate::{
         render::wgpu::{
             ui::{
                 console::ConsoleRenderer,
-                glyph::{GlyphRenderer, GlyphRendererCommand, GlyphUniforms},
+                glyph::{GlyphInstance, GlyphRenderer, GlyphRendererCommand},
                 quad::{QuadRenderer, QuadRendererCommand, QuadUniforms},
             },
             uniform::{self, DynamicUniformBufferBlock},
             GraphicsState,
         },
     },
-    common::console::Console,
+    common::{console::Console, util::any_slice_as_bytes},
 };
 
-use cgmath::Matrix4;
+use cgmath::{Matrix4, Vector2};
 use chrono::Duration;
+
+pub fn screen_space_vertex_translate(
+    display_w: u32,
+    display_h: u32,
+    pos_x: i32,
+    pos_y: i32,
+) -> Vector2<f32> {
+    // rescale from [0, DISPLAY_*] to [-1, 1] (NDC)
+    Vector2::new(
+        (pos_x * 2 - display_w as i32) as f32 / display_w as f32,
+        (pos_y * 2 - display_h as i32) as f32 / display_h as f32,
+    )
+}
+
+pub fn screen_space_vertex_scale(
+    display_w: u32,
+    display_h: u32,
+    quad_w: u32,
+    quad_h: u32,
+) -> Vector2<f32> {
+    Vector2::new(
+        (quad_w * 2) as f32 / display_w as f32,
+        (quad_h * 2) as f32 / display_h as f32,
+    )
+}
 
 pub fn screen_space_vertex_transform(
     display_w: u32,
@@ -32,12 +57,13 @@ pub fn screen_space_vertex_transform(
     pos_x: i32,
     pos_y: i32,
 ) -> Matrix4<f32> {
-    // rescale from [0, DISPLAY_*] to [-1, 1] (NDC)
-    let ndc_x = (pos_x * 2 - display_w as i32) as f32 / display_w as f32;
-    let ndc_y = (pos_y * 2 - display_h as i32) as f32 / display_h as f32;
+    let Vector2 { x: ndc_x, y: ndc_y } =
+        screen_space_vertex_translate(display_w, display_h, pos_x, pos_y);
 
-    let scale_x = (quad_w * 2) as f32 / display_w as f32;
-    let scale_y = (quad_h * 2) as f32 / display_h as f32;
+    let Vector2 {
+        x: scale_x,
+        y: scale_y,
+    } = screen_space_vertex_scale(display_w, display_h, quad_w, quad_h);
 
     Matrix4::from_translation([ndc_x, ndc_y, 0.0].into())
         * Matrix4::from_nonuniform_scale(scale_x, scale_y, 1.0)
@@ -60,10 +86,7 @@ pub enum UiState<'a> {
 
 pub struct UiRenderer<'a> {
     console_renderer: ConsoleRenderer,
-
     glyph_renderer: GlyphRenderer,
-    glyph_uniform_blocks: RefCell<Vec<DynamicUniformBufferBlock<'a, GlyphUniforms>>>,
-
     quad_renderer: QuadRenderer,
     quad_uniform_blocks: RefCell<Vec<DynamicUniformBufferBlock<'a, QuadUniforms>>>,
 }
@@ -73,7 +96,6 @@ impl<'a> UiRenderer<'a> {
         UiRenderer {
             console_renderer: ConsoleRenderer::new(state),
             glyph_renderer: GlyphRenderer::new(state),
-            glyph_uniform_blocks: RefCell::new(Vec::new()),
             quad_renderer: QuadRenderer::new(state),
             quad_uniform_blocks: RefCell::new(Vec::new()),
         }
@@ -85,24 +107,14 @@ impl<'a> UiRenderer<'a> {
         display_width: u32,
         display_height: u32,
         _time: Duration,
-        quad_commands: &mut Vec<QuadRendererCommand>,
-        glyph_commands: &mut Vec<GlyphRendererCommand>,
+        quad_commands: &[QuadRendererCommand],
     ) {
         trace!("Updating UI uniform buffers");
 
-        let glyph_uniforms =
-            self.glyph_renderer
-                .generate_uniforms(&glyph_commands, display_width, display_height);
         let quad_uniforms =
             self.quad_renderer
-                .generate_uniforms(&quad_commands, display_width, display_height);
+                .generate_uniforms(quad_commands, display_width, display_height);
 
-        uniform::clear_and_rewrite(
-            state.queue(),
-            &mut state.glyph_uniform_buffer_mut(),
-            &mut self.glyph_uniform_blocks.borrow_mut(),
-            &glyph_uniforms,
-        );
         uniform::clear_and_rewrite(
             state.queue(),
             &mut state.quad_uniform_buffer_mut(),
@@ -120,7 +132,7 @@ impl<'a> UiRenderer<'a> {
         time: Duration,
         ui_state: UiState<'pass>,
         quad_commands: &'pass mut Vec<QuadRendererCommand<'pass>>,
-        glyph_commands: &mut Vec<GlyphRendererCommand>,
+        glyph_commands: &'pass mut Vec<GlyphRendererCommand>,
     ) where
         'a: 'pass,
     {
@@ -145,19 +157,21 @@ impl<'a> UiRenderer<'a> {
             }
         }
 
-        self.update_uniform_buffers(
-            state,
-            display_width,
-            display_height,
-            time,
-            quad_commands,
-            glyph_commands,
-        );
+        self.update_uniform_buffers(state, display_width, display_height, time, quad_commands);
+
+        let glyph_instances =
+            self.glyph_renderer
+                .generate_instances(glyph_commands, display_width, display_height);
+        state
+            .queue()
+            .write_buffer(state.glyph_instance_buffer(), 0, unsafe {
+                any_slice_as_bytes(&glyph_instances)
+            });
 
         let quad_blocks = self.quad_uniform_blocks.borrow();
         self.quad_renderer
             .record_draw(state, pass, quad_commands, &quad_blocks);
         self.glyph_renderer
-            .record_draw(state, pass, &self.glyph_uniform_blocks.borrow());
+            .record_draw(state, pass, glyph_instances.len() as u32);
     }
 }

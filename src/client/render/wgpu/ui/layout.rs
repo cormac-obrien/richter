@@ -29,9 +29,16 @@ impl AnchorCoord {
     }
 }
 
+/// An anchor position on a quad.
+///
+/// The anchor specifies which part of the quad should be considered the origin
+/// when positioning the quad, or when positioning quads relative to one another.
 #[derive(Clone, Copy, Debug)]
 pub struct Anchor {
+    /// The x-coordinate of the anchor.
     pub x: AnchorCoord,
+
+    /// The y-coordinate of the anchor.
     pub y: AnchorCoord,
 }
 

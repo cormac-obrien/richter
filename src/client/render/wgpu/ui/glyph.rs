@@ -3,14 +3,14 @@ use std::mem::size_of;
 use crate::client::render::wgpu::{
     ui::{
         layout::{Anchor, ScreenPosition},
-        quad::QuadPipeline,
-        screen_space_vertex_transform,
+        quad::{QuadPipeline, QuadVertex},
+        screen_space_vertex_scale, screen_space_vertex_translate,
     },
     uniform::DynamicUniformBufferBlock,
     GraphicsState, Pipeline, TextureData,
 };
 
-use cgmath::Matrix4;
+use cgmath::{Matrix4, Vector2};
 
 pub const GLYPH_WIDTH: usize = 8;
 pub const GLYPH_HEIGHT: usize = 8;
@@ -20,8 +20,11 @@ const GLYPH_COUNT: usize = GLYPH_ROWS * GLYPH_COLS;
 const GLYPH_TEXTURE_WIDTH: usize = GLYPH_WIDTH * GLYPH_COLS;
 const GLYPH_TEXTURE_HEIGHT: usize = GLYPH_HEIGHT * GLYPH_ROWS;
 
+/// The maximum number of glyphs that can be rendered at once.
+pub const GLYPH_MAX_INSTANCES: usize = 65536;
+
 lazy_static! {
-    static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 2] = [
+    static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 1] = [
         // group 0: constant for all glyph draws
         vec![
             // sampler
@@ -44,29 +47,19 @@ lazy_static! {
                 )
             },
         ],
-
-        // group 1: per-glyph
-        vec![
-            // GlyphUniforms
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::all(),
-                wgpu::BindingType::UniformBuffer {
-                    dynamic: true,
-                    min_binding_size: Some(
-                        std::num::NonZeroU64::new(size_of::<GlyphUniforms>() as u64).unwrap(),
-                    ),
-                },
-            ),
-        ],
     ];
-}
 
-#[repr(C, align(256))]
-#[derive(Clone, Copy, Debug)]
-pub struct GlyphUniforms {
-    transform: Matrix4<f32>,
-    layer: u32,
+    static ref VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES: [Vec<wgpu::VertexAttributeDescriptor>; 2] = [
+        wgpu::vertex_attr_array![
+            0 => Float2, // a_position
+            1 => Float2 // a_texcoord
+        ].to_vec(),
+        wgpu::vertex_attr_array![
+            2 => Float2, // a_instance_position
+            3 => Float2, // a_instance_scale
+            4 => Uint // a_instance_layer
+        ].to_vec(),
+    ];
 }
 
 pub struct GlyphPipeline;
@@ -80,19 +73,22 @@ impl Pipeline for GlyphPipeline {
         r#"
 #version 450
 
+// vertex rate
 layout(location = 0) in vec2 a_position;
 layout(location = 1) in vec2 a_texcoord;
 
-layout(location = 0) out vec2 f_texcoord;
+// instance rate
+layout(location = 2) in vec2 a_instance_position;
+layout(location = 3) in vec2 a_instance_scale;
+layout(location = 4) in uint a_instance_layer;
 
-layout(set = 1, binding = 0) uniform GlyphUniforms {
-    mat4 transform;
-    uint layer;
-} u_glyph;
+layout(location = 0) out vec2 f_texcoord;
+layout(location = 1) out uint f_layer;
 
 void main() {
     f_texcoord = a_texcoord;
-    gl_Position = u_glyph.transform * vec4(a_position, 0.0, 1.0);
+    f_layer = a_instance_layer;
+    gl_Position = vec4(a_instance_scale * a_position + a_instance_position, 0.0, 1.0);
 }
 "#
     }
@@ -102,19 +98,15 @@ void main() {
 #version 450
 
 layout(location = 0) in vec2 f_texcoord;
+layout(location = 1) flat in uint f_layer;
 
 layout(location = 0) out vec4 output_attachment;
 
 layout(set = 0, binding = 0) uniform sampler u_sampler;
 layout(set = 0, binding = 1) uniform texture2D u_texture[256];
 
-layout(set = 1, binding = 0) uniform GlyphUniforms {
-    mat4 transform;
-    uint layer;
-} u_glyph;
-
 void main() {
-    vec4 color = texture(sampler2D(u_texture[u_glyph.layer], u_sampler), f_texcoord);
+    vec4 color = texture(sampler2D(u_texture[f_layer], u_sampler), f_texcoord);
     if (color.a == 0) {
         discard;
     } else {
@@ -125,16 +117,10 @@ void main() {
     }
 
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
-        vec![
-            wgpu::BindGroupLayoutDescriptor {
-                label: Some("glyph constant bind group"),
-                bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
-            },
-            wgpu::BindGroupLayoutDescriptor {
-                label: Some("glyph per_draw bind group"),
-                bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[1],
-            },
-        ]
+        vec![wgpu::BindGroupLayoutDescriptor {
+            label: Some("glyph constant bind group"),
+            bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+        }]
     }
 
     fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {
@@ -154,8 +140,27 @@ void main() {
     }
 
     fn vertex_buffer_descriptors() -> Vec<wgpu::VertexBufferDescriptor<'static>> {
-        QuadPipeline::vertex_buffer_descriptors()
+        vec![
+            wgpu::VertexBufferDescriptor {
+                stride: size_of::<QuadVertex>() as u64,
+                step_mode: wgpu::InputStepMode::Vertex,
+                attributes: &VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES[0],
+            },
+            wgpu::VertexBufferDescriptor {
+                stride: size_of::<GlyphInstance>() as u64,
+                step_mode: wgpu::InputStepMode::Instance,
+                attributes: &VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES[1],
+            },
+        ]
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct GlyphInstance {
+    pub position: Vector2<f32>,
+    pub scale: Vector2<f32>,
+    pub layer: u32,
 }
 
 pub enum GlyphRendererCommand {
@@ -175,7 +180,6 @@ pub struct GlyphRenderer {
     textures: Vec<wgpu::Texture>,
     texture_views: Vec<wgpu::TextureView>,
     const_bind_group: wgpu::BindGroup,
-    per_draw_bind_group: wgpu::BindGroup,
 }
 
 impl GlyphRenderer {
@@ -242,34 +246,20 @@ impl GlyphRenderer {
                 ],
             });
 
-        let per_draw_bind_group = state
-            .device()
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("glyph per-draw bind group"),
-                layout: &state.glyph_bind_group_layouts()[1],
-                bindings: &[wgpu::Binding {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(
-                        state.glyph_uniform_buffer().buffer().slice(..),
-                    ),
-                }],
-            });
-
         GlyphRenderer {
             textures,
             texture_views,
             const_bind_group,
-            per_draw_bind_group,
         }
     }
 
-    pub fn generate_uniforms(
+    pub fn generate_instances(
         &self,
         commands: &[GlyphRendererCommand],
         display_width: u32,
         display_height: u32,
-    ) -> Vec<GlyphUniforms> {
-        let mut uniforms = Vec::new();
+    ) -> Vec<GlyphInstance> {
+        let mut instances = Vec::new();
         for cmd in commands {
             match cmd {
                 GlyphRendererCommand::Glyph {
@@ -282,14 +272,18 @@ impl GlyphRenderer {
                     let x = screen_x - glyph_x;
                     let y = screen_y - glyph_y;
 
-                    uniforms.push(GlyphUniforms {
-                        transform: screen_space_vertex_transform(
+                    instances.push(GlyphInstance {
+                        position: screen_space_vertex_translate(
+                            display_width,
+                            display_height,
+                            x,
+                            y,
+                        ),
+                        scale: screen_space_vertex_scale(
                             display_width,
                             display_height,
                             GLYPH_WIDTH as u32,
                             GLYPH_HEIGHT as u32,
-                            x,
-                            y,
                         ),
                         layer: *glyph_id as u32,
                     });
@@ -300,8 +294,10 @@ impl GlyphRenderer {
                     anchor,
                 } => {
                     let (screen_x, screen_y) = position.to_xy(display_width, display_height);
-                    let (glyph_x, glyph_y) =
-                        anchor.to_xy((text.len() * GLYPH_WIDTH) as u32, GLYPH_HEIGHT as u32);
+                    let (glyph_x, glyph_y) = anchor.to_xy(
+                        (text.chars().count() * GLYPH_WIDTH) as u32,
+                        GLYPH_HEIGHT as u32,
+                    );
                     let x = screen_x - glyph_x;
                     let y = screen_y - glyph_y;
 
@@ -313,14 +309,18 @@ impl GlyphRenderer {
                             break;
                         }
 
-                        uniforms.push(GlyphUniforms {
-                            transform: screen_space_vertex_transform(
+                        instances.push(GlyphInstance {
+                            position: screen_space_vertex_translate(
+                                display_width,
+                                display_height,
+                                abs_x,
+                                y,
+                            ),
+                            scale: screen_space_vertex_scale(
                                 display_width,
                                 display_height,
                                 GLYPH_WIDTH as u32,
                                 GLYPH_HEIGHT as u32,
-                                abs_x,
-                                y,
                             ),
                             layer: chr as u32,
                         });
@@ -329,24 +329,21 @@ impl GlyphRenderer {
             }
         }
 
-        uniforms
+        instances
     }
 
     pub fn record_draw<'a, 'b>(
         &'b self,
         state: &'b GraphicsState<'a>,
         pass: &mut wgpu::RenderPass<'b>,
-        blocks: &[DynamicUniformBufferBlock<'a, GlyphUniforms>],
+        instance_count: u32,
     ) where
         'a: 'b,
     {
         pass.set_pipeline(state.glyph_pipeline());
         pass.set_vertex_buffer(0, state.quad_vertex_buffer().slice(..));
+        pass.set_vertex_buffer(1, state.glyph_instance_buffer().slice(..));
         pass.set_bind_group(0, &self.const_bind_group, &[]);
-
-        for block in blocks {
-            pass.set_bind_group(1, &self.per_draw_bind_group, &[block.offset()]);
-            pass.draw(0..6, 0..1);
-        }
+        pass.draw(0..6, 0..instance_count);
     }
 }

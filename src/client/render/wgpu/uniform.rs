@@ -82,17 +82,22 @@ where
     }
 
     pub fn block_size(&self) -> wgpu::BufferSize {
-        std::num::NonZeroU64::new((DYNAMIC_UNIFORM_BUFFER_ALIGNMENT.max(size_of::<T>())) as u64)
-            .unwrap()
+        std::num::NonZeroU64::new(
+            ((DYNAMIC_UNIFORM_BUFFER_ALIGNMENT / 8).max(size_of::<T>())) as u64,
+        )
+        .unwrap()
     }
 
     /// Allocates a block of memory in this dynamic uniform buffer with the
     /// specified initial value.
     #[must_use]
     pub fn allocate(&mut self, val: T) -> DynamicUniformBufferBlock<'a, T> {
-        trace!("Allocating dynamic uniform block");
         let allocated = self.allocated.get();
         let size = self.block_size().get();
+        trace!(
+            "Allocating dynamic uniform block (allocated: {})",
+            allocated
+        );
         if allocated + size > DYNAMIC_UNIFORM_BUFFER_SIZE {
             panic!(
                 "Not enough space to allocate {} bytes in dynamic uniform buffer",

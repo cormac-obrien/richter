@@ -260,10 +260,66 @@ impl QuadTexture {
     }
 }
 
+/// Specifies what size a quad should be when rendered on the screen.
+#[derive(Clone, Copy, Debug)]
+pub enum QuadSize {
+    /// Render the quad at an exact size in pixels.
+    Absolute {
+        /// The width of the quad in pixels.
+        width: u32,
+
+        /// The height of the quad in pixels.
+        height: u32,
+    },
+
+    /// Render the quad at a size specified relative to the dimensions of its texture.
+    Scale {
+        /// The factor to multiply by the quad's texture dimensions to determine its size.
+        factor: f32,
+    },
+
+    /// Render the quad at a size specified relative to the size of the display.
+    DisplayScale {
+        /// The ratio of the display size at which to render the quad.
+        ratio: f32,
+    },
+}
+
+impl QuadSize {
+    pub fn to_wh(
+        &self,
+        texture_width: u32,
+        texture_height: u32,
+        display_width: u32,
+        display_height: u32,
+    ) -> (u32, u32) {
+        match *self {
+            QuadSize::Absolute { width, height } => (width, height),
+            QuadSize::Scale { factor } => (
+                (texture_width as f32 * factor) as u32,
+                (texture_height as f32 * factor) as u32,
+            ),
+            QuadSize::DisplayScale { ratio } => (
+                (display_width as f32 * ratio) as u32,
+                (display_height as f32 * ratio) as u32,
+            ),
+        }
+    }
+}
+
+/// A command which specifies how a quad should be rendered.
 pub struct QuadRendererCommand<'a> {
+    /// The texture to be mapped to the quad.
     pub texture: &'a QuadTexture,
+
+    /// The position of the quad on the screen.
     pub position: ScreenPosition,
+
+    /// Which part of the quad to position at `position`.
     pub anchor: Anchor,
+
+    /// The size at which to render the quad.
+    pub size: QuadSize,
 }
 
 pub struct QuadRenderer {
@@ -315,19 +371,22 @@ impl QuadRenderer {
                 texture,
                 position,
                 anchor,
+                size,
             } = *cmd;
 
             let (screen_x, screen_y) = position.to_xy(display_width, display_height);
             let (quad_x, quad_y) = anchor.to_xy(texture.width, texture.height);
             let x = screen_x - quad_x;
             let y = screen_y - quad_y;
+            let (quad_width, quad_height) =
+                size.to_wh(texture.width, texture.height, display_width, display_height);
 
             uniforms.push(QuadUniforms {
                 transform: screen_space_vertex_transform(
                     display_width,
                     display_height,
-                    texture.width,
-                    texture.height,
+                    quad_width,
+                    quad_height,
                     x,
                     y,
                 ),

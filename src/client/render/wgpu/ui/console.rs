@@ -3,7 +3,7 @@ use crate::{
         ui::{
             glyph::{GlyphRendererCommand, GLYPH_HEIGHT, GLYPH_WIDTH},
             layout::{Anchor, AnchorCoord, ScreenPosition},
-            quad::{QuadRendererCommand, QuadTexture},
+            quad::{QuadRendererCommand, QuadSize, QuadTexture},
         },
         GraphicsState,
     },
@@ -45,6 +45,7 @@ impl ConsoleRenderer {
             texture: &self.conback,
             position: ScreenPosition::Absolute(console_anchor),
             anchor: Anchor::BOTTOM_LEFT,
+            size: QuadSize::DisplayScale { ratio: 1.0 },
         });
 
         // draw version string
@@ -86,7 +87,7 @@ impl ConsoleRenderer {
                 let position = ScreenPosition::Relative {
                     anchor: console_anchor,
                     x_ofs: PAD_LEFT + (1 + chr_id * GLYPH_WIDTH) as i32,
-                    y_ofs: (line_id * GLYPH_HEIGHT) as i32,
+                    y_ofs: ((line_id + 1) * GLYPH_HEIGHT) as i32,
                 };
 
                 let c = if *chr as u32 > std::u8::MAX as u32 {
