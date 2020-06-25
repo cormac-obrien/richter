@@ -331,21 +331,27 @@ fn main() {
     let audio_device = rodio::default_output_device().unwrap();
 
     let event_loop = EventLoop::new();
-    let window = if cfg!(target_os = "windows") {
-        use winit::platform::windows::WindowBuilderExtWindows as _;
-        winit::window::WindowBuilder::new()
+    let window = {
+        #[cfg(target_os = "windows")]
+        {
+            use winit::platform::windows::WindowBuilderExtWindows as _;
+            winit::window::WindowBuilder::new()
             // disable file drag-and-drop so cpal and winit play nice
-            .with_drag_and_drop(false)
-            .with_title("Richter client")
-            .with_inner_size(winit::dpi::PhysicalSize::<u32>::from((1366u32, 768)))
-            .build(&event_loop)
-            .unwrap()
-    } else {
-        winit::window::WindowBuilder::new()
-            .with_title("Richter client")
-            .with_inner_size(winit::dpi::PhysicalSize::<u32>::from((1366u32, 768)))
-            .build(&event_loop)
-            .unwrap()
+                .with_drag_and_drop(false)
+                .with_title("Richter client")
+                .with_inner_size(winit::dpi::PhysicalSize::<u32>::from((1366u32, 768)))
+                .build(&event_loop)
+                .unwrap()
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            winit::window::WindowBuilder::new()
+                .with_title("Richter client")
+                .with_inner_size(winit::dpi::PhysicalSize::<u32>::from((1366u32, 768)))
+                .build(&event_loop)
+                .unwrap()
+        }
     };
 
     let mut client_program = futures::executor::block_on(ClientProgram::new(window, audio_device));
