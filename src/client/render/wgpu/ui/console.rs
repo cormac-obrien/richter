@@ -2,8 +2,8 @@ use crate::{
     client::render::wgpu::{
         ui::{
             glyph::{GlyphRendererCommand, GLYPH_HEIGHT, GLYPH_WIDTH},
-            layout::{Anchor, AnchorCoord, ScreenPosition},
-            quad::{QuadRendererCommand, QuadSize, QuadTexture},
+            layout::{Anchor, AnchorCoord, Layout, ScreenPosition, Size},
+            quad::{QuadRendererCommand, QuadTexture},
         },
         GraphicsState,
     },
@@ -35,6 +35,9 @@ impl ConsoleRenderer {
     ) {
         // TODO: take screen proportion as a parameter or cvar
         let proportion = 0.5;
+
+        // TODO: take scale as cvar
+        let scale = 2.0;
         let console_anchor = Anchor {
             x: AnchorCoord::Zero,
             y: AnchorCoord::Proportion(1.0 - proportion),
@@ -43,9 +46,11 @@ impl ConsoleRenderer {
         // draw console background
         quad_cmds.push(QuadRendererCommand {
             texture: &self.conback,
-            position: ScreenPosition::Absolute(console_anchor),
-            anchor: Anchor::BOTTOM_LEFT,
-            size: QuadSize::DisplayScale { ratio: 1.0 },
+            layout: Layout {
+                position: ScreenPosition::Absolute(console_anchor),
+                anchor: Anchor::BOTTOM_LEFT,
+                size: Size::DisplayScale { ratio: 1.0 },
+            },
         });
 
         // draw version string
@@ -54,6 +59,7 @@ impl ConsoleRenderer {
             text: version_string,
             position: ScreenPosition::Absolute(console_anchor),
             anchor: Anchor::BOTTOM_RIGHT,
+            scale,
         });
 
         // draw input line
@@ -65,6 +71,7 @@ impl ConsoleRenderer {
                 y_ofs: 0,
             },
             anchor: Anchor::BOTTOM_LEFT,
+            scale,
         });
         glyph_cmds.push(GlyphRendererCommand::Text {
             text: console.get_string(),
@@ -74,6 +81,7 @@ impl ConsoleRenderer {
                 y_ofs: 0,
             },
             anchor: Anchor::BOTTOM_LEFT,
+            scale,
         });
 
         // draw previous output
@@ -104,6 +112,7 @@ impl ConsoleRenderer {
                     glyph_id: c as u8,
                     position,
                     anchor: Anchor::BOTTOM_LEFT,
+                    scale,
                 });
             }
         }

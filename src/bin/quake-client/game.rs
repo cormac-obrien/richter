@@ -27,7 +27,9 @@ use richter::{
     client::{
         input::{Input, InputFocus},
         menu::Menu,
-        render::wgpu::{Camera, GraphicsState, UiOverlay, UiRenderer, UiState, WorldRenderer},
+        render::wgpu::{
+            Camera, GraphicsState, HudState, UiOverlay, UiRenderer, UiState, WorldRenderer,
+        },
         Client,
     },
     common::{
@@ -310,7 +312,15 @@ impl<'a> Game<'a> {
                         InGameFocus::Menu => Some(UiOverlay::Menu(menu)),
                     };
 
-                    let ui_state = UiState::InGame { overlay };
+                    let ui_state = UiState::InGame {
+                        hud: HudState {
+                            items: self.client.items(),
+                            item_pickup_time: self.client.item_get_time(),
+                            stats: self.client.stats(),
+                            face_anim_time: self.client.face_anim_time(),
+                        },
+                        overlay,
+                    };
 
                     self.ui_renderer.render_pass(
                         &self.gfx_state,

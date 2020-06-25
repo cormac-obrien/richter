@@ -3,7 +3,7 @@ use std::mem::size_of;
 use crate::{
     client::render::wgpu::{
         ui::{
-            layout::{Anchor, ScreenPosition},
+            layout::{Anchor, Layout, ScreenPosition, Size},
             screen_space_vertex_transform,
         },
         uniform::DynamicUniformBufferBlock,
@@ -165,7 +165,12 @@ layout(set = 0, binding = 0) uniform sampler quad_sampler;
 layout(set = 1, binding = 0) uniform texture2D quad_texture;
 
 void main() {
-    color_attachment = texture(sampler2D(quad_texture, quad_sampler), f_texcoord);
+    vec4 color = texture(sampler2D(quad_texture, quad_sampler), f_texcoord);
+    if (color.a == 0) {
+        discard;
+    } else {
+        color_attachment = color;
+    }
 }
 "#
     }
@@ -258,52 +263,21 @@ impl QuadTexture {
             height: qpic.height(),
         }
     }
-}
 
-/// Specifies what size a quad should be when rendered on the screen.
-#[derive(Clone, Copy, Debug)]
-pub enum QuadSize {
-    /// Render the quad at an exact size in pixels.
-    Absolute {
-        /// The width of the quad in pixels.
-        width: u32,
+    pub fn width(&self) -> u32 {
+        self.width
+    }
 
-        /// The height of the quad in pixels.
-        height: u32,
-    },
+    pub fn height(&self) -> u32 {
+        self.height
+    }
 
-    /// Render the quad at a size specified relative to the dimensions of its texture.
-    Scale {
-        /// The factor to multiply by the quad's texture dimensions to determine its size.
-        factor: f32,
-    },
+    pub fn scale_width(&self, scale: f32) -> u32 {
+        (self.width as f32 * scale) as u32
+    }
 
-    /// Render the quad at a size specified relative to the size of the display.
-    DisplayScale {
-        /// The ratio of the display size at which to render the quad.
-        ratio: f32,
-    },
-}
-
-impl QuadSize {
-    pub fn to_wh(
-        &self,
-        texture_width: u32,
-        texture_height: u32,
-        display_width: u32,
-        display_height: u32,
-    ) -> (u32, u32) {
-        match *self {
-            QuadSize::Absolute { width, height } => (width, height),
-            QuadSize::Scale { factor } => (
-                (texture_width as f32 * factor) as u32,
-                (texture_height as f32 * factor) as u32,
-            ),
-            QuadSize::DisplayScale { ratio } => (
-                (display_width as f32 * ratio) as u32,
-                (display_height as f32 * ratio) as u32,
-            ),
-        }
+    pub fn scale_height(&self, scale: f32) -> u32 {
+        (self.height as f32 * scale) as u32
     }
 }
 
@@ -312,14 +286,8 @@ pub struct QuadRendererCommand<'a> {
     /// The texture to be mapped to the quad.
     pub texture: &'a QuadTexture,
 
-    /// The position of the quad on the screen.
-    pub position: ScreenPosition,
-
-    /// Which part of the quad to position at `position`.
-    pub anchor: Anchor,
-
-    /// The size at which to render the quad.
-    pub size: QuadSize,
+    /// The layout specifying the size and position of the quad on the screen.
+    pub layout: Layout,
 }
 
 pub struct QuadRenderer {
@@ -369,15 +337,23 @@ impl QuadRenderer {
         for cmd in commands {
             let QuadRendererCommand {
                 texture,
-                position,
-                anchor,
-                size,
+                layout:
+                    Layout {
+                        position,
+                        anchor,
+                        size,
+                    },
             } = *cmd;
 
-            let (screen_x, screen_y) = position.to_xy(display_width, display_height);
+            let scale = match size {
+                Size::Scale { factor } => factor,
+                _ => 1.0,
+            };
+
+            let (screen_x, screen_y) = position.to_xy(display_width, display_height, scale);
             let (quad_x, quad_y) = anchor.to_xy(texture.width, texture.height);
-            let x = screen_x - quad_x;
-            let y = screen_y - quad_y;
+            let x = screen_x - (quad_x as f32 * scale) as i32;
+            let y = screen_y - (quad_y as f32 * scale) as i32;
             let (quad_width, quad_height) =
                 size.to_wh(texture.width, texture.height, display_width, display_height);
 

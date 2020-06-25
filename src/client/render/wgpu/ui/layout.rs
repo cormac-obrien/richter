@@ -1,3 +1,15 @@
+#[derive(Clone, Copy, Debug)]
+pub struct Layout {
+    /// The position of the quad on the screen.
+    pub position: ScreenPosition,
+
+    /// Which part of the quad to position at `position`.
+    pub anchor: Anchor,
+
+    /// The size at which to render the quad.
+    pub size: Size,
+}
+
 /// An anchor coordinate.
 #[derive(Clone, Copy, Debug)]
 pub enum AnchorCoord {
@@ -111,7 +123,7 @@ pub enum ScreenPosition {
 }
 
 impl ScreenPosition {
-    pub fn to_xy(&self, display_width: u32, display_height: u32) -> (i32, i32) {
+    pub fn to_xy(&self, display_width: u32, display_height: u32, scale: f32) -> (i32, i32) {
         match *self {
             ScreenPosition::Absolute(Anchor {
                 x: anchor_x,
@@ -129,8 +141,55 @@ impl ScreenPosition {
                 x_ofs,
                 y_ofs,
             } => (
-                anchor_x.to_value(display_width) + x_ofs,
-                anchor_y.to_value(display_height) + y_ofs,
+                anchor_x.to_value(display_width) + (x_ofs as f32 * scale) as i32,
+                anchor_y.to_value(display_height) + (y_ofs as f32 * scale) as i32,
+            ),
+        }
+    }
+}
+
+/// Specifies what size a quad should be when rendered on the screen.
+#[derive(Clone, Copy, Debug)]
+pub enum Size {
+    /// Render the quad at an exact size in pixels.
+    Absolute {
+        /// The width of the quad in pixels.
+        width: u32,
+
+        /// The height of the quad in pixels.
+        height: u32,
+    },
+
+    /// Render the quad at a size specified relative to the dimensions of its texture.
+    Scale {
+        /// The factor to multiply by the quad's texture dimensions to determine its size.
+        factor: f32,
+    },
+
+    /// Render the quad at a size specified relative to the size of the display.
+    DisplayScale {
+        /// The ratio of the display size at which to render the quad.
+        ratio: f32,
+    },
+}
+
+impl Size {
+    pub fn to_wh(
+        &self,
+        texture_width: u32,
+        texture_height: u32,
+        display_width: u32,
+        display_height: u32,
+    ) -> (u32, u32) {
+        match *self {
+            Size::Absolute { width, height } => (width, height),
+            Size::Scale { factor } => (
+                (texture_width as f32 * factor) as u32,
+                (texture_height as f32 * factor) as u32,
+            ),
+            Size::DisplayScale { ratio } => (
+                (display_width as f32 * ratio) as u32,
+                (display_height as f32 * ratio) as u32,
             ),
         }
     }

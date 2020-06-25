@@ -8,7 +8,7 @@ mod world;
 
 pub use error::{RenderError, RenderErrorKind};
 pub use palette::Palette;
-pub use ui::{UiOverlay, UiRenderer, UiState};
+pub use ui::{hud::HudState, UiOverlay, UiRenderer, UiState};
 pub use world::{Camera, WorldRenderer};
 
 use std::{
@@ -24,11 +24,7 @@ use crate::{
         uniform::{DynamicUniformBuffer, DynamicUniformBufferBlock},
         world::{alias, brush, sprite, EntityUniforms},
     },
-    common::{
-        util::any_slice_as_bytes,
-        vfs::Vfs,
-        wad::Wad,
-    },
+    common::{util::any_slice_as_bytes, vfs::Vfs, wad::Wad},
 };
 
 use cgmath::{Deg, Euler, Matrix4};

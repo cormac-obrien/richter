@@ -1,5 +1,6 @@
 pub mod console;
 pub mod glyph;
+pub mod hud;
 pub mod layout;
 pub mod quad;
 
@@ -11,7 +12,8 @@ use crate::{
         render::wgpu::{
             ui::{
                 console::ConsoleRenderer,
-                glyph::{GlyphInstance, GlyphRenderer, GlyphRendererCommand},
+                glyph::{GlyphRenderer, GlyphRendererCommand},
+                hud::{HudRenderer, HudState},
                 quad::{QuadRenderer, QuadRendererCommand, QuadUniforms},
             },
             uniform::{self, DynamicUniformBufferBlock},
@@ -80,12 +82,14 @@ pub enum UiState<'a> {
     },
     InGame {
         // TODO: stats for hud
+        hud: HudState<'a>,
         overlay: Option<UiOverlay<'a>>,
     },
 }
 
 pub struct UiRenderer<'a> {
     console_renderer: ConsoleRenderer,
+    hud_renderer: HudRenderer,
     glyph_renderer: GlyphRenderer,
     quad_renderer: QuadRenderer,
     quad_uniform_blocks: RefCell<Vec<DynamicUniformBufferBlock<'a, QuadUniforms>>>,
@@ -95,6 +99,7 @@ impl<'a> UiRenderer<'a> {
     pub fn new(state: &GraphicsState<'a>) -> UiRenderer<'a> {
         UiRenderer {
             console_renderer: ConsoleRenderer::new(state),
+            hud_renderer: HudRenderer::new(state),
             glyph_renderer: GlyphRenderer::new(state),
             quad_renderer: QuadRenderer::new(state),
             quad_uniform_blocks: RefCell::new(Vec::new()),
@@ -136,13 +141,19 @@ impl<'a> UiRenderer<'a> {
     ) where
         'a: 'pass,
     {
-        let (hud, overlay): (Option<()>, _) = match ui_state {
+        let (hud_state, overlay) = match ui_state {
             UiState::Title { overlay } => (None, Some(overlay)),
-            UiState::InGame { overlay } => (None, overlay),
+            UiState::InGame { hud, overlay } => (Some(hud), overlay),
         };
 
-        if let Some(_) = hud {
-            // TODO
+        if let Some(hs) = hud_state {
+            self.hud_renderer.generate_commands(
+                state,
+                time,
+                hs,
+                quad_commands,
+                glyph_commands,
+            );
         }
 
         if let Some(o) = overlay {

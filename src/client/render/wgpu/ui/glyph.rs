@@ -168,11 +168,13 @@ pub enum GlyphRendererCommand {
         glyph_id: u8,
         position: ScreenPosition,
         anchor: Anchor,
+        scale: f32,
     },
     Text {
         text: String,
         position: ScreenPosition,
         anchor: Anchor,
+        scale: f32,
     },
 }
 
@@ -266,8 +268,10 @@ impl GlyphRenderer {
                     glyph_id,
                     position,
                     anchor,
+                    scale,
                 } => {
-                    let (screen_x, screen_y) = position.to_xy(display_width, display_height);
+                    let (screen_x, screen_y) =
+                        position.to_xy(display_width, display_height, *scale);
                     let (glyph_x, glyph_y) = anchor.to_xy(GLYPH_WIDTH as u32, GLYPH_HEIGHT as u32);
                     let x = screen_x - glyph_x;
                     let y = screen_y - glyph_y;
@@ -282,8 +286,8 @@ impl GlyphRenderer {
                         scale: screen_space_vertex_scale(
                             display_width,
                             display_height,
-                            GLYPH_WIDTH as u32,
-                            GLYPH_HEIGHT as u32,
+                            (GLYPH_WIDTH as f32 * scale) as u32,
+                            (GLYPH_HEIGHT as f32 * scale) as u32,
                         ),
                         layer: *glyph_id as u32,
                     });
@@ -292,17 +296,19 @@ impl GlyphRenderer {
                     text,
                     position,
                     anchor,
+                    scale,
                 } => {
-                    let (screen_x, screen_y) = position.to_xy(display_width, display_height);
+                    let (screen_x, screen_y) =
+                        position.to_xy(display_width, display_height, *scale);
                     let (glyph_x, glyph_y) = anchor.to_xy(
-                        (text.chars().count() * GLYPH_WIDTH) as u32,
-                        GLYPH_HEIGHT as u32,
+                        ((text.chars().count() * GLYPH_WIDTH) as f32 * scale) as u32,
+                        (GLYPH_HEIGHT as f32 * scale) as u32,
                     );
                     let x = screen_x - glyph_x;
                     let y = screen_y - glyph_y;
 
                     for (chr_id, chr) in text.as_str().chars().enumerate() {
-                        let abs_x = x + (GLYPH_WIDTH * chr_id) as i32;
+                        let abs_x = x + ((GLYPH_WIDTH * chr_id) as f32 * scale) as i32;
 
                         if abs_x >= display_width as i32 {
                             // don't render past the edge of the screen
@@ -319,8 +325,8 @@ impl GlyphRenderer {
                             scale: screen_space_vertex_scale(
                                 display_width,
                                 display_height,
-                                GLYPH_WIDTH as u32,
-                                GLYPH_HEIGHT as u32,
+                                (GLYPH_WIDTH as f32 * scale) as u32,
+                                (GLYPH_HEIGHT as f32 * scale) as u32,
                             ),
                             layer: chr as u32,
                         });

@@ -342,7 +342,7 @@ struct ClientState {
     // cmd: MoveCmd,
     items: ItemFlags,
     item_get_time: [Duration; net::MAX_ITEMS],
-    // face_anim_time: f32,
+    face_anim_time: Duration,
     color_shifts: [Rc<RefCell<ColorShift>>; 4],
     // prev_color_shifts: [ColorShift; 4],
     view: ClientView,
@@ -456,6 +456,7 @@ impl ClientState {
                 })),
             ],
             view: ClientView::new(),
+            face_anim_time: Duration::zero(),
             msg_velocity: [Vector3::zero(), Vector3::zero()],
             velocity: Vector3::zero(),
             on_ground: false,
@@ -1074,7 +1075,7 @@ impl Client {
                     };
 
                     // TODO: face animation
-                    // self.face_anim_time += Duration::from_millis(200);
+                    self.state.face_anim_time = self.state.time + Duration::milliseconds(200);
 
                     let mut cshift =
                         self.state.color_shifts[ColorShiftCode::Damage as usize].borrow_mut();
@@ -1636,8 +1637,8 @@ impl Client {
         }
 
         let server_info = ServerInfo {
-            max_clients: max_clients,
-            game_type: game_type,
+            max_clients,
+            game_type,
         };
 
         new_client_state.max_players = server_info.max_clients as usize;
@@ -1846,7 +1847,10 @@ impl Client {
     }
 
     pub fn iter_visible_entities(&self) -> impl Iterator<Item = &ClientEntity> + Clone {
-        self.state.visible_entity_ids.iter().map(move |i| &self.state.entities[*i])
+        self.state
+            .visible_entity_ids
+            .iter()
+            .map(move |i| &self.state.entities[*i])
     }
 
     pub fn register_cmds(&self, cmds: &mut CmdRegistry) {
@@ -1913,6 +1917,10 @@ impl Client {
 
     pub fn stats(&self) -> &[i32; MAX_STATS] {
         &self.state.stats
+    }
+
+    pub fn face_anim_time(&self) -> Duration {
+        self.state.face_anim_time
     }
 
     pub fn lightstyle_values(&self) -> Result<Vec<f32>, Error> {
