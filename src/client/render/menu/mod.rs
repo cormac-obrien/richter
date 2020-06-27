@@ -71,9 +71,9 @@ impl MenuRenderer {
         // TODO: consider precaching textures we know we'll need
 
         let mut layout = None;
-        if let Some(ref name) = menu.borrow().gfx_name() {
-            layout = Layout::predefined(name);
-        }
+        // if let Some(ref name) = menu.borrow().gfx_name() {
+            // layout = Layout::predefined(name);
+        // }
 
         Ok(MenuRenderer {
             vfs,

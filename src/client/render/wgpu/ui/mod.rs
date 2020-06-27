@@ -2,6 +2,7 @@ pub mod console;
 pub mod glyph;
 pub mod hud;
 pub mod layout;
+pub mod menu;
 pub mod quad;
 
 use std::cell::RefCell;
@@ -14,6 +15,7 @@ use crate::{
                 console::ConsoleRenderer,
                 glyph::{GlyphRenderer, GlyphRendererCommand},
                 hud::{HudRenderer, HudState},
+                menu::MenuRenderer,
                 quad::{QuadRenderer, QuadRendererCommand, QuadUniforms},
             },
             uniform::{self, DynamicUniformBufferBlock},
@@ -81,7 +83,6 @@ pub enum UiState<'a> {
         overlay: UiOverlay<'a>,
     },
     InGame {
-        // TODO: stats for hud
         hud: HudState<'a>,
         overlay: Option<UiOverlay<'a>>,
     },
@@ -89,6 +90,7 @@ pub enum UiState<'a> {
 
 pub struct UiRenderer<'a> {
     console_renderer: ConsoleRenderer,
+    menu_renderer: MenuRenderer,
     hud_renderer: HudRenderer,
     glyph_renderer: GlyphRenderer,
     quad_renderer: QuadRenderer,
@@ -96,9 +98,10 @@ pub struct UiRenderer<'a> {
 }
 
 impl<'a> UiRenderer<'a> {
-    pub fn new(state: &GraphicsState<'a>) -> UiRenderer<'a> {
+    pub fn new(state: &GraphicsState<'a>, menu: &Menu) -> UiRenderer<'a> {
         UiRenderer {
             console_renderer: ConsoleRenderer::new(state),
+            menu_renderer: MenuRenderer::new(state, menu),
             hud_renderer: HudRenderer::new(state),
             glyph_renderer: GlyphRenderer::new(state),
             quad_renderer: QuadRenderer::new(state),
@@ -147,18 +150,19 @@ impl<'a> UiRenderer<'a> {
         };
 
         if let Some(hs) = hud_state {
-            self.hud_renderer.generate_commands(
-                state,
-                time,
-                hs,
-                quad_commands,
-                glyph_commands,
-            );
+            self.hud_renderer
+                .generate_commands(state, time, hs, quad_commands, glyph_commands);
         }
 
         if let Some(o) = overlay {
             match o {
-                UiOverlay::Menu(_) => (), // TODO
+                UiOverlay::Menu(menu) => self.menu_renderer.generate_commands(
+                    state,
+                    menu,
+                    time,
+                    quad_commands,
+                    glyph_commands,
+                ),
                 UiOverlay::Console(console) => self.console_renderer.generate_commands(
                     state,
                     console,

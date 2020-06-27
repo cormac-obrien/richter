@@ -166,7 +166,7 @@ impl<'a> ClientProgram<'a> {
 
         let gfx_state =
             Rc::new(GraphicsState::new(device, queue, width, height, vfs.clone()).unwrap());
-        let ui_renderer = Rc::new(UiRenderer::new(&gfx_state));
+        let ui_renderer = Rc::new(UiRenderer::new(&gfx_state, &menu.borrow()));
 
         // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
         console.borrow().stuff_text("exec quake.rc\n");

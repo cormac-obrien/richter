@@ -26,7 +26,7 @@ use failure::Error;
 
 pub enum Item {
     Submenu(Menu),
-    Action(Box<Fn()>),
+    Action(Box<dyn Fn()>),
     Toggle(Toggle),
     Enum(Enum),
     Slider(Slider),
@@ -35,11 +35,11 @@ pub enum Item {
 
 pub struct Toggle {
     state: Cell<bool>,
-    on_toggle: Box<Fn(bool)>,
+    on_toggle: Box<dyn Fn(bool)>,
 }
 
 impl Toggle {
-    pub fn new(init: bool, on_toggle: Box<Fn(bool)>) -> Toggle {
+    pub fn new(init: bool, on_toggle: Box<dyn Fn(bool)>) -> Toggle {
         let t = Toggle {
             state: Cell::new(init),
             on_toggle,
@@ -107,11 +107,11 @@ impl Enum {
 
 pub struct EnumItem {
     name: String,
-    on_select: Box<Fn()>,
+    on_select: Box<dyn Fn()>,
 }
 
 impl EnumItem {
-    pub fn new<S>(name: S, on_select: Box<Fn()>) -> Result<EnumItem, Error>
+    pub fn new<S>(name: S, on_select: Box<dyn Fn()>) -> Result<EnumItem, Error>
     where
         S: AsRef<str>,
     {
@@ -129,7 +129,7 @@ pub struct Slider {
     steps: usize,
 
     selected: Cell<usize>,
-    on_select: Box<Fn(f32)>,
+    on_select: Box<dyn Fn(f32)>,
 }
 
 impl Slider {
@@ -138,7 +138,7 @@ impl Slider {
         max: f32,
         steps: usize,
         init: usize,
-        on_select: Box<Fn(f32)>,
+        on_select: Box<dyn Fn(f32)>,
     ) -> Result<Slider, Error> {
         ensure!(steps > 1, "Slider must have at least 2 steps");
         ensure!(init < steps, "Invalid initial setting");
@@ -181,7 +181,7 @@ impl Slider {
 pub struct TextField {
     chars: Vec<char>,
     max_len: Option<usize>,
-    on_update: Box<Fn(&str)>,
+    on_update: Box<dyn Fn(&str)>,
     cursor: usize,
 }
 
@@ -189,7 +189,7 @@ impl TextField {
     pub fn new<S>(
         default: Option<S>,
         max_len: Option<usize>,
-        on_update: Box<Fn(&str)>,
+        on_update: Box<dyn Fn(&str)>,
     ) -> Result<TextField, Error>
     where
         S: AsRef<str>,

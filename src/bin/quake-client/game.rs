@@ -301,11 +301,6 @@ impl<'a> Game<'a> {
                         self.client.lightstyle_values().unwrap().as_slice(),
                     );
 
-                    // state
-                    //     .hud_renderer
-                    //     .render(encoder, &self.client, display_width, display_height)
-                    //     .unwrap();
-
                     let overlay = match state.focus.get() {
                         InGameFocus::Game => None,
                         InGameFocus::Console => Some(UiOverlay::Console(console)),
