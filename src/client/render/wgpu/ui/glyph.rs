@@ -272,7 +272,10 @@ impl GlyphRenderer {
                 } => {
                     let (screen_x, screen_y) =
                         position.to_xy(display_width, display_height, *scale);
-                    let (glyph_x, glyph_y) = anchor.to_xy(GLYPH_WIDTH as u32, GLYPH_HEIGHT as u32);
+                    let (glyph_x, glyph_y) = anchor.to_xy(
+                        (GLYPH_WIDTH as f32 * scale) as u32,
+                        (GLYPH_HEIGHT as f32 * scale) as u32,
+                    );
                     let x = screen_x - glyph_x;
                     let y = screen_y - glyph_y;
 

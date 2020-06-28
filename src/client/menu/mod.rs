@@ -162,18 +162,53 @@ impl Menu {
     ///
     /// If this item is an `Action`, executes the function contained in the
     /// `Action`.
+    ///
+    /// Otherwise, this has no effect.
     pub fn activate(&self) -> Result<(), Error> {
         let m = self.active_submenu()?;
 
-        let s = m.state.get().clone();
-        if let MenuState::Active { index } = s {
+        if let MenuState::Active { index } = m.state.get() {
             match m.items[index].item {
                 Item::Submenu(ref submenu) => {
                     m.state.replace(MenuState::InSubMenu { index });
                     submenu.state.replace(MenuState::Active { index: 0 });
                 }
 
-                _ => unimplemented!(),
+                Item::Action(ref action) => (action)(),
+
+                _ => (),
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn left(&self) -> Result<(), Error> {
+        let m = self.active_submenu()?;
+
+        if let MenuState::Active {index}= m.state.get() {
+            match m.items[index].item {
+                Item::Enum(ref e) => e.select_prev(),
+                Item::Slider(ref slider) => slider.decrease(),
+                Item::TextField(ref text) => text.cursor_left(),
+                Item::Toggle(ref toggle) => toggle.set_false(),
+                _ => (),
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn right(&self) -> Result<(), Error> {
+        let m = self.active_submenu()?;
+
+        if let MenuState::Active {index}= m.state.get() {
+            match m.items[index].item {
+                Item::Enum(ref e) => e.select_next(),
+                Item::Slider(ref slider) => slider.increase(),
+                Item::TextField(ref text) => text.cursor_right(),
+                Item::Toggle(ref toggle) => toggle.set_true(),
+                _ => (),
             }
         }
 

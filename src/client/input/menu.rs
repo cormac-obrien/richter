@@ -57,6 +57,8 @@ impl MenuInput {
                     Key::Up => self.menu.borrow().prev()?,
                     Key::Down => self.menu.borrow().next()?,
                     Key::Return => self.menu.borrow().activate()?,
+                    Key::Left => self.menu.borrow().left()?,
+                    Key::Right => self.menu.borrow().right()?,
 
                     _ => (),
                 },
