@@ -138,7 +138,6 @@ pub struct Game<'a> {
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
     menu: Rc<RefCell<Menu>>,
-    gfx_state: Rc<GraphicsState<'a>>,
     ui_renderer: Rc<UiRenderer<'a>>,
     state: GameState<'a>,
     input: Rc<RefCell<Input>>,
@@ -151,7 +150,6 @@ impl<'a> Game<'a> {
         cvars: Rc<RefCell<CvarRegistry>>,
         cmds: Rc<RefCell<CmdRegistry>>,
         menu: Rc<RefCell<Menu>>,
-        gfx_state: Rc<GraphicsState<'a>>,
         ui_renderer: Rc<UiRenderer<'a>>,
         input: Rc<RefCell<Input>>,
         client: Client,
@@ -163,7 +161,6 @@ impl<'a> Game<'a> {
             cvars,
             cmds,
             menu,
-            gfx_state,
             ui_renderer,
             state: GameState::Loading,
             input,
@@ -172,7 +169,7 @@ impl<'a> Game<'a> {
     }
 
     // advance the simulation
-    pub fn frame(&mut self, frame_duration: Duration) {
+    pub fn frame(&mut self, gfx_state: &GraphicsState<'a>, frame_duration: Duration) {
         self.client.frame(frame_duration).unwrap();
 
         if let GameState::Loading = self.state {
@@ -182,9 +179,9 @@ impl<'a> Game<'a> {
                 println!("finished loading");
                 // if we have, build renderers
                 let world_renderer = WorldRenderer::new(
+                    gfx_state,
                     self.client.models().unwrap(),
                     1,
-                    self.gfx_state.clone(),
                     &mut self.cvars.borrow_mut(),
                 );
 
@@ -229,6 +226,7 @@ impl<'a> Game<'a> {
 
     pub fn render(
         &self,
+        gfx_state: &GraphicsState<'a>,
         color_attachment_view: &wgpu::TextureView,
         width: u32,
         height: u32,
@@ -253,18 +251,15 @@ impl<'a> Game<'a> {
                 );
 
                 info!("Beginning render pass");
-                let mut encoder = self
-                    .gfx_state
+                let mut encoder = gfx_state
                     .device()
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-                let depth_view = self
-                    .gfx_state
+                let depth_view = gfx_state
                     .framebuffer()
                     .depth_attachment()
                     .create_default_view();
-                let color_view = self
-                    .gfx_state
+                let color_view = gfx_state
                     .framebuffer()
                     .color_attachment()
                     .create_default_view();
@@ -305,6 +300,7 @@ impl<'a> Game<'a> {
 
                     // render world
                     state.world_renderer.render_pass(
+                        gfx_state,
                         &mut pass,
                         &camera,
                         self.client.time(),
@@ -330,7 +326,7 @@ impl<'a> Game<'a> {
                     };
 
                     self.ui_renderer.render_pass(
-                        &self.gfx_state,
+                        &gfx_state,
                         &mut pass,
                         width,
                         height,
@@ -344,8 +340,8 @@ impl<'a> Game<'a> {
                 let command_buffer = encoder.finish();
                 {
                     let _submit_guard = flame::start_guard("Submit and poll");
-                    self.gfx_state.queue().submit(vec![command_buffer]);
-                    self.gfx_state.device().poll(wgpu::Maintain::Wait);
+                    gfx_state.queue().submit(vec![command_buffer]);
+                    gfx_state.device().poll(wgpu::Maintain::Wait);
                 }
             }
         }

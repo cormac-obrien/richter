@@ -2,7 +2,7 @@ pub mod alias;
 pub mod brush;
 pub mod sprite;
 
-use std::{cell::RefCell, mem::size_of, rc::Rc};
+use std::{cell::RefCell, mem::size_of};
 
 use crate::{
     client::{
@@ -151,19 +151,17 @@ pub struct EntityUniforms {
     transform: Matrix4<f32>,
 }
 
-enum EntityRenderer<'a> {
+enum EntityRenderer {
     Alias(AliasRenderer),
-    Brush(BrushRenderer<'a>),
+    Brush(BrushRenderer),
     Sprite(SpriteRenderer),
     None,
 }
 
 /// Top-level renderer.
 pub struct WorldRenderer<'a> {
-    state: Rc<GraphicsState<'a>>,
-
-    worldmodel_renderer: BrushRenderer<'a>,
-    entity_renderers: Vec<EntityRenderer<'a>>,
+    worldmodel_renderer: BrushRenderer,
+    entity_renderers: Vec<EntityRenderer>,
 
     world_uniform_block: DynamicUniformBufferBlock<'a, EntityUniforms>,
     entity_uniform_blocks: RefCell<Vec<DynamicUniformBufferBlock<'a, EntityUniforms>>>,
@@ -171,9 +169,9 @@ pub struct WorldRenderer<'a> {
 
 impl<'a> WorldRenderer<'a> {
     pub fn new(
+        state: &GraphicsState<'a>,
         models: &[Model],
         worldmodel_id: usize,
-        state: Rc<GraphicsState<'a>>,
         cvars: &mut CvarRegistry,
     ) -> WorldRenderer<'a> {
         let mut worldmodel_renderer = None;
@@ -188,8 +186,8 @@ impl<'a> WorldRenderer<'a> {
                 match *model.kind() {
                     ModelKind::Brush(ref bmodel) => {
                         worldmodel_renderer = Some(
-                            BrushRendererBuilder::new(bmodel, state.clone(), true)
-                                .build()
+                            BrushRendererBuilder::new(bmodel, true)
+                                .build(state)
                                 .unwrap(),
                         );
                     }
@@ -198,13 +196,13 @@ impl<'a> WorldRenderer<'a> {
             } else {
                 match *model.kind() {
                     ModelKind::Alias(ref amodel) => entity_renderers.push(EntityRenderer::Alias(
-                        AliasRenderer::new(state.clone(), amodel).unwrap(),
+                        AliasRenderer::new(state, amodel).unwrap(),
                     )),
 
                     ModelKind::Brush(ref bmodel) => {
                         entity_renderers.push(EntityRenderer::Brush(
-                            BrushRendererBuilder::new(bmodel, state.clone(), false)
-                                .build()
+                            BrushRendererBuilder::new(bmodel, false)
+                                .build(state)
                                 .unwrap(),
                         ));
                     }
@@ -223,7 +221,6 @@ impl<'a> WorldRenderer<'a> {
         }
 
         WorldRenderer {
-            state: state.clone(),
             worldmodel_renderer: worldmodel_renderer.unwrap(),
             entity_renderers,
             world_uniform_block,
@@ -233,6 +230,7 @@ impl<'a> WorldRenderer<'a> {
 
     pub fn update_uniform_buffers<'b, I>(
         &'b self,
+        state: &GraphicsState<'a>,
         camera: &Camera,
         time: Duration,
         entities: I,
@@ -245,9 +243,9 @@ impl<'a> WorldRenderer<'a> {
 
         println!("time = {:?}", engine::duration_to_f32(time));
         trace!("Updating frame uniform buffer");
-        self.state
+        state
             .queue()
-            .write_buffer(self.state.frame_uniform_buffer(), 0, unsafe {
+            .write_buffer(state.frame_uniform_buffer(), 0, unsafe {
                 any_as_bytes(&FrameUniforms {
                     lightmap_anim_frames: {
                         let mut frames = [UniformArrayUint::new(0); 64];
@@ -266,7 +264,7 @@ impl<'a> WorldRenderer<'a> {
         let world_uniforms = EntityUniforms {
             transform: camera.transform(),
         };
-        self.state
+        state
             .entity_uniform_buffer_mut()
             .write_block(&self.world_uniform_block, world_uniforms);
 
@@ -277,23 +275,21 @@ impl<'a> WorldRenderer<'a> {
 
             if ent_pos >= self.entity_uniform_blocks.borrow().len() {
                 // if we don't have enough blocks, get a new one
-                let block = self
-                    .state
-                    .entity_uniform_buffer_mut()
-                    .allocate(ent_uniforms);
+                let block = state.entity_uniform_buffer_mut().allocate(ent_uniforms);
                 self.entity_uniform_blocks.borrow_mut().push(block);
             } else {
-                self.state
+                state
                     .entity_uniform_buffer_mut()
                     .write_block(&self.entity_uniform_blocks.borrow()[ent_pos], ent_uniforms);
             }
         }
 
-        self.state.entity_uniform_buffer().flush(self.state.queue());
+        state.entity_uniform_buffer().flush(state.queue());
     }
 
     pub fn render_pass<'b, I>(
         &'b self,
+        state: &'b GraphicsState<'a>,
         pass: &mut wgpu::RenderPass<'b>,
         camera: &Camera,
         time: Duration,
@@ -306,11 +302,18 @@ impl<'a> WorldRenderer<'a> {
         let _guard = flame::start_guard("Renderer::render_pass");
         {
             info!("Updating uniform buffers");
-            self.update_uniform_buffers(camera, time, entities.clone(), lightstyle_values, cvars);
+            self.update_uniform_buffers(
+                state,
+                camera,
+                time,
+                entities.clone(),
+                lightstyle_values,
+                cvars,
+            );
 
             pass.set_bind_group(
                 BindGroupLayoutId::PerFrame as u32,
-                &self.state.world_bind_groups()[BindGroupLayoutId::PerFrame as usize],
+                &state.world_bind_groups()[BindGroupLayoutId::PerFrame as usize],
                 &[],
             );
 
@@ -318,31 +321,27 @@ impl<'a> WorldRenderer<'a> {
             info!("Drawing world");
             pass.set_bind_group(
                 BindGroupLayoutId::PerEntity as u32,
-                &self.state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
+                &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
                 &[self.world_uniform_block.offset()],
             );
-            self.worldmodel_renderer.record_draw(pass, camera);
+            self.worldmodel_renderer.record_draw(state, pass, camera);
 
             // draw entities
             info!("Drawing entities");
             for (ent_pos, ent) in entities.enumerate() {
                 pass.set_bind_group(
                     BindGroupLayoutId::PerEntity as u32,
-                    &self.state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
+                    &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
                     &[self.entity_uniform_blocks.borrow()[ent_pos].offset()],
                 );
 
                 match self.renderer_for_entity(&ent) {
-                    EntityRenderer::Brush(ref bmodel) => bmodel.record_draw(pass, camera),
-                    EntityRenderer::Alias(ref alias) => alias.record_draw(
-                        &self.state,
-                        pass,
-                        time,
-                        ent.get_frame_id(),
-                        ent.get_skin_id(),
-                    ),
+                    EntityRenderer::Brush(ref bmodel) => bmodel.record_draw(state, pass, camera),
+                    EntityRenderer::Alias(ref alias) => {
+                        alias.record_draw(state, pass, time, ent.get_frame_id(), ent.get_skin_id())
+                    }
                     EntityRenderer::Sprite(ref sprite) => {
-                        sprite.record_draw(&self.state, pass, ent.get_frame_id(), time)
+                        sprite.record_draw(state, pass, ent.get_frame_id(), time)
                     }
                     _ => warn!("non-brush renderers not implemented!"),
                     // _ => unimplemented!(),
@@ -351,7 +350,7 @@ impl<'a> WorldRenderer<'a> {
         }
     }
 
-    fn renderer_for_entity(&self, ent: &ClientEntity) -> &EntityRenderer<'a> {
+    fn renderer_for_entity(&self, ent: &ClientEntity) -> &EntityRenderer {
         // subtract 1 from index because world entity isn't counted
         &self.entity_renderers[ent.get_model_id() - 1]
     }

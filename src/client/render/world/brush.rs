@@ -201,7 +201,7 @@ vec4 blend_light(vec4 color) {
         uint umap = uint(texture(
             sampler2D(u_lightmap_texture[i], u_lightmap_sampler),
             f_lightmap
-        ).r * 255.0);
+        ).r * 255.0) * 2;
         uint ustyle = frame_uniforms.light_anim_frames[f_lightmap_anim[i]];
         uint ulight = umap * ustyle;
         light += float(min(ulight >> 8, 255)) / 256.0;
@@ -417,8 +417,7 @@ where
     }
 }
 
-pub struct BrushRendererBuilder<'a> {
-    state: Rc<GraphicsState<'a>>,
+pub struct BrushRendererBuilder {
     bsp_data: Rc<BspData>,
     face_range: Range<usize>,
 
@@ -435,14 +434,9 @@ pub struct BrushRendererBuilder<'a> {
     //lightmap_views: Vec<wgpu::TextureView>,
 }
 
-impl<'a> BrushRendererBuilder<'a> {
-    pub fn new(
-        bsp_model: &BspModel,
-        state: Rc<GraphicsState<'a>>,
-        worldmodel: bool,
-    ) -> BrushRendererBuilder<'a> {
+impl BrushRendererBuilder {
+    pub fn new(bsp_model: &BspModel, worldmodel: bool) -> BrushRendererBuilder {
         BrushRendererBuilder {
-            state,
             bsp_data: bsp_model.bsp_data().clone(),
             face_range: bsp_model.face_id..bsp_model.face_id + bsp_model.face_count,
             leaves: if worldmodel {
@@ -466,7 +460,11 @@ impl<'a> BrushRendererBuilder<'a> {
         }
     }
 
-    fn create_face<'b>(&'b mut self, face_id: usize) -> BrushFace {
+    fn create_face<'a, 'b>(
+        &'b mut self,
+        state: &'b GraphicsState<'a>,
+        face_id: usize,
+    ) -> BrushFace {
         let face = &self.bsp_data.faces()[face_id];
         let face_vert_id = self.vertices.len();
         let texinfo = &self.bsp_data.texinfo()[face.texinfo_id];
@@ -540,12 +538,8 @@ impl<'a> BrushRendererBuilder<'a> {
                 lightmap: Cow::Borrowed(lightmap.data()),
             });
 
-            let texture = self.state.create_texture(
-                None,
-                lightmap.width(),
-                lightmap.height(),
-                &lightmap_data,
-            );
+            let texture =
+                state.create_texture(None, lightmap.width(), lightmap.height(), &lightmap_data);
 
             let id = self.lightmaps.len();
             self.lightmaps.push(texture);
@@ -563,12 +557,14 @@ impl<'a> BrushRendererBuilder<'a> {
         }
     }
 
-    fn create_per_texture_bind_group(&self, texture_id: usize) -> wgpu::BindGroup {
-        let layout = &self
-            .state
-            .brush_bind_group_layout(BindGroupLayoutId::PerTexture);
+    fn create_per_texture_bind_group<'a>(
+        &self,
+        state: &GraphicsState<'a>,
+        texture_id: usize,
+    ) -> wgpu::BindGroup {
+        let layout = &state.brush_bind_group_layout(BindGroupLayoutId::PerTexture);
         let tex = &self.textures[texture_id];
-        let tex_unif_buf = self.state.brush_texture_uniform_buffer();
+        let tex_unif_buf = state.brush_texture_uniform_buffer();
         let desc = wgpu::BindGroupDescriptor {
             label: Some("per-texture bind group"),
             layout,
@@ -587,19 +583,21 @@ impl<'a> BrushRendererBuilder<'a> {
                 },
             ],
         };
-        self.state.device().create_bind_group(&desc)
+        state.device().create_bind_group(&desc)
     }
 
-    fn create_per_face_bind_group(&self, face_id: usize) -> wgpu::BindGroup {
+    fn create_per_face_bind_group<'a>(
+        &self,
+        state: &GraphicsState<'a>,
+        face_id: usize,
+    ) -> wgpu::BindGroup {
         let mut lightmap_views: Vec<_> = self.faces[face_id]
             .lightmap_ids
             .iter()
             .map(|id| self.lightmaps[*id].create_default_view())
             .collect();
-        lightmap_views.resize_with(4, || self.state.default_lightmap().create_default_view());
-        let layout = &self
-            .state
-            .brush_bind_group_layout(BindGroupLayoutId::PerFace);
+        lightmap_views.resize_with(4, || state.default_lightmap().create_default_view());
+        let layout = &state.brush_bind_group_layout(BindGroupLayoutId::PerFace);
         let desc = wgpu::BindGroupDescriptor {
             label: Some("per-face bind group"),
             layout,
@@ -608,10 +606,10 @@ impl<'a> BrushRendererBuilder<'a> {
                 resource: wgpu::BindingResource::TextureViewArray(&lightmap_views[..]),
             }],
         };
-        self.state.device().create_bind_group(&desc)
+        state.device().create_bind_group(&desc)
     }
 
-    pub fn build(mut self) -> Result<BrushRenderer<'a>, Error> {
+    pub fn build<'a>(mut self, state: &GraphicsState<'a>) -> Result<BrushRenderer, Error> {
         // create the diffuse and fullbright textures
         for (tex_id, tex) in self.bsp_data.textures().iter().enumerate() {
             // let mut diffuses = Vec::new();
@@ -625,16 +623,14 @@ impl<'a> BrushRendererBuilder<'a> {
             //     fullbrights.push(fullbright_data);
             // }
 
-            let (diffuse_data, fullbright_data) = self
-                .state
+            let (diffuse_data, fullbright_data) = state
                 .palette()
                 .translate(tex.mipmap(BspTextureMipmap::from_usize(0).unwrap()));
 
             let (width, height) = tex.dimensions();
             let diffuse =
-                self.state
-                    .create_texture(None, width, height, &TextureData::Diffuse(diffuse_data));
-            let fullbright = self.state.create_texture(
+                state.create_texture(None, width, height, &TextureData::Diffuse(diffuse_data));
+            let fullbright = state.create_texture(
                 None,
                 width,
                 height,
@@ -665,7 +661,7 @@ impl<'a> BrushRendererBuilder<'a> {
             self.textures.push(texture);
 
             // generate texture bind group
-            let per_texture_bind_group = self.create_per_texture_bind_group(tex_id);
+            let per_texture_bind_group = self.create_per_texture_bind_group(state, tex_id);
             self.per_texture_bind_groups.push(per_texture_bind_group);
         }
 
@@ -674,7 +670,7 @@ impl<'a> BrushRendererBuilder<'a> {
         // face_id is the new id of the face in the renderer
         for bsp_face_id in self.face_range.start..self.face_range.end {
             let face_id = self.faces.len();
-            let face = self.create_face(bsp_face_id);
+            let face = self.create_face(state, bsp_face_id);
             self.faces.push(face);
 
             let face_tex_id = self.faces[face_id].texture_id;
@@ -685,17 +681,16 @@ impl<'a> BrushRendererBuilder<'a> {
                 .push(face_id);
 
             // generate face bind group
-            let per_face_bind_group = self.create_per_face_bind_group(face_id);
+            let per_face_bind_group = self.create_per_face_bind_group(state, face_id);
             self.per_face_bind_groups.push(per_face_bind_group);
         }
 
-        let vertex_buffer = self.state.device().create_buffer_with_data(
+        let vertex_buffer = state.device().create_buffer_with_data(
             unsafe { any_slice_as_bytes(self.vertices.as_slice()) },
             wgpu::BufferUsage::VERTEX,
         );
 
         Ok(BrushRenderer {
-            state: self.state,
             bsp_data: self.bsp_data,
             vertex_buffer,
             leaves: self.leaves,
@@ -710,8 +705,7 @@ impl<'a> BrushRendererBuilder<'a> {
     }
 }
 
-pub struct BrushRenderer<'a> {
-    state: Rc<GraphicsState<'a>>,
+pub struct BrushRenderer {
     bsp_data: Rc<BspData>,
 
     leaves: Option<Vec<BrushLeaf>>,
@@ -729,11 +723,16 @@ pub struct BrushRenderer<'a> {
     //lightmap_views: Vec<wgpu::TextureView>,
 }
 
-impl<'a> BrushRenderer<'a> {
+impl BrushRenderer {
     /// Record the draw commands for this brush model to the given `wgpu::RenderPass`.
-    pub fn record_draw<'b>(&'b self, pass: &mut wgpu::RenderPass<'b>, camera: &Camera) {
+    pub fn record_draw<'a, 'b>(
+        &'b self,
+        state: &'b GraphicsState<'a>,
+        pass: &mut wgpu::RenderPass<'b>,
+        camera: &Camera,
+    ) {
         let _guard = flame::start_guard("BrushRenderer::record_draw");
-        pass.set_pipeline(self.state.brush_pipeline());
+        pass.set_pipeline(state.brush_pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
         // if this is a worldmodel, mark faces to be drawn
@@ -755,8 +754,7 @@ impl<'a> BrushRenderer<'a> {
             pass.set_bind_group(
                 BindGroupLayoutId::PerTexture as u32,
                 &self.per_texture_bind_groups[*tex_id],
-                &[self
-                    .state
+                &[state
                     .brush_texture_uniform_block(self.textures[*tex_id].kind)
                     .offset()],
             );

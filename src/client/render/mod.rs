@@ -48,10 +48,10 @@ use crate::{
         uniform::{DynamicUniformBuffer, DynamicUniformBufferBlock},
         world::{alias, brush, sprite, EntityUniforms},
     },
-    common::{console::CvarRegistry, util::any_slice_as_bytes, vfs::Vfs, wad::Wad},
+    common::{util::any_slice_as_bytes, vfs::Vfs, wad::Wad},
 };
 
-use failure::{Error, Fail};
+use failure::Error;
 use strum::IntoEnumIterator;
 
 pub const COLOR_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
@@ -167,6 +167,9 @@ impl<'a> TextureData<'a> {
     }
 }
 
+/// Create a texture suitable for use as a color attachment.
+///
+/// This texture can be resolved using a swap chain texture as its target.
 pub fn create_color_attachment(
     device: &wgpu::Device,
     width: u32,
@@ -188,6 +191,7 @@ pub fn create_color_attachment(
     })
 }
 
+/// Create a texture suitable for use as a depth attachment.
 pub fn create_depth_attachment(
     device: &wgpu::Device,
     width: u32,
@@ -288,6 +292,8 @@ pub struct GraphicsState<'a> {
     diffuse_sampler: wgpu::Sampler,
     lightmap_sampler: wgpu::Sampler,
 
+    sample_count: Cell<u32>,
+
     alias_pipeline: wgpu::RenderPipeline,
     alias_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
 
@@ -309,16 +315,13 @@ pub struct GraphicsState<'a> {
     sprite_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
     sprite_vertex_buffer: wgpu::Buffer,
 
-    default_diffuse: wgpu::Texture,
-    default_diffuse_view: wgpu::TextureView,
-    default_fullbright: wgpu::Texture,
-    default_fullbright_view: wgpu::TextureView,
     default_lightmap: wgpu::Texture,
     default_lightmap_view: wgpu::TextureView,
 
     vfs: Rc<Vfs>,
     palette: Palette,
     gfx_wad: Wad,
+    compiler: RefCell<shaderc::Compiler>,
 }
 
 impl<'a> GraphicsState<'a> {
@@ -465,31 +468,6 @@ impl<'a> GraphicsState<'a> {
             mapped_at_creation: false,
         });
 
-        let default_diffuse = create_texture(
-            &device,
-            &queue,
-            None,
-            2,
-            2,
-            &TextureData::Diffuse(DiffuseData {
-                // taking a page out of Valve's book with the pink-and-black checkerboard
-                rgba: (&[
-                    0xFF, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0xFF,
-                    0x00, 0xFF, 0xFF,
-                ][..])
-                    .into(),
-            }),
-        );
-        let default_fullbright = create_texture(
-            &device,
-            &queue,
-            None,
-            1,
-            1,
-            &TextureData::Fullbright(FullbrightData {
-                fullbright: (&[0xFF][..]).into(),
-            }),
-        );
         let default_lightmap = create_texture(
             &device,
             &queue,
@@ -500,9 +478,6 @@ impl<'a> GraphicsState<'a> {
                 lightmap: (&[0xFF][..]).into(),
             }),
         );
-
-        let default_diffuse_view = default_diffuse.create_default_view();
-        let default_fullbright_view = default_fullbright.create_default_view();
         let default_lightmap_view = default_lightmap.create_default_view();
 
         Ok(GraphicsState {
@@ -514,6 +489,8 @@ impl<'a> GraphicsState<'a> {
 
             world_bind_group_layouts,
             world_bind_groups,
+
+            sample_count: Cell::new(sample_count),
 
             alias_pipeline,
             alias_bind_group_layouts,
@@ -533,15 +510,12 @@ impl<'a> GraphicsState<'a> {
             sprite_vertex_buffer,
             diffuse_sampler,
             lightmap_sampler,
-            default_diffuse,
-            default_diffuse_view,
-            default_fullbright,
-            default_fullbright_view,
             default_lightmap,
             default_lightmap_view,
             vfs,
             palette,
             gfx_wad,
+            compiler: RefCell::new(compiler),
         })
     }
 
@@ -553,6 +527,65 @@ impl<'a> GraphicsState<'a> {
         data: &TextureData,
     ) -> wgpu::Texture {
         create_texture(&self.device, &self.queue, label, width, height, data)
+    }
+
+    pub fn update(&mut self, width: u32, height: u32, sample_count: u32) {
+        self.framebuffer.update(&self.device, width, height, sample_count);
+        if self.sample_count.get() != sample_count {
+            self.sample_count.set(sample_count);
+            self.recreate_pipelines(sample_count);
+        }
+    }
+
+    /// Rebuild all render pipelines using the new sample count.
+    ///
+    /// This must be called when the sample count of the render target(s) changes or the program
+    /// will panic.
+    fn recreate_pipelines(&mut self, sample_count: u32) {
+        let world_bind_group_layouts: Vec<_> = self.world_bind_group_layouts.iter().collect();
+
+        let mut alias_bind_group_layouts = world_bind_group_layouts.clone();
+        alias_bind_group_layouts.extend(self.alias_bind_group_layouts.iter());
+        self.alias_pipeline = alias::AliasPipeline::recreate(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            &alias_bind_group_layouts,
+            sample_count,
+        );
+
+        let mut brush_bind_group_layouts = world_bind_group_layouts.clone();
+        brush_bind_group_layouts.extend(self.brush_bind_group_layouts.iter());
+        self.brush_pipeline = brush::BrushPipeline::recreate(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            &brush_bind_group_layouts,
+            sample_count,
+        );
+
+        let mut sprite_bind_group_layouts = world_bind_group_layouts.clone();
+        sprite_bind_group_layouts.extend(self.sprite_bind_group_layouts.iter());
+        self.sprite_pipeline = sprite::SpritePipeline::recreate(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            &sprite_bind_group_layouts,
+            sample_count,
+        );
+
+        let glyph_bind_group_layouts: Vec<_> = self.glyph_bind_group_layouts.iter().collect();
+        self.glyph_pipeline = glyph::GlyphPipeline::recreate(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            &glyph_bind_group_layouts,
+            sample_count,
+        );
+
+        let quad_bind_group_layouts: Vec<_> = self.quad_bind_group_layouts.iter().collect();
+        self.quad_pipeline = quad::QuadPipeline::recreate(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            &quad_bind_group_layouts,
+            sample_count,
+        );
     }
 
     pub fn device(&self) -> &wgpu::Device {

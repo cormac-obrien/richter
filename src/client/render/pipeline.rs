@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-/// The `Pipeline` trait, which allows render pipelines to defined more-or-less declaratively.
+/// The `Pipeline` trait, which allows render pipelines to be defined more-or-less declaratively.
 
 fn create_shader<S>(
     device: &wgpu::Device,
@@ -154,6 +154,9 @@ pub trait Pipeline {
         (pipeline, bind_group_layouts)
     }
 
+    /// Reconstructs the pipeline using its original bind group layouts and a new sample count.
+    ///
+    /// Pipelines must be reconstructed when the MSAA sample count is changed.
     fn recreate(
         device: &wgpu::Device,
         compiler: &mut shaderc::Compiler,

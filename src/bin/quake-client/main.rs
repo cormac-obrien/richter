@@ -78,7 +78,7 @@ struct ClientProgram<'a> {
     surface: wgpu::Surface,
     adapter: wgpu::Adapter,
     swap_chain: RefCell<wgpu::SwapChain>,
-    gfx_state: Rc<GraphicsState<'a>>,
+    gfx_state: RefCell<GraphicsState<'a>>,
     ui_renderer: Rc<UiRenderer<'a>>,
 
     audio_device: Rc<rodio::Device>,
@@ -166,14 +166,13 @@ impl<'a> ClientProgram<'a> {
         let vfs = Rc::new(vfs);
 
         // TODO: warn user if r_msaa_samples is invalid
-        let mut sample_count = cvars.borrow().get_value("r_msaa_samples").unwrap_or(1.0) as u32;
-        if !&[1, 2, 4, 8, 16].contains(&sample_count) {
-            sample_count = 1;
+        let mut sample_count = cvars.borrow().get_value("r_msaa_samples").unwrap_or(2.0) as u32;
+        if !&[2, 4].contains(&sample_count) {
+            sample_count = 2;
         }
 
-        let gfx_state = Rc::new(
-            GraphicsState::new(device, queue, width, height, sample_count, vfs.clone()).unwrap(),
-        );
+        let gfx_state =
+            GraphicsState::new(device, queue, width, height, sample_count, vfs.clone()).unwrap();
         let ui_renderer = Rc::new(UiRenderer::new(&gfx_state, &menu.borrow()));
 
         // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
@@ -191,7 +190,7 @@ impl<'a> ClientProgram<'a> {
             surface,
             adapter,
             swap_chain,
-            gfx_state,
+            gfx_state: RefCell::new(gfx_state),
             ui_renderer,
             audio_device: Rc::new(audio_device),
             state: RefCell::new(ProgramState::Title),
@@ -221,7 +220,6 @@ impl<'a> ClientProgram<'a> {
                 self.cvars.clone(),
                 self.cmds.clone(),
                 self.menu.clone(),
-                self.gfx_state.clone(),
                 self.ui_renderer.clone(),
                 self.input.clone(),
                 cl,
@@ -233,7 +231,7 @@ impl<'a> ClientProgram<'a> {
     /// Builds a new swap chain with the specified present mode and the window's current dimensions.
     fn recreate_swap_chain(&self, present_mode: wgpu::PresentMode) {
         let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
-        let swap_chain = self.gfx_state.device().create_swap_chain(
+        let swap_chain = self.gfx_state.borrow().device().create_swap_chain(
             &self.surface,
             &wgpu::SwapChainDescriptor {
                 usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
@@ -254,6 +252,7 @@ impl<'a> ClientProgram<'a> {
             ProgramState::Game(ref mut game) => {
                 let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
                 game.render(
+                    &self.gfx_state.borrow(),
                     &swap_chain_output.output.view,
                     width,
                     height,
@@ -296,21 +295,25 @@ impl<'a> Program for ClientProgram<'a> {
         let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
 
         // TODO: warn user if r_msaa_samples is invalid
-        let mut sample_count = self.cvars.borrow().get_value("r_msaa_samples").unwrap_or(1.0) as u32;
-        if !&[1, 2, 4, 8, 16].contains(&sample_count) {
-            sample_count = 1;
+        let mut sample_count = self
+            .cvars
+            .borrow()
+            .get_value("r_msaa_samples")
+            .unwrap_or(2.0) as u32;
+        if !&[2, 4].contains(&sample_count) {
+            sample_count = 2;
         }
 
-        // will only recreate attachments if dims or sample count have changed
+        // recreate attachments and rebuild pipelines if necessary
         self.gfx_state
-            .framebuffer()
-            .update(self.gfx_state.device(), width, height, sample_count);
+            .borrow_mut()
+            .update(width, height, sample_count);
 
         match *self.state.borrow_mut() {
             ProgramState::Title => unimplemented!(),
 
             ProgramState::Game(ref mut game) => {
-                game.frame(frame_duration);
+                game.frame(&self.gfx_state.borrow(), frame_duration);
             }
         }
 

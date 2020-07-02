@@ -258,7 +258,7 @@ pub struct AliasRenderer {
 
 impl AliasRenderer {
     pub fn new<'a>(
-        state: Rc<GraphicsState<'a>>,
+        state: &GraphicsState<'a>,
         alias_model: &AliasModel,
     ) -> Result<AliasRenderer, Error> {
         let mut vertices = Vec::new();
