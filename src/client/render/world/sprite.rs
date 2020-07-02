@@ -1,7 +1,7 @@
 use std::mem::size_of;
 
 use crate::{
-    client::render::wgpu::{
+    client::render::{
         world::BindGroupLayoutId, GraphicsState, Pipeline, TextureData, COLOR_ATTACHMENT_FORMAT,
         DEPTH_ATTACHMENT_FORMAT,
     },

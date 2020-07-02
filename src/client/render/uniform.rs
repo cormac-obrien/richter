@@ -18,20 +18,28 @@ const DYNAMIC_UNIFORM_BUFFER_SIZE: wgpu::BufferAddress = 65536;
 // https://www.khronos.org/registry/vulkan/specs/1.2-extensions/html/vkspec.html#limits-minUniformBufferOffsetAlignment
 pub const DYNAMIC_UNIFORM_BUFFER_ALIGNMENT: usize = 256;
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct UniformBool {
+    value: u32,
+}
+
+impl UniformBool {
+    pub fn new(value: bool) -> UniformBool {
+        UniformBool { value: value as u32 }
+    }
+}
+
 // uniform float array elements are aligned as if they were vec4s
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug)]
-pub struct UniformArrayFloat {
-    value: f32,
+pub struct UniformArrayUint {
+    value: u32,
 }
 
-impl UniformArrayFloat {
-    pub fn new(value: f32) -> UniformArrayFloat {
-        UniformArrayFloat { value }
-    }
-
-    pub fn get(&self) -> f32 {
-        self.value
+impl UniformArrayUint {
+    pub fn new(value: u32) -> UniformArrayUint {
+        UniformArrayUint { value }
     }
 }
 
@@ -121,7 +129,7 @@ where
     pub fn write_block(&mut self, block: &DynamicUniformBufferBlock<'a, T>, val: T) {
         let start = block.addr as usize;
         let end = start + self.block_size().get() as usize;
-        let mut slice = &mut self.update_buf[start..end];
+        let slice = &mut self.update_buf[start..end];
         slice.copy_from_slice(unsafe { any_as_bytes(&val) });
     }
 
@@ -130,7 +138,7 @@ where
     /// Returns an error if the buffer is currently mapped or there are
     /// outstanding allocated blocks.
     pub fn clear(&self) -> Result<(), Error> {
-        let mut out = self._rc.replace(Rc::new(()));
+        let out = self._rc.replace(Rc::new(()));
         match Rc::try_unwrap(out) {
             // no outstanding blocks
             Ok(()) => {

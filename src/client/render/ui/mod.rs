@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use crate::{
     client::{
         menu::Menu,
-        render::wgpu::{
+        render::{
             ui::{
                 console::ConsoleRenderer,
                 glyph::{GlyphRenderer, GlyphRendererCommand},
@@ -149,22 +149,18 @@ impl<'a> UiRenderer<'a> {
             UiState::InGame { hud, overlay } => (Some(hud), overlay),
         };
 
-        if let Some(hs) = hud_state {
+        if let Some(hstate) = hud_state {
             self.hud_renderer
-                .generate_commands(state, time, hs, quad_commands, glyph_commands);
+                .generate_commands(hstate, time, quad_commands, glyph_commands);
         }
 
         if let Some(o) = overlay {
             match o {
-                UiOverlay::Menu(menu) => self.menu_renderer.generate_commands(
-                    state,
-                    menu,
-                    time,
-                    quad_commands,
-                    glyph_commands,
-                ),
+                UiOverlay::Menu(menu) => {
+                    self.menu_renderer
+                        .generate_commands(menu, time, quad_commands, glyph_commands)
+                }
                 UiOverlay::Console(console) => self.console_renderer.generate_commands(
-                    state,
                     console,
                     quad_commands,
                     glyph_commands,

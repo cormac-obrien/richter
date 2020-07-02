@@ -1,7 +1,7 @@
 use std::{borrow::Cow, io::BufReader};
 
 use crate::{
-    client::render::wgpu::{DiffuseData, FullbrightData},
+    client::render::{DiffuseData, FullbrightData},
     common::vfs::Vfs,
 };
 

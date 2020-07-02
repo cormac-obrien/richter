@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    client::render::wgpu::{
+    client::render::{
         glyph::GlyphRendererCommand,
         quad::{QuadRendererCommand, QuadTexture},
         ui::layout::{Anchor, Layout, ScreenPosition, Size},
@@ -274,9 +274,8 @@ impl HudRenderer {
 
     pub fn generate_commands<'state, 'a>(
         &'a self,
-        state: &GraphicsState<'state>,
-        time: Duration,
         hud_state: HudState<'a>,
+        time: Duration,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,
     ) {

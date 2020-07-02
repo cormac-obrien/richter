@@ -24,7 +24,6 @@ mod menu;
 use std::{
     cell::{Cell, RefCell},
     env,
-    fs::File,
     net::ToSocketAddrs,
     path::Path,
     process::exit,
@@ -33,14 +32,13 @@ use std::{
 
 use game::Game;
 
-use cgmath::{Matrix4, SquareMatrix};
 use chrono::Duration;
 use richter::{
     client::{
         self,
         input::{Input, InputFocus},
         menu::Menu,
-        render::wgpu::{GraphicsState, UiRenderer, COLOR_ATTACHMENT_FORMAT},
+        render::{self, GraphicsState, UiRenderer, COLOR_ATTACHMENT_FORMAT},
         Client,
     },
     common::{
@@ -112,7 +110,8 @@ impl<'a> ClientProgram<'a> {
         }
 
         let cvars = Rc::new(RefCell::new(CvarRegistry::new()));
-        client::register_cvars(&cvars.borrow_mut());
+        client::register_cvars(&cvars.borrow());
+        render::register_cvars(&cvars.borrow());
 
         let cmds = Rc::new(RefCell::new(CmdRegistry::new()));
         // TODO: register commands as other subsystems come online
@@ -135,18 +134,20 @@ impl<'a> ClientProgram<'a> {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: Some(&surface),
                 },
-                wgpu::UnsafeExtensions::disallow(),
+                wgpu::UnsafeFeatures::disallow(),
             )
             .await
             .unwrap();
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    extensions: wgpu::Extensions::empty(),
+                    features: wgpu::Features::SAMPLED_TEXTURE_BINDING_ARRAY
+                        | wgpu::Features::SAMPLED_TEXTURE_ARRAY_DYNAMIC_INDEXING
+                        | wgpu::Features::SAMPLED_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
                     limits: wgpu::Limits::default(),
                     shader_validation: true,
                 },
-                None,
+                Some(Path::new("./trace/")),
             )
             .await
             .unwrap();
@@ -164,8 +165,15 @@ impl<'a> ClientProgram<'a> {
 
         let vfs = Rc::new(vfs);
 
-        let gfx_state =
-            Rc::new(GraphicsState::new(device, queue, width, height, vfs.clone()).unwrap());
+        // TODO: warn user if r_msaa_samples is invalid
+        let mut sample_count = cvars.borrow().get_value("r_msaa_samples").unwrap_or(1.0) as u32;
+        if !&[1, 2, 4, 8, 16].contains(&sample_count) {
+            sample_count = 1;
+        }
+
+        let gfx_state = Rc::new(
+            GraphicsState::new(device, queue, width, height, sample_count, vfs.clone()).unwrap(),
+        );
         let ui_renderer = Rc::new(UiRenderer::new(&gfx_state, &menu.borrow()));
 
         // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
@@ -279,13 +287,24 @@ impl<'a> Program for ClientProgram<'a> {
     fn frame(&mut self, frame_duration: Duration) {
         let _guard = flame::start_guard("ClientProgram::frame");
 
+        // recreate swapchain if needed
         if self.window_dimensions_changed.get() {
             self.window_dimensions_changed.set(false);
             self.recreate_swap_chain(wgpu::PresentMode::Immediate);
-
-            let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
-            self.gfx_state.recreate_depth_attachment(width, height);
         }
+
+        let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
+
+        // TODO: warn user if r_msaa_samples is invalid
+        let mut sample_count = self.cvars.borrow().get_value("r_msaa_samples").unwrap_or(1.0) as u32;
+        if !&[1, 2, 4, 8, 16].contains(&sample_count) {
+            sample_count = 1;
+        }
+
+        // will only recreate attachments if dims or sample count have changed
+        self.gfx_state
+            .framebuffer()
+            .update(self.gfx_state.device(), width, height, sample_count);
 
         match *self.state.borrow_mut() {
             ProgramState::Title => unimplemented!(),
@@ -336,7 +355,7 @@ fn main() {
         {
             use winit::platform::windows::WindowBuilderExtWindows as _;
             winit::window::WindowBuilder::new()
-            // disable file drag-and-drop so cpal and winit play nice
+                // disable file drag-and-drop so cpal and winit play nice
                 .with_drag_and_drop(false)
                 .with_title("Richter client")
                 .with_inner_size(winit::dpi::PhysicalSize::<u32>::from((1366u32, 768)))

@@ -1,7 +1,7 @@
 use std::mem::size_of;
 
 use crate::{
-    client::render::wgpu::{
+    client::render::{
         ui::{
             layout::{Anchor, Layout, ScreenPosition, Size},
             screen_space_vertex_transform,
@@ -227,7 +227,9 @@ pub struct QuadUniforms {
 }
 
 pub struct QuadTexture {
+    #[allow(dead_code)]
     texture: wgpu::Texture,
+    #[allow(dead_code)]
     texture_view: wgpu::TextureView,
     bind_group: wgpu::BindGroup,
     width: u32,

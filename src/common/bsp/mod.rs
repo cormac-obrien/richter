@@ -664,6 +664,27 @@ pub struct BspEdgeIndex {
 }
 
 #[derive(Debug)]
+pub struct BspLightmap<'a> {
+    width: u32,
+    height: u32,
+    data: &'a [u8],
+}
+
+impl<'a> BspLightmap<'a> {
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn data(&self) -> &[u8] {
+        self.data
+    }
+}
+
+#[derive(Debug)]
 pub struct BspData {
     pub(crate) planes: Rc<Box<[Hyperplane]>>,
     pub(crate) textures: Box<[BspTexture]>,
@@ -716,6 +737,33 @@ impl BspData {
 
     pub fn face_texinfo(&self, face_id: usize) -> &BspTexInfo {
         &self.texinfo[self.faces[face_id].texinfo_id]
+    }
+
+    pub fn face_lightmaps(&self, face_id: usize) -> Vec<BspLightmap> {
+        let face = &self.faces[face_id];
+        match face.lightmap_id {
+            Some(lightmap_id) => {
+                let lightmap_w = face.extents[0] as u32 / 16 + 1;
+                let lightmap_h = face.extents[1] as u32 / 16 + 1;
+                let lightmap_size = (lightmap_w * lightmap_h) as usize;
+
+                face.light_styles
+                    .iter()
+                    .take_while(|style| **style != 255)
+                    .enumerate()
+                    .map(|(i, _)| {
+                        let start = lightmap_id + lightmap_size * i as usize;
+                        let end = start + lightmap_size;
+                        BspLightmap {
+                            width: lightmap_w,
+                            height: lightmap_h,
+                            data: &self.lightmaps[start..end],
+                        }
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        }
     }
 
     pub fn faces(&self) -> &[BspFace] {

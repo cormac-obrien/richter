@@ -1,16 +1,15 @@
 use std::mem::size_of;
 
-use crate::client::render::wgpu::{
+use crate::client::render::{
     ui::{
         layout::{Anchor, ScreenPosition},
         quad::{QuadPipeline, QuadVertex},
         screen_space_vertex_scale, screen_space_vertex_translate,
     },
-    uniform::DynamicUniformBufferBlock,
     GraphicsState, Pipeline, TextureData,
 };
 
-use cgmath::{Matrix4, Vector2};
+use cgmath::Vector2;
 
 pub const GLYPH_WIDTH: usize = 8;
 pub const GLYPH_HEIGHT: usize = 8;
@@ -18,7 +17,6 @@ const GLYPH_COLS: usize = 16;
 const GLYPH_ROWS: usize = 16;
 const GLYPH_COUNT: usize = GLYPH_ROWS * GLYPH_COLS;
 const GLYPH_TEXTURE_WIDTH: usize = GLYPH_WIDTH * GLYPH_COLS;
-const GLYPH_TEXTURE_HEIGHT: usize = GLYPH_HEIGHT * GLYPH_ROWS;
 
 /// The maximum number of glyphs that can be rendered at once.
 pub const GLYPH_MAX_INSTANCES: usize = 65536;
@@ -96,6 +94,7 @@ void main() {
     fn fragment_shader() -> &'static str {
         r#"
 #version 450
+#extension GL_EXT_nonuniform_qualifier : require
 
 layout(location = 0) in vec2 f_texcoord;
 layout(location = 1) flat in uint f_layer;
@@ -179,17 +178,15 @@ pub enum GlyphRendererCommand {
 }
 
 pub struct GlyphRenderer {
+    #[allow(dead_code)]
     textures: Vec<wgpu::Texture>,
+    #[allow(dead_code)]
     texture_views: Vec<wgpu::TextureView>,
     const_bind_group: wgpu::BindGroup,
 }
 
 impl GlyphRenderer {
     pub fn new(state: &GraphicsState) -> GlyphRenderer {
-        assert!(state
-            .device()
-            .capabilities()
-            .contains(wgpu::Capabilities::SAMPLED_TEXTURE_BINDING_ARRAY));
         let conchars = state.gfx_wad().open_conchars().unwrap();
 
         // TODO: validate conchars dimensions

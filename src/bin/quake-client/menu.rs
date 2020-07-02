@@ -105,12 +105,12 @@ fn build_menu_options() -> Result<Menu, Error> {
         // .add_submenu("Customize controls", unimplemented!())
         .add_action("Go to console", Box::new(|| ()))
         .add_action("Reset to defaults", Box::new(|| ()))
-        .add_slider("Render scale", 0.9, 1.0, 2, 0, Box::new(|_| ()))?
-        .add_slider("Screen Size", 0.0, 1.0, 100, 99, Box::new(|_| ()))?
-        .add_slider("Brightness", 0.0, 1.0, 100, 99, Box::new(|_| ()))?
-        .add_slider("Mouse Speed", 0.0, 1.0, 100, 99, Box::new(|_| ()))?
-        .add_slider("CD music volume", 0.0, 1.0, 100, 99, Box::new(|_| ()))?
-        .add_slider("Sound volume", 0.0, 1.0, 100, 99, Box::new(|_| ()))?
+        .add_slider("Render scale", 0.25, 1.0, 2, 0, Box::new(|_| ()))?
+        .add_slider("Screen Size", 0.0, 1.0, 10, 9, Box::new(|_| ()))?
+        .add_slider("Brightness", 0.0, 1.0, 10, 9, Box::new(|_| ()))?
+        .add_slider("Mouse Speed", 0.0, 1.0, 10, 9, Box::new(|_| ()))?
+        .add_slider("CD music volume", 0.0, 1.0, 10, 9, Box::new(|_| ()))?
+        .add_slider("Sound volume", 0.0, 1.0, 10, 9, Box::new(|_| ()))?
         .add_toggle("Always run", true, Box::new(|_| ()))
         .add_toggle("Invert mouse", false, Box::new(|_| ()))
         .add_toggle("Lookspring", false, Box::new(|_| ()))

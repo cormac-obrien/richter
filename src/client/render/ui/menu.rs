@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
     client::{
         menu::{Item, Menu, MenuBodyView, MenuState, NamedMenuItem},
-        render::wgpu::{
+        render::{
             ui::{
                 glyph::{GlyphRendererCommand, GLYPH_HEIGHT, GLYPH_WIDTH},
                 layout::{Anchor, Layout, ScreenPosition, Size},
@@ -91,12 +91,11 @@ impl MenuRenderer {
         }
     }
 
-    fn texture<'state, S>(&self, state: &GraphicsState<'state>, name: S) -> &QuadTexture
+    fn texture<'state, S>(&self, name: S) -> &QuadTexture
     where
         S: AsRef<str>,
     {
         debug!("Fetch texture {}", name.as_ref());
-        let qpic = QPic::load(state.vfs().open(name.as_ref()).unwrap()).unwrap();
         self.textures.get(name.as_ref()).unwrap()
     }
 
@@ -145,30 +144,27 @@ impl MenuRenderer {
 
     fn cmd_draw_plaque<'state, 'a>(
         &'a self,
-        state: &GraphicsState<'state>,
         scale: f32,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
     ) {
-        let plaque = self.texture(&state, "gfx/qplaque.lmp");
+        let plaque = self.texture("gfx/qplaque.lmp");
         self.cmd_draw_quad(plaque, Align::Left, 16, 4, scale, quad_cmds);
     }
 
     fn cmd_draw_title<'state, 'a, S>(
         &'a self,
-        state: &GraphicsState<'state>,
         name: S,
         scale: f32,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
     ) where
         S: AsRef<str>,
     {
-        let title = self.texture(state, name.as_ref());
+        let title = self.texture(name.as_ref());
         self.cmd_draw_quad(title, Align::Center, 0, 4, scale, quad_cmds);
     }
 
     fn cmd_draw_body_predef<'state, 'a, S>(
         &'a self,
-        state: &GraphicsState<'state>,
         name: S,
         cursor_pos: usize,
         time: Duration,
@@ -177,10 +173,10 @@ impl MenuRenderer {
     ) where
         S: AsRef<str>,
     {
-        let predef = self.texture(state, name.as_ref());
+        let predef = self.texture(name.as_ref());
         self.cmd_draw_quad(predef, Align::Left, 72, -32, scale, quad_cmds);
         let curs_frame = (time.num_milliseconds() / 100) % 6;
-        let curs = self.texture(state, &format!("gfx/menudot{}.lmp", curs_frame + 1));
+        let curs = self.texture(&format!("gfx/menudot{}.lmp", curs_frame + 1));
         self.cmd_draw_quad(
             curs,
             Align::Left,
@@ -254,7 +250,6 @@ impl MenuRenderer {
 
     fn cmd_draw_body_dynamic<'state>(
         &self,
-        state: &GraphicsState<'state>,
         items: &[NamedMenuItem],
         cursor_pos: usize,
         time: Duration,
@@ -298,7 +293,6 @@ impl MenuRenderer {
 
     pub fn generate_commands<'state, 'a>(
         &'a self,
-        state: &GraphicsState<'state>,
         menu: &Menu,
         time: Duration,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
@@ -311,10 +305,10 @@ impl MenuRenderer {
         let scale = 2.0;
 
         if view.draw_plaque() {
-            self.cmd_draw_plaque(state, scale, quad_cmds);
+            self.cmd_draw_plaque(scale, quad_cmds);
         }
 
-        self.cmd_draw_title(state, view.title_path(), scale, quad_cmds);
+        self.cmd_draw_title(view.title_path(), scale, quad_cmds);
 
         let cursor_pos = match active_menu.state() {
             MenuState::Active { index } => index,
@@ -323,11 +317,10 @@ impl MenuRenderer {
 
         match *view.body() {
             MenuBodyView::Predefined { ref path } => {
-                self.cmd_draw_body_predef(state, path, cursor_pos, time, scale, quad_cmds);
+                self.cmd_draw_body_predef(path, cursor_pos, time, scale, quad_cmds);
             }
             MenuBodyView::Dynamic => {
                 self.cmd_draw_body_dynamic(
-                    state,
                     &active_menu.items(),
                     cursor_pos,
                     time,

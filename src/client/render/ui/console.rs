@@ -1,5 +1,5 @@
 use crate::{
-    client::render::wgpu::{
+    client::render::{
         ui::{
             glyph::{GlyphRendererCommand, GLYPH_HEIGHT, GLYPH_WIDTH},
             layout::{Anchor, AnchorCoord, Layout, ScreenPosition, Size},
@@ -28,7 +28,6 @@ impl ConsoleRenderer {
 
     pub fn generate_commands<'a, 'b>(
         &'b self,
-        state: &GraphicsState<'a>,
         console: &Console,
         quad_cmds: &mut Vec<QuadRendererCommand<'b>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,

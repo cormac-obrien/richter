@@ -6,8 +6,8 @@ use std::{cell::RefCell, mem::size_of, rc::Rc};
 
 use crate::{
     client::{
-        render::wgpu::{
-            uniform::{DynamicUniformBufferBlock, UniformArrayFloat},
+        render::{
+            uniform::{DynamicUniformBufferBlock, UniformArrayUint, UniformBool},
             world::{
                 alias::AliasRenderer,
                 brush::{BrushRenderer, BrushRendererBuilder},
@@ -18,6 +18,7 @@ use crate::{
         ClientEntity,
     },
     common::{
+        console::CvarRegistry,
         engine,
         model::{Model, ModelKind},
         sprite::SpriteKind,
@@ -136,9 +137,12 @@ impl Camera {
 // TODO: derive Debug once const generics are stable
 pub struct FrameUniforms {
     // TODO: pack frame values into a [Vector4<f32>; 16],
-    lightmap_anim_frames: [UniformArrayFloat; 64],
+    lightmap_anim_frames: [UniformArrayUint; 64],
     camera_pos: Vector4<f32>,
     time: f32,
+
+    // TODO: pack flags into a bit string
+    r_lightmap: UniformBool,
 }
 
 #[repr(C, align(256))]
@@ -170,6 +174,7 @@ impl<'a> WorldRenderer<'a> {
         models: &[Model],
         worldmodel_id: usize,
         state: Rc<GraphicsState<'a>>,
+        cvars: &mut CvarRegistry,
     ) -> WorldRenderer<'a> {
         let mut worldmodel_renderer = None;
         let mut entity_renderers = Vec::new();
@@ -231,7 +236,8 @@ impl<'a> WorldRenderer<'a> {
         camera: &Camera,
         time: Duration,
         entities: I,
-        lightstyle_values: &[f32],
+        lightstyle_values: &[u32],
+        cvars: &CvarRegistry,
     ) where
         I: Iterator<Item = &'b ClientEntity>,
     {
@@ -244,14 +250,15 @@ impl<'a> WorldRenderer<'a> {
             .write_buffer(self.state.frame_uniform_buffer(), 0, unsafe {
                 any_as_bytes(&FrameUniforms {
                     lightmap_anim_frames: {
-                        let mut frames = [UniformArrayFloat::new(0.0); 64];
+                        let mut frames = [UniformArrayUint::new(0); 64];
                         for i in 0..64 {
-                            frames[i] = UniformArrayFloat::new(lightstyle_values[i]);
+                            frames[i] = UniformArrayUint::new(lightstyle_values[i]);
                         }
                         frames
                     },
                     camera_pos: camera.origin.extend(1.0),
                     time: engine::duration_to_f32(time),
+                    r_lightmap: UniformBool::new(cvars.get_value("r_lightmap").unwrap() != 0.0),
                 })
             });
 
@@ -291,14 +298,15 @@ impl<'a> WorldRenderer<'a> {
         camera: &Camera,
         time: Duration,
         entities: I,
-        lightstyle_values: &[f32],
+        lightstyle_values: &[u32],
+        cvars: &CvarRegistry,
     ) where
         I: Iterator<Item = &'b ClientEntity> + Clone,
     {
         let _guard = flame::start_guard("Renderer::render_pass");
         {
             info!("Updating uniform buffers");
-            self.update_uniform_buffers(camera, time, entities.clone(), lightstyle_values);
+            self.update_uniform_buffers(camera, time, entities.clone(), lightstyle_values, cvars);
 
             pass.set_bind_group(
                 BindGroupLayoutId::PerFrame as u32,

@@ -1923,7 +1923,7 @@ impl Client {
         self.state.face_anim_time
     }
 
-    pub fn lightstyle_values(&self) -> Result<Vec<f32>, Error> {
+    pub fn lightstyle_values(&self) -> Result<Vec<u32>, Error> {
         let mut values = Vec::new();
 
         for lightstyle_id in 0..64 {
@@ -1936,11 +1936,11 @@ impl Client {
                         Some((float_time * 10.0) as usize % ls.len())
                     };
 
-                    // NOTE: we use 44 instead of the original engine's 22 to recreate the
-                    // overbright effect of the software renderer
                     values.push(match frame {
-                        Some(f) => (ls.as_bytes()[f] - 'a' as u8) as f32 * 44.0 / 256.0,
-                        None => 1.0,
+                        Some(f) => {
+                            (ls.as_bytes()[f] - 'a' as u8) as u32 * 22
+                        }
+                        None => 256,
                     })
                 }
 

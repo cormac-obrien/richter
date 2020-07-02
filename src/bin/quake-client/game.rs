@@ -27,9 +27,7 @@ use richter::{
     client::{
         input::{Input, InputFocus},
         menu::Menu,
-        render::wgpu::{
-            Camera, GraphicsState, HudState, UiOverlay, UiRenderer, UiState, WorldRenderer,
-        },
+        render::{Camera, GraphicsState, HudState, UiOverlay, UiRenderer, UiState, WorldRenderer},
         Client,
     },
     common::{
@@ -183,8 +181,12 @@ impl<'a> Game<'a> {
             if self.client.signon_stage() == SignOnStage::Done {
                 println!("finished loading");
                 // if we have, build renderers
-                let world_renderer =
-                    WorldRenderer::new(self.client.models().unwrap(), 1, self.gfx_state.clone());
+                let world_renderer = WorldRenderer::new(
+                    self.client.models().unwrap(),
+                    1,
+                    self.gfx_state.clone(),
+                    &mut self.cvars.borrow_mut(),
+                );
 
                 self.state = GameState::InGame(InGameState::new(
                     self.cmds.clone(),
@@ -256,7 +258,16 @@ impl<'a> Game<'a> {
                     .device()
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-                let depth_view = self.gfx_state.depth_attachment().create_default_view();
+                let depth_view = self
+                    .gfx_state
+                    .framebuffer()
+                    .depth_attachment()
+                    .create_default_view();
+                let color_view = self
+                    .gfx_state
+                    .framebuffer()
+                    .color_attachment()
+                    .create_default_view();
 
                 {
                     // quad_commands must outlive pass
@@ -265,8 +276,8 @@ impl<'a> Game<'a> {
 
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                            attachment: color_attachment_view,
-                            resolve_target: None,
+                            attachment: &color_view,
+                            resolve_target: Some(color_attachment_view),
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color {
                                     r: 0.0,
@@ -299,6 +310,7 @@ impl<'a> Game<'a> {
                         self.client.time(),
                         self.client.iter_visible_entities(),
                         self.client.lightstyle_values().unwrap().as_slice(),
+                        &self.cvars.borrow(),
                     );
 
                     let overlay = match state.focus.get() {

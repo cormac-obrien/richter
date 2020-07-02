@@ -1,19 +1,38 @@
+// Copyright © 2020 Cormac O'Brien.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 use std::{borrow::Cow, cell::Cell, collections::HashMap, mem::size_of, ops::Range, rc::Rc};
 
 use crate::{
-    client::render::wgpu::{
-        warp, world::BindGroupLayoutId, Camera, DynamicUniformBufferBlock, EntityUniforms,
-        GraphicsState, LightmapData, Pipeline, TextureData, COLOR_ATTACHMENT_FORMAT,
-        DEPTH_ATTACHMENT_FORMAT,
+    client::render::{
+        warp, world::BindGroupLayoutId, Camera, GraphicsState, LightmapData, Pipeline, TextureData,
+        COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
     },
     common::{
-        bsp::{self, BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTextureMipmap},
+        bsp::{BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTextureMipmap},
         math,
         util::any_slice_as_bytes,
     },
 };
 
-use cgmath::{Deg, InnerSpace, Vector3};
+use cgmath::{InnerSpace, Vector3};
 use failure::Error;
 use num::FromPrimitive;
 use strum_macros::EnumIter;
@@ -58,16 +77,19 @@ lazy_static! {
             ),
         ],
         vec![
-            // lightmap texture
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::SampledTexture {
-                    dimension: wgpu::TextureViewDimension::D2,
-                    component_type: wgpu::TextureComponentType::Float,
-                    multisampled: false,
-                },
-            ),
+            // lightmap texture array
+            wgpu::BindGroupLayoutEntry {
+                count: Some(4),
+                ..wgpu::BindGroupLayoutEntry::new(
+                    0,
+                    wgpu::ShaderStage::FRAGMENT,
+                    wgpu::BindingType::SampledTexture {
+                        dimension: wgpu::TextureViewDimension::D2,
+                        component_type: wgpu::TextureComponentType::Float,
+                        multisampled: false,
+                    },
+                )
+            },
         ],
     ];
 }
@@ -150,9 +172,10 @@ flat layout(location = 2) in uvec4 f_lightmap_anim;
 
 // set 0: per-frame
 layout(set = 0, binding = 0) uniform FrameUniforms {
-    float light_anim_frames[64];
+    uint light_anim_frames[64]; // range [0, 550]
     vec4 camera_pos;
     float time;
+    bool r_lightmap;
 } frame_uniforms;
 
 // set 1: per-entity
@@ -167,9 +190,29 @@ layout(set = 2, binding = 2) uniform TextureUniforms {
 } texture_uniforms;
 
 // set 3: per-face
-layout(set = 3, binding = 0) uniform texture2D u_lightmap_texture;
+layout(set = 3, binding = 0) uniform texture2D u_lightmap_texture[4];
 
 layout(location = 0) out vec4 color_attachment;
+
+// FIXME
+vec4 blend_light(vec4 color) {
+    float light = 0.0;
+    for (int i = 0; i < 4 && f_lightmap_anim[i] != LIGHTMAP_ANIM_END; i++) {
+        uint umap = uint(texture(
+            sampler2D(u_lightmap_texture[i], u_lightmap_sampler),
+            f_lightmap
+        ).r * 255.0);
+        uint ustyle = frame_uniforms.light_anim_frames[f_lightmap_anim[i]];
+        uint ulight = umap * ustyle;
+        light += float(min(ulight >> 8, 255)) / 256.0;
+    }
+
+    if (frame_uniforms.r_lightmap) {
+        return vec4(light.rrr, 1.0);
+    } else {
+        return vec4(color.rgb * light.rrr, 1.0);
+    }
+}
 
 void main() {
     switch (texture_uniforms.kind) {
@@ -177,14 +220,11 @@ void main() {
             vec4 base_color = texture(sampler2D(u_diffuse_texture, u_diffuse_sampler), f_diffuse);
             float fullbright = texture(sampler2D(u_fullbright_texture, u_diffuse_sampler), f_diffuse).r;
 
-            float lightmap = texture(sampler2D(u_lightmap_texture, u_lightmap_sampler), f_lightmap).r * 2.0;
-            float light = 0.0;
-            for (int i = 0; i < f_lightmap_anim.length() && f_lightmap_anim[i] != LIGHTMAP_ANIM_END; i++) {
-                light += lightmap * frame_uniforms.light_anim_frames[f_lightmap_anim[i]];
+            if (fullbright != 0.0) {
+                color_attachment = base_color;
+            } else {
+                color_attachment = blend_light(base_color);
             }
-
-            // FIXME
-            color_attachment = base_color * max(light, fullbright);
             break;
 
         case TEXTURE_KIND_WARP:
@@ -223,7 +263,6 @@ void main() {
 
     // NOTE: if any of the binding indices are changed, they must also be changed in
     // the corresponding shaders and the BindGroupLayout generation functions.
-    // TODO: move diffuse sampler into its own group
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
         vec![
             // group 2: updated per-texture
@@ -279,33 +318,15 @@ void main() {
         vec![wgpu::VertexBufferDescriptor {
             stride: size_of::<BrushVertex>() as u64,
             step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &[
+            attributes: &wgpu::vertex_attr_array![
                 // position
-                wgpu::VertexAttributeDescriptor {
-                    offset: 0,
-                    format: wgpu::VertexFormat::Float3,
-                    shader_location: 0,
-                },
+                0 => Float3,
                 // diffuse texcoord
-                wgpu::VertexAttributeDescriptor {
-                    offset: size_of::<Position>() as u64,
-                    format: wgpu::VertexFormat::Float2,
-                    shader_location: 1,
-                },
+                1 => Float2,
                 // lightmap texcoord
-                wgpu::VertexAttributeDescriptor {
-                    offset: (size_of::<Position>() + size_of::<DiffuseTexcoord>()) as u64,
-                    format: wgpu::VertexFormat::Float2,
-                    shader_location: 2,
-                },
-                // lightmap animation id(s)
-                wgpu::VertexAttributeDescriptor {
-                    offset: (size_of::<Position>()
-                        + size_of::<DiffuseTexcoord>()
-                        + size_of::<LightmapTexcoord>()) as u64,
-                    format: wgpu::VertexFormat::Uchar4,
-                    shader_location: 3,
-                },
+                2 => Float2,
+                // lightmap animation ids
+                3 => Uchar4,
             ],
         }]
     }
@@ -328,7 +349,6 @@ fn calculate_lightmap_texcoords(
     [s, t]
 }
 
-// these type aliases are here to aid readability of e.g. size_of::<Position>()
 type Position = [f32; 3];
 type DiffuseTexcoord = [f32; 2];
 type LightmapTexcoord = [f32; 2];
@@ -369,7 +389,8 @@ pub struct BrushTexture {
 struct BrushFace {
     vertices: Range<u32>,
     texture_id: usize,
-    lightmap_id: Option<usize>,
+
+    lightmap_ids: Vec<usize>,
     light_styles: [u8; 4],
 
     /// Indicates whether the face should be drawn this frame.
@@ -411,7 +432,7 @@ pub struct BrushRendererBuilder<'a> {
     texture_chains: HashMap<usize, Vec<usize>>,
     textures: Vec<BrushTexture>,
     lightmaps: Vec<wgpu::Texture>,
-    lightmap_views: Vec<wgpu::TextureView>,
+    //lightmap_views: Vec<wgpu::TextureView>,
 }
 
 impl<'a> BrushRendererBuilder<'a> {
@@ -441,7 +462,7 @@ impl<'a> BrushRendererBuilder<'a> {
             texture_chains: HashMap::new(),
             textures: Vec::new(),
             lightmaps: Vec::new(),
-            lightmap_views: Vec::new(),
+            //lightmap_views: Vec::new(),
         }
     }
 
@@ -506,42 +527,37 @@ impl<'a> BrushRendererBuilder<'a> {
             }
         }
 
-        let lightmap_w = face.extents[0] / 16 + 1;
-        let lightmap_h = face.extents[1] / 16 + 1;
-        let lightmap_size = lightmap_w * lightmap_h;
-
-        // build the lightmap
-        let lightmap_id = if !texinfo.special {
-            if let Some(ofs) = face.lightmap_id {
-                let lightmap_data = TextureData::Lightmap(LightmapData {
-                    lightmap: Cow::Borrowed(
-                        &self.bsp_data.lightmaps()[ofs..ofs + lightmap_size as usize],
-                    ),
-                });
-
-                let texture = self.state.create_texture(
-                    None,
-                    lightmap_w as u32,
-                    lightmap_h as u32,
-                    &lightmap_data,
-                );
-
-                let id = self.lightmaps.len();
-                self.lightmaps.push(texture);
-                self.lightmap_views
-                    .push(self.lightmaps[id].create_default_view());
-                Some(id)
-            } else {
-                None
-            }
+        // build the lightmaps
+        let lightmaps = if !texinfo.special {
+            self.bsp_data.face_lightmaps(face_id)
         } else {
-            None
+            Vec::new()
         };
+
+        let mut lightmap_ids = Vec::new();
+        for lightmap in lightmaps {
+            let lightmap_data = TextureData::Lightmap(LightmapData {
+                lightmap: Cow::Borrowed(lightmap.data()),
+            });
+
+            let texture = self.state.create_texture(
+                None,
+                lightmap.width(),
+                lightmap.height(),
+                &lightmap_data,
+            );
+
+            let id = self.lightmaps.len();
+            self.lightmaps.push(texture);
+            //self.lightmap_views
+            //.push(self.lightmaps[id].create_default_view());
+            lightmap_ids.push(id);
+        }
 
         BrushFace {
             vertices: face_vert_id as u32..self.vertices.len() as u32,
             texture_id: texinfo.tex_id as usize,
-            lightmap_id,
+            lightmap_ids,
             light_styles: face.light_styles,
             draw_flag: Cell::new(true),
         }
@@ -575,6 +591,12 @@ impl<'a> BrushRendererBuilder<'a> {
     }
 
     fn create_per_face_bind_group(&self, face_id: usize) -> wgpu::BindGroup {
+        let mut lightmap_views: Vec<_> = self.faces[face_id]
+            .lightmap_ids
+            .iter()
+            .map(|id| self.lightmaps[*id].create_default_view())
+            .collect();
+        lightmap_views.resize_with(4, || self.state.default_lightmap().create_default_view());
         let layout = &self
             .state
             .brush_bind_group_layout(BindGroupLayoutId::PerFace);
@@ -583,12 +605,7 @@ impl<'a> BrushRendererBuilder<'a> {
             layout,
             bindings: &[wgpu::Binding {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(
-                    match self.faces[face_id].lightmap_id {
-                        Some(id) => &self.lightmap_views[id],
-                        None => self.state.default_lightmap_view(),
-                    },
-                ),
+                resource: wgpu::BindingResource::TextureViewArray(&lightmap_views[..]),
             }],
         };
         self.state.device().create_bind_group(&desc)
@@ -680,7 +697,7 @@ impl<'a> BrushRendererBuilder<'a> {
         Ok(BrushRenderer {
             state: self.state,
             bsp_data: self.bsp_data,
-            vertex_buffer: vertex_buffer,
+            vertex_buffer,
             leaves: self.leaves,
             per_texture_bind_groups: self.per_texture_bind_groups,
             per_face_bind_groups: self.per_face_bind_groups,
@@ -688,7 +705,7 @@ impl<'a> BrushRendererBuilder<'a> {
             faces: self.faces,
             textures: self.textures,
             lightmaps: self.lightmaps,
-            lightmap_views: self.lightmap_views,
+            //lightmap_views: self.lightmap_views,
         })
     }
 }
@@ -709,16 +726,12 @@ pub struct BrushRenderer<'a> {
     faces: Vec<BrushFace>,
     textures: Vec<BrushTexture>,
     lightmaps: Vec<wgpu::Texture>,
-    lightmap_views: Vec<wgpu::TextureView>,
+    //lightmap_views: Vec<wgpu::TextureView>,
 }
 
 impl<'a> BrushRenderer<'a> {
     /// Record the draw commands for this brush model to the given `wgpu::RenderPass`.
-    pub fn record_draw<'b>(
-        &'b self,
-        pass: &mut wgpu::RenderPass<'b>,
-        camera: &Camera,
-    ) {
+    pub fn record_draw<'b>(&'b self, pass: &mut wgpu::RenderPass<'b>, camera: &Camera) {
         let _guard = flame::start_guard("BrushRenderer::record_draw");
         pass.set_pipeline(self.state.brush_pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
