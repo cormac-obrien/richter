@@ -134,45 +134,11 @@ impl Pipeline for QuadPipeline {
     }
 
     fn vertex_shader() -> &'static str {
-        r#"
-#version 450
-
-layout(location = 0) in vec2 a_position;
-layout(location = 1) in vec2 a_texcoord;
-
-layout(location = 0) out vec2 f_texcoord;
-
-layout(set = 2, binding = 0) uniform QuadUniforms {
-    mat4 transform;
-} quad_uniforms;
-
-void main() {
-    f_texcoord = a_texcoord;
-    gl_Position = quad_uniforms.transform * vec4(a_position, 0.0, 1.0);
-}
-"#
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/quad.vert"))
     }
 
     fn fragment_shader() -> &'static str {
-        r#"
-#version 450
-
-layout(location = 0) in vec2 f_texcoord;
-
-layout(location = 0) out vec4 color_attachment;
-
-layout(set = 0, binding = 0) uniform sampler quad_sampler;
-layout(set = 1, binding = 0) uniform texture2D quad_texture;
-
-void main() {
-    vec4 color = texture(sampler2D(quad_texture, quad_sampler), f_texcoord);
-    if (color.a == 0) {
-        discard;
-    } else {
-        color_attachment = color;
-    }
-}
-"#
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/quad.frag"))
     }
 
     fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {

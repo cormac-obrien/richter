@@ -68,51 +68,11 @@ impl Pipeline for GlyphPipeline {
     }
 
     fn vertex_shader() -> &'static str {
-        r#"
-#version 450
-
-// vertex rate
-layout(location = 0) in vec2 a_position;
-layout(location = 1) in vec2 a_texcoord;
-
-// instance rate
-layout(location = 2) in vec2 a_instance_position;
-layout(location = 3) in vec2 a_instance_scale;
-layout(location = 4) in uint a_instance_layer;
-
-layout(location = 0) out vec2 f_texcoord;
-layout(location = 1) out uint f_layer;
-
-void main() {
-    f_texcoord = a_texcoord;
-    f_layer = a_instance_layer;
-    gl_Position = vec4(a_instance_scale * a_position + a_instance_position, 0.0, 1.0);
-}
-"#
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/glyph.vert"))
     }
 
     fn fragment_shader() -> &'static str {
-        r#"
-#version 450
-#extension GL_EXT_nonuniform_qualifier : require
-
-layout(location = 0) in vec2 f_texcoord;
-layout(location = 1) flat in uint f_layer;
-
-layout(location = 0) out vec4 output_attachment;
-
-layout(set = 0, binding = 0) uniform sampler u_sampler;
-layout(set = 0, binding = 1) uniform texture2D u_texture[256];
-
-void main() {
-    vec4 color = texture(sampler2D(u_texture[f_layer], u_sampler), f_texcoord);
-    if (color.a == 0) {
-        discard;
-    } else {
-        output_attachment = color;
-    }
-}
-"#
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/glyph.frag"))
     }
 
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {

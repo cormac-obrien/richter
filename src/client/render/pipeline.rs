@@ -32,13 +32,7 @@ where
 {
     log::debug!("creating shader {}", name.as_ref());
     let spirv = compiler
-        .compile_into_spirv(
-            source.as_ref(),
-            kind,
-            name.as_ref(),
-            "main",
-            None,
-        )
+        .compile_into_spirv(source.as_ref(), kind, name.as_ref(), "main", None)
         .unwrap();
     device.create_shader_module(wgpu::ShaderModuleSource::SpirV(spirv.as_binary()))
 }
