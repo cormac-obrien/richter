@@ -1,7 +1,7 @@
 #version 450
 #define LIGHTMAP_ANIM_END (255)
 
-const uint TEXTURE_KIND_NORMAL = 0;
+const uint TEXTURE_KIND_REGULAR = 0;
 const uint TEXTURE_KIND_WARP = 1;
 const uint TEXTURE_KIND_SKY = 2;
 
@@ -9,9 +9,10 @@ const float WARP_AMPLITUDE = 0.15;
 const float WARP_FREQUENCY = 0.25;
 const float WARP_SCALE = 1.0;
 
-layout(location = 0) in vec2 f_diffuse; // also used for fullbright
-layout(location = 1) in vec2 f_lightmap;
-flat layout(location = 2) in uvec4 f_lightmap_anim;
+layout(location = 0) in vec3 f_normal;
+layout(location = 1) in vec2 f_diffuse; // also used for fullbright
+layout(location = 2) in vec2 f_lightmap;
+flat layout(location = 3) in uvec4 f_lightmap_anim;
 
 // set 0: per-frame
 layout(set = 0, binding = 0) uniform FrameUniforms {
@@ -35,7 +36,8 @@ layout(set = 2, binding = 2) uniform TextureUniforms {
 // set 3: per-face
 layout(set = 3, binding = 0) uniform texture2D u_lightmap_texture[4];
 
-layout(location = 0) out vec4 color_attachment;
+layout(location = 0) out vec4 diffuse_attachment;
+layout(location = 1) out vec4 normal_attachment;
 
 vec4 blend_light(vec4 color) {
     float light = 0.0;
@@ -58,7 +60,7 @@ vec4 blend_light(vec4 color) {
 
 void main() {
     switch (texture_uniforms.kind) {
-        case TEXTURE_KIND_NORMAL:
+        case TEXTURE_KIND_REGULAR:
             vec4 base_color = texture(
                 sampler2D(u_diffuse_texture, u_diffuse_sampler),
                 f_diffuse
@@ -70,9 +72,9 @@ void main() {
             ).r;
 
             if (fullbright != 0.0) {
-                color_attachment = base_color;
+                diffuse_attachment = base_color;
             } else {
-                color_attachment = blend_light(base_color);
+                diffuse_attachment = blend_light(base_color);
             }
             break;
 
@@ -85,7 +87,7 @@ void main() {
             vec2 warp_texcoord = f_diffuse.st + WARP_AMPLITUDE
                 * vec2(sin(wave1.s), sin(wave1.t));
 
-            color_attachment = texture(
+            diffuse_attachment = texture(
                 sampler2D(u_diffuse_texture, u_diffuse_sampler),
                 warp_texcoord
             );
@@ -112,11 +114,14 @@ void main() {
             } else {
                 cloud_factor = 1.0;
             }
-            color_attachment = mix(sky_color, cloud_color, cloud_factor);
+            diffuse_attachment = mix(sky_color, cloud_color, cloud_factor);
             break;
 
         // not possible
         default:
             break;
     }
+
+    // rescale normal to [0, 1]
+    normal_attachment = vec4(f_normal / 2.0 + 0.5, 1.0);
 }

@@ -1,9 +1,9 @@
-use std::{mem::size_of, ops::Range, rc::Rc};
+use std::{mem::size_of, ops::Range};
 
 use crate::{
     client::render::{
-        world::BindGroupLayoutId, GraphicsState, Pipeline, TextureData, COLOR_ATTACHMENT_FORMAT,
-        DEPTH_ATTACHMENT_FORMAT,
+        world::BindGroupLayoutId, GraphicsState, Pipeline, TextureData, DEPTH_ATTACHMENT_FORMAT,
+        DIFFUSE_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
     },
     common::{
         mdl::{self, AliasModel},
@@ -11,6 +11,7 @@ use crate::{
     },
 };
 
+use cgmath::{InnerSpace as _, Vector3, Zero as _};
 use chrono::Duration;
 use failure::Error;
 
@@ -71,12 +72,22 @@ impl Pipeline for AliasPipeline {
     }
 
     fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
-        vec![wgpu::ColorStateDescriptor {
-            format: COLOR_ATTACHMENT_FORMAT,
-            alpha_blend: wgpu::BlendDescriptor::REPLACE,
-            color_blend: wgpu::BlendDescriptor::REPLACE,
-            write_mask: wgpu::ColorWrite::ALL,
-        }]
+        vec![
+            // diffuse attachment
+            wgpu::ColorStateDescriptor {
+                format: DIFFUSE_ATTACHMENT_FORMAT,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::ALL,
+            },
+            // normal attachment
+            wgpu::ColorStateDescriptor {
+                format: NORMAL_ATTACHMENT_FORMAT,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::ALL,
+            },
+        ]
     }
 
     fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
@@ -96,19 +107,15 @@ impl Pipeline for AliasPipeline {
         vec![wgpu::VertexBufferDescriptor {
             stride: size_of::<AliasVertex>() as u64,
             step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &[
-                // position
-                wgpu::VertexAttributeDescriptor {
-                    offset: 0,
-                    format: wgpu::VertexFormat::Float3,
-                    shader_location: 0,
-                },
-                // diffuse texcoord
-                wgpu::VertexAttributeDescriptor {
-                    offset: size_of::<Position>() as u64,
-                    format: wgpu::VertexFormat::Float2,
-                    shader_location: 1,
-                },
+            attributes: &wgpu::vertex_attr_array![
+                // frame 0 position
+                0 => Float3,
+                // frame 1 position
+                // 1 => Float3,
+                // normal
+                2 => Float3,
+                // texcoord
+                3 => Float2,
             ],
         }]
     }
@@ -116,12 +123,14 @@ impl Pipeline for AliasPipeline {
 
 // these type aliases are here to aid readability of e.g. size_of::<Position>()
 type Position = [f32; 3];
+type Normal = [f32; 3];
 type DiffuseTexcoord = [f32; 2];
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct AliasVertex {
     position: Position,
+    normal: Normal,
     diffuse_texcoord: DiffuseTexcoord,
 }
 
@@ -208,10 +217,7 @@ pub struct AliasRenderer {
 }
 
 impl AliasRenderer {
-    pub fn new<'a>(
-        state: &GraphicsState<'a>,
-        alias_model: &AliasModel,
-    ) -> Result<AliasRenderer, Error> {
+    pub fn new(state: &GraphicsState, alias_model: &AliasModel) -> Result<AliasRenderer, Error> {
         let mut vertices = Vec::new();
         let mut keyframes = Vec::new();
 
@@ -222,20 +228,28 @@ impl AliasRenderer {
                 mdl::Keyframe::Static(ref static_keyframe) => {
                     let vertex_start = vertices.len() as u32;
                     for polygon in alias_model.polygons() {
-                        for index in polygon.indices() {
-                            let pos = static_keyframe.vertices()[*index as usize];
-                            let texcoord = &alias_model.texcoords()[*index as usize];
+                        let mut tri = [Vector3::zero(); 3];
+                        let mut texcoords = [[0.0; 2]; 3];
+                        for (i, index) in polygon.indices().iter().enumerate() {
+                            tri[i] = static_keyframe.vertices()[*index as usize].into();
 
+                            let texcoord = &alias_model.texcoords()[*index as usize];
                             let s = if !polygon.faces_front() && texcoord.is_on_seam() {
                                 (texcoord.s() + w / 2) as f32 + 0.5
                             } else {
                                 texcoord.s() as f32 + 0.5
                             } / w as f32;
-
                             let t = (texcoord.t() as f32 + 0.5) / h as f32;
+                            texcoords[i] = [s, t];
+                        }
+
+                        let normal = (tri[0] - tri[1]).cross(tri[2] - tri[1]).normalize();
+
+                        for i in 0..3 {
                             vertices.push(AliasVertex {
-                                position: pos.into(),
-                                diffuse_texcoord: [s, t],
+                                position: tri[i].into(),
+                                normal: normal.into(),
+                                diffuse_texcoord: texcoords[i],
                             });
                         }
                     }
@@ -255,20 +269,28 @@ impl AliasRenderer {
 
                         let vertex_start = vertices.len() as u32;
                         for polygon in alias_model.polygons() {
-                            for index in polygon.indices().iter() {
-                                let pos = frame.vertices()[*index as usize];
-                                let texcoord = &alias_model.texcoords()[*index as usize];
+                            let mut tri = [Vector3::zero(); 3];
+                            let mut texcoords = [[0.0; 2]; 3];
+                            for (i, index) in polygon.indices().iter().enumerate() {
+                                tri[i] = frame.vertices()[*index as usize].into();
 
+                                let texcoord = &alias_model.texcoords()[*index as usize];
                                 let s = if !polygon.faces_front() && texcoord.is_on_seam() {
                                     (texcoord.s() + w / 2) as f32 + 0.5
                                 } else {
                                     texcoord.s() as f32 + 0.5
                                 } / w as f32;
-
                                 let t = (texcoord.t() as f32 + 0.5) / h as f32;
+                                texcoords[i] = [s, t];
+                            }
+
+                            let normal = (tri[0] - tri[1]).cross(tri[2] - tri[1]).normalize();
+
+                            for i in 0..3 {
                                 vertices.push(AliasVertex {
-                                    position: pos.into(),
-                                    diffuse_texcoord: [s, t],
+                                    position: tri[i].into(),
+                                    normal: normal.into(),
+                                    diffuse_texcoord: texcoords[i],
                                 });
                             }
                         }
@@ -367,16 +389,15 @@ impl AliasRenderer {
         })
     }
 
-    pub fn record_draw<'a, 'b>(
-        &'b self,
-        state: &'b GraphicsState<'a>,
-        pass: &mut wgpu::RenderPass<'b>,
+    pub fn record_draw<'a>(
+        &'a self,
+        state: &'a GraphicsState,
+        pass: &mut wgpu::RenderPass<'a>,
         time: Duration,
         keyframe_id: usize,
         texture_id: usize,
-    ) where
-        'a: 'b,
-    {
+    ) {
+        debug!("AliasRenderer::record_draw");
         pass.set_pipeline(state.alias_pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 

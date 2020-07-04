@@ -54,7 +54,7 @@ pub struct MenuRenderer {
 }
 
 impl MenuRenderer {
-    pub fn new<'state>(state: &GraphicsState<'state>, menu: &Menu) -> MenuRenderer {
+    pub fn new(state: &GraphicsState, menu: &Menu) -> MenuRenderer {
         let mut tex_names = std::collections::HashSet::new();
         tex_names.insert("gfx/qplaque.lmp".to_string());
         tex_names.extend((1..=6).into_iter().map(|i| format!("gfx/menudot{}.lmp", i)));
@@ -91,7 +91,7 @@ impl MenuRenderer {
         }
     }
 
-    fn texture<'state, S>(&self, name: S) -> &QuadTexture
+    fn texture<S>(&self, name: S) -> &QuadTexture
     where
         S: AsRef<str>,
     {
@@ -142,16 +142,12 @@ impl MenuRenderer {
         });
     }
 
-    fn cmd_draw_plaque<'state, 'a>(
-        &'a self,
-        scale: f32,
-        quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
-    ) {
+    fn cmd_draw_plaque<'a>(&'a self, scale: f32, quad_cmds: &mut Vec<QuadRendererCommand<'a>>) {
         let plaque = self.texture("gfx/qplaque.lmp");
         self.cmd_draw_quad(plaque, Align::Left, 16, 4, scale, quad_cmds);
     }
 
-    fn cmd_draw_title<'state, 'a, S>(
+    fn cmd_draw_title<'a, S>(
         &'a self,
         name: S,
         scale: f32,
@@ -163,7 +159,7 @@ impl MenuRenderer {
         self.cmd_draw_quad(title, Align::Center, 0, 4, scale, quad_cmds);
     }
 
-    fn cmd_draw_body_predef<'state, 'a, S>(
+    fn cmd_draw_body_predef<'a, S>(
         &'a self,
         name: S,
         cursor_pos: usize,
@@ -248,7 +244,7 @@ impl MenuRenderer {
         self.cmd_draw_glyph(SLIDER_HANDLE, handle_x, y, scale, glyph_cmds);
     }
 
-    fn cmd_draw_body_dynamic<'state>(
+    fn cmd_draw_body_dynamic(
         &self,
         items: &[NamedMenuItem],
         cursor_pos: usize,
@@ -291,7 +287,7 @@ impl MenuRenderer {
         }
     }
 
-    pub fn generate_commands<'state, 'a>(
+    pub fn generate_commands<'a>(
         &'a self,
         menu: &Menu,
         time: Duration,

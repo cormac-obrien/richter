@@ -298,14 +298,13 @@ impl GlyphRenderer {
         instances
     }
 
-    pub fn record_draw<'a, 'b>(
-        &'b self,
-        state: &'b GraphicsState<'a>,
-        pass: &mut wgpu::RenderPass<'b>,
+    pub fn record_draw<'a>(
+        &'a self,
+        state: &'a GraphicsState,
+        pass: &mut wgpu::RenderPass<'a>,
         instance_count: u32,
-    ) where
-        'a: 'b,
-    {
+    ) {
+        debug!("GlyphRenderer::record_draw");
         pass.set_pipeline(state.glyph_pipeline());
         pass.set_vertex_buffer(0, state.quad_vertex_buffer().slice(..));
         pass.set_vertex_buffer(1, state.glyph_instance_buffer().slice(..));

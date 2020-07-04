@@ -11,8 +11,8 @@ use failure::Error;
 
 // minimum limit is 16384:
 // https://www.khronos.org/registry/vulkan/specs/1.2-extensions/html/vkspec.html#limits-maxUniformBufferRange
-// but https://vulkan.gpuinfo.org/displaydevicelimit.php?name=maxUniformBufferRange&platform=windows indicates
-// that a limit of 65536 or higher is more common
+// but https://vulkan.gpuinfo.org/displaydevicelimit.php?name=maxUniformBufferRange&platform=windows
+// indicates that a limit of 65536 or higher is more common
 const DYNAMIC_UNIFORM_BUFFER_SIZE: wgpu::BufferAddress = 65536;
 
 // https://www.khronos.org/registry/vulkan/specs/1.2-extensions/html/vkspec.html#limits-minUniformBufferOffsetAlignment
@@ -26,7 +26,9 @@ pub struct UniformBool {
 
 impl UniformBool {
     pub fn new(value: bool) -> UniformBool {
-        UniformBool { value: value as u32 }
+        UniformBool {
+            value: value as u32,
+        }
     }
 }
 
@@ -46,7 +48,7 @@ impl UniformArrayUint {
 /// A handle to a dynamic uniform buffer on the GPU.
 ///
 /// Allows allocation and updating of individual blocks of memory.
-pub struct DynamicUniformBuffer<'a, T>
+pub struct DynamicUniformBuffer<T>
 where
     T: Pod,
 {
@@ -55,18 +57,18 @@ where
     _rc: RefCell<Rc<()>>,
 
     // represents the data in the buffer, which we don't actually own
-    _phantom: PhantomData<&'a [T]>,
+    _phantom: PhantomData<T>,
 
     inner: wgpu::Buffer,
     allocated: Cell<u64>,
     update_buf: Vec<u8>,
 }
 
-impl<'a, T> DynamicUniformBuffer<'a, T>
+impl<T> DynamicUniformBuffer<T>
 where
     T: Pod,
 {
-    pub fn new<'b>(device: &'b wgpu::Device) -> DynamicUniformBuffer<'a, T> {
+    pub fn new<'b>(device: &'b wgpu::Device) -> DynamicUniformBuffer<T> {
         // TODO: is this something we can enforce at compile time?
         assert!(align_of::<T>() % DYNAMIC_UNIFORM_BUFFER_ALIGNMENT == 0);
 
@@ -99,7 +101,7 @@ where
     /// Allocates a block of memory in this dynamic uniform buffer with the
     /// specified initial value.
     #[must_use]
-    pub fn allocate(&mut self, val: T) -> DynamicUniformBufferBlock<'a, T> {
+    pub fn allocate(&mut self, val: T) -> DynamicUniformBufferBlock<T> {
         let allocated = self.allocated.get();
         let size = self.block_size().get();
         trace!(
@@ -126,7 +128,7 @@ where
         block
     }
 
-    pub fn write_block(&mut self, block: &DynamicUniformBufferBlock<'a, T>, val: T) {
+    pub fn write_block(&mut self, block: &DynamicUniformBufferBlock<T>, val: T) {
         let start = block.addr as usize;
         let end = start + self.block_size().get() as usize;
         let slice = &mut self.update_buf[start..end];
@@ -163,23 +165,23 @@ where
 
 /// An address into a dynamic uniform buffer.
 #[derive(Debug)]
-pub struct DynamicUniformBufferBlock<'a, T> {
+pub struct DynamicUniformBufferBlock<T> {
     _rc: Rc<()>,
-    _phantom: PhantomData<&'a T>,
+    _phantom: PhantomData<T>,
 
     addr: wgpu::BufferAddress,
 }
 
-impl<'a, T> DynamicUniformBufferBlock<'a, T> {
+impl<T> DynamicUniformBufferBlock<T> {
     pub fn offset(&self) -> wgpu::DynamicOffset {
         self.addr as wgpu::DynamicOffset
     }
 }
 
-pub fn clear_and_rewrite<'a, T>(
+pub fn clear_and_rewrite<T>(
     queue: &wgpu::Queue,
-    buffer: &mut DynamicUniformBuffer<'a, T>,
-    blocks: &mut Vec<DynamicUniformBufferBlock<'a, T>>,
+    buffer: &mut DynamicUniformBuffer<T>,
+    blocks: &mut Vec<DynamicUniformBufferBlock<T>>,
     uniforms: &[T],
 ) where
     T: Pod,

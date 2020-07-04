@@ -2,8 +2,8 @@ use std::mem::size_of;
 
 use crate::{
     client::render::{
-        world::BindGroupLayoutId, GraphicsState, Pipeline, TextureData, COLOR_ATTACHMENT_FORMAT,
-        DEPTH_ATTACHMENT_FORMAT,
+        world::BindGroupLayoutId, GraphicsState, Pipeline, TextureData, DEPTH_ATTACHMENT_FORMAT,
+        DIFFUSE_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
     },
     common::sprite::{SpriteFrame, SpriteKind, SpriteModel, SpriteSubframe},
 };
@@ -84,12 +84,20 @@ impl Pipeline for SpritePipeline {
     }
 
     fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
-        vec![wgpu::ColorStateDescriptor {
-            format: COLOR_ATTACHMENT_FORMAT,
-            alpha_blend: wgpu::BlendDescriptor::REPLACE,
-            color_blend: wgpu::BlendDescriptor::REPLACE,
-            write_mask: wgpu::ColorWrite::ALL,
-        }]
+        vec![
+            wgpu::ColorStateDescriptor {
+                format: DIFFUSE_ATTACHMENT_FORMAT,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::ALL,
+            },
+            wgpu::ColorStateDescriptor {
+                format: NORMAL_ATTACHMENT_FORMAT,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::ALL,
+            },
+        ]
     }
 
     fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
@@ -109,45 +117,60 @@ impl Pipeline for SpritePipeline {
         vec![wgpu::VertexBufferDescriptor {
             stride: size_of::<SpriteVertex>() as u64,
             step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES[..],
+            attributes: &wgpu::vertex_attr_array![
+                // position
+                0 => Float3,
+                // normal
+                1 => Float3,
+                // texcoord
+                2 => Float2,
+            ],
         }]
     }
 }
 
 // these type aliases are here to aid readability of e.g. size_of::<Position>()
 type Position = [f32; 3];
+type Normal = [f32; 3];
 type DiffuseTexcoord = [f32; 2];
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct SpriteVertex {
     position: Position,
+    normal: Normal,
     diffuse_texcoord: DiffuseTexcoord,
 }
 
 pub const VERTICES: [SpriteVertex; 6] = [
     SpriteVertex {
         position: [0.0, 0.0, 0.0],
+        normal: [0.0, 0.0, 1.0],
         diffuse_texcoord: [0.0, 1.0],
     },
     SpriteVertex {
         position: [0.0, 1.0, 0.0],
+        normal: [0.0, 0.0, 1.0],
         diffuse_texcoord: [0.0, 0.0],
     },
     SpriteVertex {
         position: [1.0, 1.0, 0.0],
+        normal: [0.0, 0.0, 1.0],
         diffuse_texcoord: [1.0, 0.0],
     },
     SpriteVertex {
         position: [0.0, 0.0, 0.0],
+        normal: [0.0, 0.0, 1.0],
         diffuse_texcoord: [0.0, 1.0],
     },
     SpriteVertex {
         position: [1.0, 1.0, 0.0],
+        normal: [0.0, 0.0, 1.0],
         diffuse_texcoord: [1.0, 0.0],
     },
     SpriteVertex {
         position: [1.0, 0.0, 0.0],
+        normal: [0.0, 0.0, 1.0],
         diffuse_texcoord: [1.0, 1.0],
     },
 ];
@@ -278,10 +301,10 @@ impl SpriteRenderer {
         }
     }
 
-    pub fn record_draw<'a, 'b>(
-        &'b self,
-        state: &'b GraphicsState<'a>,
-        pass: &mut wgpu::RenderPass<'b>,
+    pub fn record_draw<'a>(
+        &'a self,
+        state: &'a GraphicsState,
+        pass: &mut wgpu::RenderPass<'a>,
         frame_id: usize,
         time: Duration,
     ) {

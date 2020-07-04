@@ -1937,9 +1937,7 @@ impl Client {
                     };
 
                     values.push(match frame {
-                        Some(f) => {
-                            (ls.as_bytes()[f] - 'a' as u8) as u32 * 22
-                        }
+                        Some(f) => (ls.as_bytes()[f] - 'a' as u8) as u32 * 22,
                         None => 256,
                     })
                 }

@@ -38,7 +38,7 @@ use richter::{
         self,
         input::{Input, InputFocus},
         menu::Menu,
-        render::{self, GraphicsState, UiRenderer, COLOR_ATTACHMENT_FORMAT},
+        render::{self, Extent2d, GraphicsState, UiRenderer, DIFFUSE_ATTACHMENT_FORMAT},
         Client,
     },
     common::{
@@ -59,12 +59,12 @@ enum TitleState {
     Console,
 }
 
-enum ProgramState<'a> {
+enum ProgramState {
     Title,
-    Game(Game<'a>),
+    Game(Game),
 }
 
-struct ClientProgram<'a> {
+struct ClientProgram {
     vfs: Rc<Vfs>,
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
@@ -78,17 +78,17 @@ struct ClientProgram<'a> {
     surface: wgpu::Surface,
     adapter: wgpu::Adapter,
     swap_chain: RefCell<wgpu::SwapChain>,
-    gfx_state: RefCell<GraphicsState<'a>>,
-    ui_renderer: Rc<UiRenderer<'a>>,
+    gfx_state: RefCell<GraphicsState>,
+    ui_renderer: Rc<UiRenderer>,
 
     audio_device: Rc<rodio::Device>,
 
-    state: RefCell<ProgramState<'a>>,
+    state: RefCell<ProgramState>,
     input: Rc<RefCell<Input>>,
 }
 
-impl<'a> ClientProgram<'a> {
-    pub async fn new(window: Window, audio_device: rodio::Device) -> ClientProgram<'a> {
+impl ClientProgram {
+    pub async fn new(window: Window, audio_device: rodio::Device) -> ClientProgram {
         let mut vfs = Vfs::new();
 
         // add basedir first
@@ -151,14 +151,14 @@ impl<'a> ClientProgram<'a> {
             )
             .await
             .unwrap();
-        let winit::dpi::PhysicalSize { width, height } = window.inner_size();
+        let size: Extent2d = window.inner_size().into();
         let swap_chain = RefCell::new(device.create_swap_chain(
             &surface,
             &wgpu::SwapChainDescriptor {
                 usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-                format: COLOR_ATTACHMENT_FORMAT,
-                width,
-                height,
+                format: DIFFUSE_ATTACHMENT_FORMAT,
+                width: size.width,
+                height: size.height,
                 present_mode: wgpu::PresentMode::Immediate,
             },
         ));
@@ -171,8 +171,7 @@ impl<'a> ClientProgram<'a> {
             sample_count = 2;
         }
 
-        let gfx_state =
-            GraphicsState::new(device, queue, width, height, sample_count, vfs.clone()).unwrap();
+        let gfx_state = GraphicsState::new(device, queue, size, sample_count, vfs.clone()).unwrap();
         let ui_renderer = Rc::new(UiRenderer::new(&gfx_state, &menu.borrow()));
 
         // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
@@ -216,10 +215,8 @@ impl<'a> ClientProgram<'a> {
 
         self.state.replace(ProgramState::Game(
             Game::new(
-                self.vfs.clone(),
                 self.cvars.clone(),
                 self.cmds.clone(),
-                self.menu.clone(),
                 self.ui_renderer.clone(),
                 self.input.clone(),
                 cl,
@@ -235,7 +232,7 @@ impl<'a> ClientProgram<'a> {
             &self.surface,
             &wgpu::SwapChainDescriptor {
                 usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-                format: COLOR_ATTACHMENT_FORMAT,
+                format: DIFFUSE_ATTACHMENT_FORMAT,
                 width,
                 height,
                 present_mode,
@@ -264,7 +261,7 @@ impl<'a> ClientProgram<'a> {
     }
 }
 
-impl<'a> Program for ClientProgram<'a> {
+impl Program for ClientProgram {
     fn handle_event<T>(
         &mut self,
         event: Event<T>,
@@ -292,7 +289,7 @@ impl<'a> Program for ClientProgram<'a> {
             self.recreate_swap_chain(wgpu::PresentMode::Immediate);
         }
 
-        let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
+        let size: Extent2d = self.window.inner_size().into();
 
         // TODO: warn user if r_msaa_samples is invalid
         let mut sample_count = self
@@ -305,9 +302,7 @@ impl<'a> Program for ClientProgram<'a> {
         }
 
         // recreate attachments and rebuild pipelines if necessary
-        self.gfx_state
-            .borrow_mut()
-            .update(width, height, sample_count);
+        self.gfx_state.borrow_mut().update(size, sample_count);
 
         match *self.state.borrow_mut() {
             ProgramState::Title => unimplemented!(),

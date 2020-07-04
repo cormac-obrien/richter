@@ -186,7 +186,7 @@ impl Menu {
     pub fn left(&self) -> Result<(), Error> {
         let m = self.active_submenu()?;
 
-        if let MenuState::Active {index}= m.state.get() {
+        if let MenuState::Active { index } = m.state.get() {
             match m.items[index].item {
                 Item::Enum(ref e) => e.select_prev(),
                 Item::Slider(ref slider) => slider.decrease(),
@@ -202,7 +202,7 @@ impl Menu {
     pub fn right(&self) -> Result<(), Error> {
         let m = self.active_submenu()?;
 
-        if let MenuState::Active {index}= m.state.get() {
+        if let MenuState::Active { index } = m.state.get() {
             match m.items[index].item {
                 Item::Enum(ref e) => e.select_next(),
                 Item::Slider(ref slider) => slider.increase(),

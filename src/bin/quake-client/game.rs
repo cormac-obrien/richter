@@ -27,7 +27,10 @@ use richter::{
     client::{
         input::{Input, InputFocus},
         menu::Menu,
-        render::{Camera, GraphicsState, HudState, UiOverlay, UiRenderer, UiState, WorldRenderer},
+        render::{
+            Camera, GraphicsState, HudState, PostProcessRenderer, RenderTarget as _, UiOverlay,
+            UiRenderer, UiState, WorldRenderer,
+        },
         Client,
     },
     common::{
@@ -55,20 +58,22 @@ enum InGameFocus {
     Console,
 }
 
-struct InGameState<'a> {
+struct InGameState {
     cmds: Rc<RefCell<CmdRegistry>>,
-    world_renderer: WorldRenderer<'a>,
-    ui_renderer: Rc<UiRenderer<'a>>,
+    world_renderer: WorldRenderer,
+    postprocess_renderer: PostProcessRenderer,
+    ui_renderer: Rc<UiRenderer>,
     focus: Rc<Cell<InGameFocus>>,
 }
 
-impl<'a> InGameState<'a> {
+impl InGameState {
     pub fn new(
         cmds: Rc<RefCell<CmdRegistry>>,
-        world_renderer: WorldRenderer<'a>,
-        ui_renderer: Rc<UiRenderer<'a>>,
+        world_renderer: WorldRenderer,
+        postprocess_renderer: PostProcessRenderer,
+        ui_renderer: Rc<UiRenderer>,
         focus: InGameFocus,
-    ) -> InGameState<'a> {
+    ) -> InGameState {
         let focus_rc = Rc::new(Cell::new(focus));
         let toggleconsole_focus = focus_rc.clone();
 
@@ -113,54 +118,49 @@ impl<'a> InGameState<'a> {
         InGameState {
             cmds,
             world_renderer,
+            postprocess_renderer,
             ui_renderer,
             focus: focus_rc,
         }
     }
 }
 
-impl<'a> ::std::ops::Drop for InGameState<'a> {
+impl ::std::ops::Drop for InGameState {
     fn drop(&mut self) {
         // TODO: delete toggleconsole from cmds
     }
 }
 
-enum GameState<'a> {
+enum GameState {
     // loading level resources
     Loading,
 
     // in game
-    InGame(InGameState<'a>),
+    InGame(InGameState),
 }
 
-pub struct Game<'a> {
-    vfs: Rc<Vfs>,
+pub struct Game {
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
-    menu: Rc<RefCell<Menu>>,
-    ui_renderer: Rc<UiRenderer<'a>>,
-    state: GameState<'a>,
+    ui_renderer: Rc<UiRenderer>,
+    state: GameState,
     input: Rc<RefCell<Input>>,
     client: Client,
 }
 
-impl<'a> Game<'a> {
+impl Game {
     pub fn new(
-        vfs: Rc<Vfs>,
         cvars: Rc<RefCell<CvarRegistry>>,
         cmds: Rc<RefCell<CmdRegistry>>,
-        menu: Rc<RefCell<Menu>>,
-        ui_renderer: Rc<UiRenderer<'a>>,
+        ui_renderer: Rc<UiRenderer>,
         input: Rc<RefCell<Input>>,
         client: Client,
-    ) -> Result<Game<'a>, Error> {
+    ) -> Result<Game, Error> {
         input.borrow().register_cmds(&mut cmds.borrow_mut());
 
         Ok(Game {
-            vfs,
             cvars,
             cmds,
-            menu,
             ui_renderer,
             state: GameState::Loading,
             input,
@@ -169,7 +169,7 @@ impl<'a> Game<'a> {
     }
 
     // advance the simulation
-    pub fn frame(&mut self, gfx_state: &GraphicsState<'a>, frame_duration: Duration) {
+    pub fn frame(&mut self, gfx_state: &GraphicsState, frame_duration: Duration) {
         self.client.frame(frame_duration).unwrap();
 
         if let GameState::Loading = self.state {
@@ -185,9 +185,15 @@ impl<'a> Game<'a> {
                     &mut self.cvars.borrow_mut(),
                 );
 
+                let postprocess_renderer = PostProcessRenderer::new(
+                    gfx_state,
+                    gfx_state.initial_pass_target().diffuse_view(),
+                );
+
                 self.state = GameState::InGame(InGameState::new(
                     self.cmds.clone(),
                     world_renderer,
+                    postprocess_renderer,
                     self.ui_renderer.clone(),
                     InGameFocus::Game,
                 ));
@@ -226,7 +232,7 @@ impl<'a> Game<'a> {
 
     pub fn render(
         &self,
-        gfx_state: &GraphicsState<'a>,
+        gfx_state: &GraphicsState,
         color_attachment_view: &wgpu::TextureView,
         width: u32,
         height: u32,
@@ -255,59 +261,39 @@ impl<'a> Game<'a> {
                     .device()
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-                let depth_view = gfx_state
-                    .framebuffer()
-                    .depth_attachment()
-                    .create_default_view();
-                let color_view = gfx_state
-                    .framebuffer()
-                    .color_attachment()
-                    .create_default_view();
-
+                // initial render pass
                 {
-                    // quad_commands must outlive pass
-                    let mut quad_commands = Vec::new();
-                    let mut glyph_commands = Vec::new();
+                    let init_pass_builder =
+                        gfx_state.initial_pass_target().render_pass_builder(None);
 
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                            attachment: &color_view,
-                            resolve_target: Some(color_attachment_view),
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.0,
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 1.0,
-                                }),
-                                store: true,
-                            },
-                        }],
-                        depth_stencil_attachment: Some(
-                            wgpu::RenderPassDepthStencilAttachmentDescriptor {
-                                attachment: &depth_view,
-                                depth_ops: Some(wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(1.0),
-                                    store: true,
-                                }),
-                                stencil_ops: Some(wgpu::Operations {
-                                    load: wgpu::LoadOp::Load,
-                                    store: true,
-                                }),
-                            },
-                        ),
-                    });
+                    let mut init_pass = encoder.begin_render_pass(&init_pass_builder.descriptor());
 
-                    // render world
                     state.world_renderer.render_pass(
                         gfx_state,
-                        &mut pass,
+                        &mut init_pass,
                         &camera,
                         self.client.time(),
                         self.client.iter_visible_entities(),
                         self.client.lightstyle_values().unwrap().as_slice(),
                         &self.cvars.borrow(),
                     );
+                }
+
+                // final render pass
+                {
+                    // quad_commands must outlive final pass
+                    let mut quad_commands = Vec::new();
+                    let mut glyph_commands = Vec::new();
+
+                    let final_pass_builder = gfx_state
+                        .final_pass_target()
+                        .render_pass_builder(Some(color_attachment_view));
+                    let mut final_pass =
+                        encoder.begin_render_pass(&final_pass_builder.descriptor());
+
+                    state
+                        .postprocess_renderer
+                        .record_draw(gfx_state, &mut final_pass);
 
                     let overlay = match state.focus.get() {
                         InGameFocus::Game => None,
@@ -327,7 +313,7 @@ impl<'a> Game<'a> {
 
                     self.ui_renderer.render_pass(
                         &gfx_state,
-                        &mut pass,
+                        &mut final_pass,
                         width,
                         height,
                         self.client.time(),

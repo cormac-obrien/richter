@@ -26,10 +26,10 @@ impl ConsoleRenderer {
         ConsoleRenderer { conback }
     }
 
-    pub fn generate_commands<'a, 'b>(
-        &'b self,
+    pub fn generate_commands<'a>(
+        &'a self,
         console: &Console,
-        quad_cmds: &mut Vec<QuadRendererCommand<'b>>,
+        quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,
     ) {
         // TODO: take screen proportion as a parameter or cvar

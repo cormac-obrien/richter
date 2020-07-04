@@ -108,9 +108,13 @@ impl AudioSource {
     {
         let name = name.as_ref();
         let full_path = "sound/".to_owned() + name;
-        let mut file = vfs.open(&full_path).context(SoundErrorKind::Io { name: name.to_owned() })?;
+        let mut file = vfs.open(&full_path).context(SoundErrorKind::Io {
+            name: name.to_owned(),
+        })?;
         let mut data = Vec::new();
-        file.read_to_end(&mut data).context(SoundErrorKind::Io { name: name.to_owned() })?;
+        file.read_to_end(&mut data).context(SoundErrorKind::Io {
+            name: name.to_owned(),
+        })?;
 
         let spec = {
             let wav_reader =

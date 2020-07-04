@@ -1,5 +1,6 @@
 pub mod alias;
 pub mod brush;
+pub mod postprocess;
 pub mod sprite;
 
 use std::{cell::RefCell, mem::size_of};
@@ -148,7 +149,11 @@ pub struct FrameUniforms {
 #[repr(C, align(256))]
 #[derive(Clone, Copy, Debug)]
 pub struct EntityUniforms {
+    /// Model-view-projection transform matrix
     transform: Matrix4<f32>,
+
+    /// Model-only transform matrix
+    model: Matrix4<f32>,
 }
 
 enum EntityRenderer {
@@ -159,26 +164,27 @@ enum EntityRenderer {
 }
 
 /// Top-level renderer.
-pub struct WorldRenderer<'a> {
+pub struct WorldRenderer {
     worldmodel_renderer: BrushRenderer,
     entity_renderers: Vec<EntityRenderer>,
 
-    world_uniform_block: DynamicUniformBufferBlock<'a, EntityUniforms>,
-    entity_uniform_blocks: RefCell<Vec<DynamicUniformBufferBlock<'a, EntityUniforms>>>,
+    world_uniform_block: DynamicUniformBufferBlock<EntityUniforms>,
+    entity_uniform_blocks: RefCell<Vec<DynamicUniformBufferBlock<EntityUniforms>>>,
 }
 
-impl<'a> WorldRenderer<'a> {
+impl WorldRenderer {
     pub fn new(
-        state: &GraphicsState<'a>,
+        state: &GraphicsState,
         models: &[Model],
         worldmodel_id: usize,
         cvars: &mut CvarRegistry,
-    ) -> WorldRenderer<'a> {
+    ) -> WorldRenderer {
         let mut worldmodel_renderer = None;
         let mut entity_renderers = Vec::new();
 
         let world_uniform_block = state.entity_uniform_buffer_mut().allocate(EntityUniforms {
             transform: Matrix4::identity(),
+            model: Matrix4::identity(),
         });
 
         for (i, model) in models.iter().enumerate() {
@@ -228,16 +234,16 @@ impl<'a> WorldRenderer<'a> {
         }
     }
 
-    pub fn update_uniform_buffers<'b, I>(
-        &'b self,
-        state: &GraphicsState<'a>,
+    pub fn update_uniform_buffers<'a, I>(
+        &self,
+        state: &GraphicsState,
         camera: &Camera,
         time: Duration,
         entities: I,
         lightstyle_values: &[u32],
         cvars: &CvarRegistry,
     ) where
-        I: Iterator<Item = &'b ClientEntity>,
+        I: Iterator<Item = &'a ClientEntity>,
     {
         let _guard = flame::start_guard("Renderer::update_uniform");
 
@@ -263,6 +269,7 @@ impl<'a> WorldRenderer<'a> {
         trace!("Updating entity uniform buffer");
         let world_uniforms = EntityUniforms {
             transform: camera.transform(),
+            model: Matrix4::identity(),
         };
         state
             .entity_uniform_buffer_mut()
@@ -270,7 +277,8 @@ impl<'a> WorldRenderer<'a> {
 
         for (ent_pos, ent) in entities.into_iter().enumerate() {
             let ent_uniforms = EntityUniforms {
-                transform: self.calculate_transform(camera, ent),
+                transform: self.calculate_mvp_transform(camera, ent),
+                model: self.calculate_model_transform(camera, ent),
             };
 
             if ent_pos >= self.entity_uniform_blocks.borrow().len() {
@@ -287,17 +295,17 @@ impl<'a> WorldRenderer<'a> {
         state.entity_uniform_buffer().flush(state.queue());
     }
 
-    pub fn render_pass<'b, I>(
-        &'b self,
-        state: &'b GraphicsState<'a>,
-        pass: &mut wgpu::RenderPass<'b>,
+    pub fn render_pass<'a, I>(
+        &'a self,
+        state: &'a GraphicsState,
+        pass: &mut wgpu::RenderPass<'a>,
         camera: &Camera,
         time: Duration,
         entities: I,
         lightstyle_values: &[u32],
         cvars: &CvarRegistry,
     ) where
-        I: Iterator<Item = &'b ClientEntity> + Clone,
+        I: Iterator<Item = &'a ClientEntity> + Clone,
     {
         let _guard = flame::start_guard("Renderer::render_pass");
         {
@@ -355,7 +363,13 @@ impl<'a> WorldRenderer<'a> {
         &self.entity_renderers[ent.get_model_id() - 1]
     }
 
-    fn calculate_transform(&self, camera: &Camera, entity: &ClientEntity) -> Matrix4<f32> {
+    fn calculate_mvp_transform(&self, camera: &Camera, entity: &ClientEntity) -> Matrix4<f32> {
+        let model_transform = self.calculate_model_transform(camera, entity);
+
+        camera.transform() * model_transform
+    }
+
+    fn calculate_model_transform(&self, camera: &Camera, entity: &ClientEntity) -> Matrix4<f32> {
         let origin = entity.get_origin();
         let angles = entity.get_angles();
         let euler = match self.renderer_for_entity(entity) {
@@ -373,8 +387,7 @@ impl<'a> WorldRenderer<'a> {
             _ => Euler::new(angles.x, angles.y, angles.z),
         };
 
-        camera.transform()
-            * Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
+        Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
             * Matrix4::from(euler)
     }
 }

@@ -7,7 +7,7 @@ use crate::{
             screen_space_vertex_transform,
         },
         uniform::DynamicUniformBufferBlock,
-        GraphicsState, Pipeline, TextureData, COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
+        GraphicsState, Pipeline, TextureData, DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT,
     },
     common::wad::QPic,
 };
@@ -157,7 +157,7 @@ impl Pipeline for QuadPipeline {
 
     fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
         vec![wgpu::ColorStateDescriptor {
-            format: COLOR_ATTACHMENT_FORMAT,
+            format: DIFFUSE_ATTACHMENT_FORMAT,
             alpha_blend: wgpu::BlendDescriptor::REPLACE,
             color_blend: wgpu::BlendDescriptor::REPLACE,
             write_mask: wgpu::ColorWrite::ALL,
@@ -165,15 +165,7 @@ impl Pipeline for QuadPipeline {
     }
 
     fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
-        Some(wgpu::DepthStencilStateDescriptor {
-            format: DEPTH_ATTACHMENT_FORMAT,
-            depth_write_enabled: false,
-            depth_compare: wgpu::CompareFunction::Always,
-            stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-            stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-            stencil_read_mask: 0,
-            stencil_write_mask: 0,
-        })
+        None
     }
 
     // NOTE: if the vertex format is changed, this descriptor must also be changed accordingly.
@@ -340,13 +332,14 @@ impl QuadRenderer {
         uniforms
     }
 
-    pub fn record_draw<'state, 'pass, 'cmds>(
+    pub fn record_draw<'pass, 'cmds>(
         &'pass self,
-        state: &'pass GraphicsState<'state>,
+        state: &'pass GraphicsState,
         pass: &mut wgpu::RenderPass<'pass>,
         cmds: &'pass [QuadRendererCommand<'pass>],
-        blocks: &'cmds [DynamicUniformBufferBlock<'state, QuadUniforms>],
+        blocks: &'cmds [DynamicUniformBufferBlock<QuadUniforms>],
     ) {
+        debug!("QuadRenderer::record_draw");
         pass.set_pipeline(state.quad_pipeline());
         pass.set_vertex_buffer(0, state.quad_vertex_buffer().slice(..));
         pass.set_bind_group(0, &self.sampler_bind_group, &[]);

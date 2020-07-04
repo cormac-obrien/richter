@@ -88,17 +88,17 @@ pub enum UiState<'a> {
     },
 }
 
-pub struct UiRenderer<'a> {
+pub struct UiRenderer {
     console_renderer: ConsoleRenderer,
     menu_renderer: MenuRenderer,
     hud_renderer: HudRenderer,
     glyph_renderer: GlyphRenderer,
     quad_renderer: QuadRenderer,
-    quad_uniform_blocks: RefCell<Vec<DynamicUniformBufferBlock<'a, QuadUniforms>>>,
+    quad_uniform_blocks: RefCell<Vec<DynamicUniformBufferBlock<QuadUniforms>>>,
 }
 
-impl<'a> UiRenderer<'a> {
-    pub fn new(state: &GraphicsState<'a>, menu: &Menu) -> UiRenderer<'a> {
+impl UiRenderer {
+    pub fn new(state: &GraphicsState, menu: &Menu) -> UiRenderer {
         UiRenderer {
             console_renderer: ConsoleRenderer::new(state),
             menu_renderer: MenuRenderer::new(state, menu),
@@ -109,9 +109,9 @@ impl<'a> UiRenderer<'a> {
         }
     }
 
-    pub fn update_uniform_buffers<'b>(
-        &'b self,
-        state: &'b GraphicsState<'a>,
+    pub fn update_uniform_buffers(
+        &self,
+        state: &GraphicsState,
         display_width: u32,
         display_height: u32,
         _time: Duration,
@@ -133,7 +133,7 @@ impl<'a> UiRenderer<'a> {
 
     pub fn render_pass<'pass>(
         &'pass self,
-        state: &'pass GraphicsState<'a>,
+        state: &'pass GraphicsState,
         pass: &mut wgpu::RenderPass<'pass>,
         display_width: u32,
         display_height: u32,
@@ -141,9 +141,7 @@ impl<'a> UiRenderer<'a> {
         ui_state: UiState<'pass>,
         quad_commands: &'pass mut Vec<QuadRendererCommand<'pass>>,
         glyph_commands: &'pass mut Vec<GlyphRendererCommand>,
-    ) where
-        'a: 'pass,
-    {
+    ) {
         let (hud_state, overlay) = match ui_state {
             UiState::Title { overlay } => (None, Some(overlay)),
             UiState::InGame { hud, overlay } => (Some(hud), overlay),
@@ -160,11 +158,10 @@ impl<'a> UiRenderer<'a> {
                     self.menu_renderer
                         .generate_commands(menu, time, quad_commands, glyph_commands)
                 }
-                UiOverlay::Console(console) => self.console_renderer.generate_commands(
-                    console,
-                    quad_commands,
-                    glyph_commands,
-                ),
+                UiOverlay::Console(console) => {
+                    self.console_renderer
+                        .generate_commands(console, quad_commands, glyph_commands)
+                }
             }
         }
 

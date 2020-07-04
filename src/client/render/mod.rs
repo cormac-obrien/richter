@@ -23,6 +23,7 @@ mod cvars;
 mod error;
 mod palette;
 mod pipeline;
+mod target;
 mod ui;
 mod uniform;
 mod warp;
@@ -32,6 +33,8 @@ pub use cvars::register_cvars;
 pub use error::{RenderError, RenderErrorKind};
 pub use palette::Palette;
 pub use pipeline::Pipeline;
+pub use postprocess::PostProcessRenderer;
+pub use target::RenderTarget;
 pub use ui::{hud::HudState, UiOverlay, UiRenderer, UiState};
 pub use world::{Camera, WorldRenderer};
 
@@ -44,9 +47,10 @@ use std::{
 
 use crate::{
     client::render::{
+        target::{FinalPassTarget, InitialPassTarget},
         ui::{glyph, quad},
         uniform::{DynamicUniformBuffer, DynamicUniformBufferBlock},
-        world::{alias, brush, sprite, EntityUniforms},
+        world::{alias, brush, postprocess, sprite, EntityUniforms},
     },
     common::{util::any_slice_as_bytes, vfs::Vfs, wad::Wad},
 };
@@ -54,8 +58,10 @@ use crate::{
 use failure::Error;
 use strum::IntoEnumIterator;
 
-pub const COLOR_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub const DIFFUSE_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
+const NORMAL_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
+
 const DIFFUSE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const FULLBRIGHT_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const LIGHTMAP_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -167,6 +173,29 @@ impl<'a> TextureData<'a> {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Extent2d {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl std::convert::Into<wgpu::Extent3d> for Extent2d {
+    fn into(self) -> wgpu::Extent3d {
+        wgpu::Extent3d {
+            width: self.width,
+            height: self.height,
+            depth: 1,
+        }
+    }
+}
+
+impl std::convert::From<winit::dpi::PhysicalSize<u32>> for Extent2d {
+    fn from(other: winit::dpi::PhysicalSize<u32>) -> Extent2d {
+        let winit::dpi::PhysicalSize { width, height } = other;
+        Extent2d { width, height }
+    }
+}
+
 /// Create a texture suitable for use as a color attachment.
 ///
 /// This texture can be resolved using a swap chain texture as its target.
@@ -186,7 +215,7 @@ pub fn create_color_attachment(
         mip_level_count: 1,
         sample_count,
         dimension: wgpu::TextureDimension::D2,
-        format: COLOR_ATTACHMENT_FORMAT,
+        format: DIFFUSE_ATTACHMENT_FORMAT,
         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
     })
 }
@@ -213,82 +242,18 @@ pub fn create_depth_attachment(
     })
 }
 
-pub struct Framebuffer {
-    width: Cell<u32>,
-    height: Cell<u32>,
-    sample_count: Cell<u32>,
-    color_attachment: RefCell<wgpu::Texture>,
-    depth_attachment: RefCell<wgpu::Texture>,
-}
-
-impl Framebuffer {
-    fn new<'a>(device: &wgpu::Device, width: u32, height: u32, sample_count: u32) -> Framebuffer {
-        let color_attachment =
-            RefCell::new(create_color_attachment(device, width, height, sample_count));
-        let depth_attachment =
-            RefCell::new(create_depth_attachment(device, width, height, sample_count));
-        Framebuffer {
-            width: Cell::new(width),
-            height: Cell::new(height),
-            sample_count: Cell::new(sample_count),
-            color_attachment,
-            depth_attachment,
-        }
-    }
-
-    pub fn update(&self, device: &wgpu::Device, width: u32, height: u32, sample_count: u32) {
-        let size_changed = self.width.get() != width || self.height.get() != height;
-        let sample_count_changed = self.sample_count.get() != sample_count;
-
-        // might be redundant but doesn't matter
-        self.width.set(width);
-        self.height.set(height);
-        self.sample_count.set(sample_count);
-
-        if size_changed {
-            self.color_attachment.replace(create_color_attachment(
-                device,
-                width,
-                height,
-                sample_count,
-            ));
-            self.depth_attachment.replace(create_depth_attachment(
-                device,
-                width,
-                height,
-                sample_count,
-            ));
-        } else if sample_count_changed {
-            self.sample_count.set(sample_count);
-            self.color_attachment.replace(create_color_attachment(
-                device,
-                width,
-                height,
-                sample_count,
-            ));
-        }
-    }
-
-    pub fn depth_attachment(&self) -> Ref<wgpu::Texture> {
-        self.depth_attachment.borrow()
-    }
-
-    pub fn color_attachment(&self) -> Ref<wgpu::Texture> {
-        self.color_attachment.borrow()
-    }
-}
-
-pub struct GraphicsState<'a> {
+pub struct GraphicsState {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    framebuffer: Framebuffer,
+    initial_pass_target: InitialPassTarget,
+    final_pass_target: FinalPassTarget,
 
     world_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
     world_bind_groups: Vec<wgpu::BindGroup>,
 
     frame_uniform_buffer: wgpu::Buffer,
 
-    entity_uniform_buffer: RefCell<DynamicUniformBuffer<'a, EntityUniforms>>,
+    entity_uniform_buffer: RefCell<DynamicUniformBuffer<EntityUniforms>>,
     diffuse_sampler: wgpu::Sampler,
     lightmap_sampler: wgpu::Sampler,
 
@@ -299,8 +264,11 @@ pub struct GraphicsState<'a> {
 
     brush_pipeline: wgpu::RenderPipeline,
     brush_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    brush_texture_uniform_buffer: RefCell<DynamicUniformBuffer<'a, brush::TextureUniforms>>,
-    brush_texture_uniform_blocks: Vec<DynamicUniformBufferBlock<'a, brush::TextureUniforms>>,
+    brush_texture_uniform_buffer: RefCell<DynamicUniformBuffer<brush::TextureUniforms>>,
+    brush_texture_uniform_blocks: Vec<DynamicUniformBufferBlock<brush::TextureUniforms>>,
+
+    postprocess_pipeline: wgpu::RenderPipeline,
+    postprocess_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
 
     glyph_pipeline: wgpu::RenderPipeline,
     glyph_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
@@ -309,7 +277,7 @@ pub struct GraphicsState<'a> {
     quad_pipeline: wgpu::RenderPipeline,
     quad_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
     quad_vertex_buffer: wgpu::Buffer,
-    quad_uniform_buffer: RefCell<DynamicUniformBuffer<'a, quad::QuadUniforms>>,
+    quad_uniform_buffer: RefCell<DynamicUniformBuffer<quad::QuadUniforms>>,
 
     sprite_pipeline: wgpu::RenderPipeline,
     sprite_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
@@ -324,20 +292,20 @@ pub struct GraphicsState<'a> {
     compiler: RefCell<shaderc::Compiler>,
 }
 
-impl<'a> GraphicsState<'a> {
-    pub fn new<'b>(
+impl GraphicsState {
+    pub fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
-        width: u32,
-        height: u32,
+        size: Extent2d,
         sample_count: u32,
         vfs: Rc<Vfs>,
-    ) -> Result<GraphicsState<'a>, Error> {
+    ) -> Result<GraphicsState, Error> {
         let palette = Palette::load(&vfs, "gfx/palette.lmp");
         let gfx_wad = Wad::load(vfs.open("gfx.wad")?).unwrap();
         let mut compiler = shaderc::Compiler::new().unwrap();
 
-        let framebuffer = Framebuffer::new(&device, width, height, sample_count);
+        let initial_pass_target = InitialPassTarget::new(&device, size, sample_count);
+        let final_pass_target = FinalPassTarget::new(&device, size, sample_count);
 
         let frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frame uniform buffer"),
@@ -452,6 +420,9 @@ impl<'a> GraphicsState<'a> {
             wgpu::BufferUsage::VERTEX,
         );
 
+        let (postprocess_pipeline, postprocess_bind_group_layouts) =
+            postprocess::PostProcessPipeline::create(&device, &mut compiler, &[], sample_count);
+
         let (quad_pipeline, quad_bind_group_layouts) =
             quad::QuadPipeline::create(&device, &mut compiler, &[], sample_count);
         let quad_vertex_buffer = device.create_buffer_with_data(
@@ -483,7 +454,8 @@ impl<'a> GraphicsState<'a> {
         Ok(GraphicsState {
             device,
             queue,
-            framebuffer,
+            initial_pass_target,
+            final_pass_target,
             frame_uniform_buffer,
             entity_uniform_buffer,
 
@@ -498,6 +470,11 @@ impl<'a> GraphicsState<'a> {
             brush_bind_group_layouts,
             brush_texture_uniform_buffer,
             brush_texture_uniform_blocks,
+            sprite_pipeline,
+            sprite_bind_group_layouts,
+            sprite_vertex_buffer,
+            postprocess_pipeline,
+            postprocess_bind_group_layouts,
             glyph_pipeline,
             glyph_bind_group_layouts,
             glyph_instance_buffer,
@@ -505,9 +482,6 @@ impl<'a> GraphicsState<'a> {
             quad_bind_group_layouts,
             quad_vertex_buffer,
             quad_uniform_buffer,
-            sprite_pipeline,
-            sprite_bind_group_layouts,
-            sprite_vertex_buffer,
             diffuse_sampler,
             lightmap_sampler,
             default_lightmap,
@@ -519,9 +493,9 @@ impl<'a> GraphicsState<'a> {
         })
     }
 
-    pub fn create_texture<'b>(
+    pub fn create_texture<'a>(
         &self,
-        label: Option<&'b str>,
+        label: Option<&'a str>,
         width: u32,
         height: u32,
         data: &TextureData,
@@ -529,11 +503,28 @@ impl<'a> GraphicsState<'a> {
         create_texture(&self.device, &self.queue, label, width, height, data)
     }
 
-    pub fn update(&mut self, width: u32, height: u32, sample_count: u32) {
-        self.framebuffer.update(&self.device, width, height, sample_count);
+    /// Update graphics state with the new framebuffer size and sample count.
+    ///
+    /// If the framebuffer size has changed, this recreates all render targets with the new size.
+    ///
+    /// If the framebuffer sample count has changed, this recreates all render targets with the
+    /// new sample count and rebuilds the render pipelines to output that number of samples.
+    pub fn update(&mut self, size: Extent2d, sample_count: u32) {
         if self.sample_count.get() != sample_count {
             self.sample_count.set(sample_count);
             self.recreate_pipelines(sample_count);
+        }
+
+        if self.initial_pass_target.size() != size
+            || self.initial_pass_target.sample_count() != sample_count
+        {
+            self.initial_pass_target = InitialPassTarget::new(self.device(), size, sample_count);
+        }
+
+        if self.final_pass_target.size() != size
+            || self.final_pass_target.sample_count() != sample_count
+        {
+            self.final_pass_target = FinalPassTarget::new(self.device(), size, sample_count);
         }
     }
 
@@ -571,6 +562,15 @@ impl<'a> GraphicsState<'a> {
             sample_count,
         );
 
+        let postprocess_bind_group_layouts: Vec<_> =
+            self.postprocess_bind_group_layouts.iter().collect();
+        self.postprocess_pipeline = postprocess::PostProcessPipeline::recreate(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            &postprocess_bind_group_layouts,
+            sample_count,
+        );
+
         let glyph_bind_group_layouts: Vec<_> = self.glyph_bind_group_layouts.iter().collect();
         self.glyph_pipeline = glyph::GlyphPipeline::recreate(
             &self.device,
@@ -596,19 +596,23 @@ impl<'a> GraphicsState<'a> {
         &self.queue
     }
 
-    pub fn framebuffer(&self) -> &Framebuffer {
-        &self.framebuffer
+    pub fn initial_pass_target(&self) -> &InitialPassTarget {
+        &self.initial_pass_target
+    }
+
+    pub fn final_pass_target(&self) -> &FinalPassTarget {
+        &self.final_pass_target
     }
 
     pub fn frame_uniform_buffer(&self) -> &wgpu::Buffer {
         &self.frame_uniform_buffer
     }
 
-    pub fn entity_uniform_buffer(&self) -> Ref<DynamicUniformBuffer<'a, EntityUniforms>> {
+    pub fn entity_uniform_buffer(&self) -> Ref<DynamicUniformBuffer<EntityUniforms>> {
         self.entity_uniform_buffer.borrow()
     }
 
-    pub fn entity_uniform_buffer_mut(&self) -> RefMut<DynamicUniformBuffer<'a, EntityUniforms>> {
+    pub fn entity_uniform_buffer_mut(&self) -> RefMut<DynamicUniformBuffer<EntityUniforms>> {
         self.entity_uniform_buffer.borrow_mut()
     }
 
@@ -660,21 +664,31 @@ impl<'a> GraphicsState<'a> {
 
     pub fn brush_texture_uniform_buffer(
         &self,
-    ) -> Ref<DynamicUniformBuffer<'a, brush::TextureUniforms>> {
+    ) -> Ref<DynamicUniformBuffer<brush::TextureUniforms>> {
         self.brush_texture_uniform_buffer.borrow()
     }
 
     pub fn brush_texture_uniform_buffer_mut(
         &self,
-    ) -> RefMut<DynamicUniformBuffer<'a, brush::TextureUniforms>> {
+    ) -> RefMut<DynamicUniformBuffer<brush::TextureUniforms>> {
         self.brush_texture_uniform_buffer.borrow_mut()
     }
 
     pub fn brush_texture_uniform_block(
         &self,
         kind: brush::TextureKind,
-    ) -> &DynamicUniformBufferBlock<'a, brush::TextureUniforms> {
+    ) -> &DynamicUniformBufferBlock<brush::TextureUniforms> {
         &self.brush_texture_uniform_blocks[kind as usize]
+    }
+
+    // postprocess pipeline
+
+    pub fn postprocess_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.postprocess_pipeline
+    }
+
+    pub fn postprocess_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+        &self.postprocess_bind_group_layouts
     }
 
     // glyph pipeline
@@ -705,13 +719,11 @@ impl<'a> GraphicsState<'a> {
         &self.quad_vertex_buffer
     }
 
-    pub fn quad_uniform_buffer(&self) -> Ref<DynamicUniformBuffer<'a, ui::quad::QuadUniforms>> {
+    pub fn quad_uniform_buffer(&self) -> Ref<DynamicUniformBuffer<ui::quad::QuadUniforms>> {
         self.quad_uniform_buffer.borrow()
     }
 
-    pub fn quad_uniform_buffer_mut(
-        &self,
-    ) -> RefMut<DynamicUniformBuffer<'a, ui::quad::QuadUniforms>> {
+    pub fn quad_uniform_buffer_mut(&self) -> RefMut<DynamicUniformBuffer<ui::quad::QuadUniforms>> {
         self.quad_uniform_buffer.borrow_mut()
     }
 

@@ -76,7 +76,7 @@ pub trait Pipeline {
     /// `bind_group_layout_prefix` specifies a list of `BindGroupLayout`s to be prefixed onto those
     /// created from this pipeline's `bind_group_layout_descriptors()` method when creating the
     /// `RenderPipeline`. This permits the reuse of `BindGroupLayout`s between pipelines.
-    fn create<'a>(
+    fn create(
         device: &wgpu::Device,
         compiler: &mut shaderc::Compiler,
         bind_group_layout_prefix: &[wgpu::BindGroupLayout],

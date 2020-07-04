@@ -23,7 +23,7 @@ use std::{borrow::Cow, cell::Cell, collections::HashMap, mem::size_of, ops::Rang
 use crate::{
     client::render::{
         warp, world::BindGroupLayoutId, Camera, GraphicsState, LightmapData, Pipeline, TextureData,
-        COLOR_ATTACHMENT_FORMAT, DEPTH_ATTACHMENT_FORMAT,
+        DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
     },
     common::{
         bsp::{BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTextureMipmap},
@@ -32,7 +32,7 @@ use crate::{
     },
 };
 
-use cgmath::{InnerSpace, Vector3};
+use cgmath::{InnerSpace as _, Vector3};
 use failure::Error;
 use num::FromPrimitive;
 use strum_macros::EnumIter;
@@ -141,12 +141,22 @@ impl Pipeline for BrushPipeline {
     }
 
     fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
-        vec![wgpu::ColorStateDescriptor {
-            format: COLOR_ATTACHMENT_FORMAT,
-            alpha_blend: wgpu::BlendDescriptor::REPLACE,
-            color_blend: wgpu::BlendDescriptor::REPLACE,
-            write_mask: wgpu::ColorWrite::ALL,
-        }]
+        vec![
+            // diffuse attachment
+            wgpu::ColorStateDescriptor {
+                format: DIFFUSE_ATTACHMENT_FORMAT,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::ALL,
+            },
+            // normal attachment
+            wgpu::ColorStateDescriptor {
+                format: NORMAL_ATTACHMENT_FORMAT,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::ALL,
+            },
+        ]
     }
 
     fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
@@ -169,12 +179,14 @@ impl Pipeline for BrushPipeline {
             attributes: &wgpu::vertex_attr_array![
                 // position
                 0 => Float3,
+                // normal
+                1 => Float3,
                 // diffuse texcoord
-                1 => Float2,
-                // lightmap texcoord
                 2 => Float2,
+                // lightmap texcoord
+                3 => Float2,
                 // lightmap animation ids
-                3 => Uchar4,
+                4 => Uchar4,
             ],
         }]
     }
@@ -198,6 +210,7 @@ fn calculate_lightmap_texcoords(
 }
 
 type Position = [f32; 3];
+type Normal = [f32; 3];
 type DiffuseTexcoord = [f32; 2];
 type LightmapTexcoord = [f32; 2];
 type LightmapAnim = [u8; 4];
@@ -206,6 +219,7 @@ type LightmapAnim = [u8; 4];
 #[derive(Clone, Copy, Debug)]
 struct BrushVertex {
     position: Position,
+    normal: Normal,
     diffuse_texcoord: DiffuseTexcoord,
     lightmap_texcoord: LightmapTexcoord,
     lightmap_anim: LightmapAnim,
@@ -308,11 +322,7 @@ impl BrushRendererBuilder {
         }
     }
 
-    fn create_face<'a, 'b>(
-        &'b mut self,
-        state: &'b GraphicsState<'a>,
-        face_id: usize,
-    ) -> BrushFace {
+    fn create_face(&mut self, state: &GraphicsState, face_id: usize) -> BrushFace {
         let face = &self.bsp_data.faces()[face_id];
         let face_vert_id = self.vertices.len();
         let texinfo = &self.bsp_data.texinfo()[face.texinfo_id];
@@ -323,9 +333,11 @@ impl BrushRendererBuilder {
             let verts = warp::subdivide(math::remove_collinear(
                 self.bsp_data.face_iter_vertices(face_id).collect(),
             ));
+            let normal = (verts[0] - verts[1]).cross(verts[2] - verts[1]).normalize();
             for vert in verts.into_iter() {
                 self.vertices.push(BrushVertex {
                     position: vert.into(),
+                    normal: normal.into(),
                     diffuse_texcoord: [
                         ((vert.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32),
                         ((vert.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32),
@@ -343,9 +355,10 @@ impl BrushRendererBuilder {
             // v1 is the base vertex, so it remains constant.
             // v2 takes the previous value of v3.
             // v3 is the newest vertex.
-            let mut vert_iter =
-                math::remove_collinear(self.bsp_data.face_iter_vertices(face_id).collect())
-                    .into_iter();
+            let mut verts =
+                math::remove_collinear(self.bsp_data.face_iter_vertices(face_id).collect());
+            let normal = (verts[0] - verts[1]).cross(verts[2] - verts[1]).normalize();
+            let mut vert_iter = verts.into_iter();
 
             let v1 = vert_iter.next().unwrap();
             let mut v2 = vert_iter.next().unwrap();
@@ -356,6 +369,7 @@ impl BrushRendererBuilder {
                 for vert in tri.iter() {
                     self.vertices.push(BrushVertex {
                         position: (*vert).into(),
+                        normal: normal.into(),
                         diffuse_texcoord: [
                             ((vert.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32),
                             ((vert.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32),
@@ -405,9 +419,9 @@ impl BrushRendererBuilder {
         }
     }
 
-    fn create_per_texture_bind_group<'a>(
+    fn create_per_texture_bind_group(
         &self,
-        state: &GraphicsState<'a>,
+        state: &GraphicsState,
         texture_id: usize,
     ) -> wgpu::BindGroup {
         let layout = &state.brush_bind_group_layout(BindGroupLayoutId::PerTexture);
@@ -434,11 +448,7 @@ impl BrushRendererBuilder {
         state.device().create_bind_group(&desc)
     }
 
-    fn create_per_face_bind_group<'a>(
-        &self,
-        state: &GraphicsState<'a>,
-        face_id: usize,
-    ) -> wgpu::BindGroup {
+    fn create_per_face_bind_group(&self, state: &GraphicsState, face_id: usize) -> wgpu::BindGroup {
         let mut lightmap_views: Vec<_> = self.faces[face_id]
             .lightmap_ids
             .iter()
@@ -457,7 +467,7 @@ impl BrushRendererBuilder {
         state.device().create_bind_group(&desc)
     }
 
-    pub fn build<'a>(mut self, state: &GraphicsState<'a>) -> Result<BrushRenderer, Error> {
+    pub fn build(mut self, state: &GraphicsState) -> Result<BrushRenderer, Error> {
         // create the diffuse and fullbright textures
         for (tex_id, tex) in self.bsp_data.textures().iter().enumerate() {
             // let mut diffuses = Vec::new();
@@ -573,12 +583,13 @@ pub struct BrushRenderer {
 
 impl BrushRenderer {
     /// Record the draw commands for this brush model to the given `wgpu::RenderPass`.
-    pub fn record_draw<'a, 'b>(
-        &'b self,
-        state: &'b GraphicsState<'a>,
-        pass: &mut wgpu::RenderPass<'b>,
+    pub fn record_draw<'a>(
+        &'a self,
+        state: &'a GraphicsState,
+        pass: &mut wgpu::RenderPass<'a>,
         camera: &Camera,
     ) {
+        debug!("BrushRenderer::record_draw");
         let _guard = flame::start_guard("BrushRenderer::record_draw");
         pass.set_pipeline(state.brush_pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
