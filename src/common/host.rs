@@ -21,12 +21,24 @@
 use crate::common::engine;
 
 use chrono::{DateTime, Duration, Utc};
+use winit::{
+    event::{Event, WindowEvent},
+    event_loop::{ControlFlow, EventLoopWindowTarget},
+};
 
 // TODO: replace with cvar
 const FPS_MAX: f32 = 144.0;
 
 pub trait Program: Sized {
+    fn handle_event<T>(
+        &mut self,
+        event: Event<T>,
+        _target: &EventLoopWindowTarget<T>,
+        control_flow: &mut ControlFlow,
+    );
+
     fn frame(&mut self, frame_duration: Duration);
+    fn shutdown(&mut self);
 }
 
 pub struct Host<P>
@@ -55,6 +67,27 @@ where
         }
     }
 
+    pub fn handle_event<T>(&mut self, event: Event<T>, _target: &EventLoopWindowTarget<T>, control_flow: &mut ControlFlow) {
+        match event {
+            Event::WindowEvent{event: WindowEvent::CloseRequested, ..} => {
+                self.program.shutdown();
+                *control_flow = ControlFlow::Exit;
+            }
+
+            Event::MainEventsCleared => self.frame(),
+            Event::Suspended | Event::Resumed => unimplemented!(),
+            Event::LoopDestroyed => {
+                // TODO:
+                // - host_writeconfig
+                // - others...
+                let mut flame_file = std::io::BufWriter::new(std::fs::File::create("flame.html").unwrap());
+                flame::dump_html(&mut flame_file).unwrap();
+            }
+
+            e => self.program.handle_event(e, _target, control_flow),
+        }
+    }
+
     pub fn frame(&mut self) {
         let new_frame_time = Utc::now();
         self.prev_frame_duration = new_frame_time.signed_duration_since(self.prev_frame_time);
@@ -64,7 +97,7 @@ where
         if !self.check_frame_duration(prev_frame_duration) {
             // TODO: not sure about this performance wise. we'll see.
             // avoid busy waiting if we're running at a really high framerate.
-            ::std::thread::yield_now();
+            std::thread::yield_now();
             return;
         }
 

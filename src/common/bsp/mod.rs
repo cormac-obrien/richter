@@ -118,7 +118,7 @@
 
 mod load;
 
-use std::{collections::HashSet, error::Error, fmt, rc::Rc};
+use std::{collections::HashSet, error::Error, fmt, iter::Iterator, rc::Rc};
 
 use crate::common::math::{Hyperplane, HyperplaneSide, LinePlaneIntersect};
 
@@ -664,6 +664,27 @@ pub struct BspEdgeIndex {
 }
 
 #[derive(Debug)]
+pub struct BspLightmap<'a> {
+    width: u32,
+    height: u32,
+    data: &'a [u8],
+}
+
+impl<'a> BspLightmap<'a> {
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn data(&self) -> &[u8] {
+        self.data
+    }
+}
+
+#[derive(Debug)]
 pub struct BspData {
     pub(crate) planes: Rc<Box<[Hyperplane]>>,
     pub(crate) textures: Box<[BspTexture]>,
@@ -699,6 +720,50 @@ impl BspData {
 
     pub fn texinfo(&self) -> &[BspTexInfo] {
         &self.texinfo
+    }
+
+    pub fn face(&self, face_id: usize) -> &BspFace {
+        &self.faces[face_id]
+    }
+
+    pub fn face_iter_vertices(&self, face_id: usize) -> impl Iterator<Item = Vector3<f32>> + '_ {
+        let face = &self.faces[face_id];
+        self.edgelist[face.edge_id..face.edge_id + face.edge_count]
+            .iter()
+            .map(move |id| {
+                self.vertices[self.edges[id.index].vertex_ids[id.direction as usize] as usize]
+            })
+    }
+
+    pub fn face_texinfo(&self, face_id: usize) -> &BspTexInfo {
+        &self.texinfo[self.faces[face_id].texinfo_id]
+    }
+
+    pub fn face_lightmaps(&self, face_id: usize) -> Vec<BspLightmap> {
+        let face = &self.faces[face_id];
+        match face.lightmap_id {
+            Some(lightmap_id) => {
+                let lightmap_w = face.extents[0] as u32 / 16 + 1;
+                let lightmap_h = face.extents[1] as u32 / 16 + 1;
+                let lightmap_size = (lightmap_w * lightmap_h) as usize;
+
+                face.light_styles
+                    .iter()
+                    .take_while(|style| **style != 255)
+                    .enumerate()
+                    .map(|(i, _)| {
+                        let start = lightmap_id + lightmap_size * i as usize;
+                        let end = start + lightmap_size;
+                        BspLightmap {
+                            width: lightmap_w,
+                            height: lightmap_h,
+                            data: &self.lightmaps[start..end],
+                        }
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        }
     }
 
     pub fn faces(&self) -> &[BspFace] {
@@ -815,9 +880,6 @@ impl BspData {
                         bits => {
                             for shift in 0..8 {
                                 if bits & 1 << shift != 0 {
-                                    if visleaf >= leaf_count {
-                                        error!("Impossible visleaf in PVS: the len is {} but the leaf ID is {}", leaf_count, visleaf);
-                                    }
                                     visleaf_list.push(visleaf);
                                 }
 
@@ -941,6 +1003,17 @@ impl BspModel {
     /// Returns the origin of this BSP model.
     pub fn origin(&self) -> Vector3<f32> {
         self.origin
+    }
+
+    pub fn iter_leaves(&self) -> impl Iterator<Item = &BspLeaf> {
+        // add 1 to leaf_count because...??? TODO: figure out if this is documented anywhere
+        self.bsp_data.leaves[self.leaf_id..self.leaf_id + self.leaf_count + 1].iter()
+    }
+
+    pub fn iter_faces(&self) -> impl Iterator<Item = &BspFace> {
+        self.bsp_data.facelist[self.face_id..self.face_id + self.face_count]
+            .iter()
+            .map(move |face_id| &self.bsp_data.faces[*face_id])
     }
 
     pub fn face_list(&self) -> &[usize] {

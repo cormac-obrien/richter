@@ -28,12 +28,13 @@ use richter::{
         input::{Input, InputFocus},
         menu::Menu,
         render::{
-            self, hud::HudRenderer, menu::MenuRenderer, pipe, GraphicsPackage, SceneRenderer,
+            Camera, GraphicsState, HudState, PostProcessRenderer, RenderTarget as _, UiOverlay,
+            UiRenderer, UiState, WorldRenderer,
         },
         Client,
     },
     common::{
-        console::{CmdRegistry, CvarRegistry},
+        console::{CmdRegistry, Console, CvarRegistry},
         math,
         net::SignOnStage,
         vfs::Vfs,
@@ -43,9 +44,7 @@ use richter::{
 use cgmath;
 use chrono::Duration;
 use failure::Error;
-use gfx::{CommandBuffer, Encoder};
-use gfx_device_gl::Resources;
-use glutin::Event;
+use log::info;
 
 #[derive(Clone, Copy)]
 enum InGameFocus {
@@ -61,16 +60,18 @@ enum InGameFocus {
 
 struct InGameState {
     cmds: Rc<RefCell<CmdRegistry>>,
-    renderer: SceneRenderer,
-    hud_renderer: HudRenderer,
+    world_renderer: WorldRenderer,
+    postprocess_renderer: PostProcessRenderer,
+    ui_renderer: Rc<UiRenderer>,
     focus: Rc<Cell<InGameFocus>>,
 }
 
 impl InGameState {
     pub fn new(
         cmds: Rc<RefCell<CmdRegistry>>,
-        scene_renderer: SceneRenderer,
-        hud_renderer: HudRenderer,
+        world_renderer: WorldRenderer,
+        postprocess_renderer: PostProcessRenderer,
+        ui_renderer: Rc<UiRenderer>,
         focus: InGameFocus,
     ) -> InGameState {
         let focus_rc = Rc::new(Cell::new(focus));
@@ -116,8 +117,9 @@ impl InGameState {
 
         InGameState {
             cmds,
-            renderer: scene_renderer,
-            hud_renderer,
+            world_renderer,
+            postprocess_renderer,
+            ui_renderer,
             focus: focus_rc,
         }
     }
@@ -138,12 +140,9 @@ enum GameState {
 }
 
 pub struct Game {
-    vfs: Rc<Vfs>,
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
-    menu: Rc<RefCell<Menu>>,
-    menu_renderer: MenuRenderer,
-    gfx_pkg: Rc<RefCell<GraphicsPackage>>,
+    ui_renderer: Rc<UiRenderer>,
     state: GameState,
     input: Rc<RefCell<Input>>,
     client: Client,
@@ -151,25 +150,18 @@ pub struct Game {
 
 impl Game {
     pub fn new(
-        vfs: Rc<Vfs>,
         cvars: Rc<RefCell<CvarRegistry>>,
         cmds: Rc<RefCell<CmdRegistry>>,
-        menu: Rc<RefCell<Menu>>,
-        gfx_pkg: Rc<RefCell<GraphicsPackage>>,
+        ui_renderer: Rc<UiRenderer>,
         input: Rc<RefCell<Input>>,
         client: Client,
     ) -> Result<Game, Error> {
         input.borrow().register_cmds(&mut cmds.borrow_mut());
 
-        println!("Building menu renderer...");
-        let menu_renderer = MenuRenderer::new(vfs.clone(), menu.clone(), gfx_pkg.clone()).unwrap();
         Ok(Game {
-            vfs,
             cvars,
             cmds,
-            menu,
-            menu_renderer,
-            gfx_pkg,
+            ui_renderer,
             state: GameState::Loading,
             input,
             client,
@@ -177,14 +169,8 @@ impl Game {
     }
 
     // advance the simulation
-    pub fn frame(&mut self, frame_duration: Duration) {
+    pub fn frame(&mut self, gfx_state: &GraphicsState, frame_duration: Duration) {
         self.client.frame(frame_duration).unwrap();
-
-        if let Some(ref mut game_input) = self.input.borrow_mut().game_input_mut() {
-            self.client
-                .handle_input(game_input, frame_duration)
-                .unwrap();
-        }
 
         if let GameState::Loading = self.state {
             println!("loading...");
@@ -192,26 +178,29 @@ impl Game {
             if self.client.signon_stage() == SignOnStage::Done {
                 println!("finished loading");
                 // if we have, build renderers
-                let renderer = SceneRenderer::new(
+                let world_renderer = WorldRenderer::new(
+                    gfx_state,
                     self.client.models().unwrap(),
                     1,
-                    &mut self.gfx_pkg.borrow_mut(),
-                )
-                .unwrap();
+                    &mut self.cvars.borrow_mut(),
+                );
 
-                let hud_renderer = HudRenderer::new(self.gfx_pkg.clone()).unwrap();
+                let postprocess_renderer = PostProcessRenderer::new(
+                    gfx_state,
+                    gfx_state.initial_pass_target().diffuse_view(),
+                );
 
                 self.state = GameState::InGame(InGameState::new(
                     self.cmds.clone(),
-                    renderer,
-                    hud_renderer,
+                    world_renderer,
+                    postprocess_renderer,
+                    self.ui_renderer.clone(),
                     InGameFocus::Game,
                 ));
             }
         }
-    }
 
-    pub fn handle_input(&mut self, event: Event) {
+        // update input focus
         match self.state {
             // ignore inputs during loading
             GameState::Loading => return,
@@ -234,93 +223,112 @@ impl Game {
             }
         }
 
-        self.input.borrow_mut().handle_event(event).unwrap();
+        if let Some(ref mut game_input) = self.input.borrow_mut().game_input_mut() {
+            self.client
+                .handle_input(game_input, frame_duration)
+                .unwrap();
+        }
     }
 
-    pub fn render<C>(
-        &mut self,
-        encoder: &mut Encoder<Resources, C>,
-        user_data: &mut pipe::Data<Resources>,
-        display_width: u32,
-        display_height: u32,
-    ) where
-        C: CommandBuffer<Resources>,
-    {
+    pub fn render(
+        &self,
+        gfx_state: &GraphicsState,
+        color_attachment_view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        console: &Console,
+        menu: &Menu,
+    ) {
+        println!("rendering...");
         match self.state {
             // TODO: loading screen
             GameState::Loading => (),
 
-            GameState::InGame(ref mut state) => {
-                let aspect = display_width as f32 / display_height as f32;
+            GameState::InGame(ref state) => {
+                let aspect_ratio = width as f32 / height as f32;
                 let fov_x = self.cvars.borrow().get_value("fov").unwrap();
-                let fov_y = math::fov_x_to_fov_y(cgmath::Deg(fov_x), aspect).unwrap();
+                let fov_y = math::fov_x_to_fov_y(cgmath::Deg(fov_x), aspect_ratio).unwrap();
+                let perspective = cgmath::perspective(fov_y, aspect_ratio, 4.0, 4096.0);
 
-                let perspective = cgmath::perspective(fov_y, aspect, 4.0, 4096.0);
-
-                let camera = render::Camera::new(
+                let camera = Camera::new(
                     self.client.view_origin(),
-                    self.client.view_angles(),
+                    self.client.view_angles(self.client.time()).unwrap(),
                     perspective,
                 );
 
-                // render world
-                state
-                    .renderer
-                    .render(
-                        encoder,
-                        user_data,
-                        self.client.entities().unwrap(),
-                        self.client.view_ent(),
-                        self.client.weapon() as usize,
-                        self.client.time(),
+                info!("Beginning render pass");
+                let mut encoder = gfx_state
+                    .device()
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+                // initial render pass
+                {
+                    let init_pass_builder =
+                        gfx_state.initial_pass_target().render_pass_builder(None);
+
+                    let mut init_pass = encoder.begin_render_pass(&init_pass_builder.descriptor());
+
+                    state.world_renderer.render_pass(
+                        gfx_state,
+                        &mut init_pass,
                         &camera,
+                        self.client.time(),
+                        self.client.iter_visible_entities(),
                         self.client.lightstyle_values().unwrap().as_slice(),
-                    )
-                    .unwrap();
+                        &self.cvars.borrow(),
+                    );
+                }
 
-                state
-                    .hud_renderer
-                    .render(encoder, &self.client, display_width, display_height)
-                    .unwrap();
+                // final render pass
+                {
+                    // quad_commands must outlive final pass
+                    let mut quad_commands = Vec::new();
+                    let mut glyph_commands = Vec::new();
 
-                match state.focus.get() {
-                    // don't need to render anything else
-                    InGameFocus::Game => (),
+                    let final_pass_builder = gfx_state
+                        .final_pass_target()
+                        .render_pass_builder(Some(color_attachment_view));
+                    let mut final_pass =
+                        encoder.begin_render_pass(&final_pass_builder.descriptor());
 
-                    // render the console
-                    InGameFocus::Console => {
-                        let mut data = self.gfx_pkg.borrow().gen_user_data_2d();
+                    log::debug!("color shift = {:?}", self.client.color_shift());
+                    state
+                        .postprocess_renderer
+                        .record_draw(gfx_state, &mut final_pass, self.client.color_shift());
 
-                        self.gfx_pkg
-                            .borrow()
-                            .console_renderer()
-                            .render(
-                                encoder,
-                                self.gfx_pkg.borrow().pipeline_2d(),
-                                &mut data,
-                                display_width,
-                                display_height,
-                                0.5,
-                                1.0,
-                            )
-                            .unwrap();
-                    }
+                    let overlay = match state.focus.get() {
+                        InGameFocus::Game => None,
+                        InGameFocus::Console => Some(UiOverlay::Console(console)),
+                        InGameFocus::Menu => Some(UiOverlay::Menu(menu)),
+                    };
 
-                    // render the menu
-                    InGameFocus::Menu => {
-                        let mut data = self.gfx_pkg.borrow().gen_user_data_2d();
+                    let ui_state = UiState::InGame {
+                        hud: HudState {
+                            items: self.client.items(),
+                            item_pickup_time: self.client.item_get_time(),
+                            stats: self.client.stats(),
+                            face_anim_time: self.client.face_anim_time(),
+                        },
+                        overlay,
+                    };
 
-                        self.menu_renderer
-                            .render(
-                                encoder,
-                                self.gfx_pkg.borrow().pipeline_2d(),
-                                &mut data,
-                                display_width,
-                                display_height,
-                                0.5,
-                            )
-                            .unwrap();
-                    }
+                    self.ui_renderer.render_pass(
+                        &gfx_state,
+                        &mut final_pass,
+                        width,
+                        height,
+                        self.client.time(),
+                        ui_state,
+                        &mut quad_commands,
+                        &mut glyph_commands,
+                    );
+                }
+
+                let command_buffer = encoder.finish();
+                {
+                    let _submit_guard = flame::start_guard("Submit and poll");
+                    gfx_state.queue().submit(vec![command_buffer]);
+                    gfx_state.device().poll(wgpu::Maintain::Wait);
                 }
             }
         }

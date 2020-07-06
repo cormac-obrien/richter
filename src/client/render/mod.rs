@@ -1,4 +1,4 @@
-// Copyright © 2018 Cormac O'Brien
+// Copyright © 2020 Cormac O'Brien.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -18,224 +18,682 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod alias;
-pub mod bitmap;
-pub mod brush;
-pub mod console;
-pub mod glyph;
-pub mod hud;
-pub mod menu;
-pub mod world;
+// mod atlas;
+mod cvars;
+mod error;
+mod palette;
+mod pipeline;
+mod target;
+mod ui;
+mod uniform;
+mod warp;
+mod world;
+
+pub use cvars::register_cvars;
+pub use error::{RenderError, RenderErrorKind};
+pub use palette::Palette;
+pub use pipeline::Pipeline;
+pub use postprocess::PostProcessRenderer;
+pub use target::RenderTarget;
+pub use ui::{hud::HudState, UiOverlay, UiRenderer, UiState};
+pub use world::{Camera, WorldRenderer};
 
 use std::{
-    cell::{Ref, RefCell, RefMut},
-    collections::HashMap,
-    io::BufReader,
-    ops::DerefMut,
+    borrow::Cow,
+    cell::{Cell, Ref, RefCell, RefMut},
+    mem::size_of,
     rc::Rc,
 };
 
 use crate::{
-    client::ClientEntity,
-    common::{
-        console::Console,
-        model::{Model, ModelKind},
-        vfs::Vfs,
-        wad::{QPic, Wad},
+    client::render::{
+        target::{FinalPassTarget, InitialPassTarget},
+        ui::{glyph, quad},
+        uniform::{DynamicUniformBuffer, DynamicUniformBufferBlock},
+        world::{
+            alias,
+            brush::{self, BrushPipeline},
+            postprocess::{self, PostProcessPipeline},
+            sprite, EntityUniforms,
+        },
     },
+    common::{util::any_slice_as_bytes, vfs::Vfs, wad::Wad},
 };
 
-use byteorder::ReadBytesExt;
-use cgmath::{Deg, Euler, Matrix3, Matrix4, SquareMatrix, Vector3, Zero};
-use chrono::Duration;
 use failure::Error;
-use flame;
-use gfx::{
-    self,
-    format::{Unorm, R8, R8_G8_B8_A8},
-    handle::{Buffer, DepthStencilView, RenderTargetView, Sampler, ShaderResourceView, Texture},
-    pso::{PipelineData, PipelineState},
-    texture::{self, SamplerInfo},
-    traits::FactoryExt,
-    IndexBuffer, Slice,
-};
-use gfx_device_gl::{Factory, Resources};
+use strum::IntoEnumIterator;
 
-pub use gfx::format::{DepthStencil as DepthFormat, Srgba8 as ColorFormat};
+const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub const DIFFUSE_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
+const NORMAL_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 
-use self::{
-    alias::AliasRenderer, bitmap::BitmapTexture, brush::BrushRenderer, console::ConsoleRenderer,
-    glyph::GlyphRenderer, world::WorldRenderer,
-};
+const DIFFUSE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+const FULLBRIGHT_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+const LIGHTMAP_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
-const PALETTE_SIZE: usize = 768;
-
-// TODO: per-API coordinate system conversions
-pub static VERTEX_SHADER_GLSL: &[u8] = br#"
-#version 430
-
-layout (location = 0) in vec3 a_Pos;
-layout (location = 1) in vec2 a_Texcoord;
-
-out vec2 f_texcoord;
-
-uniform mat4 u_Transform;
-
-void main() {
-    f_texcoord = a_Texcoord;
-    gl_Position = u_Transform * vec4(-a_Pos.y, a_Pos.z, -a_Pos.x, 1.0);
-}
-"#;
-
-pub static FRAGMENT_SHADER_GLSL: &[u8] = br#"
-#version 430
-
-in vec2 f_texcoord;
-
-uniform sampler2D u_Texture;
-
-out vec4 Target0;
-
-void main() {
-    vec4 color = texture(u_Texture, f_texcoord);
-    if (color.a == 0) {
-        discard;
-    } else {
-        Target0 = color;
-    }
-}"#;
-
-// TODO: per-API coordinate system conversions
-pub static VERTEX_SHADER_2D_GLSL: &[u8] = br#"
-#version 430
-
-layout (location = 0) in vec2 a_Pos;
-layout (location = 1) in vec2 a_Texcoord;
-
-out vec2 f_texcoord;
-
-uniform mat4 u_Transform;
-
-void main() {
-    f_texcoord = a_Texcoord;
-    gl_Position = u_Transform * vec4(a_Pos.x, a_Pos.y, 0.0, 1.0);
-}
-"#;
-
-pub static FRAGMENT_SHADER_2D_GLSL: &[u8] = br#"
-#version 430
-
-in vec2 f_texcoord;
-
-uniform sampler2D u_Texture;
-
-out vec4 Target0;
-
-void main() {
-    vec4 color = texture(u_Texture, f_texcoord);
-    if (color.a == 0) {
-        discard;
-    } else {
-        Target0 = color;
+/// Create a `wgpu::TextureDescriptor` appropriate for the provided texture data.
+pub fn texture_descriptor<'a>(
+    label: Option<&'a str>,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+) -> wgpu::TextureDescriptor {
+    wgpu::TextureDescriptor {
+        label,
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsage::COPY_DST | wgpu::TextureUsage::SAMPLED,
     }
 }
-"#;
 
-/// Shared resources between different renderers.
-pub struct GraphicsPackage {
-    palette: Palette,
-    gfx_wad: Wad,
-    glyph_renderer: Rc<GlyphRenderer>,
-    console_renderer: ConsoleRenderer,
-    factory: RefCell<Factory>,
-    color_target: RenderTargetView<Resources, ColorFormat>,
-    depth_stencil: DepthStencilView<Resources, DepthFormat>,
-    quad_vertex_buffer: Buffer<Resources, Vertex2d>,
-    dummy_diffuse_texture: ShaderResourceView<Resources, [f32; 4]>,
-    sampler: Sampler<Resources>,
-    pipeline_2d: PipelineState2d,
+pub fn create_texture<'a>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: Option<&'a str>,
+    width: u32,
+    height: u32,
+    data: &TextureData,
+) -> wgpu::Texture {
+    trace!(
+        "Creating texture ({:?}: {}x{})",
+        data.format(),
+        width,
+        height
+    );
+    let texture = device.create_texture(&texture_descriptor(label, width, height, data.format()));
+    queue.write_texture(
+        wgpu::TextureCopyView {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+        },
+        data.data(),
+        wgpu::TextureDataLayout {
+            offset: 0,
+            bytes_per_row: width * data.stride(),
+            rows_per_image: 0,
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth: 1,
+        },
+    );
+
+    texture
 }
 
-impl GraphicsPackage {
-    pub fn new(
-        vfs: &Vfs,
-        mut factory: Factory,
-        color_target: RenderTargetView<Resources, ColorFormat>,
-        depth_stencil: DepthStencilView<Resources, DepthFormat>,
-        console: Rc<RefCell<Console>>,
-    ) -> GraphicsPackage {
-        let palette = Palette::load(&vfs, "gfx/palette.lmp");
-        let gfx_wad = Wad::load(vfs.open("gfx.wad").unwrap()).unwrap();
-        let quad_vertex_buffer = factory.create_vertex_buffer(&QUAD_VERTICES);
+pub struct DiffuseData<'a> {
+    pub rgba: Cow<'a, [u8]>,
+}
 
-        let glyph_renderer = Rc::new(
-            GlyphRenderer::new(&mut factory, &gfx_wad.open_conchars().unwrap(), &palette).unwrap(),
-        );
+pub struct FullbrightData<'a> {
+    pub fullbright: Cow<'a, [u8]>,
+}
 
-        let console_renderer = ConsoleRenderer::new(
-            &vfs,
-            &mut factory,
-            quad_vertex_buffer.clone(),
-            &palette,
-            console.clone(),
-            glyph_renderer.clone(),
-        )
-        .unwrap();
+pub struct LightmapData<'a> {
+    pub lightmap: Cow<'a, [u8]>,
+}
 
-        let (_handle, dummy_diffuse_texture) = create_dummy_texture(&mut factory).unwrap();
+pub enum TextureData<'a> {
+    Diffuse(DiffuseData<'a>),
+    Fullbright(FullbrightData<'a>),
+    Lightmap(LightmapData<'a>),
+}
 
-        use gfx::{texture::WrapMode, Factory};
-        let sampler = factory.create_sampler(SamplerInfo::new(
-            gfx::texture::FilterMethod::Scale,
-            WrapMode::Tile,
-        ));
-
-        let shader_set_2d = factory
-            .create_shader_set(VERTEX_SHADER_2D_GLSL, FRAGMENT_SHADER_2D_GLSL)
-            .unwrap();
-
-        let rasterizer_2d = gfx::state::Rasterizer {
-            front_face: gfx::state::FrontFace::Clockwise,
-            cull_face: gfx::state::CullFace::Back,
-            method: gfx::state::RasterMethod::Fill,
-            offset: None,
-            samples: Some(gfx::state::MultiSample),
-        };
-
-        let pipeline_2d = factory
-            .create_pipeline_state(
-                &shader_set_2d,
-                gfx::Primitive::TriangleList,
-                rasterizer_2d,
-                pipeline2d::new(),
-            )
-            .unwrap();
-
-        GraphicsPackage {
-            palette,
-            gfx_wad,
-            glyph_renderer,
-            console_renderer,
-            factory: RefCell::new(factory),
-            color_target,
-            depth_stencil,
-            quad_vertex_buffer,
-            dummy_diffuse_texture,
-            sampler,
-            pipeline_2d,
+impl<'a> TextureData<'a> {
+    pub fn format(&self) -> wgpu::TextureFormat {
+        match self {
+            TextureData::Diffuse(_) => DIFFUSE_TEXTURE_FORMAT,
+            TextureData::Fullbright(_) => FULLBRIGHT_TEXTURE_FORMAT,
+            TextureData::Lightmap(_) => LIGHTMAP_TEXTURE_FORMAT,
         }
     }
 
-    pub fn texture_from_qpic<S>(&self, vfs: &Vfs, name: S) -> BitmapTexture
-    where
-        S: AsRef<str>,
-    {
-        BitmapTexture::from_qpic(
-            self.factory.borrow_mut().deref_mut(),
-            &QPic::load(vfs.open(name).unwrap()).unwrap(),
-            &self.palette,
-        )
-        .unwrap()
+    pub fn data(&self) -> &[u8] {
+        match self {
+            TextureData::Diffuse(d) => &d.rgba,
+            TextureData::Fullbright(d) => &d.fullbright,
+            TextureData::Lightmap(d) => &d.lightmap,
+        }
+    }
+
+    pub fn stride(&self) -> u32 {
+        (match self {
+            TextureData::Diffuse(_) => size_of::<[u8; 4]>(),
+            TextureData::Fullbright(_) => size_of::<u8>(),
+            TextureData::Lightmap(_) => size_of::<u8>(),
+        }) as u32
+    }
+
+    pub fn size(&self) -> wgpu::BufferAddress {
+        self.data().len() as wgpu::BufferAddress
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Extent2d {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl std::convert::Into<wgpu::Extent3d> for Extent2d {
+    fn into(self) -> wgpu::Extent3d {
+        wgpu::Extent3d {
+            width: self.width,
+            height: self.height,
+            depth: 1,
+        }
+    }
+}
+
+impl std::convert::From<winit::dpi::PhysicalSize<u32>> for Extent2d {
+    fn from(other: winit::dpi::PhysicalSize<u32>) -> Extent2d {
+        let winit::dpi::PhysicalSize { width, height } = other;
+        Extent2d { width, height }
+    }
+}
+
+/// Create a texture suitable for use as a color attachment.
+///
+/// This texture can be resolved using a swap chain texture as its target.
+pub fn create_color_attachment(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    sample_count: u32,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("color attachment"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth: 1,
+        },
+        mip_level_count: 1,
+        sample_count,
+        dimension: wgpu::TextureDimension::D2,
+        format: DIFFUSE_ATTACHMENT_FORMAT,
+        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+    })
+}
+
+/// Create a texture suitable for use as a depth attachment.
+pub fn create_depth_attachment(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    sample_count: u32,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("depth attachment"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth: 1,
+        },
+        mip_level_count: 1,
+        sample_count,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH_ATTACHMENT_FORMAT,
+        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+    })
+}
+
+pub struct GraphicsState {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    initial_pass_target: InitialPassTarget,
+    final_pass_target: FinalPassTarget,
+
+    world_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    world_bind_groups: Vec<wgpu::BindGroup>,
+
+    frame_uniform_buffer: wgpu::Buffer,
+
+    entity_uniform_buffer: RefCell<DynamicUniformBuffer<EntityUniforms>>,
+    diffuse_sampler: wgpu::Sampler,
+    lightmap_sampler: wgpu::Sampler,
+
+    sample_count: Cell<u32>,
+
+    alias_pipeline: wgpu::RenderPipeline,
+    alias_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+
+    brush_pipeline: BrushPipeline,
+
+    postprocess_pipeline: PostProcessPipeline,
+
+    glyph_pipeline: wgpu::RenderPipeline,
+    glyph_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    glyph_instance_buffer: wgpu::Buffer,
+
+    quad_pipeline: wgpu::RenderPipeline,
+    quad_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    quad_vertex_buffer: wgpu::Buffer,
+    quad_uniform_buffer: RefCell<DynamicUniformBuffer<quad::QuadUniforms>>,
+
+    sprite_pipeline: wgpu::RenderPipeline,
+    sprite_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    sprite_vertex_buffer: wgpu::Buffer,
+
+    default_lightmap: wgpu::Texture,
+    default_lightmap_view: wgpu::TextureView,
+
+    vfs: Rc<Vfs>,
+    palette: Palette,
+    gfx_wad: Wad,
+    compiler: RefCell<shaderc::Compiler>,
+}
+
+impl GraphicsState {
+    pub fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        size: Extent2d,
+        sample_count: u32,
+        vfs: Rc<Vfs>,
+    ) -> Result<GraphicsState, Error> {
+        let palette = Palette::load(&vfs, "gfx/palette.lmp");
+        let gfx_wad = Wad::load(vfs.open("gfx.wad")?).unwrap();
+        let mut compiler = shaderc::Compiler::new().unwrap();
+
+        let initial_pass_target = InitialPassTarget::new(&device, size, sample_count);
+        let final_pass_target = FinalPassTarget::new(&device, size, sample_count);
+
+        let frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frame uniform buffer"),
+            size: size_of::<world::FrameUniforms>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let entity_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
+        let quad_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
+
+        let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: None,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            // TODO: these are the OpenGL defaults; see if there's a better choice for us
+            lod_min_clamp: -1000.0,
+            lod_max_clamp: 1000.0,
+            compare: None,
+            anisotropy_clamp: None,
+            ..Default::default()
+        });
+
+        let lightmap_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: None,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            // TODO: these are the OpenGL defaults; see if there's a better choice for us
+            lod_min_clamp: -1000.0,
+            lod_max_clamp: 1000.0,
+            compare: None,
+            anisotropy_clamp: None,
+            ..Default::default()
+        });
+
+        let world_bind_group_layouts: Vec<wgpu::BindGroupLayout> =
+            world::BIND_GROUP_LAYOUT_DESCRIPTORS
+                .iter()
+                .map(|desc| device.create_bind_group_layout(desc))
+                .collect();
+        let world_bind_groups = vec![
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("per-frame bind group"),
+                layout: &world_bind_group_layouts[world::BindGroupLayoutId::PerFrame as usize],
+                bindings: &[wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(frame_uniform_buffer.slice(..)),
+                }],
+            }),
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("brush per-entity bind group"),
+                layout: &world_bind_group_layouts[world::BindGroupLayoutId::PerEntity as usize],
+                bindings: &[
+                    wgpu::Binding {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(
+                            entity_uniform_buffer
+                                .borrow()
+                                .buffer()
+                                .slice(0..entity_uniform_buffer.borrow().block_size().get()),
+                        ),
+                    },
+                    wgpu::Binding {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
+                    },
+                    wgpu::Binding {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&lightmap_sampler),
+                    },
+                ],
+            }),
+        ];
+
+        let (alias_pipeline, alias_bind_group_layouts) = alias::AliasPipeline::create(
+            &device,
+            &mut compiler,
+            &world_bind_group_layouts,
+            sample_count,
+        );
+        let brush_pipeline = BrushPipeline::new(
+            &device,
+            &queue,
+            &mut compiler,
+            &world_bind_group_layouts,
+            sample_count,
+        );
+        let (sprite_pipeline, sprite_bind_group_layouts) = sprite::SpritePipeline::create(
+            &device,
+            &mut compiler,
+            &world_bind_group_layouts,
+            sample_count,
+        );
+        let sprite_vertex_buffer = device.create_buffer_with_data(
+            unsafe { any_slice_as_bytes(&sprite::VERTICES) },
+            wgpu::BufferUsage::VERTEX,
+        );
+
+        let postprocess_pipeline = PostProcessPipeline::new(&device, &mut compiler, sample_count);
+
+        let (quad_pipeline, quad_bind_group_layouts) =
+            quad::QuadPipeline::create(&device, &mut compiler, &[], sample_count);
+        let quad_vertex_buffer = device.create_buffer_with_data(
+            unsafe { any_slice_as_bytes(&quad::VERTICES) },
+            wgpu::BufferUsage::VERTEX,
+        );
+
+        let (glyph_pipeline, glyph_bind_group_layouts) =
+            glyph::GlyphPipeline::create(&device, &mut compiler, &[], sample_count);
+        let glyph_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("quad instance buffer"),
+            size: (glyph::GLYPH_MAX_INSTANCES * size_of::<glyph::GlyphInstance>()) as u64,
+            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let default_lightmap = create_texture(
+            &device,
+            &queue,
+            None,
+            1,
+            1,
+            &TextureData::Lightmap(LightmapData {
+                lightmap: (&[0xFF][..]).into(),
+            }),
+        );
+        let default_lightmap_view = default_lightmap.create_default_view();
+
+        Ok(GraphicsState {
+            device,
+            queue,
+            initial_pass_target,
+            final_pass_target,
+            frame_uniform_buffer,
+            entity_uniform_buffer,
+
+            world_bind_group_layouts,
+            world_bind_groups,
+
+            sample_count: Cell::new(sample_count),
+
+            alias_pipeline,
+            alias_bind_group_layouts,
+            brush_pipeline,
+            sprite_pipeline,
+            sprite_bind_group_layouts,
+            sprite_vertex_buffer,
+            postprocess_pipeline,
+            glyph_pipeline,
+            glyph_bind_group_layouts,
+            glyph_instance_buffer,
+            quad_pipeline,
+            quad_bind_group_layouts,
+            quad_vertex_buffer,
+            quad_uniform_buffer,
+            diffuse_sampler,
+            lightmap_sampler,
+            default_lightmap,
+            default_lightmap_view,
+            vfs,
+            palette,
+            gfx_wad,
+            compiler: RefCell::new(compiler),
+        })
+    }
+
+    pub fn create_texture<'a>(
+        &self,
+        label: Option<&'a str>,
+        width: u32,
+        height: u32,
+        data: &TextureData,
+    ) -> wgpu::Texture {
+        create_texture(&self.device, &self.queue, label, width, height, data)
+    }
+
+    /// Update graphics state with the new framebuffer size and sample count.
+    ///
+    /// If the framebuffer size has changed, this recreates all render targets with the new size.
+    ///
+    /// If the framebuffer sample count has changed, this recreates all render targets with the
+    /// new sample count and rebuilds the render pipelines to output that number of samples.
+    pub fn update(&mut self, size: Extent2d, sample_count: u32) {
+        if self.sample_count.get() != sample_count {
+            self.sample_count.set(sample_count);
+            self.recreate_pipelines(sample_count);
+        }
+
+        if self.initial_pass_target.size() != size
+            || self.initial_pass_target.sample_count() != sample_count
+        {
+            self.initial_pass_target = InitialPassTarget::new(self.device(), size, sample_count);
+        }
+
+        if self.final_pass_target.size() != size
+            || self.final_pass_target.sample_count() != sample_count
+        {
+            self.final_pass_target = FinalPassTarget::new(self.device(), size, sample_count);
+        }
+    }
+
+    /// Rebuild all render pipelines using the new sample count.
+    ///
+    /// This must be called when the sample count of the render target(s) changes or the program
+    /// will panic.
+    fn recreate_pipelines(&mut self, sample_count: u32) {
+        let world_bind_group_layouts: Vec<_> = self.world_bind_group_layouts.iter().collect();
+
+        let mut alias_bind_group_layouts = world_bind_group_layouts.clone();
+        alias_bind_group_layouts.extend(self.alias_bind_group_layouts.iter());
+        self.alias_pipeline = alias::AliasPipeline::recreate(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            &alias_bind_group_layouts,
+            sample_count,
+        );
+
+        self.brush_pipeline.rebuild(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            &self.world_bind_group_layouts,
+            sample_count,
+        );
+
+        let mut sprite_bind_group_layouts = world_bind_group_layouts.clone();
+        sprite_bind_group_layouts.extend(self.sprite_bind_group_layouts.iter());
+        self.sprite_pipeline = sprite::SpritePipeline::recreate(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            &sprite_bind_group_layouts,
+            sample_count,
+        );
+
+        self.postprocess_pipeline.rebuild(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            sample_count,
+        );
+
+        let glyph_bind_group_layouts: Vec<_> = self.glyph_bind_group_layouts.iter().collect();
+        self.glyph_pipeline = glyph::GlyphPipeline::recreate(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            &glyph_bind_group_layouts,
+            sample_count,
+        );
+
+        let quad_bind_group_layouts: Vec<_> = self.quad_bind_group_layouts.iter().collect();
+        self.quad_pipeline = quad::QuadPipeline::recreate(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            &quad_bind_group_layouts,
+            sample_count,
+        );
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    pub fn initial_pass_target(&self) -> &InitialPassTarget {
+        &self.initial_pass_target
+    }
+
+    pub fn final_pass_target(&self) -> &FinalPassTarget {
+        &self.final_pass_target
+    }
+
+    pub fn frame_uniform_buffer(&self) -> &wgpu::Buffer {
+        &self.frame_uniform_buffer
+    }
+
+    pub fn entity_uniform_buffer(&self) -> Ref<DynamicUniformBuffer<EntityUniforms>> {
+        self.entity_uniform_buffer.borrow()
+    }
+
+    pub fn entity_uniform_buffer_mut(&self) -> RefMut<DynamicUniformBuffer<EntityUniforms>> {
+        self.entity_uniform_buffer.borrow_mut()
+    }
+
+    pub fn diffuse_sampler(&self) -> &wgpu::Sampler {
+        &self.diffuse_sampler
+    }
+
+    pub fn default_lightmap(&self) -> &wgpu::Texture {
+        &self.default_lightmap
+    }
+
+    pub fn default_lightmap_view(&self) -> &wgpu::TextureView {
+        &self.default_lightmap_view
+    }
+
+    pub fn lightmap_sampler(&self) -> &wgpu::Sampler {
+        &self.lightmap_sampler
+    }
+
+    pub fn world_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+        &self.world_bind_group_layouts
+    }
+
+    pub fn world_bind_groups(&self) -> &[wgpu::BindGroup] {
+        &self.world_bind_groups
+    }
+
+    pub fn alias_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.alias_pipeline
+    }
+
+    pub fn alias_bind_group_layout(&self, id: world::BindGroupLayoutId) -> &wgpu::BindGroupLayout {
+        &self.alias_bind_group_layouts[id as usize - 2]
+    }
+
+    pub fn brush_pipeline(&self) -> &BrushPipeline {
+        &self.brush_pipeline
+    }
+
+    pub fn postprocess_pipeline(&self) -> &PostProcessPipeline {
+        &self.postprocess_pipeline
+    }
+
+    // glyph pipeline
+
+    pub fn glyph_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.glyph_pipeline
+    }
+
+    pub fn glyph_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+        &self.glyph_bind_group_layouts
+    }
+
+    pub fn glyph_instance_buffer(&self) -> &wgpu::Buffer {
+        &self.glyph_instance_buffer
+    }
+
+    // quad pipeline(s)
+
+    pub fn quad_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.quad_pipeline
+    }
+
+    pub fn quad_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+        &self.quad_bind_group_layouts
+    }
+
+    pub fn quad_vertex_buffer(&self) -> &wgpu::Buffer {
+        &self.quad_vertex_buffer
+    }
+
+    pub fn quad_uniform_buffer(&self) -> Ref<DynamicUniformBuffer<ui::quad::QuadUniforms>> {
+        self.quad_uniform_buffer.borrow()
+    }
+
+    pub fn quad_uniform_buffer_mut(&self) -> RefMut<DynamicUniformBuffer<ui::quad::QuadUniforms>> {
+        self.quad_uniform_buffer.borrow_mut()
+    }
+
+    // sprite pipeline
+
+    pub fn sprite_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.sprite_pipeline
+    }
+
+    pub fn sprite_bind_group_layout(&self, id: world::BindGroupLayoutId) -> &wgpu::BindGroupLayout {
+        &self.sprite_bind_group_layouts[id as usize - 2]
+    }
+
+    pub fn sprite_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+        &self.sprite_bind_group_layouts
+    }
+
+    pub fn sprite_vertex_buffer(&self) -> &wgpu::Buffer {
+        &self.sprite_vertex_buffer
+    }
+
+    pub fn vfs(&self) -> &Vfs {
+        &self.vfs
     }
 
     pub fn palette(&self) -> &Palette {
@@ -245,518 +703,4 @@ impl GraphicsPackage {
     pub fn gfx_wad(&self) -> &Wad {
         &self.gfx_wad
     }
-
-    pub fn glyph_renderer(&self) -> &GlyphRenderer {
-        &self.glyph_renderer
-    }
-
-    pub fn console_renderer(&self) -> &ConsoleRenderer {
-        &self.console_renderer
-    }
-
-    pub fn factory(&self) -> Ref<Factory> {
-        self.factory.borrow()
-    }
-
-    pub fn factory_mut(&self) -> RefMut<Factory> {
-        self.factory.borrow_mut()
-    }
-
-    pub fn color_target(&self) -> RenderTargetView<Resources, ColorFormat> {
-        self.color_target.clone()
-    }
-
-    pub fn depth_stencil(&self) -> DepthStencilView<Resources, DepthFormat> {
-        self.depth_stencil.clone()
-    }
-
-    pub fn quad_vertex_buffer(&self) -> Buffer<Resources, Vertex2d> {
-        self.quad_vertex_buffer.clone()
-    }
-
-    pub fn dummy_diffuse_texture(&self) -> ShaderResourceView<Resources, [f32; 4]> {
-        self.dummy_diffuse_texture.clone()
-    }
-
-    pub fn sampler(&self) -> Sampler<Resources> {
-        self.sampler.clone()
-    }
-
-    pub fn pipeline_2d(&self) -> &PipelineState2d {
-        &self.pipeline_2d
-    }
-
-    pub fn gen_user_data_2d(&self) -> PipelineData2d {
-        PipelineData2d {
-            vertex_buffer: self.quad_vertex_buffer(),
-            transform: Matrix4::identity().into(),
-            sampler: (self.dummy_diffuse_texture(), self.sampler()),
-            out_color: self.color_target(),
-            out_depth: self.depth_stencil(),
-        }
-    }
-}
-
-// these have to be wound clockwise
-static QUAD_VERTICES: [Vertex2d; 6] = [
-    Vertex2d {
-        pos: [-1.0, -1.0],
-        texcoord: [0.0, 1.0],
-    }, // bottom left
-    Vertex2d {
-        pos: [-1.0, 1.0],
-        texcoord: [0.0, 0.0],
-    }, // top left
-    Vertex2d {
-        pos: [1.0, 1.0],
-        texcoord: [1.0, 0.0],
-    }, // top right
-    Vertex2d {
-        pos: [-1.0, -1.0],
-        texcoord: [0.0, 1.0],
-    }, // bottom left
-    Vertex2d {
-        pos: [1.0, 1.0],
-        texcoord: [1.0, 0.0],
-    }, // top right
-    Vertex2d {
-        pos: [1.0, -1.0],
-        texcoord: [1.0, 1.0],
-    }, // bottom right
-];
-
-static QUAD_SLICE: Slice<Resources> = Slice {
-    start: 0,
-    end: 6,
-    base_vertex: 0,
-    instances: None,
-    buffer: IndexBuffer::Auto,
-};
-
-gfx_defines! {
-    vertex Vertex {
-        pos: [f32; 3] = "a_Pos",
-        texcoord: [f32; 2] = "a_Texcoord",
-    }
-
-    constant Locals {
-        transform: [[f32; 4]; 4] = "u_Transform",
-    }
-
-    pipeline pipe {
-        vertex_buffer: gfx::VertexBuffer<Vertex> = (),
-        transform: gfx::Global<[[f32; 4]; 4]> = "u_Transform",
-        sampler: gfx::TextureSampler<[f32; 4]> = "u_Texture",
-        out_color: gfx::RenderTarget<ColorFormat> = "Target0",
-        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::LESS_EQUAL_WRITE,
-    }
-}
-
-gfx_defines! {
-    vertex Vertex2d {
-        pos: [f32; 2] = "a_Pos",
-        texcoord: [f32; 2] = "a_Texcoord",
-    }
-
-    constant Locals2d {
-        transform: [[f32; 4]; 4] = "u_Transform",
-    }
-
-    pipeline pipeline2d {
-        vertex_buffer: gfx::VertexBuffer<Vertex2d> = (),
-        transform: gfx::Global<[[f32; 4]; 4]> = "u_Transform",
-        sampler: gfx::TextureSampler<[f32; 4]> = "u_Texture",
-        out_color: gfx::RenderTarget<ColorFormat> = "Target0",
-        out_depth: gfx::DepthTarget<DepthFormat> = gfx::preset::depth::PASS_TEST,
-    }
-}
-
-pub type PipelineState2d =
-    PipelineState<Resources, <pipeline2d::Data<Resources> as PipelineData<Resources>>::Meta>;
-pub type PipelineData2d = pipeline2d::Data<Resources>;
-
-pub struct Camera {
-    origin: Vector3<f32>,
-    angles: Vector3<Deg<f32>>,
-    projection: Matrix4<f32>,
-
-    transform: Matrix4<f32>,
-}
-
-impl Camera {
-    pub fn new(
-        origin: Vector3<f32>,
-        angles: Vector3<Deg<f32>>,
-        projection: Matrix4<f32>,
-    ) -> Camera {
-        // negate the camera origin and angles
-        // TODO: the OpenGL coordinate conversion is hardcoded here! XXX
-        let converted_origin = Vector3::new(-origin.y, origin.z, -origin.x);
-        let translation = Matrix4::from_translation(-converted_origin);
-        let rotation = Matrix4::from(Euler::new(angles.x, -angles.y, -angles.z));
-
-        Camera {
-            origin,
-            angles,
-            projection,
-            transform: projection * rotation * translation,
-        }
-    }
-
-    pub fn origin(&self) -> Vector3<f32> {
-        self.origin
-    }
-
-    pub fn transform(&self) -> Matrix4<f32> {
-        self.transform
-    }
-}
-
-pub struct SceneRenderer {
-    pipeline: PipelineState<Resources, <pipe::Data<Resources> as PipelineData<Resources>>::Meta>,
-    world_renderer: WorldRenderer,
-    brush_renderers: HashMap<usize, BrushRenderer>,
-    alias_renderers: HashMap<usize, AliasRenderer>,
-    // spr_renderers: ...,
-}
-
-impl SceneRenderer {
-    pub fn new(
-        models: &[Model],
-        worldmodel_id: usize,
-        gfx_pkg: &mut GraphicsPackage,
-    ) -> Result<SceneRenderer, Error> {
-        use gfx::traits::FactoryExt;
-        let shader_set = gfx_pkg
-            .factory_mut()
-            .create_shader_set(VERTEX_SHADER_GLSL, FRAGMENT_SHADER_GLSL)
-            .unwrap();
-
-        let rasterizer = gfx::state::Rasterizer {
-            front_face: gfx::state::FrontFace::Clockwise,
-            cull_face: gfx::state::CullFace::Back,
-            method: gfx::state::RasterMethod::Fill,
-            offset: None,
-            samples: Some(gfx::state::MultiSample),
-        };
-
-        let pipeline = gfx_pkg
-            .factory_mut()
-            .create_pipeline_state(
-                &shader_set,
-                gfx::Primitive::TriangleList,
-                rasterizer,
-                pipe::new(),
-            )
-            .unwrap();
-
-        let mut maybe_world_renderer = None;
-        let mut brush_renderers = HashMap::new();
-        let mut alias_renderers = HashMap::new();
-        for (i, model) in models.iter().enumerate() {
-            if i == worldmodel_id {
-                match *model.kind() {
-                    ModelKind::Brush(ref bmodel) => {
-                        debug!("model {}: world model", i);
-                        maybe_world_renderer = Some(WorldRenderer::new(
-                            &bmodel,
-                            gfx_pkg.palette(),
-                            gfx_pkg.factory_mut().deref_mut(),
-                            gfx_pkg.color_target(),
-                            gfx_pkg.depth_stencil(),
-                        )?);
-                    }
-
-                    _ => bail!("Invalid kind for worldmodel"),
-                }
-            } else {
-                match *model.kind() {
-                    ModelKind::Brush(ref bmodel) => {
-                        debug!("model {}: brush model", i);
-                        brush_renderers.insert(
-                            i,
-                            BrushRenderer::new(
-                                &bmodel,
-                                gfx_pkg.palette(),
-                                gfx_pkg.factory_mut().deref_mut(),
-                                gfx_pkg.color_target(),
-                                gfx_pkg.depth_stencil(),
-                            )?,
-                        );
-                    }
-
-                    ModelKind::Alias(ref amodel) => {
-                        debug!("model {}: alias model", i);
-                        alias_renderers.insert(
-                            i,
-                            AliasRenderer::new(
-                                &amodel,
-                                gfx_pkg.palette(),
-                                gfx_pkg.factory_mut().deref_mut(),
-                            )?,
-                        );
-                    }
-
-                    // TODO handle sprite and null models
-                    ModelKind::Sprite(_) => debug!("model {}: sprite model", i),
-                    _ => (),
-                }
-            }
-        }
-
-        let world_renderer = match maybe_world_renderer {
-            Some(w) => w,
-            None => bail!("No worldmodel provided"),
-        };
-
-        Ok(SceneRenderer {
-            pipeline,
-            world_renderer,
-            brush_renderers,
-            alias_renderers,
-        })
-    }
-
-    pub fn render<C>(
-        &self,
-        encoder: &mut gfx::Encoder<Resources, C>,
-        user_data: &mut pipe::Data<Resources>,
-        entities: &[ClientEntity],
-        view_ent_id: usize,
-        view_model_id: usize,
-        time: Duration,
-        camera: &Camera,
-        lightstyle_values: &[f32],
-    ) -> Result<(), Error>
-    where
-        C: gfx::CommandBuffer<Resources>,
-    {
-        flame::start("render_world");
-        self.world_renderer.render(
-            encoder,
-            time,
-            camera,
-            Vector3::zero(),
-            Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            lightstyle_values,
-        )?;
-        flame::end("render_world");
-
-        flame::start("render_entities");
-        for (ent_id, ent) in entities.iter().enumerate() {
-            // draw viewmodel in first person perspective
-            if ent_id == view_ent_id {
-                if let Some(ref alias_renderer) = self.alias_renderers.get(&view_model_id) {
-                    let angles = ent.get_angles();
-                    let rotate: Matrix3<f32> = Euler::new(angles.x, angles.y, angles.z).into();
-                    let offset = rotate * Vector3::new(15.0, -10.0, 0.0);
-                    let position = ent.get_origin() + offset;
-                    // TODO: need keyframe, texture ID
-                    // also need to disable depth testing to stop viewmodel clipping into walls
-                    alias_renderer.render(
-                        encoder,
-                        &self.pipeline,
-                        user_data,
-                        time,
-                        camera,
-                        position,
-                        angles,
-                        0,
-                        0,
-                    )?;
-                }
-                continue;
-            }
-
-            let model_id = ent.get_model_id();
-            if let Some(ref brush_renderer) = self.brush_renderers.get(&model_id) {
-                brush_renderer.render(
-                    encoder,
-                    time,
-                    camera,
-                    ent.get_origin(),
-                    ent.get_angles(),
-                    lightstyle_values,
-                )?;
-            } else if let Some(ref alias_renderer) = self.alias_renderers.get(&model_id) {
-                // TODO: pull keyframe and texture ID
-                alias_renderer.render(
-                    encoder,
-                    &self.pipeline,
-                    user_data,
-                    time,
-                    camera,
-                    ent.get_origin(),
-                    ent.get_angles(),
-                    0,
-                    0,
-                )?;
-            }
-        }
-        flame::end("render_entities");
-
-        Ok(())
-    }
-}
-
-pub struct Palette {
-    rgb: [[u8; 3]; 256],
-}
-
-impl Palette {
-    pub fn load<S>(vfs: &Vfs, path: S) -> Palette
-    where
-        S: AsRef<str>,
-    {
-        let mut data = BufReader::new(vfs.open(path).unwrap());
-
-        let mut rgb = [[0u8; 3]; 256];
-
-        for color in 0..256 {
-            for component in 0..3 {
-                rgb[color][component] = data.read_u8().unwrap();
-            }
-        }
-
-        Palette { rgb }
-    }
-
-    // TODO: this will not render console characters correctly, as they use index 0 (black) to
-    // indicate transparency.
-    /// Translates a set of indices into a list of RGBA values and a list of fullbright values.
-    pub fn translate(&self, indices: &[u8]) -> (Vec<u8>, Vec<u8>) {
-        let mut rgba = Vec::with_capacity(indices.len() * 4);
-        let mut fullbright = Vec::with_capacity(indices.len());
-
-        for index in indices {
-            match *index {
-                0xFF => {
-                    for _ in 0..4 {
-                        rgba.push(0);
-                        fullbright.push(0);
-                    }
-                }
-
-                i => {
-                    for component in 0..3 {
-                        rgba.push(self.rgb[*index as usize][component]);
-                    }
-                    rgba.push(0xFF);
-
-                    fullbright.push(if i > 223 { 0xFF } else { 0 });
-                }
-            }
-        }
-
-        (rgba, fullbright)
-    }
-}
-
-pub fn create_texture<F>(
-    factory: &mut F,
-    width: u32,
-    height: u32,
-    rgba: &[u8],
-) -> Result<
-    (
-        Texture<Resources, R8_G8_B8_A8>,
-        ShaderResourceView<Resources, [f32; 4]>,
-    ),
-    Error,
->
-where
-    F: gfx::Factory<Resources>,
-{
-    ensure!(
-        (width * height * 4) as usize == rgba.len(),
-        "Invalid dimensions for texture"
-    );
-    let ret = factory.create_texture_immutable_u8::<ColorFormat>(
-        gfx::texture::Kind::D2(width as u16, height as u16, gfx::texture::AaMode::Single),
-        gfx::texture::Mipmap::Allocated,
-        &[&rgba],
-    )?;
-
-    Ok(ret)
-}
-
-pub fn create_dummy_texture<F>(
-    factory: &mut F,
-) -> Result<
-    (
-        Texture<Resources, R8_G8_B8_A8>,
-        ShaderResourceView<Resources, [f32; 4]>,
-    ),
-    Error,
->
-where
-    F: gfx::Factory<Resources>,
-{
-    // the infamous Source engine "missing texture" texture
-    let rgba = [
-        0xFF, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0xFF,
-        0xFF,
-    ];
-
-    let ret = factory.create_texture_immutable_u8::<ColorFormat>(
-        gfx::texture::Kind::D2(2, 2, gfx::texture::AaMode::Single),
-        gfx::texture::Mipmap::Allocated,
-        &[&rgba],
-    )?;
-
-    Ok(ret)
-}
-
-pub fn create_dummy_fullbright<F>(
-    factory: &mut F,
-) -> Result<(Texture<Resources, R8>, ShaderResourceView<Resources, f32>), Error>
-where
-    F: gfx::Factory<Resources>,
-{
-    let ret = factory.create_texture_immutable_u8::<(R8, Unorm)>(
-        texture::Kind::D2(1, 1, texture::AaMode::Single),
-        texture::Mipmap::Allocated,
-        &[&[0]],
-    )?;
-
-    Ok(ret)
-}
-
-pub fn create_dummy_lightmap<F>(
-    factory: &mut F,
-) -> Result<(Texture<Resources, R8>, ShaderResourceView<Resources, f32>), Error>
-where
-    F: gfx::Factory<Resources>,
-{
-    let ret = factory.create_texture_immutable_u8::<(R8, Unorm)>(
-        texture::Kind::D2(1, 1, texture::AaMode::Single),
-        texture::Mipmap::Allocated,
-        &[&[0xFF]],
-    )?;
-
-    Ok(ret)
-}
-
-pub fn screen_space_vertex_transform(
-    display_w: u32,
-    display_h: u32,
-    quad_w: u32,
-    quad_h: u32,
-    pos_x: i32,
-    pos_y: i32,
-) -> Matrix4<f32> {
-    // find center
-    let center_x = pos_x + quad_w as i32 / 2;
-    let center_y = pos_y + quad_h as i32 / 2;
-
-    // rescale from [0, DISPLAY_*] to [-1, 1] (NDC)
-    // TODO: this may break on APIs other than OpenGL
-    let ndc_x = (center_x * 2 - display_w as i32) as f32 / display_w as f32;
-    let ndc_y = (center_y * 2 - display_h as i32) as f32 / display_h as f32;
-
-    let scale_x = quad_w as f32 / display_w as f32;
-    let scale_y = quad_h as f32 / display_h as f32;
-
-    Matrix4::from_translation([ndc_x, ndc_y, 0.0].into())
-        * Matrix4::from_nonuniform_scale(scale_x, scale_y, 1.0)
 }

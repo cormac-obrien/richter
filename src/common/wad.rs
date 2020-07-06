@@ -20,18 +20,87 @@
 
 use std::{
     collections::HashMap,
-    io::{BufReader, Cursor, Read, Seek, SeekFrom},
+    convert::From,
+    fmt::{self, Display},
+    io::{self, BufReader, Cursor, Read, Seek, SeekFrom},
 };
 
 use crate::common::util;
 
 use byteorder::{LittleEndian, ReadBytesExt};
-use failure::Error;
+use failure::{Backtrace, Context, Error, Fail};
 
 // see definition of lumpinfo_t:
 // https://github.com/id-Software/Quake/blob/master/WinQuake/wad.h#L54-L63
 const LUMPINFO_SIZE: usize = 32;
 const MAGIC: u32 = 'W' as u32 | ('A' as u32) << 8 | ('D' as u32) << 16 | ('2' as u32) << 24;
+
+#[derive(Debug)]
+pub struct WadError {
+    inner: Context<WadErrorKind>,
+}
+
+impl WadError {
+    pub fn kind(&self) -> WadErrorKind {
+        *self.inner.get_context()
+    }
+}
+
+impl From<WadErrorKind> for WadError {
+    fn from(kind: WadErrorKind) -> Self {
+        WadError {
+            inner: Context::new(kind),
+        }
+    }
+}
+
+impl From<Context<WadErrorKind>> for WadError {
+    fn from(inner: Context<WadErrorKind>) -> Self {
+        WadError { inner }
+    }
+}
+
+impl From<io::Error> for WadError {
+    fn from(io_error: io::Error) -> Self {
+        let kind = io_error.kind();
+        match kind {
+            io::ErrorKind::UnexpectedEof => io_error.context(WadErrorKind::UnexpectedEof).into(),
+            _ => io_error.context(WadErrorKind::Io).into(),
+        }
+    }
+}
+
+impl Fail for WadError {
+    fn cause(&self) -> Option<&dyn Fail> {
+        self.inner.cause()
+    }
+
+    fn backtrace(&self) -> Option<&Backtrace> {
+        self.inner.backtrace()
+    }
+}
+
+impl Display for WadError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Display::fmt(&self.inner, f)
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Fail)]
+pub enum WadErrorKind {
+    #[fail(display = "CONCHARS must be loaded with the dedicated function")]
+    ConcharsUseDedicatedFunction,
+    #[fail(display = "Invalid magic number")]
+    InvalidMagicNumber,
+    #[fail(display = "I/O error")]
+    Io,
+    #[fail(display = "No such file in WAD")]
+    NoSuchFile,
+    #[fail(display = "Failed to load QPic")]
+    QPicNotLoaded,
+    #[fail(display = "Unexpected end of data")]
+    UnexpectedEof,
+}
 
 pub struct QPic {
     width: u32,
@@ -40,7 +109,7 @@ pub struct QPic {
 }
 
 impl QPic {
-    pub fn load<R>(data: R) -> Result<QPic, Error>
+    pub fn load<R>(data: R) -> Result<QPic, WadError>
     where
         R: Read + Seek,
     {
@@ -92,12 +161,9 @@ impl Wad {
         let mut reader = BufReader::new(data);
 
         let magic = reader.read_u32::<LittleEndian>()?;
-        ensure!(
-            magic == MAGIC,
-            "Bad magic number for WAD: got {}, should be {}",
-            magic,
-            MAGIC
-        );
+        if magic != MAGIC {
+            return Err(WadErrorKind::InvalidMagicNumber.into());
+        }
 
         let lump_count = reader.read_u32::<LittleEndian>()?;
         let lumpinfo_ofs = reader.read_u32::<LittleEndian>()?;
@@ -155,17 +221,17 @@ impl Wad {
         }
     }
 
-    pub fn open_qpic<S>(&self, name: S) -> Result<QPic, Error>
+    pub fn open_qpic<S>(&self, name: S) -> Result<QPic, WadError>
     where
         S: AsRef<str>,
     {
         if name.as_ref() == "CONCHARS" {
-            bail!("conchars must be opened with open_conchars()");
+            Err(WadErrorKind::ConcharsUseDedicatedFunction)?
         }
 
         match self.files.get(name.as_ref()) {
             Some(ref data) => QPic::load(Cursor::new(data)),
-            None => bail!("File not found in WAD: {}", name.as_ref()),
+            None => Err(WadErrorKind::NoSuchFile.into()),
         }
     }
 }

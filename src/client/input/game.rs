@@ -31,8 +31,11 @@ use crate::common::{
 use combine::Parser;
 use failure::Error;
 use winit::{
-    dpi::LogicalPosition, DeviceEvent, ElementState, Event, KeyboardInput, MouseButton,
-    MouseScrollDelta, VirtualKeyCode as Key, WindowEvent,
+    dpi::LogicalPosition,
+    event::{
+        DeviceEvent, ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta,
+        VirtualKeyCode as Key, WindowEvent,
+    },
 };
 
 const ACTION_COUNT: usize = 19;
@@ -542,7 +545,7 @@ impl GameInput {
         self.bindings.borrow().get(&input.into()).map(|t| t.clone())
     }
 
-    pub fn handle_event(&mut self, outer_event: Event) -> Result<(), Error> {
+    pub fn handle_event<T>(&mut self, outer_event: Event<T>) -> Result<(), Error> {
         let (input, state): (BindInput, _) = match outer_event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::KeyboardInput {

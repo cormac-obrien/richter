@@ -246,6 +246,7 @@ impl ::std::convert::From<u8> for PlayerColor {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct ColorShift {
     pub dest_color: [u8; 3],
     pub percent: i32,
@@ -593,6 +594,7 @@ pub trait Cmd: Sized {
         W: WriteBytesExt;
 }
 
+// TODO: use feature(arbitrary_enum_discriminant)
 #[derive(Debug, FromPrimitive)]
 pub enum ServerCmdCode {
     Bad = 0,

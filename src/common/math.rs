@@ -1,23 +1,111 @@
 // Copyright © 2018 Cormac O'Brien
 //
-// Permission is hereby granted, free of charge, to any person obtaining a copy of this software
-// and associated documentation files (the "Software"), to deal in the Software without
-// restriction, including without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
 //
-// The above copyright notice and this permission notice shall be included in all copies or
-// substantial portions of the Software.
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
 //
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
-// BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-use std::ops::Neg;
+use std::{cmp::Ordering, convert::Into, ops::Neg};
 
-use cgmath::{Angle, Deg, InnerSpace, Vector3, Zero};
+use cgmath::{Angle, Deg, InnerSpace, Matrix3, Matrix4, Vector2, Vector3, Zero};
+
+trait CoordSys {}
+
+struct Quake;
+impl CoordSys for Quake {}
+
+struct Wgpu;
+impl CoordSys for Wgpu {}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Angles {
+    pub pitch: Deg<f32>,
+    pub roll: Deg<f32>,
+    pub yaw: Deg<f32>,
+}
+
+impl Angles {
+    pub fn zero() -> Angles {
+        Angles {
+            pitch: Deg(0.0),
+            roll: Deg(0.0),
+            yaw: Deg(0.0),
+        }
+    }
+
+    pub fn mat3_quake(&self) -> Matrix3<f32> {
+        Matrix3::from_angle_x(-self.roll)
+            * Matrix3::from_angle_y(-self.pitch)
+            * Matrix3::from_angle_z(self.yaw)
+    }
+
+    pub fn mat4_quake(&self) -> Matrix4<f32> {
+        Matrix4::from_angle_x(-self.roll)
+            * Matrix4::from_angle_y(-self.pitch)
+            * Matrix4::from_angle_z(self.yaw)
+    }
+
+    pub fn mat3_wgpu(&self) -> Matrix3<f32> {
+        Matrix3::from_angle_z(-self.roll)
+            * Matrix3::from_angle_x(self.pitch)
+            * Matrix3::from_angle_y(-self.yaw)
+    }
+
+    pub fn mat4_wgpu(&self) -> Matrix4<f32> {
+        Matrix4::from_angle_z(-self.roll)
+            * Matrix4::from_angle_x(self.pitch)
+            * Matrix4::from_angle_y(-self.yaw)
+    }
+}
+
+impl std::ops::Add for Angles {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            pitch: self.pitch + other.pitch,
+            roll: self.roll + other.roll,
+            yaw: self.yaw + other.yaw,
+        }
+    }
+}
+
+impl std::ops::Mul<f32> for Angles {
+    type Output = Self;
+
+    fn mul(self, other: f32) -> Self {
+        Self {
+            pitch: self.pitch * other,
+            roll: self.roll * other,
+            yaw: self.yaw * other,
+        }
+    }
+}
+
+pub fn clamp_deg(val: Deg<f32>, min: Deg<f32>, max: Deg<f32>) -> Deg<f32> {
+    assert!(min <= max);
+
+    return if val < min {
+        min
+    } else if val > max {
+        max
+    } else {
+        val
+    };
+}
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum HyperplaneSide {
@@ -255,6 +343,109 @@ pub fn fov_x_to_fov_y(fov_x: Deg<f32>, aspect: f32) -> Option<Deg<f32>> {
     }
 }
 
+// see https://github.com/id-Software/Quake/blob/master/WinQuake/gl_rsurf.c#L1544
+const COLLINEAR_EPSILON: f32 = 0.001;
+
+/// Determines if the given points are collinear.
+///
+/// A set of points V is considered collinear if
+/// norm(V<sub>1</sub> &minus; V<sub>0</sub>) &equals;
+/// norm(V<sub>2</sub> &minus; V<sub>1</sub>) &equals;
+/// .&nbsp;.&nbsp;. &equals;
+/// norm(V<sub>k &minus; 1</sub> &minus; V<sub>k</sub>).
+///
+/// Special cases:
+/// - If `vs.len() < 2`, always returns `false`.
+/// - If `vs.len() == 2`, always returns `true`.
+pub fn collinear(vs: &[Vector3<f32>]) -> bool {
+    match vs.len() {
+        l if l < 2 => false,
+        2 => true,
+        _ => {
+            let init = (vs[1] - vs[0]).normalize();
+            for i in 2..vs.len() {
+                let norm = (vs[i] - vs[i - 1]).normalize();
+                if (norm[0] - init[0]).abs() > COLLINEAR_EPSILON
+                    || (norm[1] - init[1]).abs() > COLLINEAR_EPSILON
+                    || (norm[2] - init[2]).abs() > COLLINEAR_EPSILON
+                {
+                    return false;
+                }
+            }
+
+            true
+        }
+    }
+}
+
+pub fn remove_collinear(vs: Vec<Vector3<f32>>) -> Vec<Vector3<f32>> {
+    assert!(vs.len() >= 3);
+
+    let mut out = Vec::new();
+
+    let mut vs_iter = vs.into_iter().cycle();
+    let v_init = vs_iter.next().unwrap();
+    let mut v1 = v_init;
+    let mut v2 = vs_iter.next().unwrap();
+    out.push(v1);
+    for v3 in vs_iter {
+        let tri = &[v1, v2, v3];
+
+        if !collinear(tri) {
+            out.push(v2);
+        }
+
+        if v3 == v_init {
+            break;
+        }
+
+        v1 = v2;
+        v2 = v3;
+    }
+
+    out
+}
+
+pub fn bounds<'a, I>(points: I) -> (Vector3<f32>, Vector3<f32>)
+where
+    I: IntoIterator<Item = &'a Vector3<f32>>,
+{
+    let mut min = Vector3::new(32767.0, 32767.0, 32767.0);
+    let mut max = Vector3::new(-32768.0, -32768.0, -32768.0);
+    for p in points.into_iter() {
+        for c in 0..3 {
+            min[c] = p[c].min(min[c]);
+            max[c] = p[c].max(max[c]);
+        }
+    }
+    (min, max)
+}
+
+pub fn vec2_extend_n(v: Vector2<f32>, n: usize, val: f32) -> Vector3<f32> {
+    let mut ar = [0.0; 3];
+    for i in 0..3 {
+        match i.cmp(&n) {
+            Ordering::Less => ar[i] = v[i],
+            Ordering::Equal => ar[i] = val,
+            Ordering::Greater => ar[i] = v[i - 1],
+        }
+    }
+
+    ar.into()
+}
+
+pub fn vec3_truncate_n(v: Vector3<f32>, n: usize) -> Vector2<f32> {
+    let mut ar = [0.0; 2];
+    for i in 0..3 {
+        match i.cmp(&n) {
+            Ordering::Less => ar[i] = v[i],
+            Ordering::Equal => (),
+            Ordering::Greater => ar[i - 1] = v[i],
+        }
+    }
+    ar.into()
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -413,6 +604,87 @@ mod test {
                 assert_eq!(p_i.point(), Vector3::new(0.5, 0.5, 1.0));
             }
             _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_collinear() {
+        let cases = vec![
+            (
+                vec![Vector3::unit_x(), Vector3::unit_y(), Vector3::unit_z()],
+                false,
+            ),
+            (
+                vec![
+                    Vector3::unit_x(),
+                    Vector3::unit_x() * 2.0,
+                    Vector3::unit_x() * 3.0,
+                ],
+                true,
+            ),
+            (
+                vec![
+                    [1400.0, 848.0, -456.0].into(),
+                    [1352.0, 848.0, -456.0].into(),
+                    [1272.0, 848.0, -456.0].into(),
+                    [1256.0, 848.0, -456.0].into(),
+                    [1208.0, 848.0, -456.0].into(),
+                    [1192.0, 848.0, -456.0].into(),
+                    [1176.0, 848.0, -456.0].into(),
+                ],
+                true,
+            ),
+        ];
+
+        for (input, result) in cases.into_iter() {
+            assert_eq!(collinear(&input), result);
+        }
+    }
+
+    #[test]
+    fn test_remove_collinear() {
+        let cases = vec![
+            (
+                vec![
+                    [1176.0, 992.0, -456.0].into(),
+                    [1176.0, 928.0, -456.0].into(),
+                    [1176.0, 880.0, -456.0].into(),
+                    [1176.0, 864.0, -456.0].into(),
+                    [1176.0, 848.0, -456.0].into(),
+                    [1120.0, 848.0, -456.0].into(),
+                    [1120.0, 992.0, -456.0].into(),
+                ],
+                vec![
+                    [1176.0, 992.0, -456.0].into(),
+                    [1176.0, 848.0, -456.0].into(),
+                    [1120.0, 848.0, -456.0].into(),
+                    [1120.0, 992.0, -456.0].into(),
+                ],
+            ),
+            (
+                vec![
+                    [1400.0, 768.0, -456.0].into(),
+                    [1400.0, 848.0, -456.0].into(),
+                    [1352.0, 848.0, -456.0].into(),
+                    [1272.0, 848.0, -456.0].into(),
+                    [1256.0, 848.0, -456.0].into(),
+                    [1208.0, 848.0, -456.0].into(),
+                    [1192.0, 848.0, -456.0].into(),
+                    [1176.0, 848.0, -456.0].into(),
+                    [1120.0, 848.0, -456.0].into(),
+                    [1200.0, 768.0, -456.0].into(),
+                ],
+                vec![
+                    [1400.0, 768.0, -456.0].into(),
+                    [1400.0, 848.0, -456.0].into(),
+                    [1120.0, 848.0, -456.0].into(),
+                    [1200.0, 768.0, -456.0].into(),
+                ],
+            ),
+        ];
+
+        for (input, output) in cases.into_iter() {
+            assert_eq!(remove_collinear(input), output);
         }
     }
 }

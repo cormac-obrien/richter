@@ -5,38 +5,36 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 edition = "2018"
 
 [dependencies]
-"bitflags" = "1.0.1"
-"byteorder" = "1.2.1"
-"cgmath" = "0.16.0"
-"chrono" = "0.4.0"
-"combine" = "3.5.1"
-"env_logger" = "0.5.3"
-"failure" = "0.1.8"
-"flame" = "0.2.0"
-"nom" = "3.2.1"
-"num" = "0.1.42"
-"num-derive" = "0.1.42"
-"lazy_static" = "1.0.0"
-"log" = "0.4.1"
-"rand" = "0.4.2"
-"regex" = "0.2.6"
-"rodio" = "0.11.0"
+bitflags = "1.0.1"
+byteorder = "1.2.1"
+cgmath = "0.17.0"
+chrono = "0.4.0"
+combine = "3.5.1"
+env_logger = "0.5.3"
+failure = "0.1.8"
+futures = "0.3.5"
+flame = "0.2.0"
+hound = "3.4.0"
+lazy_static = "1.0.0"
+log = "0.4.1"
+nom = "3.2.1"
+num = "0.1.42"
+num-derive = "0.1.42"
+rand = "0.4.2"
+regex = "0.2.6"
+rodio = "0.11.0"
+shaderc = "0.6.2"
+# wgpu = "0.6.0"
+wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", rev = "d272a69" }
 
-# gfx pre-ll deps
-#
-# these break easily, especially with incompatibilities between the versions of glutin and winit.
-# check crates.io before changing them.
-"gfx" = "~0.18"
-"gfx_device_gl" = "~0.16"
-"gfx_window_glutin" = "~0.30.0"
-"glutin" = "~0.20"
-"winit" = "~0.19"
+# "winit" = "0.22.2"
+# necessary until winit/#1524 is merged
+winit = { git = "https://github.com/chemicstry/winit", branch = "optional_drag_and_drop" }
 
 # binaries only
 "docopt" = "0.8"
 "serde" = "1.0"
 "serde_derive" = "1.0"
-hound = "3.4.0"
+strum = "0.18.0"
+strum_macros = "0.18.0"
 
-[dependencies.shaderc]
-features = ["build-from-source"]

@@ -18,46 +18,41 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-extern crate cgmath;
-extern crate chrono;
-extern crate env_logger;
-extern crate failure;
-extern crate flame;
-extern crate gfx;
-extern crate gfx_device_gl;
-extern crate gfx_window_glutin;
-extern crate glutin;
-extern crate richter;
-extern crate rodio;
-
 mod game;
 mod menu;
 
-use std::{cell::RefCell, env, fs::File, net::ToSocketAddrs, path::Path, process::exit, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    env,
+    net::ToSocketAddrs,
+    path::Path,
+    process::exit,
+    rc::Rc,
+};
 
+use game::Game;
+
+use chrono::Duration;
 use richter::{
     client::{
         self,
         input::{Input, InputFocus},
         menu::Menu,
-        render::{self, GraphicsPackage},
+        render::{self, Extent2d, GraphicsState, UiRenderer, DIFFUSE_ATTACHMENT_FORMAT},
         Client,
     },
-    common,
     common::{
+        self,
         console::{CmdRegistry, Console, CvarRegistry},
         host::{Host, Program},
         vfs::Vfs,
     },
 };
-
-use crate::game::Game;
-
-use cgmath::{Matrix4, SquareMatrix};
-use chrono::Duration;
-use gfx::Encoder;
-use gfx_device_gl::{CommandBuffer, Device, Resources};
-use glutin::{Event, EventsLoop, WindowEvent, WindowedContext};
+use winit::{
+    event::{Event, WindowEvent},
+    event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget},
+    window::{Window, WindowBuilder},
+};
 
 enum TitleState {
     Menu,
@@ -76,13 +71,15 @@ struct ClientProgram {
     console: Rc<RefCell<Console>>,
     menu: Rc<RefCell<Menu>>,
 
-    events_loop: RefCell<EventsLoop>,
-    windowed_context: RefCell<WindowedContext>,
+    window: Window,
+    window_dimensions_changed: Cell<bool>,
 
-    gfx_pkg: Rc<RefCell<GraphicsPackage>>,
-    device: RefCell<Device>,
-    encoder: RefCell<Encoder<Resources, CommandBuffer>>,
-    data: RefCell<render::pipe::Data<Resources>>,
+    instance: wgpu::Instance,
+    surface: wgpu::Surface,
+    adapter: wgpu::Adapter,
+    swap_chain: RefCell<wgpu::SwapChain>,
+    gfx_state: RefCell<GraphicsState>,
+    ui_renderer: Rc<UiRenderer>,
 
     audio_device: Rc<rodio::Device>,
 
@@ -91,7 +88,7 @@ struct ClientProgram {
 }
 
 impl ClientProgram {
-    pub fn new() -> ClientProgram {
+    pub async fn new(window: Window, audio_device: rodio::Device) -> ClientProgram {
         let mut vfs = Vfs::new();
 
         // add basedir first
@@ -113,7 +110,8 @@ impl ClientProgram {
         }
 
         let cvars = Rc::new(RefCell::new(CvarRegistry::new()));
-        client::register_cvars(&cvars.borrow_mut());
+        client::register_cvars(&cvars.borrow()).unwrap();
+        render::register_cvars(&cvars.borrow());
 
         let cmds = Rc::new(RefCell::new(CmdRegistry::new()));
         // TODO: register commands as other subsystems come online
@@ -128,72 +126,72 @@ impl ClientProgram {
         )));
         input.borrow_mut().bind_defaults();
 
-        let events_loop = glutin::EventsLoop::new();
-        let window_builder = glutin::WindowBuilder::new()
-            .with_title("Richter client")
-            .with_dimensions((1600, 900).into());
-        let context_builder = glutin::ContextBuilder::new()
-            .with_gl(glutin::GlRequest::Specific(glutin::Api::OpenGl, (4, 3)))
-            .with_vsync(false);
-
-        let (windowed_context, device, mut factory, color, depth) =
-            gfx_window_glutin::init::<render::ColorFormat, render::DepthFormat>(
-                window_builder,
-                context_builder,
-                &events_loop,
+        let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
+        let surface = unsafe { instance.create_surface(&window) };
+        let adapter = instance
+            .request_adapter(
+                &wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: Some(&surface),
+                },
+                wgpu::UnsafeFeatures::disallow(),
             )
+            .await
             .unwrap();
-
-        use gfx::{traits::FactoryExt, Factory};
-        let (_, dummy_texture) = factory
-            .create_texture_immutable_u8::<render::ColorFormat>(
-                gfx::texture::Kind::D2(1, 1, gfx::texture::AaMode::Single),
-                gfx::texture::Mipmap::Allocated,
-                &[&[]],
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    features: wgpu::Features::SAMPLED_TEXTURE_BINDING_ARRAY
+                        | wgpu::Features::SAMPLED_TEXTURE_ARRAY_DYNAMIC_INDEXING
+                        | wgpu::Features::SAMPLED_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
+                    limits: wgpu::Limits::default(),
+                    shader_validation: true,
+                },
+                Some(Path::new("./trace/")),
             )
-            .expect("dummy texture generation failed");
-
-        let sampler = factory.create_sampler(gfx::texture::SamplerInfo::new(
-            gfx::texture::FilterMethod::Scale,
-            gfx::texture::WrapMode::Tile,
+            .await
+            .unwrap();
+        let size: Extent2d = window.inner_size().into();
+        let swap_chain = RefCell::new(device.create_swap_chain(
+            &surface,
+            &wgpu::SwapChainDescriptor {
+                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+                format: DIFFUSE_ATTACHMENT_FORMAT,
+                width: size.width,
+                height: size.height,
+                present_mode: wgpu::PresentMode::Immediate,
+            },
         ));
 
-        let data = render::pipe::Data {
-            vertex_buffer: factory.create_vertex_buffer(&[]),
-            transform: Matrix4::identity().into(),
-            sampler: (dummy_texture.clone(), sampler.clone()),
-            out_color: color.clone(),
-            out_depth: depth.clone(),
-        };
+        let vfs = Rc::new(vfs);
 
-        let encoder = factory.create_command_buffer().into();
+        // TODO: warn user if r_msaa_samples is invalid
+        let mut sample_count = cvars.borrow().get_value("r_msaa_samples").unwrap_or(2.0) as u32;
+        if !&[2, 4].contains(&sample_count) {
+            sample_count = 2;
+        }
 
-        let audio_device = Rc::new(rodio::default_output_device().unwrap());
-
-        let gfx_pkg = Rc::new(RefCell::new(GraphicsPackage::new(
-            &vfs,
-            factory,
-            color,
-            depth,
-            console.clone(),
-        )));
+        let gfx_state = GraphicsState::new(device, queue, size, sample_count, vfs.clone()).unwrap();
+        let ui_renderer = Rc::new(UiRenderer::new(&gfx_state, &menu.borrow()));
 
         // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
         console.borrow().stuff_text("exec quake.rc\n");
 
         ClientProgram {
-            vfs: Rc::new(vfs),
+            vfs,
             cvars,
             cmds,
             console,
             menu,
-            events_loop: RefCell::new(events_loop),
-            windowed_context: RefCell::new(windowed_context),
-            gfx_pkg,
-            device: RefCell::new(device),
-            encoder: RefCell::new(encoder),
-            data: RefCell::new(data),
-            audio_device,
+            window,
+            window_dimensions_changed: Cell::new(false),
+            instance,
+            surface,
+            adapter,
+            swap_chain,
+            gfx_state: RefCell::new(gfx_state),
+            ui_renderer,
+            audio_device: Rc::new(audio_device),
             state: RefCell::new(ProgramState::Title),
             input,
         }
@@ -217,11 +215,9 @@ impl ClientProgram {
 
         self.state.replace(ProgramState::Game(
             Game::new(
-                self.vfs.clone(),
                 self.cvars.clone(),
                 self.cmds.clone(),
-                self.menu.clone(),
-                self.gfx_pkg.clone(),
+                self.ui_renderer.clone(),
                 self.input.clone(),
                 cl,
             )
@@ -229,96 +225,102 @@ impl ClientProgram {
         ));
     }
 
+    /// Builds a new swap chain with the specified present mode and the window's current dimensions.
+    fn recreate_swap_chain(&self, present_mode: wgpu::PresentMode) {
+        let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
+        let swap_chain = self.gfx_state.borrow().device().create_swap_chain(
+            &self.surface,
+            &wgpu::SwapChainDescriptor {
+                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+                format: DIFFUSE_ATTACHMENT_FORMAT,
+                width,
+                height,
+                present_mode,
+            },
+        );
+        let _ = self.swap_chain.replace(swap_chain);
+    }
+
     fn render(&mut self) {
-        self.encoder
-            .borrow_mut()
-            .clear(&self.gfx_pkg.borrow().color_target(), [0.0, 0.0, 0.0, 1.0]);
-        self.encoder
-            .borrow_mut()
-            .clear_depth(&self.gfx_pkg.borrow().depth_stencil(), 1.0);
-        let (win_w, win_h) = self
-            .windowed_context
-            .borrow()
-            .get_inner_size()
-            .unwrap()
-            .into();
+        let swap_chain_output = self.swap_chain.borrow_mut().get_next_frame().unwrap();
 
         match *self.state.borrow_mut() {
             ProgramState::Title => unimplemented!(),
             ProgramState::Game(ref mut game) => {
+                let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
                 game.render(
-                    &mut self.encoder.borrow_mut(),
-                    &mut self.data.borrow_mut(),
-                    win_w,
-                    win_h,
+                    &self.gfx_state.borrow(),
+                    &swap_chain_output.output.view,
+                    width,
+                    height,
+                    &self.console.borrow(),
+                    &self.menu.borrow(),
                 );
             }
         }
-
-        use std::ops::DerefMut;
-        flame::start("Encoder::flush");
-        self.encoder
-            .borrow_mut()
-            .flush(self.device.borrow_mut().deref_mut());
-        flame::end("Encoder::flush");
-
-        flame::start("Window::swap_buffers");
-        self.windowed_context.borrow_mut().swap_buffers().unwrap();
-        flame::end("Window::swap_buffers");
-
-        use gfx::Device;
-        flame::start("Device::cleanup");
-        self.device.borrow_mut().cleanup();
-        flame::end("Device::cleanup");
     }
 }
 
 impl Program for ClientProgram {
+    fn handle_event<T>(
+        &mut self,
+        event: Event<T>,
+        _target: &EventLoopWindowTarget<T>,
+        _control_flow: &mut ControlFlow,
+    ) {
+        match event {
+            Event::WindowEvent {
+                event: WindowEvent::Resized(_),
+                ..
+            } => {
+                self.window_dimensions_changed.set(true);
+            }
+
+            e => self.input.borrow_mut().handle_event(e).unwrap(),
+        }
+    }
+
     fn frame(&mut self, frame_duration: Duration) {
         let _guard = flame::start_guard("ClientProgram::frame");
+
+        // recreate swapchain if needed
+        if self.window_dimensions_changed.get() {
+            self.window_dimensions_changed.set(false);
+            self.recreate_swap_chain(wgpu::PresentMode::Immediate);
+        }
+
+        let size: Extent2d = self.window.inner_size().into();
+
+        // TODO: warn user if r_msaa_samples is invalid
+        let mut sample_count = self
+            .cvars
+            .borrow()
+            .get_value("r_msaa_samples")
+            .unwrap_or(2.0) as u32;
+        if !&[2, 4].contains(&sample_count) {
+            sample_count = 2;
+        }
+
+        // recreate attachments and rebuild pipelines if necessary
+        self.gfx_state.borrow_mut().update(size, sample_count);
+
         match *self.state.borrow_mut() {
             ProgramState::Title => unimplemented!(),
 
             ProgramState::Game(ref mut game) => {
-                game.frame(frame_duration);
+                game.frame(&self.gfx_state.borrow(), frame_duration);
             }
         }
 
-        flame::start("EventsLoop::poll_events");
-        self.events_loop
-            .borrow_mut()
-            .poll_events(|event| match event {
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
-                    // TODO: handle quit properly
-                    flame::dump_html(File::create("flame.html").unwrap()).unwrap();
-                    std::process::exit(0);
-                }
-
-                e => match *self.state.borrow_mut() {
-                    ProgramState::Title => unimplemented!(),
-                    ProgramState::Game(ref mut game) => game.handle_input(e),
-                },
-            });
-        flame::end("EventsLoop::poll_events");
-
         match self.input.borrow().current_focus() {
             InputFocus::Game => {
-                self.windowed_context
-                    .borrow_mut()
-                    .grab_cursor(true)
-                    .unwrap();
-                self.windowed_context.borrow_mut().hide_cursor(true);
+                self.window.set_cursor_grab(true).unwrap();
+                self.window.set_cursor_visible(false);
             }
 
             _ => {
-                self.windowed_context
-                    .borrow_mut()
-                    .grab_cursor(false)
-                    .unwrap();
-                self.windowed_context.borrow_mut().hide_cursor(false);
+                self.window.set_cursor_grab(false).unwrap();
+                self.window.set_cursor_visible(true);
             }
         }
 
@@ -326,6 +328,10 @@ impl Program for ClientProgram {
         self.console.borrow().execute();
 
         self.render();
+    }
+
+    fn shutdown(&mut self) {
+        // TODO: do cleanup things here
     }
 }
 
@@ -339,11 +345,37 @@ fn main() {
         exit(1);
     }
 
-    let mut client_program = ClientProgram::new();
+    let audio_device = rodio::default_output_device().unwrap();
+
+    let event_loop = EventLoop::new();
+    let window = {
+        #[cfg(target_os = "windows")]
+        {
+            use winit::platform::windows::WindowBuilderExtWindows as _;
+            winit::window::WindowBuilder::new()
+                // disable file drag-and-drop so cpal and winit play nice
+                .with_drag_and_drop(false)
+                .with_title("Richter client")
+                .with_inner_size(winit::dpi::PhysicalSize::<u32>::from((1366u32, 768)))
+                .build(&event_loop)
+                .unwrap()
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            winit::window::WindowBuilder::new()
+                .with_title("Richter client")
+                .with_inner_size(winit::dpi::PhysicalSize::<u32>::from((1366u32, 768)))
+                .build(&event_loop)
+                .unwrap()
+        }
+    };
+
+    let mut client_program = futures::executor::block_on(ClientProgram::new(window, audio_device));
     client_program.connect(&args[1]);
     let mut host = Host::new(client_program);
 
-    loop {
-        host.frame();
-    }
+    event_loop.run(move |event, _target, control_flow| {
+        host.handle_event(event, _target, control_flow);
+    });
 }

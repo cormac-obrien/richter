@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use crate::client::menu::Menu;
 
@@ -26,7 +26,7 @@ use failure::Error;
 
 pub enum Item {
     Submenu(Menu),
-    Action(Box<Fn()>),
+    Action(Box<dyn Fn()>),
     Toggle(Toggle),
     Enum(Enum),
     Slider(Slider),
@@ -35,11 +35,11 @@ pub enum Item {
 
 pub struct Toggle {
     state: Cell<bool>,
-    on_toggle: Box<Fn(bool)>,
+    on_toggle: Box<dyn Fn(bool)>,
 }
 
 impl Toggle {
-    pub fn new(init: bool, on_toggle: Box<Fn(bool)>) -> Toggle {
+    pub fn new(init: bool, on_toggle: Box<dyn Fn(bool)>) -> Toggle {
         let t = Toggle {
             state: Cell::new(init),
             on_toggle,
@@ -51,9 +51,23 @@ impl Toggle {
         t
     }
 
+    pub fn set_false(&self) {
+        self.state.set(false);
+        (self.on_toggle)(self.state.get());
+    }
+
+    pub fn set_true(&self) {
+        self.state.set(true);
+        (self.on_toggle)(self.state.get());
+    }
+
     pub fn toggle(&self) {
         self.state.set(!self.state.get());
         (self.on_toggle)(self.state.get());
+    }
+
+    pub fn get(&self) -> bool {
+        self.state.get()
     }
 }
 
@@ -107,11 +121,11 @@ impl Enum {
 
 pub struct EnumItem {
     name: String,
-    on_select: Box<Fn()>,
+    on_select: Box<dyn Fn()>,
 }
 
 impl EnumItem {
-    pub fn new<S>(name: S, on_select: Box<Fn()>) -> Result<EnumItem, Error>
+    pub fn new<S>(name: S, on_select: Box<dyn Fn()>) -> Result<EnumItem, Error>
     where
         S: AsRef<str>,
     {
@@ -129,7 +143,7 @@ pub struct Slider {
     steps: usize,
 
     selected: Cell<usize>,
-    on_select: Box<Fn(f32)>,
+    on_select: Box<dyn Fn(f32)>,
 }
 
 impl Slider {
@@ -138,7 +152,7 @@ impl Slider {
         max: f32,
         steps: usize,
         init: usize,
-        on_select: Box<Fn(f32)>,
+        on_select: Box<dyn Fn(f32)>,
     ) -> Result<Slider, Error> {
         ensure!(steps > 1, "Slider must have at least 2 steps");
         ensure!(init < steps, "Invalid initial setting");
@@ -176,30 +190,34 @@ impl Slider {
 
         (self.on_select)(self.min + self.selected.get() as f32 * self.increment);
     }
+
+    pub fn position(&self) -> f32 {
+        self.selected.get() as f32 / self.steps as f32
+    }
 }
 
 pub struct TextField {
-    chars: Vec<char>,
+    chars: RefCell<Vec<char>>,
     max_len: Option<usize>,
-    on_update: Box<Fn(&str)>,
-    cursor: usize,
+    on_update: Box<dyn Fn(&str)>,
+    cursor: Cell<usize>,
 }
 
 impl TextField {
     pub fn new<S>(
         default: Option<S>,
         max_len: Option<usize>,
-        on_update: Box<Fn(&str)>,
+        on_update: Box<dyn Fn(&str)>,
     ) -> Result<TextField, Error>
     where
         S: AsRef<str>,
     {
-        let chars = match default {
+        let chars = RefCell::new(match default {
             Some(d) => d.as_ref().chars().collect(),
             None => Vec::new(),
-        };
+        });
 
-        let cursor = chars.len();
+        let cursor = Cell::new(chars.borrow().len());
 
         Ok(TextField {
             chars,
@@ -210,66 +228,68 @@ impl TextField {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.chars.len() == 0
+        self.len() == 0
     }
 
     pub fn text(&self) -> String {
-        self.chars.iter().collect()
+        self.chars.borrow().iter().collect()
     }
 
     pub fn len(&self) -> usize {
-        self.chars.len()
+        self.chars.borrow().len()
     }
 
-    pub fn set_cursor(&mut self, cursor: usize) -> Result<(), Error> {
-        ensure!(cursor <= self.chars.len(), "Index out of range");
+    pub fn set_cursor(&self, cursor: usize) -> Result<(), Error> {
+        ensure!(cursor <= self.len(), "Index out of range");
 
-        self.cursor = cursor;
+        self.cursor.set(cursor);
 
         Ok(())
     }
 
-    pub fn home(&mut self) {
-        self.cursor = 0;
+    pub fn home(&self) {
+        self.cursor.set(0);
     }
 
-    pub fn end(&mut self) {
-        self.cursor = self.chars.len();
+    pub fn end(&self) {
+        self.cursor.set(self.len());
     }
 
-    pub fn cursor_right(&mut self) {
-        if self.cursor < self.chars.len() {
-            self.cursor += 1;
+    pub fn cursor_right(&self) {
+        let curs = self.cursor.get();
+        if curs < self.len() {
+            self.cursor.set(curs + 1);
         }
     }
 
-    pub fn cursor_left(&mut self) {
-        if self.cursor > 1 {
-            self.cursor -= 1;
+    pub fn cursor_left(&self) {
+        let curs = self.cursor.get();
+        if curs > 1 {
+            self.cursor.set(curs - 1);
         }
     }
 
-    pub fn insert(&mut self, c: char) {
+    pub fn insert(&self, c: char) {
         if let Some(l) = self.max_len {
             if self.len() == l {
                 return;
             }
         }
 
-        self.chars.insert(self.cursor, c);
+        self.chars.borrow_mut().insert(self.cursor.get(), c);
         (self.on_update)(&self.text());
     }
 
-    pub fn backspace(&mut self) {
-        if self.cursor > 1 {
-            self.chars.remove(self.cursor - 1);
+    pub fn backspace(&self) {
+        if self.cursor.get() > 1 {
+            self.chars.borrow_mut().remove(self.cursor.get() - 1);
             (self.on_update)(&self.text());
         }
     }
 
-    pub fn delete(&mut self) {
-        if self.cursor < self.chars.len() {
-            self.chars.remove(self.cursor);
+    pub fn delete(&self) {
+        if self.cursor.get() < self.len() {
+            self.chars.borrow_mut().remove(self.cursor.get());
             (self.on_update)(&self.text());
         }
     }

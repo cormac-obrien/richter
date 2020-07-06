@@ -20,7 +20,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::common::console::Console;
 
 use failure::Error;
-use winit::{ElementState, Event, KeyboardInput, VirtualKeyCode as Key, WindowEvent};
+use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode as Key, WindowEvent};
 
 pub struct ConsoleInput {
     console: Rc<RefCell<Console>>,
@@ -31,7 +31,7 @@ impl ConsoleInput {
         ConsoleInput { console }
     }
 
-    pub fn handle_event(&self, event: Event) -> Result<(), Error> {
+    pub fn handle_event<T>(&self, event: Event<T>) -> Result<(), Error> {
         match event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::ReceivedCharacter(c) => self.console.borrow_mut().send_char(c)?,
