@@ -339,7 +339,6 @@ impl QuadRenderer {
         cmds: &'pass [QuadRendererCommand<'pass>],
         blocks: &'cmds [DynamicUniformBufferBlock<QuadUniforms>],
     ) {
-        debug!("QuadRenderer::record_draw");
         pass.set_pipeline(state.quad_pipeline());
         pass.set_vertex_buffer(0, state.quad_vertex_buffer().slice(..));
         pass.set_bind_group(0, &self.sampler_bind_group, &[]);

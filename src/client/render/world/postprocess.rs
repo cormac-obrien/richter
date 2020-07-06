@@ -201,7 +201,6 @@ impl PostProcessRenderer {
         pass: &mut wgpu::RenderPass<'pass>,
         color_shift: [f32; 4],
     ) {
-        debug!("PostProcessRenderer::record_draw");
         self.update_uniform_buffers(state, color_shift);
         pass.set_pipeline(state.postprocess_pipeline().pipeline());
         pass.set_vertex_buffer(0, state.quad_vertex_buffer().slice(..));

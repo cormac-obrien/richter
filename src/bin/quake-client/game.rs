@@ -239,7 +239,6 @@ impl Game {
         console: &Console,
         menu: &Menu,
     ) {
-        println!("rendering...");
         match self.state {
             // TODO: loading screen
             GameState::Loading => (),

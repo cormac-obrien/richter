@@ -397,7 +397,6 @@ impl AliasRenderer {
         keyframe_id: usize,
         texture_id: usize,
     ) {
-        debug!("AliasRenderer::record_draw");
         pass.set_pipeline(state.alias_pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
