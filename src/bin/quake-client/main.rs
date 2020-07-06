@@ -48,6 +48,7 @@ use richter::{
         vfs::Vfs,
     },
 };
+use structopt::StructOpt;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget},
@@ -335,15 +336,15 @@ impl Program for ClientProgram {
     }
 }
 
+#[derive(StructOpt, Debug)]
+struct Opt {
+    #[structopt(name = "SERVER")]
+    server: String,
+}
+
 fn main() {
     env_logger::init();
-
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() != 2 {
-        println!("Usage: {} <server_address>", args[0]);
-        exit(1);
-    }
+    let opt = Opt::from_args();
 
     let audio_device = rodio::default_output_device().unwrap();
 
@@ -372,7 +373,7 @@ fn main() {
     };
 
     let mut client_program = futures::executor::block_on(ClientProgram::new(window, audio_device));
-    client_program.connect(&args[1]);
+    client_program.connect(opt.server);
     let mut host = Host::new(client_program);
 
     event_loop.run(move |event, _target, control_flow| {
