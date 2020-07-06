@@ -27,15 +27,6 @@ shaderc = "0.6.2"
 # wgpu = "0.6.0"
 wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", rev = "d272a69" }
 
-# gfx pre-ll deps
-#
-# these break easily, especially with incompatibilities between the versions of glutin and winit.
-# check crates.io before changing them.
-"gfx" = "~0.18"
-"gfx_device_gl" = "~0.16"
-"gfx_window_glutin" = "~0.30.0"
-"glutin" = "~0.20"
-
 # "winit" = "0.22.2"
 # necessary until winit/#1524 is merged
 winit = { git = "https://github.com/chemicstry/winit", branch = "optional_drag_and_drop" }

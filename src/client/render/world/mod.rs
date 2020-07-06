@@ -21,6 +21,7 @@ use crate::{
     common::{
         console::CvarRegistry,
         engine,
+        math::Angles,
         model::{Model, ModelKind},
         sprite::SpriteKind,
         util::any_as_bytes,
@@ -97,21 +98,21 @@ pub enum BindGroupLayoutId {
 
 pub struct Camera {
     origin: Vector3<f32>,
-    angles: Vector3<Deg<f32>>,
+    angles: Angles,
     transform: Matrix4<f32>,
 }
 
 impl Camera {
     pub fn new(
         origin: Vector3<f32>,
-        angles: Vector3<Deg<f32>>,
+        angles: Angles,
         projection: Matrix4<f32>,
     ) -> Camera {
         // convert coordinates
         let converted_origin = Vector3::new(-origin.y, origin.z, -origin.x);
         // translate the world by inverse of camera position
         let translation = Matrix4::from_translation(-converted_origin);
-        let rotation = Matrix4::from(Euler::new(angles.x, -angles.y, -angles.z));
+        let rotation = angles.mat4_wgpu();
 
         Camera {
             origin,
@@ -124,7 +125,7 @@ impl Camera {
         self.origin
     }
 
-    pub fn angles(&self) -> Vector3<Deg<f32>> {
+    pub fn angles(&self) -> Angles {
         self.angles
     }
 
@@ -372,22 +373,27 @@ impl WorldRenderer {
     fn calculate_model_transform(&self, camera: &Camera, entity: &ClientEntity) -> Matrix4<f32> {
         let origin = entity.get_origin();
         let angles = entity.get_angles();
-        let euler = match self.renderer_for_entity(entity) {
+        let rotation = match self.renderer_for_entity(entity) {
             EntityRenderer::Sprite(ref sprite) => match sprite.kind() {
                 // used for decals
-                SpriteKind::Oriented => Euler::new(angles.x, angles.y, angles.z),
+                SpriteKind::Oriented => Matrix4::from(Euler::new(angles.z, -angles.x, angles.y)),
 
                 _ => {
                     // keep sprite facing player, but preserve roll
-                    let inv_cam_angles = -camera.angles();
-                    Euler::new(inv_cam_angles.x, inv_cam_angles.y, angles.z)
+                    let cam_angles = camera.angles();
+
+                    Angles {
+                        pitch: -cam_angles.pitch,
+                        roll: angles.x,
+                        yaw: -cam_angles.yaw,
+                    }.mat4_quake()
                 }
             },
 
-            _ => Euler::new(angles.x, angles.y, angles.z),
+            _ => Matrix4::from(Euler::new(angles.x, angles.y, angles.z)),
         };
 
         Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
-            * Matrix4::from(euler)
+            * rotation
     }
 }

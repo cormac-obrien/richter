@@ -252,7 +252,7 @@ impl Game {
 
                 let camera = Camera::new(
                     self.client.view_origin(),
-                    self.client.view_angles(),
+                    self.client.view_angles(self.client.time()).unwrap(),
                     perspective,
                 );
 
@@ -291,9 +291,10 @@ impl Game {
                     let mut final_pass =
                         encoder.begin_render_pass(&final_pass_builder.descriptor());
 
+                    log::debug!("color shift = {:?}", self.client.color_shift());
                     state
                         .postprocess_renderer
-                        .record_draw(gfx_state, &mut final_pass);
+                        .record_draw(gfx_state, &mut final_pass, self.client.color_shift());
 
                     let overlay = match state.focus.get() {
                         InGameFocus::Game => None,

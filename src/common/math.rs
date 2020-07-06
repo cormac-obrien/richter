@@ -1,23 +1,111 @@
 // Copyright © 2018 Cormac O'Brien
 //
-// Permission is hereby granted, free of charge, to any person obtaining a copy of this software
-// and associated documentation files (the "Software"), to deal in the Software without
-// restriction, including without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
 //
-// The above copyright notice and this permission notice shall be included in all copies or
-// substantial portions of the Software.
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
 //
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
-// BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-use std::{cmp::Ordering, ops::Neg};
+use std::{cmp::Ordering, convert::Into, ops::Neg};
 
-use cgmath::{Angle, Deg, InnerSpace, Vector2, Vector3, Zero};
+use cgmath::{Angle, Deg, InnerSpace, Matrix3, Matrix4, Vector2, Vector3, Zero};
+
+trait CoordSys {}
+
+struct Quake;
+impl CoordSys for Quake {}
+
+struct Wgpu;
+impl CoordSys for Wgpu {}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Angles {
+    pub pitch: Deg<f32>,
+    pub roll: Deg<f32>,
+    pub yaw: Deg<f32>,
+}
+
+impl Angles {
+    pub fn zero() -> Angles {
+        Angles {
+            pitch: Deg(0.0),
+            roll: Deg(0.0),
+            yaw: Deg(0.0),
+        }
+    }
+
+    pub fn mat3_quake(&self) -> Matrix3<f32> {
+        Matrix3::from_angle_x(-self.roll)
+            * Matrix3::from_angle_y(-self.pitch)
+            * Matrix3::from_angle_z(self.yaw)
+    }
+
+    pub fn mat4_quake(&self) -> Matrix4<f32> {
+        Matrix4::from_angle_x(-self.roll)
+            * Matrix4::from_angle_y(-self.pitch)
+            * Matrix4::from_angle_z(self.yaw)
+    }
+
+    pub fn mat3_wgpu(&self) -> Matrix3<f32> {
+        Matrix3::from_angle_z(-self.roll)
+            * Matrix3::from_angle_x(self.pitch)
+            * Matrix3::from_angle_y(-self.yaw)
+    }
+
+    pub fn mat4_wgpu(&self) -> Matrix4<f32> {
+        Matrix4::from_angle_z(-self.roll)
+            * Matrix4::from_angle_x(self.pitch)
+            * Matrix4::from_angle_y(-self.yaw)
+    }
+}
+
+impl std::ops::Add for Angles {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            pitch: self.pitch + other.pitch,
+            roll: self.roll + other.roll,
+            yaw: self.yaw + other.yaw,
+        }
+    }
+}
+
+impl std::ops::Mul<f32> for Angles {
+    type Output = Self;
+
+    fn mul(self, other: f32) -> Self {
+        Self {
+            pitch: self.pitch * other,
+            roll: self.roll * other,
+            yaw: self.yaw * other,
+        }
+    }
+}
+
+pub fn clamp_deg(val: Deg<f32>, min: Deg<f32>, max: Deg<f32>) -> Deg<f32> {
+    assert!(min <= max);
+
+    return if val < min {
+        min
+    } else if val > max {
+        max
+    } else {
+        val
+    };
+}
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum HyperplaneSide {

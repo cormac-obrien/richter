@@ -24,6 +24,7 @@ pub mod input;
 pub mod menu;
 pub mod render;
 pub mod sound;
+pub mod view;
 
 pub use self::{
     cvars::register_cvars,
@@ -42,11 +43,13 @@ use crate::{
     client::{
         input::game::{Action, GameInput},
         sound::{AudioSource, Channel, Listener, StaticSound},
+        view::{IdleVars, KickVars, RollVars, View},
     },
     common::{
         bsp,
         console::{CmdRegistry, Console, CvarRegistry},
         engine,
+        math::Angles,
         model::{Model, ModelFlags, ModelKind, SyncType},
         net::{
             self,
@@ -86,36 +89,6 @@ enum ColorShiftCode {
 struct ServerInfo {
     max_clients: u8,
     game_type: GameType,
-}
-
-struct ClientView {
-    ent_id: usize,
-    msg_view_angles: [Vector3<Deg<f32>>; 2],
-
-    // TODO: this may not need to be a field (calculated once per frame)
-    view_angles: Vector3<Deg<f32>>,
-
-    ideal_pitch: Deg<f32>,
-    punch_angle: Vector3<Deg<f32>>,
-    dmg_angle: Vector3<Deg<f32>>,
-    view_height: f32,
-}
-
-impl ClientView {
-    pub fn new() -> ClientView {
-        ClientView {
-            ent_id: 0,
-            msg_view_angles: [
-                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            ],
-            view_angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            ideal_pitch: Deg(0.0),
-            punch_angle: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            dmg_angle: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            view_height: 0.0,
-        }
-    }
 }
 
 struct PlayerInfo {
@@ -345,7 +318,7 @@ struct ClientState {
     face_anim_time: Duration,
     color_shifts: [Rc<RefCell<ColorShift>>; 4],
     // prev_color_shifts: [ColorShift; 4],
-    view: ClientView,
+    view: View,
 
     msg_velocity: [Vector3<f32>; 2],
     velocity: Vector3<f32>,
@@ -455,7 +428,7 @@ impl ClientState {
                     percent: 0,
                 })),
             ],
-            view: ClientView::new(),
+            view: View::new(),
             face_anim_time: Duration::zero(),
             msg_velocity: [Vector3::zero(), Vector3::zero()],
             velocity: Vector3::zero(),
@@ -467,19 +440,14 @@ impl ClientState {
     }
 
     fn update_listener(&self) {
-        let view_origin = self.entities[self.view.ent_id].origin;
+        // TODO: update to self.view_origin()
+        let view_origin = self.entities[self.view.entity_id()].origin;
         let world_translate = Matrix4::from_translation(view_origin);
 
-        let left_base = Vector3::new(0.0, 4.0, self.view.view_height);
-        let right_base = Vector3::new(0.0, -4.0, self.view.view_height);
+        let left_base = Vector3::new(0.0, 4.0, self.view.view_height());
+        let right_base = Vector3::new(0.0, -4.0, self.view.view_height());
 
-        // transformations take place in Quake's left-handed coordinate space: X is
-        // forward, Y is *left* and Z is up.
-        let rotate = Matrix4::from(Euler::new(
-            self.view.view_angles[2],
-            -self.view.view_angles[0],
-            self.view.view_angles[1],
-        ));
+        let rotate = self.view.input_angles().mat4_quake();
 
         let left = (world_translate * rotate * left_base.extend(1.0)).truncate();
         let right = (world_translate * rotate * right_base.extend(1.0)).truncate();
@@ -625,87 +593,27 @@ impl Client {
         })
     }
 
+    pub fn disconnect(&self) {
+        unimplemented!();
+    }
+
     pub fn add_cmd(&mut self, cmd: ClientCmd) -> Result<(), Error> {
         cmd.serialize(&mut self.compose)?;
 
         Ok(())
     }
 
-    fn adjust_angles(&mut self, game_input: &GameInput, frame_time: Duration) -> Result<(), Error> {
-        let frame_time_f32 = engine::duration_to_f32(frame_time);
-        let cl_anglespeedkey =
-            self.cvars
-                .borrow()
-                .get_value("cl_anglespeedkey")
-                .context(ClientErrorKind::Cvar {
-                    name: "cl_anglespeedkey".to_string(),
-                })?;
-
-        let speed = if game_input.action_state(Action::Speed) {
-            frame_time_f32 * cl_anglespeedkey
-        } else {
-            frame_time_f32
-        };
-
-        if !game_input.action_state(Action::Strafe) {
-            let right_factor = game_input.action_state(Action::Right) as i32 as f32;
-            let left_factor = game_input.action_state(Action::Left) as i32 as f32;
-            let cl_yawspeed =
-                self.cvars
-                    .borrow()
-                    .get_value("cl_yawspeed")
-                    .context(ClientErrorKind::Cvar {
-                        name: "cl_yawspeed".to_string(),
-                    })?;
-
-            self.state.view.view_angles.y -= Deg(speed * cl_yawspeed * right_factor);
-            self.state.view.view_angles.y += Deg(speed * cl_yawspeed * left_factor);
-            self.state.view.view_angles.y.normalize();
-        }
-
-        let cl_pitchspeed =
-            self.cvars
-                .borrow()
-                .get_value("cl_pitchspeed")
-                .context(ClientErrorKind::Cvar {
-                    name: "cl_pitchspeed".to_string(),
-                })?;
-        if game_input.action_state(Action::KLook) {
-            let forward_factor = game_input.action_state(Action::Forward) as i32 as f32;
-            let back_factor = game_input.action_state(Action::Back) as i32 as f32;
-
-            // TODO: V_StopPitchDrift
-            self.state.view.view_angles.x -= Deg(speed * cl_pitchspeed * forward_factor);
-            self.state.view.view_angles.x += Deg(speed * cl_pitchspeed * back_factor);
-        }
-
-        let lookup_factor = game_input.action_state(Action::LookUp) as i32 as f32;
-        let lookdown_factor = game_input.action_state(Action::LookDown) as i32 as f32;
-
-        self.state.view.view_angles.x -= Deg(speed * cl_pitchspeed * lookup_factor);
-        self.state.view.view_angles.x += Deg(speed * cl_pitchspeed * lookdown_factor);
-
-        if lookup_factor != 0.0 || lookdown_factor != 0.0 {
-            // TODO: V_StopPitchDrift
-        }
-
-        // clamp pitch to [-70, 80]
-        if self.state.view.view_angles.x > Deg(80.0) {
-            self.state.view.view_angles.x = Deg(80.0);
-        }
-        if self.state.view.view_angles.x < Deg(-70.0) {
-            self.state.view.view_angles.x = Deg(-70.0);
-        }
-
-        // clamp roll to [-50, 50]
-        if self.state.view.view_angles.z > Deg(50.0) {
-            self.state.view.view_angles.z = Deg(50.0);
-        }
-        if self.state.view.view_angles.z < Deg(-50.0) {
-            self.state.view.view_angles.z = Deg(-50.0);
-        }
-
-        Ok(())
+    fn cvar_value<S>(&self, name: S) -> Result<f32, ClientError>
+    where
+        S: AsRef<str>,
+    {
+        Ok(self
+            .cvars
+            .borrow()
+            .get_value(name.as_ref())
+            .context(ClientErrorKind::Cvar {
+                name: name.as_ref().to_string(),
+            })?)
     }
 
     pub fn handle_input(
@@ -713,60 +621,44 @@ impl Client {
         game_input: &mut GameInput,
         frame_time: Duration,
     ) -> Result<(), Error> {
-        self.adjust_angles(game_input, frame_time)?;
+        let mlook = game_input.action_state(Action::MLook);
+        self.state.view.handle_input(
+            frame_time,
+            game_input,
+            mlook,
+            self.cvar_value("cl_anglespeedkey")?,
+            self.cvar_value("cl_pitchspeed")?,
+            self.cvar_value("cl_yawspeed")?,
+            self.cvar_value("m_pitch")?,
+            self.cvar_value("m_yaw")?,
+        );
 
-        let cl_sidespeed =
-            self.cvars
-                .borrow()
-                .get_value("cl_sidespeed")
-                .context(ClientErrorKind::Cvar {
-                    name: "cl_sidespeed".to_string(),
-                })?;
-        let cl_upspeed =
-            self.cvars
-                .borrow()
-                .get_value("cl_upspeed")
-                .context(ClientErrorKind::Cvar {
-                    name: "cl_upspeed".to_string(),
-                })?;
+        let cl_sidespeed = self.cvar_value("cl_sidespeed")?;
+        let cl_upspeed = self.cvar_value("cl_upspeed")?;
 
-        let mut sidemove = 0.0;
+        let mut move_left = game_input.action_state(Action::MoveLeft);
+        let mut move_right = game_input.action_state(Action::MoveRight);
         if game_input.action_state(Action::Strafe) {
-            sidemove += cl_sidespeed * game_input.action_state(Action::Right) as i32 as f32;
-            sidemove -= cl_sidespeed * game_input.action_state(Action::Left) as i32 as f32;
+            move_left |= game_input.action_state(Action::Left);
+            move_right |= game_input.action_state(Action::Right);
         }
 
-        sidemove += cl_sidespeed * game_input.action_state(Action::MoveRight) as i32 as f32;
-        sidemove -= cl_sidespeed * game_input.action_state(Action::MoveLeft) as i32 as f32;
+        let mut sidemove = cl_sidespeed * (move_right as i32 - move_left as i32) as f32;
 
-        let mut upmove = 0.0;
-        upmove += cl_upspeed * game_input.action_state(Action::MoveUp) as i32 as f32;
-        upmove -= cl_upspeed * game_input.action_state(Action::MoveDown) as i32 as f32;
+        let mut upmove = cl_upspeed
+            * (game_input.action_state(Action::MoveUp) as i32
+                - game_input.action_state(Action::MoveDown) as i32) as f32;
 
         let mut forwardmove = 0.0;
         if !game_input.action_state(Action::KLook) {
-            let cl_forwardspeed = self.cvars.borrow().get_value("cl_forwardspeed").context(
-                ClientErrorKind::Cvar {
-                    name: "cl_forwardspeed".to_string(),
-                },
-            )?;
-            let cl_backspeed =
-                self.cvars
-                    .borrow()
-                    .get_value("cl_backspeed")
-                    .context(ClientErrorKind::Cvar {
-                        name: "cl_backspeed".to_string(),
-                    })?;
+            let cl_forwardspeed = self.cvar_value("cl_forwardspeed")?;
+            let cl_backspeed = self.cvar_value("cl_backspeed")?;
             forwardmove += cl_forwardspeed * game_input.action_state(Action::Forward) as i32 as f32;
             forwardmove -= cl_backspeed * game_input.action_state(Action::Back) as i32 as f32;
         }
 
         if game_input.action_state(Action::Speed) {
-            let cl_movespeedkey = self.cvars.borrow().get_value("cl_movespeedkey").context(
-                ClientErrorKind::Cvar {
-                    name: "cl_movespeedkey".to_string(),
-                },
-            )?;
+            let cl_movespeedkey = self.cvar_value("cl_movespeedkey")?;
             sidemove *= cl_movespeedkey;
             upmove *= cl_movespeedkey;
             forwardmove *= cl_movespeedkey;
@@ -782,34 +674,16 @@ impl Client {
             button_flags |= ButtonFlags::JUMP;
         }
 
-        // TODO: IN_Move (mouse / joystick / gamepad)
-        if game_input.action_state(Action::MLook) {
-            let m_pitch =
-                self.cvars
-                    .borrow()
-                    .get_value("m_pitch")
-                    .context(ClientErrorKind::Cvar {
-                        name: "m_pitch".to_string(),
-                    })?;
-            self.state.view.view_angles.x += Deg(game_input.mouse_delta().1 as f32 * m_pitch);
-
-            let m_yaw = self
-                .cvars
-                .borrow()
-                .get_value("m_yaw")
-                .context(ClientErrorKind::Cvar {
-                    name: "m_yaw".to_string(),
-                })?;
-            self.state.view.view_angles.y -= Deg(game_input.mouse_delta().0 as f32 * m_yaw);
-        } else {
-            // TODO: mouse movement controls player movement
+        if !mlook {
+            // TODO: IN_Move (mouse / joystick / gamepad)
         }
 
         let send_time = self.state.msg_times[0];
-        let angles = self.state.view.view_angles;
+        // send "raw" angles without any pitch/roll from movement or damage
+        let angles = self.state.view.input_angles();
         let move_cmd = ClientCmd::Move {
             send_time,
-            angles,
+            angles: Vector3::new(angles.pitch, angles.yaw, angles.roll),
             fwd_move: forwardmove as i16,
             side_move: sidemove as i16,
             up_move: upmove as i16,
@@ -886,11 +760,11 @@ impl Client {
         }
 
         let baseline = EntityState {
-            origin: origin,
-            angles: angles,
+            origin,
+            angles,
             model_id: model_id as usize,
             frame_id: frame_id as usize,
-            colormap: colormap,
+            colormap,
             skin_id: skin_id as usize,
             effects: EntityEffects::empty(),
         };
@@ -978,12 +852,17 @@ impl Client {
                     ammo_cells,
                     active_weapon,
                 } => {
-                    self.state.view.view_height = view_height.unwrap_or(net::DEFAULT_VIEWHEIGHT);
-                    self.state.view.ideal_pitch = ideal_pitch.unwrap_or(Deg(0.0));
-
-                    self.state.view.punch_angle[0] = punch_pitch.unwrap_or(Deg(0.0));
-                    self.state.view.punch_angle[1] = punch_yaw.unwrap_or(Deg(0.0));
-                    self.state.view.punch_angle[2] = punch_roll.unwrap_or(Deg(0.0));
+                    self.state
+                        .view
+                        .set_view_height(view_height.unwrap_or(net::DEFAULT_VIEWHEIGHT));
+                    self.state
+                        .view
+                        .set_ideal_pitch(ideal_pitch.unwrap_or(Deg(0.0)));
+                    self.state.view.set_punch_angles(Angles {
+                        pitch: punch_pitch.unwrap_or(Deg(0.0)),
+                        roll: punch_roll.unwrap_or(Deg(0.0)),
+                        yaw: punch_yaw.unwrap_or(Deg(0.0)),
+                    });
 
                     // store old velocity
                     self.state.msg_velocity[1] = self.state.msg_velocity[0];
@@ -993,7 +872,6 @@ impl Client {
 
                     if items != self.state.items {
                         // item flags have changed, something got picked up
-                        // TODO: original engine calls Sbar_Changed() here to update status bar
                         for i in 0..net::MAX_ITEMS {
                             if (items.bits() & 1 << i) != 0
                                 && (self.state.items.bits() & 1 << i) == 0
@@ -1017,43 +895,35 @@ impl Client {
                     let armor = armor.unwrap_or(0);
                     if self.state.stats[ClientStat::Armor as usize] != armor as i32 {
                         self.state.stats[ClientStat::Armor as usize] = armor as i32;
-                        // TODO: update status bar
                     }
 
                     let weapon = weapon.unwrap_or(0);
                     if self.state.stats[ClientStat::Weapon as usize] != weapon as i32 {
                         self.state.stats[ClientStat::Weapon as usize] = weapon as i32;
-                        // TODO: update status bar
                     }
 
                     if self.state.stats[ClientStat::Health as usize] != health as i32 {
                         self.state.stats[ClientStat::Health as usize] = health as i32;
-                        // TODO: update status bar
                     }
 
                     if self.state.stats[ClientStat::Ammo as usize] != ammo as i32 {
                         self.state.stats[ClientStat::Ammo as usize] = ammo as i32;
-                        // TODO: update status bar
                     }
 
                     if self.state.stats[ClientStat::Shells as usize] != ammo_shells as i32 {
                         self.state.stats[ClientStat::Shells as usize] = ammo_shells as i32;
-                        // TODO: update status bar
                     }
 
                     if self.state.stats[ClientStat::Nails as usize] != ammo_nails as i32 {
                         self.state.stats[ClientStat::Nails as usize] = ammo_nails as i32;
-                        // TODO: update status bar
                     }
 
                     if self.state.stats[ClientStat::Rockets as usize] != ammo_rockets as i32 {
                         self.state.stats[ClientStat::Rockets as usize] = ammo_rockets as i32;
-                        // TODO: update status bar
                     }
 
                     if self.state.stats[ClientStat::Cells as usize] != ammo_cells as i32 {
                         self.state.stats[ClientStat::Cells as usize] = ammo_cells as i32;
-                        // TODO: update status bar
                     }
 
                     // TODO: this behavior assumes the `standard_quake` behavior and will likely
@@ -1069,17 +939,12 @@ impl Client {
                     blood,
                     source,
                 } => {
-                    let count = match armor / 2 + blood / 2 {
-                        c if c <= 10 => 10,
-                        c => c,
-                    };
-
-                    // TODO: face animation
                     self.state.face_anim_time = self.state.time + Duration::milliseconds(200);
 
+                    let dmg_factor = (armor + blood).min(20) as f32 / 2.0;
                     let mut cshift =
                         self.state.color_shifts[ColorShiftCode::Damage as usize].borrow_mut();
-                    cshift.percent += 3 * count as i32;
+                    cshift.percent += 3 * dmg_factor as i32;
                     cshift.percent = cshift.percent.clamp(0, 150);
 
                     if armor > blood {
@@ -1090,36 +955,23 @@ impl Client {
                         cshift.dest_color = [255, 0, 0];
                     }
 
-                    let v_ent = &self.state.entities[self.state.view.ent_id];
+                    let v_ent = &self.state.entities[self.state.view.entity_id()];
 
-                    // unit vector of damage direction
-                    let dirn = (source - v_ent.origin).normalize();
+                    let v_angles = Angles {
+                        pitch: v_ent.angles.x,
+                        roll: v_ent.angles.z,
+                        yaw: v_ent.angles.y,
+                    };
 
-                    let [pitch, yaw, roll]: [Deg<f32>; 3] = *v_ent.angles.as_ref();
-
-                    // player's forward and right vectors
-                    let forward = Vector3::new(yaw.sin(), yaw.cos(), -pitch.sin());
-                    let right = Vector3::new(
-                        -(pitch.sin() * yaw.cos() * roll.sin() + roll.cos() * -yaw.sin()),
-                        -(pitch.sin() * yaw.sin() * roll.sin() + roll.cos() * yaw.cos()),
-                        -(pitch.cos() * roll.sin()),
+                    self.state.view.handle_damage(
+                        self.state.time,
+                        armor as f32,
+                        blood as f32,
+                        v_ent.origin,
+                        v_angles,
+                        source,
+                        self.kick_vars()?,
                     );
-
-                    // update damage angles
-                    self.state.view.dmg_angle[0] = Deg(count as f32
-                        * dirn.dot(forward)
-                        * self.cvars.borrow().get_value("v_kickpitch").context(
-                            ClientErrorKind::Cvar {
-                                name: "v_kickpitch".to_string(),
-                            },
-                        )?);
-                    self.state.view.dmg_angle[2] = Deg(count as f32
-                        * dirn.dot(right)
-                        * self.cvars.borrow().get_value("v_kickroll").context(
-                            ClientErrorKind::Cvar {
-                                name: "v_kickroll".to_string(),
-                            },
-                        )?);
                 }
 
                 ServerCmd::Disconnect => self.disconnect(),
@@ -1312,8 +1164,11 @@ impl Client {
 
                 ServerCmd::SetAngle { angles } => {
                     debug!("Set view angles to {:?}", angles);
-                    self.state.view.msg_view_angles[1] = self.state.view.msg_view_angles[0];
-                    self.state.view.msg_view_angles[0] = angles;
+                    self.state.view.update_msg_angles(Angles {
+                        pitch: angles.x,
+                        roll: angles.z,
+                        yaw: angles.y,
+                    });
                 }
 
                 ServerCmd::SetView { ent_id } => {
@@ -1329,7 +1184,7 @@ impl Client {
                     );
 
                     debug!("Set view entity to {}", ent_id);
-                    self.state.view.ent_id = new_id;
+                    self.state.view.set_entity_id(new_id);
                 }
 
                 ServerCmd::SignOnStage { stage } => self.handle_signon(stage)?,
@@ -1671,16 +1526,22 @@ impl Client {
     }
 
     pub fn view_origin(&self) -> Vector3<f32> {
-        self.state.entities[self.state.view.ent_id].origin
-            + Vector3::new(0.0, 0.0, self.state.view.view_height)
+        self.state.entities[self.state.view.entity_id()].origin
+            + Vector3::new(0.0, 0.0, self.state.view.view_height())
     }
 
-    pub fn view_angles(&self) -> Vector3<Deg<f32>> {
-        self.state.view.view_angles
+    pub fn view_angles(&self, time: Duration) -> Result<Angles, ClientError> {
+        Ok(self.state.view.angles(
+            time,
+            self.state.velocity,
+            self.idle_vars()?,
+            self.kick_vars()?,
+            self.roll_vars()?,
+        ))
     }
 
     pub fn view_ent(&self) -> usize {
-        self.state.view.ent_id
+        self.state.view.entity_id()
     }
 
     pub fn time(&self) -> Duration {
@@ -1797,12 +1658,8 @@ impl Client {
             } else {
                 let origin_delta = ent.msg_origins[0] - ent.msg_origins[1];
                 let ent_lerp_factor = if origin_delta.magnitude2() > 10_000.0 {
-                    // NOTE: the original engine uses magnitude vs. +/- 100 units, where we use
-                    // magnitude^2 vs. 10000 sq. units
-                    //
                     // if the entity moved more than 100 units in one frame, assume it was teleported
                     // and don't lerp anything
-                    trace!("entity {} seems to have teleported", ent_id);
                     1.0
                 } else {
                     lerp_factor
@@ -1830,6 +1687,83 @@ impl Client {
         }
     }
 
+    fn view_leaf_contents(&self) -> bsp::BspLeafContents {
+        match self.state.models[1].kind() {
+            ModelKind::Brush(ref bmodel) => {
+                let bsp_data = bmodel.bsp_data();
+                let leaf_id = bsp_data.find_leaf(self.view_origin());
+                let leaf = &bsp_data.leaves()[leaf_id];
+                leaf.contents
+            }
+            _ => panic!("non-brush worldmodel"),
+        }
+    }
+
+    fn update_color_shifts(&self, frame_time: Duration) {
+        let float_time = engine::duration_to_f32(frame_time);
+
+        // set color for leaf contents
+        self.state.color_shifts[ColorShiftCode::Contents as usize].replace(
+            match self.view_leaf_contents() {
+                bsp::BspLeafContents::Empty => ColorShift {
+                    dest_color: [0, 0, 0],
+                    percent: 0,
+                },
+                bsp::BspLeafContents::Lava => ColorShift {
+                    dest_color: [255, 80, 0],
+                    percent: 150,
+                },
+                bsp::BspLeafContents::Slime => ColorShift {
+                    dest_color: [0, 25, 5],
+                    percent: 150,
+                },
+                _ => ColorShift {
+                    dest_color: [130, 80, 50],
+                    percent: 128,
+                },
+            },
+        );
+
+        // decay damage and item pickup shifts
+        let mut dmg_shift = self.state.color_shifts[ColorShiftCode::Damage as usize].borrow_mut();
+        dmg_shift.percent -= (float_time * 150.0) as i32;
+        dmg_shift.percent = dmg_shift.percent.max(0);
+
+        let mut bonus_shift = self.state.color_shifts[ColorShiftCode::Bonus as usize].borrow_mut();
+        bonus_shift.percent -= (float_time * 100.0) as i32;
+        bonus_shift.percent = bonus_shift.percent.max(0);
+
+        // set power-up overlay
+        self.state.color_shifts[ColorShiftCode::Powerup as usize].replace(
+            if self.state.items.contains(ItemFlags::QUAD) {
+                ColorShift {
+                    dest_color: [0, 0, 255],
+                    percent: 30,
+                }
+            } else if self.state.items.contains(ItemFlags::SUIT) {
+                ColorShift {
+                    dest_color: [0, 255, 0],
+                    percent: 20,
+                }
+            } else if self.state.items.contains(ItemFlags::INVISIBILITY) {
+                ColorShift {
+                    dest_color: [100, 100, 100],
+                    percent: 100,
+                }
+            } else if self.state.items.contains(ItemFlags::INVULNERABILITY) {
+                ColorShift {
+                    dest_color: [255, 255, 0],
+                    percent: 30,
+                }
+            } else {
+                ColorShift {
+                    dest_color: [0, 0, 0],
+                    percent: 0,
+                }
+            },
+        );
+    }
+
     pub fn frame(&mut self, frame_time: Duration) -> Result<(), Error> {
         self.update_time();
         self.state.time = self.state.time + frame_time;
@@ -1840,6 +1774,7 @@ impl Client {
         if self.signon == SignOnStage::Done {
             self.state.update_listener();
             self.state.update_sound_spatialization();
+            self.update_color_shifts(frame_time);
         }
         // TODO: CL_UpdateTEnts
 
@@ -1949,7 +1884,53 @@ impl Client {
         Ok(values)
     }
 
-    pub fn disconnect(&self) {
-        unimplemented!();
+    pub fn color_shift(&self) -> [f32; 4] {
+        self.state
+            .color_shifts
+            .iter()
+            .fold([0.0; 4], |accum, elem| {
+                let elem_a = elem.borrow().percent as f32 / 255.0 / 2.0;
+                if elem_a == 0.0 {
+                    return accum;
+                }
+                let in_a = accum[3];
+                let out_a = in_a + elem_a * (1.0 - in_a);
+                let color_factor = elem_a / out_a;
+
+                let mut out = [0.0; 4];
+                for i in 0..3 {
+                    out[i] = accum[i] * (1.0 - color_factor)
+                        + elem.borrow().dest_color[i] as f32 / 255.0 * color_factor;
+                }
+                out[3] = out_a.min(1.0).max(0.0);
+                out
+            })
+    }
+
+    fn idle_vars(&self) -> Result<IdleVars, ClientError> {
+        Ok(IdleVars {
+            v_idlescale: self.cvar_value("v_idlescale")?,
+            v_ipitch_cycle: self.cvar_value("v_ipitch_cycle")?,
+            v_ipitch_level: self.cvar_value("v_ipitch_level")?,
+            v_iroll_cycle: self.cvar_value("v_iroll_cycle")?,
+            v_iroll_level: self.cvar_value("v_iroll_level")?,
+            v_iyaw_cycle: self.cvar_value("v_iyaw_cycle")?,
+            v_iyaw_level: self.cvar_value("v_iyaw_level")?,
+        })
+    }
+
+    fn kick_vars(&self) -> Result<KickVars, ClientError> {
+        Ok(KickVars {
+            v_kickpitch: self.cvar_value("v_kickpitch")?,
+            v_kickroll: self.cvar_value("v_kickroll")?,
+            v_kicktime: self.cvar_value("v_kicktime")?,
+        })
+    }
+
+    fn roll_vars(&self) -> Result<RollVars, ClientError> {
+        Ok(RollVars {
+            cl_rollangle: self.cvar_value("cl_rollangle")?,
+            cl_rollspeed: self.cvar_value("cl_rollspeed")?,
+        })
     }
 }

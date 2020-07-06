@@ -22,8 +22,11 @@ use std::{borrow::Cow, cell::Cell, collections::HashMap, mem::size_of, ops::Rang
 
 use crate::{
     client::render::{
-        warp, world::BindGroupLayoutId, Camera, GraphicsState, LightmapData, Pipeline, TextureData,
-        DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
+        uniform::{DynamicUniformBuffer, DynamicUniformBufferBlock},
+        warp,
+        world::BindGroupLayoutId,
+        Camera, GraphicsState, LightmapData, Pipeline, TextureData, DEPTH_ATTACHMENT_FORMAT,
+        DIFFUSE_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
     },
     common::{
         bsp::{BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTextureMipmap},
@@ -35,6 +38,7 @@ use crate::{
 use cgmath::{InnerSpace as _, Vector3};
 use failure::Error;
 use num::FromPrimitive;
+use strum::IntoEnumIterator as _;
 use strum_macros::EnumIter;
 
 lazy_static! {
@@ -94,7 +98,77 @@ lazy_static! {
     ];
 }
 
-pub struct BrushPipeline;
+pub struct BrushPipeline {
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    texture_uniform_buffer: DynamicUniformBuffer<TextureUniforms>,
+    texture_uniform_blocks: Vec<DynamicUniformBufferBlock<TextureUniforms>>,
+}
+
+impl BrushPipeline {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        compiler: &mut shaderc::Compiler,
+        world_bind_group_layouts: &[wgpu::BindGroupLayout],
+        sample_count: u32,
+    ) -> BrushPipeline {
+        let (pipeline, bind_group_layouts) =
+            BrushPipeline::create(device, compiler, world_bind_group_layouts, sample_count);
+
+        let mut texture_uniform_buffer = DynamicUniformBuffer::new(&device);
+        let texture_uniform_blocks = TextureKind::iter()
+            .map(|kind| {
+                debug!("Texture kind: {:?} ({})", kind, kind as u32);
+                texture_uniform_buffer.allocate(TextureUniforms { kind })
+            })
+            .collect();
+        texture_uniform_buffer.flush(&queue);
+
+        BrushPipeline {
+            pipeline,
+            bind_group_layouts,
+            texture_uniform_buffer,
+            texture_uniform_blocks,
+        }
+    }
+
+    pub fn rebuild(
+        &mut self,
+        device: &wgpu::Device,
+        compiler: &mut shaderc::Compiler,
+        world_bind_group_layouts: &[wgpu::BindGroupLayout],
+        sample_count: u32,
+    ) {
+        let layout_refs: Vec<_> = world_bind_group_layouts
+            .iter()
+            .chain(self.bind_group_layouts.iter())
+            .collect();
+        let pipeline = BrushPipeline::recreate(device, compiler, &layout_refs, sample_count);
+        self.pipeline = pipeline;
+    }
+
+    pub fn pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.pipeline
+    }
+
+    pub fn bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+        &self.bind_group_layouts
+    }
+
+    pub fn bind_group_layout(&self, id: BindGroupLayoutId) -> &wgpu::BindGroupLayout {
+        assert!(id as usize >= BindGroupLayoutId::PerTexture as usize);
+        &self.bind_group_layouts[id as usize - BindGroupLayoutId::PerTexture as usize]
+    }
+
+    pub fn texture_uniform_buffer(&self) -> &DynamicUniformBuffer<TextureUniforms> {
+        &self.texture_uniform_buffer
+    }
+
+    pub fn texture_uniform_blocks(&self) -> &[DynamicUniformBufferBlock<TextureUniforms>] {
+        &self.texture_uniform_blocks
+    }
+}
 
 impl Pipeline for BrushPipeline {
     fn name() -> &'static str {
@@ -355,7 +429,7 @@ impl BrushRendererBuilder {
             // v1 is the base vertex, so it remains constant.
             // v2 takes the previous value of v3.
             // v3 is the newest vertex.
-            let mut verts =
+            let verts =
                 math::remove_collinear(self.bsp_data.face_iter_vertices(face_id).collect());
             let normal = (verts[0] - verts[1]).cross(verts[2] - verts[1]).normalize();
             let mut vert_iter = verts.into_iter();
@@ -424,9 +498,11 @@ impl BrushRendererBuilder {
         state: &GraphicsState,
         texture_id: usize,
     ) -> wgpu::BindGroup {
-        let layout = &state.brush_bind_group_layout(BindGroupLayoutId::PerTexture);
+        let layout = &state
+            .brush_pipeline()
+            .bind_group_layout(BindGroupLayoutId::PerTexture);
         let tex = &self.textures[texture_id];
-        let tex_unif_buf = state.brush_texture_uniform_buffer();
+        let tex_unif_buf = state.brush_pipeline().texture_uniform_buffer();
         let desc = wgpu::BindGroupDescriptor {
             label: Some("per-texture bind group"),
             layout,
@@ -455,7 +531,9 @@ impl BrushRendererBuilder {
             .map(|id| self.lightmaps[*id].create_default_view())
             .collect();
         lightmap_views.resize_with(4, || state.default_lightmap().create_default_view());
-        let layout = &state.brush_bind_group_layout(BindGroupLayoutId::PerFace);
+        let layout = &state
+            .brush_pipeline()
+            .bind_group_layout(BindGroupLayoutId::PerFace);
         let desc = wgpu::BindGroupDescriptor {
             label: Some("per-face bind group"),
             layout,
@@ -591,7 +669,7 @@ impl BrushRenderer {
     ) {
         debug!("BrushRenderer::record_draw");
         let _guard = flame::start_guard("BrushRenderer::record_draw");
-        pass.set_pipeline(state.brush_pipeline());
+        pass.set_pipeline(state.brush_pipeline().pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
         // if this is a worldmodel, mark faces to be drawn
@@ -613,8 +691,8 @@ impl BrushRenderer {
             pass.set_bind_group(
                 BindGroupLayoutId::PerTexture as u32,
                 &self.per_texture_bind_groups[*tex_id],
-                &[state
-                    .brush_texture_uniform_block(self.textures[*tex_id].kind)
+                &[state.brush_pipeline().texture_uniform_blocks()
+                    [self.textures[*tex_id].kind as usize]
                     .offset()],
             );
 

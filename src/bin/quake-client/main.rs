@@ -110,7 +110,7 @@ impl ClientProgram {
         }
 
         let cvars = Rc::new(RefCell::new(CvarRegistry::new()));
-        client::register_cvars(&cvars.borrow());
+        client::register_cvars(&cvars.borrow()).unwrap();
         render::register_cvars(&cvars.borrow());
 
         let cmds = Rc::new(RefCell::new(CmdRegistry::new()));

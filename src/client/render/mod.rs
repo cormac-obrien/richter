@@ -50,7 +50,12 @@ use crate::{
         target::{FinalPassTarget, InitialPassTarget},
         ui::{glyph, quad},
         uniform::{DynamicUniformBuffer, DynamicUniformBufferBlock},
-        world::{alias, brush, postprocess, sprite, EntityUniforms},
+        world::{
+            alias,
+            brush::{self, BrushPipeline},
+            postprocess::{self, PostProcessPipeline},
+            sprite, EntityUniforms,
+        },
     },
     common::{util::any_slice_as_bytes, vfs::Vfs, wad::Wad},
 };
@@ -262,13 +267,9 @@ pub struct GraphicsState {
     alias_pipeline: wgpu::RenderPipeline,
     alias_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
 
-    brush_pipeline: wgpu::RenderPipeline,
-    brush_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    brush_texture_uniform_buffer: RefCell<DynamicUniformBuffer<brush::TextureUniforms>>,
-    brush_texture_uniform_blocks: Vec<DynamicUniformBufferBlock<brush::TextureUniforms>>,
+    brush_pipeline: BrushPipeline,
 
-    postprocess_pipeline: wgpu::RenderPipeline,
-    postprocess_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    postprocess_pipeline: PostProcessPipeline,
 
     glyph_pipeline: wgpu::RenderPipeline,
     glyph_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
@@ -314,16 +315,6 @@ impl GraphicsState {
             mapped_at_creation: false,
         });
         let entity_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
-        let brush_texture_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
-        let brush_texture_uniform_blocks = brush::TextureKind::iter()
-            .map(|kind| {
-                debug!("Texture kind: {:?} ({})", kind, kind as u32);
-                brush_texture_uniform_buffer
-                    .borrow_mut()
-                    .allocate(brush::TextureUniforms { kind })
-            })
-            .collect();
-        brush_texture_uniform_buffer.borrow_mut().flush(&queue);
         let quad_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
 
         let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -403,8 +394,9 @@ impl GraphicsState {
             &world_bind_group_layouts,
             sample_count,
         );
-        let (brush_pipeline, brush_bind_group_layouts) = brush::BrushPipeline::create(
+        let brush_pipeline = BrushPipeline::new(
             &device,
+            &queue,
             &mut compiler,
             &world_bind_group_layouts,
             sample_count,
@@ -420,8 +412,7 @@ impl GraphicsState {
             wgpu::BufferUsage::VERTEX,
         );
 
-        let (postprocess_pipeline, postprocess_bind_group_layouts) =
-            postprocess::PostProcessPipeline::create(&device, &mut compiler, &[], sample_count);
+        let postprocess_pipeline = PostProcessPipeline::new(&device, &mut compiler, sample_count);
 
         let (quad_pipeline, quad_bind_group_layouts) =
             quad::QuadPipeline::create(&device, &mut compiler, &[], sample_count);
@@ -467,14 +458,10 @@ impl GraphicsState {
             alias_pipeline,
             alias_bind_group_layouts,
             brush_pipeline,
-            brush_bind_group_layouts,
-            brush_texture_uniform_buffer,
-            brush_texture_uniform_blocks,
             sprite_pipeline,
             sprite_bind_group_layouts,
             sprite_vertex_buffer,
             postprocess_pipeline,
-            postprocess_bind_group_layouts,
             glyph_pipeline,
             glyph_bind_group_layouts,
             glyph_instance_buffer,
@@ -544,12 +531,10 @@ impl GraphicsState {
             sample_count,
         );
 
-        let mut brush_bind_group_layouts = world_bind_group_layouts.clone();
-        brush_bind_group_layouts.extend(self.brush_bind_group_layouts.iter());
-        self.brush_pipeline = brush::BrushPipeline::recreate(
+        self.brush_pipeline.rebuild(
             &self.device,
             &mut self.compiler.borrow_mut(),
-            &brush_bind_group_layouts,
+            &self.world_bind_group_layouts,
             sample_count,
         );
 
@@ -562,12 +547,9 @@ impl GraphicsState {
             sample_count,
         );
 
-        let postprocess_bind_group_layouts: Vec<_> =
-            self.postprocess_bind_group_layouts.iter().collect();
-        self.postprocess_pipeline = postprocess::PostProcessPipeline::recreate(
+        self.postprocess_pipeline.rebuild(
             &self.device,
             &mut self.compiler.borrow_mut(),
-            &postprocess_bind_group_layouts,
             sample_count,
         );
 
@@ -648,47 +630,12 @@ impl GraphicsState {
         &self.alias_bind_group_layouts[id as usize - 2]
     }
 
-    // brush pipeline
-
-    pub fn brush_pipeline(&self) -> &wgpu::RenderPipeline {
+    pub fn brush_pipeline(&self) -> &BrushPipeline {
         &self.brush_pipeline
     }
 
-    pub fn brush_bind_group_layout(&self, id: world::BindGroupLayoutId) -> &wgpu::BindGroupLayout {
-        &self.brush_bind_group_layouts[id as usize - 2]
-    }
-
-    pub fn brush_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
-        &self.brush_bind_group_layouts
-    }
-
-    pub fn brush_texture_uniform_buffer(
-        &self,
-    ) -> Ref<DynamicUniformBuffer<brush::TextureUniforms>> {
-        self.brush_texture_uniform_buffer.borrow()
-    }
-
-    pub fn brush_texture_uniform_buffer_mut(
-        &self,
-    ) -> RefMut<DynamicUniformBuffer<brush::TextureUniforms>> {
-        self.brush_texture_uniform_buffer.borrow_mut()
-    }
-
-    pub fn brush_texture_uniform_block(
-        &self,
-        kind: brush::TextureKind,
-    ) -> &DynamicUniformBufferBlock<brush::TextureUniforms> {
-        &self.brush_texture_uniform_blocks[kind as usize]
-    }
-
-    // postprocess pipeline
-
-    pub fn postprocess_pipeline(&self) -> &wgpu::RenderPipeline {
+    pub fn postprocess_pipeline(&self) -> &PostProcessPipeline {
         &self.postprocess_pipeline
-    }
-
-    pub fn postprocess_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
-        &self.postprocess_bind_group_layouts
     }
 
     // glyph pipeline
