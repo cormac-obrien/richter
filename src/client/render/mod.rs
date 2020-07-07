@@ -329,7 +329,7 @@ impl GraphicsState {
             lod_min_clamp: -1000.0,
             lod_max_clamp: 1000.0,
             compare: None,
-            anisotropy_clamp: None,
+            anisotropy_clamp: Some(16),
             ..Default::default()
         });
 
@@ -345,7 +345,7 @@ impl GraphicsState {
             lod_min_clamp: -1000.0,
             lod_max_clamp: 1000.0,
             compare: None,
-            anisotropy_clamp: None,
+            anisotropy_clamp: Some(16),
             ..Default::default()
         });
 
