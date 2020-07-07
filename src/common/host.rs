@@ -89,14 +89,14 @@ where
     }
 
     pub fn frame(&mut self) {
+        // TODO: make sure this doesn't cause weirdness with e.g. leap seconds
         let new_frame_time = Utc::now();
         self.prev_frame_duration = new_frame_time.signed_duration_since(self.prev_frame_time);
 
         // if the time elapsed since the last frame is too low, don't run this one yet
         let prev_frame_duration = self.prev_frame_duration;
         if !self.check_frame_duration(prev_frame_duration) {
-            // TODO: not sure about this performance wise. we'll see.
-            // avoid busy waiting if we're running at a really high framerate.
+            // avoid busy waiting if we're running at a really high framerate
             std::thread::yield_now();
             return;
         }

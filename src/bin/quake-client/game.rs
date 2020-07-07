@@ -20,6 +20,8 @@
 
 use std::{
     cell::{Cell, RefCell},
+    fs::File,
+    io::BufWriter,
     rc::Rc,
 };
 
@@ -31,6 +33,7 @@ use richter::{
             Camera, GraphicsState, HudState, PostProcessRenderer, RenderTarget as _, UiOverlay,
             UiRenderer, UiState, WorldRenderer,
         },
+        trace::TraceFrame,
         Client,
     },
     common::{
@@ -45,6 +48,8 @@ use cgmath;
 use chrono::Duration;
 use failure::Error;
 use log::info;
+
+const DEFAULT_TRACE_PATH: &'static str = "richter-trace.json";
 
 #[derive(Clone, Copy)]
 enum InGameFocus {
@@ -146,6 +151,7 @@ pub struct Game {
     state: GameState,
     input: Rc<RefCell<Input>>,
     client: Client,
+    trace: Rc<RefCell<Option<Vec<TraceFrame>>>>,
 }
 
 impl Game {
@@ -158,6 +164,58 @@ impl Game {
     ) -> Result<Game, Error> {
         input.borrow().register_cmds(&mut cmds.borrow_mut());
 
+        // set up frame tracing
+        let trace = Rc::new(RefCell::new(None));
+
+        let trace_begin_trace = trace.clone();
+        cmds.borrow_mut()
+            .insert(
+                "trace_begin",
+                Box::new(move |_| {
+                    if trace_begin_trace.borrow().is_some() {
+                        log::error!("trace already in progress");
+                    } else {
+                        // start a new trace
+                        trace_begin_trace.replace(Some(Vec::new()));
+                    }
+                }),
+            )
+            .unwrap();
+
+        let trace_end_cvars = cvars.clone();
+        let trace_end_trace = trace.clone();
+        cmds.borrow_mut()
+            .insert(
+                "trace_end",
+                Box::new(move |_| {
+                    if let Some(trace_frames) = trace_end_trace.replace(None) {
+                        let trace_path = trace_end_cvars
+                            .borrow()
+                            .get("trace_path")
+                            .unwrap_or(DEFAULT_TRACE_PATH.to_string());
+                        let trace_file = match File::create(&trace_path) {
+                            Ok(f) => f,
+                            Err(e) => {
+                                log::error!("Couldn't open trace file for write: {}", e);
+                                return;
+                            }
+                        };
+
+                        let mut writer = BufWriter::new(trace_file);
+
+                        match serde_json::to_writer(&mut writer, &trace_frames) {
+                            Ok(()) => (),
+                            Err(e) => log::error!("Couldn't serialize trace: {}", e),
+                        };
+
+                        log::debug!("wrote {} frames to {}", trace_frames.len(), &trace_path);
+                    } else {
+                        log::error!("no trace in progress");
+                    }
+                }),
+            )
+            .unwrap();
+
         Ok(Game {
             cvars,
             cmds,
@@ -165,6 +223,7 @@ impl Game {
             state: GameState::Loading,
             input,
             client,
+            trace,
         })
     }
 
@@ -227,6 +286,10 @@ impl Game {
             self.client
                 .handle_input(game_input, frame_duration)
                 .unwrap();
+        }
+
+        if let Some(ref mut trace_frames) = *self.trace.borrow_mut() {
+            trace_frames.push(self.client.trace(&[self.client.view_ent()]));
         }
     }
 
@@ -291,9 +354,11 @@ impl Game {
                         encoder.begin_render_pass(&final_pass_builder.descriptor());
 
                     log::debug!("color shift = {:?}", self.client.color_shift());
-                    state
-                        .postprocess_renderer
-                        .record_draw(gfx_state, &mut final_pass, self.client.color_shift());
+                    state.postprocess_renderer.record_draw(
+                        gfx_state,
+                        &mut final_pass,
+                        self.client.color_shift(),
+                    );
 
                     let overlay = match state.focus.get() {
                         InGameFocus::Game => None,
@@ -331,5 +396,12 @@ impl Game {
                 }
             }
         }
+    }
+}
+
+impl std::ops::Drop for Game {
+    fn drop(&mut self) {
+        let _ = self.cmds.borrow_mut().remove("trace_begin");
+        let _ = self.cmds.borrow_mut().remove("trace_end");
     }
 }
