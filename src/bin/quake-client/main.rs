@@ -22,7 +22,7 @@ mod game;
 mod menu;
 
 use std::{
-    cell::{Cell, RefCell},
+    cell::{Cell, Ref, RefCell, RefMut},
     env,
     net::ToSocketAddrs,
     path::Path,
@@ -333,6 +333,14 @@ impl Program for ClientProgram {
 
     fn shutdown(&mut self) {
         // TODO: do cleanup things here
+    }
+
+    fn cvars(&self) -> Ref<CvarRegistry> {
+        self.cvars.borrow()
+    }
+
+    fn cvars_mut(&self) -> RefMut<CvarRegistry> {
+        self.cvars.borrow_mut()
     }
 }
 
