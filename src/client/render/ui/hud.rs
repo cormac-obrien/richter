@@ -272,7 +272,7 @@ impl HudRenderer {
 
     pub fn generate_commands<'state, 'a>(
         &'a self,
-        hud_state: HudState<'a>,
+        hud_state: &HudState<'a>,
         time: Duration,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,

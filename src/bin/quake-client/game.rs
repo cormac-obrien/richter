@@ -22,6 +22,7 @@ use std::{
     cell::{Cell, RefCell},
     fs::File,
     io::BufWriter,
+    path::PathBuf,
     rc::Rc,
 };
 
@@ -45,7 +46,7 @@ use richter::{
 };
 
 use cgmath;
-use chrono::Duration;
+use chrono::{Duration, Utc};
 use failure::Error;
 use log::info;
 
@@ -151,7 +152,12 @@ pub struct Game {
     state: GameState,
     input: Rc<RefCell<Input>>,
     client: Client,
+
+    // if Some(v), trace is in progress
     trace: Rc<RefCell<Option<Vec<TraceFrame>>>>,
+
+    // if Some(path), take a screenshot and save it to path
+    screenshot_path: Rc<RefCell<Option<PathBuf>>>,
 }
 
 impl Game {
@@ -163,6 +169,31 @@ impl Game {
         client: Client,
     ) -> Result<Game, Error> {
         input.borrow().register_cmds(&mut cmds.borrow_mut());
+
+        // set up screenshots
+        let screenshot_path = Rc::new(RefCell::new(None));
+        let screenshot_screenshot_path = screenshot_path.clone();
+        cmds.borrow_mut()
+            .insert(
+                "screenshot",
+                Box::new(move |args| {
+                    let path = match args.len() {
+                        // TODO: make default path configurable
+                        0 => PathBuf::from(format!(
+                            "richter-{}.png",
+                            Utc::now().format("%FT%H-%M-%S")
+                        )),
+                        1 => PathBuf::from(args[0]),
+                        _ => {
+                            log::error!("Usage: screenshot [PATH]");
+                            return;
+                        }
+                    };
+
+                    screenshot_screenshot_path.replace(Some(PathBuf::from(path)));
+                }),
+            )
+            .unwrap();
 
         // set up frame tracing
         let trace = Rc::new(RefCell::new(None));
@@ -224,6 +255,7 @@ impl Game {
             input,
             client,
             trace,
+            screenshot_path,
         })
     }
 
@@ -341,7 +373,23 @@ impl Game {
                     );
                 }
 
+                let ui_state = UiState::InGame {
+                    hud: HudState {
+                        items: self.client.items(),
+                        item_pickup_time: self.client.item_get_time(),
+                        stats: self.client.stats(),
+                        face_anim_time: self.client.face_anim_time(),
+                    },
+                    overlay: match state.focus.get() {
+                        InGameFocus::Game => None,
+                        InGameFocus::Console => Some(UiOverlay::Console(console)),
+                        InGameFocus::Menu => Some(UiOverlay::Menu(menu)),
+                    },
+                };
+
                 // final render pass
+                // TODO: use a separate resolve target that we then blit to the swap chain
+                //       so we don't have to render twice for screenshots
                 {
                     // quad_commands must outlive final pass
                     let mut quad_commands = Vec::new();
@@ -353,28 +401,11 @@ impl Game {
                     let mut final_pass =
                         encoder.begin_render_pass(&final_pass_builder.descriptor());
 
-                    log::debug!("color shift = {:?}", self.client.color_shift());
                     state.postprocess_renderer.record_draw(
                         gfx_state,
                         &mut final_pass,
                         self.client.color_shift(),
                     );
-
-                    let overlay = match state.focus.get() {
-                        InGameFocus::Game => None,
-                        InGameFocus::Console => Some(UiOverlay::Console(console)),
-                        InGameFocus::Menu => Some(UiOverlay::Menu(menu)),
-                    };
-
-                    let ui_state = UiState::InGame {
-                        hud: HudState {
-                            items: self.client.items(),
-                            item_pickup_time: self.client.item_get_time(),
-                            stats: self.client.stats(),
-                            face_anim_time: self.client.face_anim_time(),
-                        },
-                        overlay,
-                    };
 
                     self.ui_renderer.render_pass(
                         &gfx_state,
@@ -382,11 +413,99 @@ impl Game {
                         width,
                         height,
                         self.client.time(),
-                        ui_state,
+                        &ui_state,
                         &mut quad_commands,
                         &mut glyph_commands,
                     );
                 }
+
+                let screenshot_target = self.screenshot_path.borrow().as_ref().map(|_| {
+                    gfx_state.device().create_texture(&wgpu::TextureDescriptor {
+                        label: Some("screenshot texture"),
+                        size: gfx_state.final_pass_target().size().into(),
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::COPY_SRC,
+                    })
+                });
+
+                // render to screenshot target
+                if let Some(ref target) = screenshot_target {
+                    // re-record UI commands (XXX this is a huge waste :( )
+                    let mut quad_commands = Vec::new();
+                    let mut glyph_commands = Vec::new();
+
+                    let view = target.create_default_view();
+                    let screenshot_pass_builder = gfx_state
+                        .final_pass_target()
+                        .render_pass_builder(Some(&view));
+                    let mut screenshot_pass =
+                        encoder.begin_render_pass(&screenshot_pass_builder.descriptor());
+
+                    state.postprocess_renderer.record_draw(
+                        gfx_state,
+                        &mut screenshot_pass,
+                        self.client.color_shift(),
+                    );
+
+                    self.ui_renderer.render_pass(
+                        &gfx_state,
+                        &mut screenshot_pass,
+                        width,
+                        height,
+                        self.client.time(),
+                        &ui_state,
+                        &mut quad_commands,
+                        &mut glyph_commands,
+                    );
+                }
+
+                // bytes_per_row must be a multiple of 256
+                // 4 bytes per pixel, so width must be multiple of 64
+                let ss_buf_width = (width + 63) / 64 * 64;
+
+                // create buffer to read screenshot target
+                let screenshot_buffer = screenshot_target.as_ref().map(|_| {
+                    gfx_state.device().create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("screenshot buffer"),
+                        size: {
+                            let target_size = gfx_state.final_pass_target().size();
+                            (ss_buf_width * target_size.height * 4) as u64
+                        },
+                        usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::MAP_READ,
+                        mapped_at_creation: false,
+                    })
+                });
+
+                let screenshot_path = match self.screenshot_path.replace(None) {
+                    Some(path) => {
+                        encoder.copy_texture_to_buffer(
+                            wgpu::TextureCopyView {
+                                texture: screenshot_target.as_ref().unwrap(),
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                            },
+                            wgpu::BufferCopyView {
+                                buffer: screenshot_buffer.as_ref().unwrap(),
+                                layout: wgpu::TextureDataLayout {
+                                    offset: 0,
+                                    bytes_per_row: ss_buf_width * 4,
+                                    rows_per_image: 0,
+                                },
+                            },
+                            wgpu::Extent3d {
+                                width,
+                                height,
+                                depth: 0,
+                            },
+                        );
+                        Some(path)
+                    }
+
+                    None => None,
+                };
 
                 let command_buffer = encoder.finish();
                 {
@@ -394,6 +513,33 @@ impl Game {
                     gfx_state.queue().submit(vec![command_buffer]);
                     gfx_state.device().poll(wgpu::Maintain::Wait);
                 }
+
+                let screenshot_data = screenshot_buffer.map(|b| {
+                    let mut data = Vec::new();
+                    {
+                        let slice = b.slice(..);
+                        let map_future = slice.map_async(wgpu::MapMode::Read);
+                        gfx_state.device().poll(wgpu::Maintain::Wait);
+                        futures::executor::block_on(map_future).unwrap();
+                        let mapped = b.slice(..).get_mapped_range();
+                        for row in mapped.chunks(ss_buf_width as usize * 4) {
+                            data.extend_from_slice(&row[..width as usize * 4]);
+                        }
+                    }
+                    b.unmap();
+                    data
+                });
+
+                screenshot_data.map(|data| {
+                    let f = File::create(screenshot_path.as_ref().unwrap()).unwrap();
+                    let w = BufWriter::new(f);
+
+                    let mut encoder = png::Encoder::new(w, width, height);
+                    encoder.set_color(png::ColorType::RGBA);
+                    encoder.set_depth(png::BitDepth::Eight);
+                    let mut writer = encoder.write_header().unwrap();
+                    writer.write_image_data(&data).unwrap();
+                });
             }
         }
     }

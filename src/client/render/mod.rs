@@ -18,6 +18,24 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+/// Rendering functionality.
+///
+/// # Pipeline stages
+///
+/// The current rendering implementation consists of the following stages:
+/// - Initial geometry pass
+///   - Inputs:
+///     - `AliasPipeline`
+///     - `BrushPipeline`
+///     - `SpritePipeline`
+///   - Output: `InitialPassTarget`
+/// - Final pass
+///   - Inputs:
+///     - `PostProcessPipeline`
+///     - `QuadPipeline`
+///     - `GlyphPipeline`
+///   - Output: `FinalPassTarget`, which is resolved onto the framebuffer
+
 // mod atlas;
 mod cvars;
 mod error;
@@ -49,10 +67,10 @@ use crate::{
     client::render::{
         target::{FinalPassTarget, InitialPassTarget},
         ui::{glyph, quad},
-        uniform::{DynamicUniformBuffer, DynamicUniformBufferBlock},
+        uniform::DynamicUniformBuffer,
         world::{
             alias,
-            brush::{self, BrushPipeline},
+            brush::BrushPipeline,
             postprocess::{self, PostProcessPipeline},
             sprite, EntityUniforms,
         },
@@ -61,7 +79,6 @@ use crate::{
 };
 
 use failure::Error;
-use strum::IntoEnumIterator;
 
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const DIFFUSE_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;

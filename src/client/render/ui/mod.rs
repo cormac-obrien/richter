@@ -138,13 +138,13 @@ impl UiRenderer {
         display_width: u32,
         display_height: u32,
         time: Duration,
-        ui_state: UiState<'pass>,
+        ui_state: &UiState<'pass>,
         quad_commands: &'pass mut Vec<QuadRendererCommand<'pass>>,
         glyph_commands: &'pass mut Vec<GlyphRendererCommand>,
     ) {
         let (hud_state, overlay) = match ui_state {
             UiState::Title { overlay } => (None, Some(overlay)),
-            UiState::InGame { hud, overlay } => (Some(hud), overlay),
+            UiState::InGame { hud, overlay } => (Some(hud), overlay.as_ref()),
         };
 
         if let Some(hstate) = hud_state {
