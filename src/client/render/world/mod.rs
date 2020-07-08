@@ -248,7 +248,6 @@ impl WorldRenderer {
     {
         let _guard = flame::start_guard("Renderer::update_uniform");
 
-        println!("time = {:?}", engine::duration_to_f32(time));
         trace!("Updating frame uniform buffer");
         state
             .queue()

@@ -20,7 +20,13 @@
 
 use std::{
     cell::{Cell, RefCell},
+    path::PathBuf,
     rc::Rc,
+};
+
+use crate::{
+    capture::{cmd_screenshot, Capture},
+    trace::{cmd_trace_begin, cmd_trace_end},
 };
 
 use richter::{
@@ -28,21 +34,22 @@ use richter::{
         input::{Input, InputFocus},
         menu::Menu,
         render::{
-            Camera, GraphicsState, HudState, PostProcessRenderer, RenderTarget as _, UiOverlay,
-            UiRenderer, UiState, WorldRenderer,
+            Camera, Extent2d, GraphicsState, HudState, PostProcessRenderer, RenderTarget as _,
+            RenderTargetResolve as _, SwapChainTarget, UiOverlay, UiRenderer, UiState,
+            WorldRenderer,
         },
+        trace::TraceFrame,
         Client,
     },
     common::{
         console::{CmdRegistry, Console, CvarRegistry},
         math,
         net::SignOnStage,
-        vfs::Vfs,
     },
 };
 
 use cgmath;
-use chrono::Duration;
+use chrono::{Duration, Utc};
 use failure::Error;
 use log::info;
 
@@ -146,6 +153,12 @@ pub struct Game {
     state: GameState,
     input: Rc<RefCell<Input>>,
     client: Client,
+
+    // if Some(v), trace is in progress
+    trace: Rc<RefCell<Option<Vec<TraceFrame>>>>,
+
+    // if Some(path), take a screenshot and save it to path
+    screenshot_path: Rc<RefCell<Option<PathBuf>>>,
 }
 
 impl Game {
@@ -158,6 +171,21 @@ impl Game {
     ) -> Result<Game, Error> {
         input.borrow().register_cmds(&mut cmds.borrow_mut());
 
+        // set up screenshots
+        let screenshot_path = Rc::new(RefCell::new(None));
+        cmds.borrow_mut()
+            .insert("screenshot", cmd_screenshot(screenshot_path.clone()))
+            .unwrap();
+
+        // set up frame tracing
+        let trace = Rc::new(RefCell::new(None));
+        cmds.borrow_mut()
+            .insert("trace_begin", cmd_trace_begin(trace.clone()))
+            .unwrap();
+        cmds.borrow_mut()
+            .insert("trace_end", cmd_trace_end(cvars.clone(), trace.clone()))
+            .unwrap();
+
         Ok(Game {
             cvars,
             cmds,
@@ -165,6 +193,8 @@ impl Game {
             state: GameState::Loading,
             input,
             client,
+            trace,
+            screenshot_path,
         })
     }
 
@@ -207,19 +237,11 @@ impl Game {
 
             GameState::InGame(ref state) => {
                 // set the proper focus
-                match state.focus.get() {
-                    InGameFocus::Game => {
-                        self.input.borrow_mut().set_focus(InputFocus::Game).unwrap()
-                    }
-                    InGameFocus::Menu => {
-                        self.input.borrow_mut().set_focus(InputFocus::Menu).unwrap()
-                    }
-                    InGameFocus::Console => self
-                        .input
-                        .borrow_mut()
-                        .set_focus(InputFocus::Console)
-                        .unwrap(),
-                }
+                self.input.borrow_mut().set_focus(match state.focus.get() {
+                    InGameFocus::Game => InputFocus::Game,
+                    InGameFocus::Menu => InputFocus::Menu,
+                    InGameFocus::Console => InputFocus::Console,
+                }).unwrap();
             }
         }
 
@@ -227,6 +249,11 @@ impl Game {
             self.client
                 .handle_input(game_input, frame_duration)
                 .unwrap();
+        }
+
+        // if there's an active trace, record this frame
+        if let Some(ref mut trace_frames) = *self.trace.borrow_mut() {
+            trace_frames.push(self.client.trace(&[self.client.view_ent()]));
         }
     }
 
@@ -239,7 +266,6 @@ impl Game {
         console: &Console,
         menu: &Menu,
     ) {
-        println!("rendering...");
         match self.state {
             // TODO: loading screen
             GameState::Loading => (),
@@ -263,8 +289,7 @@ impl Game {
 
                 // initial render pass
                 {
-                    let init_pass_builder =
-                        gfx_state.initial_pass_target().render_pass_builder(None);
+                    let init_pass_builder = gfx_state.initial_pass_target().render_pass_builder();
 
                     let mut init_pass = encoder.begin_render_pass(&init_pass_builder.descriptor());
 
@@ -279,49 +304,68 @@ impl Game {
                     );
                 }
 
+                let ui_state = UiState::InGame {
+                    hud: HudState {
+                        items: self.client.items(),
+                        item_pickup_time: self.client.item_get_time(),
+                        stats: self.client.stats(),
+                        face_anim_time: self.client.face_anim_time(),
+                    },
+                    overlay: match state.focus.get() {
+                        InGameFocus::Game => None,
+                        InGameFocus::Console => Some(UiOverlay::Console(console)),
+                        InGameFocus::Menu => Some(UiOverlay::Menu(menu)),
+                    },
+                };
+
                 // final render pass
                 {
                     // quad_commands must outlive final pass
                     let mut quad_commands = Vec::new();
                     let mut glyph_commands = Vec::new();
 
-                    let final_pass_builder = gfx_state
-                        .final_pass_target()
-                        .render_pass_builder(Some(color_attachment_view));
+                    let final_pass_builder = gfx_state.final_pass_target().render_pass_builder();
                     let mut final_pass =
                         encoder.begin_render_pass(&final_pass_builder.descriptor());
 
-                    log::debug!("color shift = {:?}", self.client.color_shift());
-                    state
-                        .postprocess_renderer
-                        .record_draw(gfx_state, &mut final_pass, self.client.color_shift());
-
-                    let overlay = match state.focus.get() {
-                        InGameFocus::Game => None,
-                        InGameFocus::Console => Some(UiOverlay::Console(console)),
-                        InGameFocus::Menu => Some(UiOverlay::Menu(menu)),
-                    };
-
-                    let ui_state = UiState::InGame {
-                        hud: HudState {
-                            items: self.client.items(),
-                            item_pickup_time: self.client.item_get_time(),
-                            stats: self.client.stats(),
-                            face_anim_time: self.client.face_anim_time(),
-                        },
-                        overlay,
-                    };
+                    state.postprocess_renderer.record_draw(
+                        gfx_state,
+                        &mut final_pass,
+                        self.client.color_shift(),
+                    );
 
                     self.ui_renderer.render_pass(
                         &gfx_state,
                         &mut final_pass,
-                        width,
-                        height,
+                        Extent2d { width, height },
                         self.client.time(),
-                        ui_state,
+                        &ui_state,
                         &mut quad_commands,
                         &mut glyph_commands,
                     );
+                }
+
+                // screenshot setup
+                let capture = self.screenshot_path.borrow().as_ref().map(|_| {
+                    let cap = Capture::new(gfx_state.device(), Extent2d { width, height });
+                    cap.copy_from_texture(
+                        &mut encoder,
+                        wgpu::TextureCopyView {
+                            texture: gfx_state.final_pass_target().resolve_attachment(),
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                        },
+                    );
+                    cap
+                });
+
+                // blit to swap chain
+                {
+                    let swap_chain_target =
+                        SwapChainTarget::with_swap_chain_view(color_attachment_view);
+                    let blit_pass_builder = swap_chain_target.render_pass_builder();
+                    let mut blit_pass = encoder.begin_render_pass(&blit_pass_builder.descriptor());
+                    gfx_state.blit_pipeline().blit(gfx_state, &mut blit_pass);
                 }
 
                 let command_buffer = encoder.finish();
@@ -330,7 +374,22 @@ impl Game {
                     gfx_state.queue().submit(vec![command_buffer]);
                     gfx_state.device().poll(wgpu::Maintain::Wait);
                 }
+
+                // write screenshot if requested and clear screenshot path
+                self.screenshot_path.replace(None).map(|path| {
+                    capture
+                        .as_ref()
+                        .unwrap()
+                        .write_to_file(gfx_state.device(), path)
+                });
             }
         }
+    }
+}
+
+impl std::ops::Drop for Game {
+    fn drop(&mut self) {
+        let _ = self.cmds.borrow_mut().remove("trace_begin");
+        let _ = self.cmds.borrow_mut().remove("trace_end");
     }
 }

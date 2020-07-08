@@ -5,7 +5,10 @@ use crate::{
         world::BindGroupLayoutId, GraphicsState, Pipeline, TextureData, DEPTH_ATTACHMENT_FORMAT,
         DIFFUSE_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
     },
-    common::sprite::{SpriteFrame, SpriteKind, SpriteModel, SpriteSubframe},
+    common::{
+        sprite::{SpriteFrame, SpriteKind, SpriteModel, SpriteSubframe},
+        util::any_slice_as_bytes,
+    },
 };
 
 use chrono::Duration;
@@ -42,7 +45,60 @@ lazy_static! {
     ];
 }
 
-pub struct SpritePipeline;
+pub struct SpritePipeline {
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    vertex_buffer: wgpu::Buffer,
+}
+
+impl SpritePipeline {
+    pub fn new(
+        device: &wgpu::Device,
+        compiler: &mut shaderc::Compiler,
+        world_bind_group_layouts: &[wgpu::BindGroupLayout],
+        sample_count: u32,
+    ) -> SpritePipeline {
+        let (pipeline, bind_group_layouts) =
+            SpritePipeline::create(device, compiler, world_bind_group_layouts, sample_count);
+
+        let vertex_buffer = device.create_buffer_with_data(
+            unsafe { any_slice_as_bytes(&VERTICES) },
+            wgpu::BufferUsage::VERTEX,
+        );
+
+        SpritePipeline {
+            pipeline,
+            bind_group_layouts,
+            vertex_buffer,
+        }
+    }
+
+    pub fn rebuild(
+        &mut self,
+        device: &wgpu::Device,
+        compiler: &mut shaderc::Compiler,
+        world_bind_group_layouts: &[wgpu::BindGroupLayout],
+        sample_count: u32,
+    ) {
+        let layout_refs: Vec<_> = world_bind_group_layouts
+            .iter()
+            .chain(self.bind_group_layouts.iter())
+            .collect();
+        self.pipeline = SpritePipeline::recreate(device, compiler, &layout_refs, sample_count);
+    }
+
+    pub fn pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.pipeline
+    }
+
+    pub fn bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+        &self.bind_group_layouts
+    }
+
+    pub fn vertex_buffer(&self) -> &wgpu::Buffer {
+        &self.vertex_buffer
+    }
+}
 
 impl Pipeline for SpritePipeline {
     fn name() -> &'static str {
@@ -196,7 +252,7 @@ impl Frame {
             state: &GraphicsState,
             subframe: &SpriteSubframe,
         ) -> (wgpu::Texture, wgpu::TextureView, wgpu::BindGroup) {
-            let (diffuse_data, fullbright_data) = state.palette.translate(subframe.indexed());
+            let (diffuse_data, _fullbright_data) = state.palette.translate(subframe.indexed());
             let diffuse = state.create_texture(
                 None,
                 subframe.width(),
@@ -208,7 +264,8 @@ impl Frame {
                 .device()
                 .create_bind_group(&wgpu::BindGroupDescriptor {
                     label: None,
-                    layout: &state.sprite_bind_group_layout(BindGroupLayoutId::PerTexture),
+                    layout: &state.sprite_pipeline().bind_group_layouts()
+                        [BindGroupLayoutId::PerTexture as usize - 2],
                     bindings: &[wgpu::Binding {
                         binding: 0,
                         resource: wgpu::BindingResource::TextureView(&diffuse_view),
@@ -308,8 +365,8 @@ impl SpriteRenderer {
         frame_id: usize,
         time: Duration,
     ) {
-        pass.set_pipeline(state.sprite_pipeline());
-        pass.set_vertex_buffer(0, state.sprite_vertex_buffer().slice(..));
+        pass.set_pipeline(state.sprite_pipeline().pipeline());
+        pass.set_vertex_buffer(0, state.sprite_pipeline().vertex_buffer().slice(..));
         pass.set_bind_group(
             BindGroupLayoutId::PerTexture as u32,
             self.frames[frame_id].animate(time),

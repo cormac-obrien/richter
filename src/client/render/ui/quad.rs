@@ -1,15 +1,18 @@
-use std::mem::size_of;
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    mem::size_of,
+};
 
 use crate::{
     client::render::{
         ui::{
-            layout::{Anchor, Layout, ScreenPosition, Size},
+            layout::{Layout, Size},
             screen_space_vertex_transform,
         },
-        uniform::DynamicUniformBufferBlock,
-        GraphicsState, Pipeline, TextureData, DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT,
+        uniform::{self, DynamicUniformBuffer, DynamicUniformBufferBlock},
+        Extent2d, GraphicsState, Pipeline, TextureData, DIFFUSE_ATTACHMENT_FORMAT,
     },
-    common::wad::QPic,
+    common::{util::any_slice_as_bytes, wad::QPic},
 };
 
 use cgmath::Matrix4;
@@ -106,7 +109,80 @@ lazy_static! {
     ];
 }
 
-pub struct QuadPipeline;
+pub struct QuadPipeline {
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    vertex_buffer: wgpu::Buffer,
+    uniform_buffer: RefCell<DynamicUniformBuffer<QuadUniforms>>,
+    uniform_buffer_blocks: RefCell<Vec<DynamicUniformBufferBlock<QuadUniforms>>>,
+}
+
+impl QuadPipeline {
+    pub fn new(
+        device: &wgpu::Device,
+        compiler: &mut shaderc::Compiler,
+        sample_count: u32,
+    ) -> QuadPipeline {
+        let (pipeline, bind_group_layouts) =
+            QuadPipeline::create(device, compiler, &[], sample_count);
+
+        let vertex_buffer = device.create_buffer_with_data(
+            unsafe { any_slice_as_bytes(&VERTICES) },
+            wgpu::BufferUsage::VERTEX,
+        );
+
+        let uniform_buffer = RefCell::new(DynamicUniformBuffer::new(device));
+        let uniform_buffer_blocks = RefCell::new(Vec::new());
+
+        QuadPipeline {
+            pipeline,
+            bind_group_layouts,
+            vertex_buffer,
+            uniform_buffer,
+            uniform_buffer_blocks,
+        }
+    }
+
+    pub fn rebuild(
+        &mut self,
+        device: &wgpu::Device,
+        compiler: &mut shaderc::Compiler,
+        sample_count: u32,
+    ) {
+        let layout_refs = self.bind_group_layouts.iter().collect::<Vec<_>>();
+        self.pipeline = QuadPipeline::recreate(device, compiler, &layout_refs, sample_count);
+    }
+
+    pub fn pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.pipeline
+    }
+
+    pub fn bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+        &self.bind_group_layouts
+    }
+
+    pub fn vertex_buffer(&self) -> &wgpu::Buffer {
+        &self.vertex_buffer
+    }
+
+    pub fn uniform_buffer(&self) -> Ref<DynamicUniformBuffer<QuadUniforms>> {
+        self.uniform_buffer.borrow()
+    }
+
+    pub fn uniform_buffer_mut(&self) -> RefMut<DynamicUniformBuffer<QuadUniforms>> {
+        self.uniform_buffer.borrow_mut()
+    }
+
+    pub fn uniform_buffer_blocks(&self) -> Ref<Vec<DynamicUniformBufferBlock<QuadUniforms>>> {
+        self.uniform_buffer_blocks.borrow()
+    }
+
+    pub fn uniform_buffer_blocks_mut(
+        &self,
+    ) -> RefMut<Vec<DynamicUniformBufferBlock<QuadUniforms>>> {
+        self.uniform_buffer_blocks.borrow_mut()
+    }
+}
 
 impl Pipeline for QuadPipeline {
     fn name() -> &'static str {
@@ -208,7 +284,7 @@ impl QuadTexture {
             .device()
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
-                layout: &state.quad_bind_group_layouts()[1],
+                layout: &state.quad_pipeline().bind_group_layouts()[1],
                 bindings: &[wgpu::Binding {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(&texture_view),
@@ -261,7 +337,7 @@ impl QuadRenderer {
             .device()
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("quad sampler bind group"),
-                layout: &state.quad_bind_group_layouts()[0],
+                layout: &state.quad_pipeline().bind_group_layouts()[0],
                 bindings: &[wgpu::Binding {
                     binding: 0,
                     resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
@@ -271,11 +347,11 @@ impl QuadRenderer {
             .device()
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("quad transform bind group"),
-                layout: &state.quad_bind_group_layouts()[2],
+                layout: &state.quad_pipeline().bind_group_layouts()[2],
                 bindings: &[wgpu::Binding {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer(
-                        state.quad_uniform_buffer().buffer().slice(..),
+                        state.quad_pipeline().uniform_buffer().buffer().slice(..),
                     ),
                 }],
             });
@@ -286,11 +362,10 @@ impl QuadRenderer {
         }
     }
 
-    pub fn generate_uniforms<'cmds>(
+    fn generate_uniforms<'cmds>(
         &self,
         commands: &[QuadRendererCommand<'cmds>],
-        display_width: u32,
-        display_height: u32,
+        target_size: Extent2d,
     ) -> Vec<QuadUniforms> {
         let mut uniforms = Vec::new();
 
@@ -309,6 +384,11 @@ impl QuadRenderer {
                 Size::Scale { factor } => factor,
                 _ => 1.0,
             };
+
+            let Extent2d {
+                width: display_width,
+                height: display_height,
+            } = target_size;
 
             let (screen_x, screen_y) = position.to_xy(display_width, display_height, scale);
             let (quad_x, quad_y) = anchor.to_xy(texture.width, texture.height);
@@ -336,14 +416,25 @@ impl QuadRenderer {
         &'pass self,
         state: &'pass GraphicsState,
         pass: &mut wgpu::RenderPass<'pass>,
-        cmds: &'pass [QuadRendererCommand<'pass>],
-        blocks: &'cmds [DynamicUniformBufferBlock<QuadUniforms>],
+        target_size: Extent2d,
+        commands: &'pass [QuadRendererCommand<'pass>],
     ) {
-        debug!("QuadRenderer::record_draw");
-        pass.set_pipeline(state.quad_pipeline());
-        pass.set_vertex_buffer(0, state.quad_vertex_buffer().slice(..));
+        // update uniform buffer
+        let uniforms = self.generate_uniforms(commands, target_size);
+        uniform::clear_and_rewrite(
+            state.queue(),
+            &mut state.quad_pipeline().uniform_buffer_mut(),
+            &mut state.quad_pipeline().uniform_buffer_blocks_mut(),
+            &uniforms,
+        );
+
+        pass.set_pipeline(state.quad_pipeline().pipeline());
+        pass.set_vertex_buffer(0, state.quad_pipeline().vertex_buffer().slice(..));
         pass.set_bind_group(0, &self.sampler_bind_group, &[]);
-        for (cmd, block) in cmds.iter().zip(blocks.iter()) {
+        for (cmd, block) in commands
+            .iter()
+            .zip(state.quad_pipeline().uniform_buffer_blocks().iter())
+        {
             pass.set_bind_group(1, &cmd.texture.bind_group, &[]);
             pass.set_bind_group(2, &self.transform_bind_group, &[block.offset()]);
             pass.draw(0..6, 0..1);

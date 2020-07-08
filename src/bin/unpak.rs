@@ -15,70 +15,53 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-extern crate docopt;
 extern crate richter;
-#[macro_use]
-extern crate serde_derive;
 
 use std::{
     fs,
     fs::File,
     io::{BufWriter, Write},
+    path::PathBuf,
+    process::exit,
 };
-
-use std::{path::PathBuf, process::exit};
 
 use richter::common::pak::Pak;
 
-use docopt::Docopt;
+use structopt::StructOpt;
 
-#[derive(Deserialize)]
-struct Args {
-    arg_source: String,
-    arg_dest: Option<String>,
-    flag_h: bool,
-    flag_help: bool,
-    flag_v: bool,
-    flag_verbose: bool,
-    flag_version: bool,
+#[derive(Debug, StructOpt)]
+struct Opt {
+    #[structopt(short, long)]
+    verbose: bool,
+
+    #[structopt(long)]
+    version: bool,
+
+    #[structopt(name = "INPUT_PAK", parse(from_os_str))]
+    input_pak: PathBuf,
+
+    #[structopt(name = "OUTPUT_DIR", parse(from_os_str))]
+    output_dir: Option<PathBuf>,
 }
-
-const USAGE: &'static str = "
-Usage: unpak <source>
-       unpak <source> <dest>
-
-Options:
-    -v, --verbose  Produce detailed output.
-
-    -h, --help     Show this message and exit.
-        --version  Print version information and exit.
-";
 
 const VERSION: &'static str = "
 unpak 0.1
-Copyright © 2018 Cormac O'Brien
+Copyright © 2020 Cormac O'Brien
 Released under the terms of the MIT License
 ";
 
 fn main() {
-    let args: Args = Docopt::new(USAGE)
-        .and_then(|d| d.deserialize())
-        .unwrap_or_else(|e| e.exit());
+    let opt = Opt::from_args();
 
-    if args.flag_help || args.flag_h {
-        println!("{}", USAGE);
-        exit(0);
-    }
-
-    if args.flag_version {
+    if opt.version {
         println!("{}", VERSION);
         exit(0);
     }
 
-    let pak = match Pak::new(&args.arg_source) {
+    let pak = match Pak::new(&opt.input_pak) {
         Ok(p) => p,
         Err(why) => {
-            println!("Couldn't open {}: {}", &args.arg_source, why);
+            println!("Couldn't open {:#?}: {}", &opt.input_pak, why);
             exit(1);
         }
     };
@@ -86,7 +69,7 @@ fn main() {
     for (k, v) in pak.iter() {
         let mut path = PathBuf::new();
 
-        if let Some(ref d) = args.arg_dest {
+        if let Some(ref d) = opt.output_dir {
             path.push(d);
         }
 

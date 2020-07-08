@@ -24,6 +24,7 @@ pub mod input;
 pub mod menu;
 pub mod render;
 pub mod sound;
+pub mod trace;
 pub mod view;
 
 pub use self::{
@@ -43,6 +44,7 @@ use crate::{
     client::{
         input::game::{Action, GameInput},
         sound::{AudioSource, Channel, Listener, StaticSound},
+        trace::{TraceEntity, TraceFrame},
         view::{IdleVars, KickVars, RollVars, View},
     },
     common::{
@@ -1559,7 +1561,7 @@ impl Client {
 
         let server_delta =
             engine::duration_to_f32(match self.state.msg_times[0] - self.state.msg_times[1] {
-                // if no time has passed, don't lerp anything
+                // if no time has passed between updates, don't lerp anything
                 d if d == Duration::zero() => {
                     self.state.time = self.state.msg_times[0];
                     self.state.lerp_factor = 1.0;
@@ -1604,10 +1606,7 @@ impl Client {
                 1.0
             }
 
-            f => {
-                warn!("Normal lerp factor: {}", f);
-                f
-            }
+            f => f,
         }
     }
 
@@ -1765,16 +1764,20 @@ impl Client {
     }
 
     pub fn frame(&mut self, frame_time: Duration) -> Result<(), Error> {
-        self.update_time();
-        self.state.time = self.state.time + frame_time;
-        self.send()?;
+        debug!("frame time: {}ms", frame_time.num_milliseconds());
         self.parse_server_msg()?;
+        self.state.time = self.state.time + frame_time;
+        self.update_time();
         self.relink_entities();
+        self.send()?;
 
         if self.signon == SignOnStage::Done {
             self.state.update_listener();
             self.state.update_sound_spatialization();
             self.update_color_shifts(frame_time);
+
+            let orig = self.state.entities[self.state.view.entity_id()].origin;
+            println!("{},{}", engine::duration_to_f32(self.state.time), orig.x);
         }
         // TODO: CL_UpdateTEnts
 
@@ -1932,5 +1935,49 @@ impl Client {
             cl_rollangle: self.cvar_value("cl_rollangle")?,
             cl_rollspeed: self.cvar_value("cl_rollspeed")?,
         })
+    }
+
+    pub fn trace<'a, I>(&self, entity_ids: I) -> TraceFrame
+    where
+        I: IntoIterator<Item = &'a usize>,
+    {
+        let mut trace = TraceFrame {
+            msg_times_ms: [
+                self.state.msg_times[0].num_milliseconds(),
+                self.state.msg_times[1].num_milliseconds(),
+            ],
+            time_ms: self.state.time.num_milliseconds(),
+            lerp_factor: self.state.lerp_factor,
+            entities: HashMap::new(),
+        };
+
+        for id in entity_ids.into_iter() {
+            let ent = &self.state.entities[*id];
+
+            let msg_origins = [ent.msg_origins[0].into(), ent.msg_origins[1].into()];
+            let msg_angles_deg = [
+                [
+                    ent.msg_angles[0][0].0,
+                    ent.msg_angles[0][1].0,
+                    ent.msg_angles[0][2].0,
+                ],
+                [
+                    ent.msg_angles[1][0].0,
+                    ent.msg_angles[1][1].0,
+                    ent.msg_angles[1][2].0,
+                ],
+            ];
+
+            trace.entities.insert(
+                *id as u32,
+                TraceEntity {
+                    msg_origins,
+                    msg_angles_deg,
+                    origin: ent.origin.into(),
+                },
+            );
+        }
+
+        trace
     }
 }

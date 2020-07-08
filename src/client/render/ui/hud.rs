@@ -2,9 +2,11 @@ use std::collections::HashMap;
 
 use crate::{
     client::render::{
-        glyph::GlyphRendererCommand,
-        quad::{QuadRendererCommand, QuadTexture},
-        ui::layout::{Anchor, Layout, ScreenPosition, Size},
+        ui::{
+            glyph::GlyphRendererCommand,
+            layout::{Anchor, Layout, ScreenPosition, Size},
+            quad::{QuadRendererCommand, QuadTexture},
+        },
         GraphicsState,
     },
     common::net::{ClientStat, ItemFlags},
@@ -235,7 +237,6 @@ impl HudRenderer {
         use HudTextureId::*;
 
         let number_str = format!("{}", number);
-        debug!("number_str = {}", number_str);
         let number_chars = number_str.chars().collect::<Vec<_>>();
 
         let mut skip = 0;
@@ -245,7 +246,6 @@ impl HudRenderer {
         } else if max_digits > number_chars.len() {
             place_ofs = (max_digits - number_chars.len()) as i32 * 24;
         }
-        debug!("skip = {} | place_ofs = {}", skip, place_ofs);
 
         for (chr_id, chr) in number_chars.into_iter().skip(skip).enumerate() {
             let tex_id = match chr {
@@ -274,7 +274,7 @@ impl HudRenderer {
 
     pub fn generate_commands<'state, 'a>(
         &'a self,
-        hud_state: HudState<'a>,
+        hud_state: &HudState<'a>,
         time: Duration,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,

@@ -119,7 +119,6 @@ impl BrushPipeline {
         let mut texture_uniform_buffer = DynamicUniformBuffer::new(&device);
         let texture_uniform_blocks = TextureKind::iter()
             .map(|kind| {
-                debug!("Texture kind: {:?} ({})", kind, kind as u32);
                 texture_uniform_buffer.allocate(TextureUniforms { kind })
             })
             .collect();
@@ -144,8 +143,7 @@ impl BrushPipeline {
             .iter()
             .chain(self.bind_group_layouts.iter())
             .collect();
-        let pipeline = BrushPipeline::recreate(device, compiler, &layout_refs, sample_count);
-        self.pipeline = pipeline;
+        self.pipeline = BrushPipeline::recreate(device, compiler, &layout_refs, sample_count);
     }
 
     pub fn pipeline(&self) -> &wgpu::RenderPipeline {
@@ -577,10 +575,8 @@ impl BrushRendererBuilder {
             let fullbright_view = fullbright.create_default_view();
 
             let kind = if tex.name().starts_with("sky") {
-                debug!("sky texture");
                 TextureKind::Sky
             } else if tex.name().starts_with("*") {
-                debug!("warp texture");
                 TextureKind::Warp
             } else {
                 TextureKind::Normal
@@ -667,7 +663,6 @@ impl BrushRenderer {
         pass: &mut wgpu::RenderPass<'a>,
         camera: &Camera,
     ) {
-        debug!("BrushRenderer::record_draw");
         let _guard = flame::start_guard("BrushRenderer::record_draw");
         pass.set_pipeline(state.brush_pipeline().pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));

@@ -33,7 +33,7 @@ impl ConsoleRenderer {
         glyph_cmds: &mut Vec<GlyphRendererCommand>,
     ) {
         // TODO: take screen proportion as a parameter or cvar
-        let proportion = 0.5;
+        let proportion = 0.33;
 
         // TODO: take scale as cvar
         let scale = 2.0;

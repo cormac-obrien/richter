@@ -20,21 +20,19 @@ log = "0.4.1"
 nom = "3.2.1"
 num = "0.1.42"
 num-derive = "0.1.42"
+png = "0.16"
 rand = "0.4.2"
 regex = "0.2.6"
 rodio = "0.11.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 shaderc = "0.6.2"
+structopt = "0.3.12"
+strum = "0.18.0"
+strum_macros = "0.18.0"
 # wgpu = "0.6.0"
 wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", rev = "d272a69" }
 
 # "winit" = "0.22.2"
 # necessary until winit/#1524 is merged
 winit = { git = "https://github.com/chemicstry/winit", branch = "optional_drag_and_drop" }
-
-# binaries only
-"docopt" = "0.8"
-"serde" = "1.0"
-"serde_derive" = "1.0"
-strum = "0.18.0"
-strum_macros = "0.18.0"
-
