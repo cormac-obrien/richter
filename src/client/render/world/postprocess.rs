@@ -5,8 +5,6 @@ use crate::{
     common::util::any_as_bytes,
 };
 
-use cgmath::{Vector4, Zero};
-
 lazy_static! {
     pub static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 1] = [
         vec![
@@ -203,7 +201,7 @@ impl PostProcessRenderer {
     ) {
         self.update_uniform_buffers(state, color_shift);
         pass.set_pipeline(state.postprocess_pipeline().pipeline());
-        pass.set_vertex_buffer(0, state.quad_vertex_buffer().slice(..));
+        pass.set_vertex_buffer(0, state.quad_pipeline().vertex_buffer().slice(..));
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..6, 0..1);
     }

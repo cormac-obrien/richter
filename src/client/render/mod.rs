@@ -35,8 +35,8 @@
 ///     - `QuadPipeline`
 ///     - `GlyphPipeline`
 ///   - Output: `FinalPassTarget`, which is resolved onto the framebuffer
-
 // mod atlas;
+mod blit;
 mod cvars;
 mod error;
 mod palette;
@@ -52,7 +52,7 @@ pub use error::{RenderError, RenderErrorKind};
 pub use palette::Palette;
 pub use pipeline::Pipeline;
 pub use postprocess::PostProcessRenderer;
-pub use target::RenderTarget;
+pub use target::{RenderTarget, RenderTargetResolve, SwapChainTarget};
 pub use ui::{hud::HudState, UiOverlay, UiRenderer, UiState};
 pub use world::{Camera, WorldRenderer};
 
@@ -65,17 +65,19 @@ use std::{
 
 use crate::{
     client::render::{
+        blit::BlitPipeline,
         target::{FinalPassTarget, InitialPassTarget},
-        ui::{glyph, quad},
+        ui::{glyph::GlyphPipeline, quad::QuadPipeline},
         uniform::DynamicUniformBuffer,
         world::{
-            alias,
+            alias::AliasPipeline,
             brush::BrushPipeline,
             postprocess::{self, PostProcessPipeline},
-            sprite, EntityUniforms,
+            sprite::SpritePipeline,
+            EntityUniforms,
         },
     },
-    common::{util::any_slice_as_bytes, vfs::Vfs, wad::Wad},
+    common::{vfs::Vfs, wad::Wad},
 };
 
 use failure::Error;
@@ -281,25 +283,13 @@ pub struct GraphicsState {
 
     sample_count: Cell<u32>,
 
-    alias_pipeline: wgpu::RenderPipeline,
-    alias_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-
+    alias_pipeline: AliasPipeline,
     brush_pipeline: BrushPipeline,
-
+    sprite_pipeline: SpritePipeline,
     postprocess_pipeline: PostProcessPipeline,
-
-    glyph_pipeline: wgpu::RenderPipeline,
-    glyph_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    glyph_instance_buffer: wgpu::Buffer,
-
-    quad_pipeline: wgpu::RenderPipeline,
-    quad_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    quad_vertex_buffer: wgpu::Buffer,
-    quad_uniform_buffer: RefCell<DynamicUniformBuffer<quad::QuadUniforms>>,
-
-    sprite_pipeline: wgpu::RenderPipeline,
-    sprite_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    sprite_vertex_buffer: wgpu::Buffer,
+    glyph_pipeline: GlyphPipeline,
+    quad_pipeline: QuadPipeline,
+    blit_pipeline: BlitPipeline,
 
     default_lightmap: wgpu::Texture,
     default_lightmap_view: wgpu::TextureView,
@@ -332,7 +322,6 @@ impl GraphicsState {
             mapped_at_creation: false,
         });
         let entity_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
-        let quad_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
 
         let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: None,
@@ -405,7 +394,7 @@ impl GraphicsState {
             }),
         ];
 
-        let (alias_pipeline, alias_bind_group_layouts) = alias::AliasPipeline::create(
+        let alias_pipeline = AliasPipeline::new(
             &device,
             &mut compiler,
             &world_bind_group_layouts,
@@ -418,34 +407,17 @@ impl GraphicsState {
             &world_bind_group_layouts,
             sample_count,
         );
-        let (sprite_pipeline, sprite_bind_group_layouts) = sprite::SpritePipeline::create(
+        let sprite_pipeline = SpritePipeline::new(
             &device,
             &mut compiler,
             &world_bind_group_layouts,
             sample_count,
         );
-        let sprite_vertex_buffer = device.create_buffer_with_data(
-            unsafe { any_slice_as_bytes(&sprite::VERTICES) },
-            wgpu::BufferUsage::VERTEX,
-        );
-
         let postprocess_pipeline = PostProcessPipeline::new(&device, &mut compiler, sample_count);
-
-        let (quad_pipeline, quad_bind_group_layouts) =
-            quad::QuadPipeline::create(&device, &mut compiler, &[], sample_count);
-        let quad_vertex_buffer = device.create_buffer_with_data(
-            unsafe { any_slice_as_bytes(&quad::VERTICES) },
-            wgpu::BufferUsage::VERTEX,
-        );
-
-        let (glyph_pipeline, glyph_bind_group_layouts) =
-            glyph::GlyphPipeline::create(&device, &mut compiler, &[], sample_count);
-        let glyph_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("quad instance buffer"),
-            size: (glyph::GLYPH_MAX_INSTANCES * size_of::<glyph::GlyphInstance>()) as u64,
-            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let quad_pipeline = QuadPipeline::new(&device, &mut compiler, sample_count);
+        let glyph_pipeline = GlyphPipeline::new(&device, &mut compiler, sample_count);
+        let blit_pipeline =
+            BlitPipeline::new(&device, &mut compiler, final_pass_target.resolve_view());
 
         let default_lightmap = create_texture(
             &device,
@@ -473,19 +445,13 @@ impl GraphicsState {
             sample_count: Cell::new(sample_count),
 
             alias_pipeline,
-            alias_bind_group_layouts,
             brush_pipeline,
             sprite_pipeline,
-            sprite_bind_group_layouts,
-            sprite_vertex_buffer,
             postprocess_pipeline,
             glyph_pipeline,
-            glyph_bind_group_layouts,
-            glyph_instance_buffer,
             quad_pipeline,
-            quad_bind_group_layouts,
-            quad_vertex_buffer,
-            quad_uniform_buffer,
+            blit_pipeline,
+
             diffuse_sampler,
             lightmap_sampler,
             default_lightmap,
@@ -537,54 +503,35 @@ impl GraphicsState {
     /// This must be called when the sample count of the render target(s) changes or the program
     /// will panic.
     fn recreate_pipelines(&mut self, sample_count: u32) {
-        let world_bind_group_layouts: Vec<_> = self.world_bind_group_layouts.iter().collect();
-
-        let mut alias_bind_group_layouts = world_bind_group_layouts.clone();
-        alias_bind_group_layouts.extend(self.alias_bind_group_layouts.iter());
-        self.alias_pipeline = alias::AliasPipeline::recreate(
+        self.alias_pipeline.rebuild(
             &self.device,
             &mut self.compiler.borrow_mut(),
-            &alias_bind_group_layouts,
+            &self.world_bind_group_layouts,
             sample_count,
         );
-
         self.brush_pipeline.rebuild(
             &self.device,
             &mut self.compiler.borrow_mut(),
             &self.world_bind_group_layouts,
             sample_count,
         );
-
-        let mut sprite_bind_group_layouts = world_bind_group_layouts.clone();
-        sprite_bind_group_layouts.extend(self.sprite_bind_group_layouts.iter());
-        self.sprite_pipeline = sprite::SpritePipeline::recreate(
+        self.sprite_pipeline.rebuild(
             &self.device,
             &mut self.compiler.borrow_mut(),
-            &sprite_bind_group_layouts,
+            &self.world_bind_group_layouts,
             sample_count,
         );
-
         self.postprocess_pipeline.rebuild(
             &self.device,
             &mut self.compiler.borrow_mut(),
             sample_count,
         );
-
-        let glyph_bind_group_layouts: Vec<_> = self.glyph_bind_group_layouts.iter().collect();
-        self.glyph_pipeline = glyph::GlyphPipeline::recreate(
-            &self.device,
-            &mut self.compiler.borrow_mut(),
-            &glyph_bind_group_layouts,
-            sample_count,
-        );
-
-        let quad_bind_group_layouts: Vec<_> = self.quad_bind_group_layouts.iter().collect();
-        self.quad_pipeline = quad::QuadPipeline::recreate(
-            &self.device,
-            &mut self.compiler.borrow_mut(),
-            &quad_bind_group_layouts,
-            sample_count,
-        );
+        self.glyph_pipeline
+            .rebuild(&self.device, &mut self.compiler.borrow_mut(), sample_count);
+        self.quad_pipeline
+            .rebuild(&self.device, &mut self.compiler.borrow_mut(), sample_count);
+        self.blit_pipeline
+            .rebuild(&self.device, &mut self.compiler.borrow_mut());
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -639,74 +586,34 @@ impl GraphicsState {
         &self.world_bind_groups
     }
 
-    pub fn alias_pipeline(&self) -> &wgpu::RenderPipeline {
-        &self.alias_pipeline
-    }
+    // pipelines
 
-    pub fn alias_bind_group_layout(&self, id: world::BindGroupLayoutId) -> &wgpu::BindGroupLayout {
-        &self.alias_bind_group_layouts[id as usize - 2]
+    pub fn alias_pipeline(&self) -> &AliasPipeline {
+        &self.alias_pipeline
     }
 
     pub fn brush_pipeline(&self) -> &BrushPipeline {
         &self.brush_pipeline
     }
 
+    pub fn sprite_pipeline(&self) -> &SpritePipeline {
+        &self.sprite_pipeline
+    }
+
     pub fn postprocess_pipeline(&self) -> &PostProcessPipeline {
         &self.postprocess_pipeline
     }
 
-    // glyph pipeline
-
-    pub fn glyph_pipeline(&self) -> &wgpu::RenderPipeline {
+    pub fn glyph_pipeline(&self) -> &GlyphPipeline {
         &self.glyph_pipeline
     }
 
-    pub fn glyph_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
-        &self.glyph_bind_group_layouts
-    }
-
-    pub fn glyph_instance_buffer(&self) -> &wgpu::Buffer {
-        &self.glyph_instance_buffer
-    }
-
-    // quad pipeline(s)
-
-    pub fn quad_pipeline(&self) -> &wgpu::RenderPipeline {
+    pub fn quad_pipeline(&self) -> &QuadPipeline {
         &self.quad_pipeline
     }
 
-    pub fn quad_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
-        &self.quad_bind_group_layouts
-    }
-
-    pub fn quad_vertex_buffer(&self) -> &wgpu::Buffer {
-        &self.quad_vertex_buffer
-    }
-
-    pub fn quad_uniform_buffer(&self) -> Ref<DynamicUniformBuffer<ui::quad::QuadUniforms>> {
-        self.quad_uniform_buffer.borrow()
-    }
-
-    pub fn quad_uniform_buffer_mut(&self) -> RefMut<DynamicUniformBuffer<ui::quad::QuadUniforms>> {
-        self.quad_uniform_buffer.borrow_mut()
-    }
-
-    // sprite pipeline
-
-    pub fn sprite_pipeline(&self) -> &wgpu::RenderPipeline {
-        &self.sprite_pipeline
-    }
-
-    pub fn sprite_bind_group_layout(&self, id: world::BindGroupLayoutId) -> &wgpu::BindGroupLayout {
-        &self.sprite_bind_group_layouts[id as usize - 2]
-    }
-
-    pub fn sprite_bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
-        &self.sprite_bind_group_layouts
-    }
-
-    pub fn sprite_vertex_buffer(&self) -> &wgpu::Buffer {
-        &self.sprite_vertex_buffer
+    pub fn blit_pipeline(&self) -> &BlitPipeline {
+        &self.blit_pipeline
     }
 
     pub fn vfs(&self) -> &Vfs {

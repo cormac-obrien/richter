@@ -2,9 +2,11 @@ use std::collections::HashMap;
 
 use crate::{
     client::render::{
-        glyph::GlyphRendererCommand,
-        quad::{QuadRendererCommand, QuadTexture},
-        ui::layout::{Anchor, Layout, ScreenPosition, Size},
+        ui::{
+            glyph::GlyphRendererCommand,
+            layout::{Anchor, Layout, ScreenPosition, Size},
+            quad::{QuadRendererCommand, QuadTexture},
+        },
         GraphicsState,
     },
     common::net::{ClientStat, ItemFlags},

@@ -32,7 +32,49 @@ lazy_static! {
     ];
 }
 
-pub struct AliasPipeline;
+pub struct AliasPipeline {
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+}
+
+impl AliasPipeline {
+    pub fn new(
+        device: &wgpu::Device,
+        compiler: &mut shaderc::Compiler,
+        world_bind_group_layouts: &[wgpu::BindGroupLayout],
+        sample_count: u32,
+    ) -> AliasPipeline {
+        let (pipeline, bind_group_layouts) =
+            AliasPipeline::create(device, compiler, world_bind_group_layouts, sample_count);
+
+        AliasPipeline {
+            pipeline,
+            bind_group_layouts,
+        }
+    }
+
+    pub fn rebuild(
+        &mut self,
+        device: &wgpu::Device,
+        compiler: &mut shaderc::Compiler,
+        world_bind_group_layouts: &[wgpu::BindGroupLayout],
+        sample_count: u32,
+    ) {
+        let layout_refs: Vec<_> = world_bind_group_layouts
+            .iter()
+            .chain(self.bind_group_layouts.iter())
+            .collect();
+        self.pipeline = AliasPipeline::recreate(device, compiler, &layout_refs, sample_count);
+    }
+
+    pub fn pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.pipeline
+    }
+
+    pub fn bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+        &self.bind_group_layouts
+    }
+}
 
 impl Pipeline for AliasPipeline {
     fn name() -> &'static str {
@@ -325,7 +367,9 @@ impl AliasRenderer {
                         .device()
                         .create_bind_group(&wgpu::BindGroupDescriptor {
                             label: None,
-                            layout: &state.alias_bind_group_layout(BindGroupLayoutId::PerTexture),
+                            // TODO: per-pipeline bind group layout ids
+                            layout: &state.alias_pipeline().bind_group_layouts()
+                                [BindGroupLayoutId::PerTexture as usize - 2],
                             bindings: &[wgpu::Binding {
                                 binding: 0,
                                 resource: wgpu::BindingResource::TextureView(&diffuse_view),
@@ -358,8 +402,8 @@ impl AliasRenderer {
                                 .device()
                                 .create_bind_group(&wgpu::BindGroupDescriptor {
                                     label: None,
-                                    layout: &state
-                                        .alias_bind_group_layout(BindGroupLayoutId::PerTexture),
+                                    layout: &state.alias_pipeline().bind_group_layouts()
+                                        [BindGroupLayoutId::PerTexture as usize - 2],
                                     bindings: &[wgpu::Binding {
                                         binding: 0,
                                         resource: wgpu::BindingResource::TextureView(&diffuse_view),
@@ -397,7 +441,7 @@ impl AliasRenderer {
         keyframe_id: usize,
         texture_id: usize,
     ) {
-        pass.set_pipeline(state.alias_pipeline());
+        pass.set_pipeline(state.alias_pipeline().pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
         pass.set_bind_group(

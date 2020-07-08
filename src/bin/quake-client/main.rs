@@ -18,8 +18,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+mod capture;
 mod game;
 mod menu;
+mod trace;
 
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},

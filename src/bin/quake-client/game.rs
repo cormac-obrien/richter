@@ -20,10 +20,13 @@
 
 use std::{
     cell::{Cell, RefCell},
-    fs::File,
-    io::BufWriter,
     path::PathBuf,
     rc::Rc,
+};
+
+use crate::{
+    capture::{cmd_screenshot, Capture},
+    trace::{cmd_trace_begin, cmd_trace_end},
 };
 
 use richter::{
@@ -31,8 +34,9 @@ use richter::{
         input::{Input, InputFocus},
         menu::Menu,
         render::{
-            Camera, GraphicsState, HudState, PostProcessRenderer, RenderTarget as _, UiOverlay,
-            UiRenderer, UiState, WorldRenderer,
+            Camera, Extent2d, GraphicsState, HudState, PostProcessRenderer, RenderTarget as _,
+            RenderTargetResolve as _, SwapChainTarget, UiOverlay, UiRenderer, UiState,
+            WorldRenderer,
         },
         trace::TraceFrame,
         Client,
@@ -41,7 +45,6 @@ use richter::{
         console::{CmdRegistry, Console, CvarRegistry},
         math,
         net::SignOnStage,
-        vfs::Vfs,
     },
 };
 
@@ -49,8 +52,6 @@ use cgmath;
 use chrono::{Duration, Utc};
 use failure::Error;
 use log::info;
-
-const DEFAULT_TRACE_PATH: &'static str = "richter-trace.json";
 
 #[derive(Clone, Copy)]
 enum InGameFocus {
@@ -172,79 +173,17 @@ impl Game {
 
         // set up screenshots
         let screenshot_path = Rc::new(RefCell::new(None));
-        let screenshot_screenshot_path = screenshot_path.clone();
         cmds.borrow_mut()
-            .insert(
-                "screenshot",
-                Box::new(move |args| {
-                    let path = match args.len() {
-                        // TODO: make default path configurable
-                        0 => PathBuf::from(format!(
-                            "richter-{}.png",
-                            Utc::now().format("%FT%H-%M-%S")
-                        )),
-                        1 => PathBuf::from(args[0]),
-                        _ => {
-                            log::error!("Usage: screenshot [PATH]");
-                            return;
-                        }
-                    };
-
-                    screenshot_screenshot_path.replace(Some(PathBuf::from(path)));
-                }),
-            )
+            .insert("screenshot", cmd_screenshot(screenshot_path.clone()))
             .unwrap();
 
         // set up frame tracing
         let trace = Rc::new(RefCell::new(None));
-
-        let trace_begin_trace = trace.clone();
         cmds.borrow_mut()
-            .insert(
-                "trace_begin",
-                Box::new(move |_| {
-                    if trace_begin_trace.borrow().is_some() {
-                        log::error!("trace already in progress");
-                    } else {
-                        // start a new trace
-                        trace_begin_trace.replace(Some(Vec::new()));
-                    }
-                }),
-            )
+            .insert("trace_begin", cmd_trace_begin(trace.clone()))
             .unwrap();
-
-        let trace_end_cvars = cvars.clone();
-        let trace_end_trace = trace.clone();
         cmds.borrow_mut()
-            .insert(
-                "trace_end",
-                Box::new(move |_| {
-                    if let Some(trace_frames) = trace_end_trace.replace(None) {
-                        let trace_path = trace_end_cvars
-                            .borrow()
-                            .get("trace_path")
-                            .unwrap_or(DEFAULT_TRACE_PATH.to_string());
-                        let trace_file = match File::create(&trace_path) {
-                            Ok(f) => f,
-                            Err(e) => {
-                                log::error!("Couldn't open trace file for write: {}", e);
-                                return;
-                            }
-                        };
-
-                        let mut writer = BufWriter::new(trace_file);
-
-                        match serde_json::to_writer(&mut writer, &trace_frames) {
-                            Ok(()) => (),
-                            Err(e) => log::error!("Couldn't serialize trace: {}", e),
-                        };
-
-                        log::debug!("wrote {} frames to {}", trace_frames.len(), &trace_path);
-                    } else {
-                        log::error!("no trace in progress");
-                    }
-                }),
-            )
+            .insert("trace_end", cmd_trace_end(cvars.clone(), trace.clone()))
             .unwrap();
 
         Ok(Game {
@@ -298,19 +237,11 @@ impl Game {
 
             GameState::InGame(ref state) => {
                 // set the proper focus
-                match state.focus.get() {
-                    InGameFocus::Game => {
-                        self.input.borrow_mut().set_focus(InputFocus::Game).unwrap()
-                    }
-                    InGameFocus::Menu => {
-                        self.input.borrow_mut().set_focus(InputFocus::Menu).unwrap()
-                    }
-                    InGameFocus::Console => self
-                        .input
-                        .borrow_mut()
-                        .set_focus(InputFocus::Console)
-                        .unwrap(),
-                }
+                self.input.borrow_mut().set_focus(match state.focus.get() {
+                    InGameFocus::Game => InputFocus::Game,
+                    InGameFocus::Menu => InputFocus::Menu,
+                    InGameFocus::Console => InputFocus::Console,
+                }).unwrap();
             }
         }
 
@@ -320,6 +251,7 @@ impl Game {
                 .unwrap();
         }
 
+        // if there's an active trace, record this frame
         if let Some(ref mut trace_frames) = *self.trace.borrow_mut() {
             trace_frames.push(self.client.trace(&[self.client.view_ent()]));
         }
@@ -357,8 +289,7 @@ impl Game {
 
                 // initial render pass
                 {
-                    let init_pass_builder =
-                        gfx_state.initial_pass_target().render_pass_builder(None);
+                    let init_pass_builder = gfx_state.initial_pass_target().render_pass_builder();
 
                     let mut init_pass = encoder.begin_render_pass(&init_pass_builder.descriptor());
 
@@ -388,16 +319,12 @@ impl Game {
                 };
 
                 // final render pass
-                // TODO: use a separate resolve target that we then blit to the swap chain
-                //       so we don't have to render twice for screenshots
                 {
                     // quad_commands must outlive final pass
                     let mut quad_commands = Vec::new();
                     let mut glyph_commands = Vec::new();
 
-                    let final_pass_builder = gfx_state
-                        .final_pass_target()
-                        .render_pass_builder(Some(color_attachment_view));
+                    let final_pass_builder = gfx_state.final_pass_target().render_pass_builder();
                     let mut final_pass =
                         encoder.begin_render_pass(&final_pass_builder.descriptor());
 
@@ -410,8 +337,7 @@ impl Game {
                     self.ui_renderer.render_pass(
                         &gfx_state,
                         &mut final_pass,
-                        width,
-                        height,
+                        Extent2d { width, height },
                         self.client.time(),
                         &ui_state,
                         &mut quad_commands,
@@ -419,93 +345,28 @@ impl Game {
                     );
                 }
 
-                let screenshot_target = self.screenshot_path.borrow().as_ref().map(|_| {
-                    gfx_state.device().create_texture(&wgpu::TextureDescriptor {
-                        label: Some("screenshot texture"),
-                        size: gfx_state.final_pass_target().size().into(),
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::COPY_SRC,
-                    })
-                });
-
-                // render to screenshot target
-                if let Some(ref target) = screenshot_target {
-                    // re-record UI commands (XXX this is a huge waste :( )
-                    let mut quad_commands = Vec::new();
-                    let mut glyph_commands = Vec::new();
-
-                    let view = target.create_default_view();
-                    let screenshot_pass_builder = gfx_state
-                        .final_pass_target()
-                        .render_pass_builder(Some(&view));
-                    let mut screenshot_pass =
-                        encoder.begin_render_pass(&screenshot_pass_builder.descriptor());
-
-                    state.postprocess_renderer.record_draw(
-                        gfx_state,
-                        &mut screenshot_pass,
-                        self.client.color_shift(),
-                    );
-
-                    self.ui_renderer.render_pass(
-                        &gfx_state,
-                        &mut screenshot_pass,
-                        width,
-                        height,
-                        self.client.time(),
-                        &ui_state,
-                        &mut quad_commands,
-                        &mut glyph_commands,
-                    );
-                }
-
-                // bytes_per_row must be a multiple of 256
-                // 4 bytes per pixel, so width must be multiple of 64
-                let ss_buf_width = (width + 63) / 64 * 64;
-
-                // create buffer to read screenshot target
-                let screenshot_buffer = screenshot_target.as_ref().map(|_| {
-                    gfx_state.device().create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("screenshot buffer"),
-                        size: {
-                            let target_size = gfx_state.final_pass_target().size();
-                            (ss_buf_width * target_size.height * 4) as u64
+                // screenshot setup
+                let capture = self.screenshot_path.borrow().as_ref().map(|_| {
+                    let cap = Capture::new(gfx_state.device(), Extent2d { width, height });
+                    cap.copy_from_texture(
+                        &mut encoder,
+                        wgpu::TextureCopyView {
+                            texture: gfx_state.final_pass_target().resolve_attachment(),
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
                         },
-                        usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::MAP_READ,
-                        mapped_at_creation: false,
-                    })
+                    );
+                    cap
                 });
 
-                let screenshot_path = match self.screenshot_path.replace(None) {
-                    Some(path) => {
-                        encoder.copy_texture_to_buffer(
-                            wgpu::TextureCopyView {
-                                texture: screenshot_target.as_ref().unwrap(),
-                                mip_level: 0,
-                                origin: wgpu::Origin3d::ZERO,
-                            },
-                            wgpu::BufferCopyView {
-                                buffer: screenshot_buffer.as_ref().unwrap(),
-                                layout: wgpu::TextureDataLayout {
-                                    offset: 0,
-                                    bytes_per_row: ss_buf_width * 4,
-                                    rows_per_image: 0,
-                                },
-                            },
-                            wgpu::Extent3d {
-                                width,
-                                height,
-                                depth: 0,
-                            },
-                        );
-                        Some(path)
-                    }
-
-                    None => None,
-                };
+                // blit to swap chain
+                {
+                    let swap_chain_target =
+                        SwapChainTarget::with_swap_chain_view(color_attachment_view);
+                    let blit_pass_builder = swap_chain_target.render_pass_builder();
+                    let mut blit_pass = encoder.begin_render_pass(&blit_pass_builder.descriptor());
+                    gfx_state.blit_pipeline().blit(gfx_state, &mut blit_pass);
+                }
 
                 let command_buffer = encoder.finish();
                 {
@@ -514,31 +375,12 @@ impl Game {
                     gfx_state.device().poll(wgpu::Maintain::Wait);
                 }
 
-                let screenshot_data = screenshot_buffer.map(|b| {
-                    let mut data = Vec::new();
-                    {
-                        let slice = b.slice(..);
-                        let map_future = slice.map_async(wgpu::MapMode::Read);
-                        gfx_state.device().poll(wgpu::Maintain::Wait);
-                        futures::executor::block_on(map_future).unwrap();
-                        let mapped = b.slice(..).get_mapped_range();
-                        for row in mapped.chunks(ss_buf_width as usize * 4) {
-                            data.extend_from_slice(&row[..width as usize * 4]);
-                        }
-                    }
-                    b.unmap();
-                    data
-                });
-
-                screenshot_data.map(|data| {
-                    let f = File::create(screenshot_path.as_ref().unwrap()).unwrap();
-                    let w = BufWriter::new(f);
-
-                    let mut encoder = png::Encoder::new(w, width, height);
-                    encoder.set_color(png::ColorType::RGBA);
-                    encoder.set_depth(png::BitDepth::Eight);
-                    let mut writer = encoder.write_header().unwrap();
-                    writer.write_image_data(&data).unwrap();
+                // write screenshot if requested and clear screenshot path
+                self.screenshot_path.replace(None).map(|path| {
+                    capture
+                        .as_ref()
+                        .unwrap()
+                        .write_to_file(gfx_state.device(), path)
                 });
             }
         }

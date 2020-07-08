@@ -19,7 +19,7 @@ use crate::{
                 quad::{QuadRenderer, QuadRendererCommand, QuadUniforms},
             },
             uniform::{self, DynamicUniformBufferBlock},
-            GraphicsState,
+            Extent2d, GraphicsState,
         },
     },
     common::{console::Console, util::any_slice_as_bytes},
@@ -94,7 +94,6 @@ pub struct UiRenderer {
     hud_renderer: HudRenderer,
     glyph_renderer: GlyphRenderer,
     quad_renderer: QuadRenderer,
-    quad_uniform_blocks: RefCell<Vec<DynamicUniformBufferBlock<QuadUniforms>>>,
 }
 
 impl UiRenderer {
@@ -105,38 +104,14 @@ impl UiRenderer {
             hud_renderer: HudRenderer::new(state),
             glyph_renderer: GlyphRenderer::new(state),
             quad_renderer: QuadRenderer::new(state),
-            quad_uniform_blocks: RefCell::new(Vec::new()),
         }
-    }
-
-    pub fn update_uniform_buffers(
-        &self,
-        state: &GraphicsState,
-        display_width: u32,
-        display_height: u32,
-        _time: Duration,
-        quad_commands: &[QuadRendererCommand],
-    ) {
-        trace!("Updating UI uniform buffers");
-
-        let quad_uniforms =
-            self.quad_renderer
-                .generate_uniforms(quad_commands, display_width, display_height);
-
-        uniform::clear_and_rewrite(
-            state.queue(),
-            &mut state.quad_uniform_buffer_mut(),
-            &mut self.quad_uniform_blocks.borrow_mut(),
-            &quad_uniforms,
-        );
     }
 
     pub fn render_pass<'pass>(
         &'pass self,
         state: &'pass GraphicsState,
         pass: &mut wgpu::RenderPass<'pass>,
-        display_width: u32,
-        display_height: u32,
+        target_size: Extent2d,
         time: Duration,
         ui_state: &UiState<'pass>,
         quad_commands: &'pass mut Vec<QuadRendererCommand<'pass>>,
@@ -165,21 +140,9 @@ impl UiRenderer {
             }
         }
 
-        self.update_uniform_buffers(state, display_width, display_height, time, quad_commands);
-
-        let glyph_instances =
-            self.glyph_renderer
-                .generate_instances(glyph_commands, display_width, display_height);
-        state
-            .queue()
-            .write_buffer(state.glyph_instance_buffer(), 0, unsafe {
-                any_slice_as_bytes(&glyph_instances)
-            });
-
-        let quad_blocks = self.quad_uniform_blocks.borrow();
         self.quad_renderer
-            .record_draw(state, pass, quad_commands, &quad_blocks);
+            .record_draw(state, pass, target_size, quad_commands);
         self.glyph_renderer
-            .record_draw(state, pass, glyph_instances.len() as u32);
+            .record_draw(state, pass, target_size, glyph_commands);
     }
 }
