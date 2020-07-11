@@ -274,12 +274,11 @@ impl Game {
                 let aspect_ratio = width as f32 / height as f32;
                 let fov_x = self.cvars.borrow().get_value("fov").unwrap();
                 let fov_y = math::fov_x_to_fov_y(cgmath::Deg(fov_x), aspect_ratio).unwrap();
-                let perspective = cgmath::perspective(fov_y, aspect_ratio, 4.0, 4096.0);
 
                 let camera = Camera::new(
                     self.client.view_origin(),
                     self.client.view_angles(self.client.time()).unwrap(),
-                    perspective,
+                    cgmath::perspective(fov_y, aspect_ratio, 4.0, 4096.0),
                 );
 
                 info!("Beginning render pass");

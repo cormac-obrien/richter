@@ -118,9 +118,7 @@ impl BrushPipeline {
 
         let mut texture_uniform_buffer = DynamicUniformBuffer::new(&device);
         let texture_uniform_blocks = TextureKind::iter()
-            .map(|kind| {
-                texture_uniform_buffer.allocate(TextureUniforms { kind })
-            })
+            .map(|kind| texture_uniform_buffer.allocate(TextureUniforms { kind }))
             .collect();
         texture_uniform_buffer.flush(&queue);
 
@@ -322,6 +320,9 @@ pub struct BrushTexture {
 #[derive(Debug)]
 struct BrushFace {
     vertices: Range<u32>,
+    min: Vector3<f32>,
+    max: Vector3<f32>,
+
     texture_id: usize,
 
     lightmap_ids: Vec<usize>,
@@ -400,11 +401,22 @@ impl BrushRendererBuilder {
         let texinfo = &self.bsp_data.texinfo()[face.texinfo_id];
         let tex = &self.bsp_data.textures()[texinfo.tex_id];
 
+        let mut min = Vector3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
+        let mut max = Vector3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+
+        let no_collinear =
+            math::remove_collinear(self.bsp_data.face_iter_vertices(face_id).collect());
+
+        for vert in no_collinear.iter() {
+            for component in 0..3 {
+                min[component] = min[component].min(vert[component]);
+                max[component] = max[component].max(vert[component]);
+            }
+        }
+
         if tex.name().starts_with("*") {
             // tessellate the surface so we can do texcoord warping
-            let verts = warp::subdivide(math::remove_collinear(
-                self.bsp_data.face_iter_vertices(face_id).collect(),
-            ));
+            let verts = warp::subdivide(no_collinear);
             let normal = (verts[0] - verts[1]).cross(verts[2] - verts[1]).normalize();
             for vert in verts.into_iter() {
                 self.vertices.push(BrushVertex {
@@ -427,8 +439,7 @@ impl BrushRendererBuilder {
             // v1 is the base vertex, so it remains constant.
             // v2 takes the previous value of v3.
             // v3 is the newest vertex.
-            let verts =
-                math::remove_collinear(self.bsp_data.face_iter_vertices(face_id).collect());
+            let verts = no_collinear;
             let normal = (verts[0] - verts[1]).cross(verts[2] - verts[1]).normalize();
             let mut vert_iter = verts.into_iter();
 
@@ -484,6 +495,8 @@ impl BrushRendererBuilder {
 
         BrushFace {
             vertices: face_vert_id as u32..self.vertices.len() as u32,
+            min,
+            max,
             texture_id: texinfo.tex_id as usize,
             lightmap_ids,
             light_styles: face.light_styles,
@@ -672,11 +685,14 @@ impl BrushRenderer {
             let pvs = self
                 .bsp_data
                 .get_pvs(self.bsp_data.find_leaf(camera.origin), leaves.len());
+
+            // only draw faces in pvs
             for leaf_id in pvs {
                 for facelist_id in leaves[leaf_id].facelist_ids.clone() {
-                    self.faces[self.bsp_data.facelist()[facelist_id]]
-                        .draw_flag
-                        .set(true);
+                    let face = &self.faces[self.bsp_data.facelist()[facelist_id]];
+
+                    // TODO: frustum culling
+                    face.draw_flag.set(true);
                 }
             }
         }
