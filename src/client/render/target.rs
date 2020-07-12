@@ -18,13 +18,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::client::render::{Extent2d, DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT};
+use crate::client::render::{
+    Extent2d, DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
+};
 
 /// Create a texture suitable for use as a color attachment.
 ///
-/// This texture can be resolved using a swap chain texture as its target.
-///
-/// The underlying texture will have the OUTPUT_ATTACHMENT flag as well as
+/// The resulting texture will have the OUTPUT_ATTACHMENT flag as well as
 /// any flags specified by `usage`.
 pub fn create_color_attachment(
     device: &wgpu::Device,
@@ -39,6 +39,27 @@ pub fn create_color_attachment(
         sample_count,
         dimension: wgpu::TextureDimension::D2,
         format: DIFFUSE_ATTACHMENT_FORMAT,
+        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | usage,
+    })
+}
+
+/// Create a texture suitable for use as a normal attachment.
+///
+/// The resulting texture will have the OUTPUT_ATTACHMENT flag as well as
+/// any flags specified by `usage`.
+pub fn create_normal_attachment(
+    device: &wgpu::Device,
+    size: Extent2d,
+    sample_count: u32,
+    usage: wgpu::TextureUsage,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("geometry attachment"),
+        size: size.into(),
+        mip_level_count: 1,
+        sample_count,
+        dimension: wgpu::TextureDimension::D2,
+        format: NORMAL_ATTACHMENT_FORMAT,
         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | usage,
     })
 }
@@ -110,7 +131,7 @@ impl InitialPassTarget {
         let diffuse_attachment =
             create_color_attachment(device, size, sample_count, wgpu::TextureUsage::SAMPLED);
         let normal_attachment =
-            create_color_attachment(device, size, sample_count, wgpu::TextureUsage::SAMPLED);
+            create_normal_attachment(device, size, sample_count, wgpu::TextureUsage::SAMPLED);
         let depth_attachment =
             create_depth_attachment(device, size, sample_count, wgpu::TextureUsage::SAMPLED);
 
@@ -122,10 +143,10 @@ impl InitialPassTarget {
             size,
             sample_count,
             diffuse_attachment,
-            normal_attachment,
-            depth_attachment,
             diffuse_view,
+            normal_attachment,
             normal_view,
+            depth_attachment,
             depth_view,
         }
     }
@@ -192,6 +213,62 @@ impl RenderTarget for InitialPassTarget {
                 }),
                 stencil_ops: None,
             }),
+        }
+    }
+}
+
+pub struct DeferredPassTarget {
+    size: Extent2d,
+    sample_count: u32,
+    color_attachment: wgpu::Texture,
+    color_view: wgpu::TextureView,
+}
+
+impl DeferredPassTarget {
+    pub fn new(device: &wgpu::Device, size: Extent2d, sample_count: u32) -> DeferredPassTarget {
+        let color_attachment =
+            create_color_attachment(device, size, sample_count, wgpu::TextureUsage::SAMPLED);
+        let color_view = color_attachment.create_default_view();
+
+        DeferredPassTarget {
+            size,
+            sample_count,
+            color_attachment,
+            color_view,
+        }
+    }
+
+    pub fn size(&self) -> Extent2d {
+        self.size
+    }
+
+    pub fn sample_count(&self) -> u32 {
+        self.sample_count
+    }
+
+    pub fn color_attachment(&self) -> &wgpu::Texture {
+        &self.color_attachment
+    }
+
+    pub fn color_view(&self) -> &wgpu::TextureView {
+        &self.color_view
+    }
+}
+
+impl RenderTarget for DeferredPassTarget {
+    fn render_pass_builder<'a>(&'a self) -> RenderPassBuilder {
+        RenderPassBuilder {
+            color_attachments: vec![
+                wgpu::RenderPassColorAttachmentDescriptor {
+                    attachment: self.color_view(),
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: true,
+                    },
+                },
+            ],
+            depth_attachment: None,
         }
     }
 }

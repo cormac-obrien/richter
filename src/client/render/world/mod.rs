@@ -1,5 +1,6 @@
 pub mod alias;
 pub mod brush;
+pub mod deferred;
 pub mod postprocess;
 pub mod sprite;
 
