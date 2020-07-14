@@ -21,7 +21,7 @@ nom = "3.2.1"
 num = "0.1.42"
 num-derive = "0.1.42"
 png = "0.16"
-rand = "0.4.2"
+rand = { version = "0.7", features = ["small_rng"] }
 regex = "0.2.6"
 rodio = "0.11.0"
 serde = { version = "1.0", features = ["derive"] }
