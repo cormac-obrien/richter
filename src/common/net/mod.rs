@@ -294,124 +294,46 @@ pub enum TempEntityCode {
     Lightning3 = 9,
     LavaSplash = 10,
     Teleport = 11,
-    Explosion2 = 12,
-    Beam = 13,
+    ColorExplosion = 12,
+    Grapple = 13,
 }
 
-/// Information used to initialize a temporary entity that exists at a single point in space.
-#[derive(Debug, PartialEq)]
-pub struct TempEntityPoint {
-    origin: Vector3<f32>,
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PointEntityKind {
+    Spike,
+    SuperSpike,
+    Gunshot,
+    Explosion,
+    ColorExplosion { color_start: u8, color_len: u8 },
+    TarExplosion,
+    WizSpike,
+    KnightSpike,
+    LavaSplash,
+    Teleport,
 }
 
-impl TempEntityPoint {
-    fn deserialize<R>(reader: &mut R) -> Result<TempEntityPoint, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let origin = read_coord_vector3(reader)?;
-        Ok(TempEntityPoint { origin })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        write_coord_vector3(writer, self.origin)?;
-        Ok(())
-    }
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BeamEntityKind {
+    /// Lightning bolt
+    Lightning {
+        /// id of the lightning model to use. must be 1, 2, or 3.
+        model_id: u8,
+    },
+    /// Grappling hook cable
+    Grapple,
 }
 
-/// Information used to initialize a temporary entity that spans a line segment.
-#[derive(Debug, PartialEq)]
-pub struct TempEntityBeam {
-    entity_id: u16,
-    start: Vector3<f32>,
-    end: Vector3<f32>,
-}
-
-impl TempEntityBeam {
-    fn deserialize<R>(reader: &mut R) -> Result<TempEntityBeam, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let entity_id = reader.read_u16::<LittleEndian>()?;
-
-        let start = read_coord_vector3(reader)?;
-        let end = read_coord_vector3(reader)?;
-
-        Ok(TempEntityBeam {
-            entity_id,
-            start,
-            end,
-        })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        write_coord_vector3(writer, self.start)?;
-        write_coord_vector3(writer, self.end)?;
-
-        Ok(())
-    }
-}
-
-/// Information used to initialize a temporary entity representing a color-mapped explosion.
-#[derive(Debug, PartialEq)]
-pub struct TempEntityColorExplosion {
-    origin: Vector3<f32>,
-    color_start: u8,
-    color_len: u8,
-}
-
-impl TempEntityColorExplosion {
-    fn deserialize<R>(reader: &mut R) -> Result<TempEntityColorExplosion, NetError>
-    where
-        R: BufRead + ReadBytesExt,
-    {
-        let origin = read_coord_vector3(reader)?;
-
-        let color_start = reader.read_u8()?;
-        let color_len = reader.read_u8()?;
-
-        Ok(TempEntityColorExplosion {
-            origin,
-            color_start,
-            color_len,
-        })
-    }
-
-    fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
-    where
-        W: WriteBytesExt,
-    {
-        write_coord_vector3(writer, self.origin)?;
-
-        writer.write_u8(self.color_start)?;
-        writer.write_u8(self.color_len)?;
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TempEntity {
-    Spike(TempEntityPoint),
-    SuperSpike(TempEntityPoint),
-    Gunshot(TempEntityPoint),
-    Explosion(TempEntityPoint),
-    TarExplosion(TempEntityPoint),
-    Lightning1(TempEntityBeam),
-    Lightning2(TempEntityBeam),
-    WizSpike(TempEntityPoint),
-    KnightSpike(TempEntityPoint),
-    Lightning3(TempEntityBeam),
-    LavaSplash(TempEntityPoint),
-    Teleport(TempEntityPoint),
-    Explosion2(TempEntityColorExplosion),
-    Beam(TempEntityBeam),
+    Point {
+        kind: PointEntityKind,
+        origin: Vector3<f32>,
+    },
+    Beam {
+        kind: BeamEntityKind,
+        start: Vector3<f32>,
+        end: Vector3<f32>,
+    },
 }
 
 impl TempEntity {
@@ -430,39 +352,63 @@ impl TempEntity {
             }
         };
 
+        use TempEntity::*;
+        use TempEntityCode as Code;
+
         Ok(match code {
-            TempEntityCode::Spike => TempEntity::Spike(TempEntityPoint::deserialize(reader)?),
-            TempEntityCode::SuperSpike => {
-                TempEntity::SuperSpike(TempEntityPoint::deserialize(reader)?)
+            Code::Spike
+            | Code::SuperSpike
+            | Code::Gunshot
+            | Code::Explosion
+            | Code::TarExplosion
+            | Code::WizSpike
+            | Code::KnightSpike
+            | Code::LavaSplash
+            | Code::Teleport => Point {
+                kind: match code {
+                    Code::Spike => PointEntityKind::Spike,
+                    Code::SuperSpike => PointEntityKind::SuperSpike,
+                    Code::Gunshot => PointEntityKind::Gunshot,
+                    Code::Explosion => PointEntityKind::Explosion,
+                    Code::TarExplosion => PointEntityKind::TarExplosion,
+                    Code::WizSpike => PointEntityKind::WizSpike,
+                    Code::KnightSpike => PointEntityKind::KnightSpike,
+                    Code::LavaSplash => PointEntityKind::LavaSplash,
+                    Code::Teleport => PointEntityKind::Teleport,
+                    _ => unreachable!(),
+                },
+                origin: read_coord_vector3(reader)?,
+            },
+            Code::ColorExplosion => {
+                let origin = read_coord_vector3(reader)?;
+                let color_start = reader.read_u8()?;
+                let color_len = reader.read_u8()?;
+
+                Point {
+                    origin,
+                    kind: PointEntityKind::ColorExplosion {
+                        color_start,
+                        color_len,
+                    },
+                }
             }
-            TempEntityCode::Gunshot => TempEntity::Gunshot(TempEntityPoint::deserialize(reader)?),
-            TempEntityCode::Explosion => {
-                TempEntity::Explosion(TempEntityPoint::deserialize(reader)?)
-            }
-            TempEntityCode::TarExplosion => {
-                TempEntity::TarExplosion(TempEntityPoint::deserialize(reader)?)
-            }
-            TempEntityCode::Lightning1 => {
-                TempEntity::Lightning1(TempEntityBeam::deserialize(reader)?)
-            }
-            TempEntityCode::Lightning2 => {
-                TempEntity::Lightning2(TempEntityBeam::deserialize(reader)?)
-            }
-            TempEntityCode::WizSpike => TempEntity::WizSpike(TempEntityPoint::deserialize(reader)?),
-            TempEntityCode::KnightSpike => {
-                TempEntity::KnightSpike(TempEntityPoint::deserialize(reader)?)
-            }
-            TempEntityCode::Lightning3 => {
-                TempEntity::Lightning3(TempEntityBeam::deserialize(reader)?)
-            }
-            TempEntityCode::LavaSplash => {
-                TempEntity::LavaSplash(TempEntityPoint::deserialize(reader)?)
-            }
-            TempEntityCode::Teleport => TempEntity::Teleport(TempEntityPoint::deserialize(reader)?),
-            TempEntityCode::Explosion2 => {
-                TempEntity::Explosion2(TempEntityColorExplosion::deserialize(reader)?)
-            }
-            TempEntityCode::Beam => TempEntity::Beam(TempEntityBeam::deserialize(reader)?),
+            Code::Lightning1 | Code::Lightning2 | Code::Lightning3 => Beam {
+                kind: BeamEntityKind::Lightning {
+                    model_id: match code {
+                        Code::Lightning1 => 1,
+                        Code::Lightning2 => 2,
+                        Code::Lightning3 => 3,
+                        _ => unreachable!(),
+                    },
+                },
+                start: read_coord_vector3(reader)?,
+                end: read_coord_vector3(reader)?,
+            },
+            Code::Grapple => Beam {
+                kind: BeamEntityKind::Grapple,
+                start: read_coord_vector3(reader)?,
+                end: read_coord_vector3(reader)?,
+            },
         })
     }
 
@@ -470,62 +416,65 @@ impl TempEntity {
     where
         W: WriteBytesExt,
     {
+        use TempEntityCode as Code;
+
         match *self {
-            TempEntity::Spike(ref point) => {
-                writer.write_u8(TempEntityCode::Spike as u8)?;
-                point.serialize(writer)?;
+            TempEntity::Point { kind, origin } => {
+                use PointEntityKind as Pk;
+                match kind {
+                    Pk::Spike
+                    | Pk::SuperSpike
+                    | Pk::Gunshot
+                    | Pk::Explosion
+                    | Pk::TarExplosion
+                    | Pk::WizSpike
+                    | Pk::KnightSpike
+                    | Pk::LavaSplash
+                    | Pk::Teleport => {
+                        let code = match kind {
+                            Pk::Spike => Code::Spike,
+                            Pk::SuperSpike => Code::SuperSpike,
+                            Pk::Gunshot => Code::Gunshot,
+                            Pk::Explosion => Code::Explosion,
+                            Pk::TarExplosion => Code::TarExplosion,
+                            Pk::WizSpike => Code::WizSpike,
+                            Pk::KnightSpike => Code::KnightSpike,
+                            Pk::LavaSplash => Code::LavaSplash,
+                            Pk::Teleport => Code::Teleport,
+                            _ => unreachable!(),
+                        };
+
+                        // write code
+                        writer.write_u8(code as u8)?;
+                    }
+                    PointEntityKind::ColorExplosion {
+                        color_start,
+                        color_len,
+                    } => {
+                        // write code and colors
+                        writer.write_u8(Code::ColorExplosion as u8)?;
+                        writer.write_u8(color_start)?;
+                        writer.write_u8(color_len)?;
+                    }
+                };
+
+                write_coord_vector3(writer, origin)?;
             }
-            TempEntity::SuperSpike(ref point) => {
-                writer.write_u8(TempEntityCode::SuperSpike as u8)?;
-                point.serialize(writer)?;
-            }
-            TempEntity::Gunshot(ref point) => {
-                writer.write_u8(TempEntityCode::Gunshot as u8)?;
-                point.serialize(writer)?;
-            }
-            TempEntity::Explosion(ref point) => {
-                writer.write_u8(TempEntityCode::Explosion as u8)?;
-                point.serialize(writer)?;
-            }
-            TempEntity::TarExplosion(ref point) => {
-                writer.write_u8(TempEntityCode::TarExplosion as u8)?;
-                point.serialize(writer)?;
-            }
-            TempEntity::Lightning1(ref beam) => {
-                writer.write_u8(TempEntityCode::Lightning1 as u8)?;
-                beam.serialize(writer)?;
-            }
-            TempEntity::Lightning2(ref beam) => {
-                writer.write_u8(TempEntityCode::Lightning2 as u8)?;
-                beam.serialize(writer)?;
-            }
-            TempEntity::WizSpike(ref point) => {
-                writer.write_u8(TempEntityCode::WizSpike as u8)?;
-                point.serialize(writer)?;
-            }
-            TempEntity::KnightSpike(ref point) => {
-                writer.write_u8(TempEntityCode::KnightSpike as u8)?;
-                point.serialize(writer)?;
-            }
-            TempEntity::Lightning3(ref beam) => {
-                writer.write_u8(TempEntityCode::Lightning3 as u8)?;
-                beam.serialize(writer)?;
-            }
-            TempEntity::LavaSplash(ref point) => {
-                writer.write_u8(TempEntityCode::LavaSplash as u8)?;
-                point.serialize(writer)?;
-            }
-            TempEntity::Teleport(ref point) => {
-                writer.write_u8(TempEntityCode::Teleport as u8)?;
-                point.serialize(writer)?;
-            }
-            TempEntity::Explosion2(ref expl) => {
-                writer.write_u8(TempEntityCode::Explosion2 as u8)?;
-                expl.serialize(writer)?;
-            }
-            TempEntity::Beam(ref beam) => {
-                writer.write_u8(TempEntityCode::Beam as u8)?;
-                beam.serialize(writer)?;
+
+            TempEntity::Beam { kind, start, end } => {
+                let code = match kind {
+                    BeamEntityKind::Lightning { model_id } => match model_id {
+                        1 => Code::Lightning1,
+                        2 => Code::Lightning2,
+                        3 => Code::Lightning3,
+                        // TODO: error
+                        _ => panic!("invalid lightning model id: {}", model_id),
+                    },
+                    BeamEntityKind::Grapple => Code::Grapple,
+                };
+                writer.write_u8(code as u8)?;
+                write_coord_vector3(writer, start)?;
+                write_coord_vector3(writer, end)?;
             }
         }
 

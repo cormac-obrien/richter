@@ -43,6 +43,7 @@ use std::{
 
 use crate::{
     client::{
+        entity::particle::{ParticleList, MAX_PARTICLES},
         input::game::{Action, GameInput},
         sound::{AudioSource, Channel, Listener, StaticSound},
         trace::{TraceEntity, TraceFrame},
@@ -57,9 +58,9 @@ use crate::{
         net::{
             self,
             connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION},
-            BlockingMode, ButtonFlags, ClientCmd, ClientStat, ColorShift, EntityEffects,
-            EntityState, GameType, ItemFlags, NetError, PlayerColor, QSocket, ServerCmd,
-            SignOnStage, TempEntity,
+            BeamEntityKind, BlockingMode, ButtonFlags, ClientCmd, ClientStat, ColorShift,
+            EntityEffects, EntityState, GameType, ItemFlags, NetError, PlayerColor,
+            PointEntityKind, QSocket, ServerCmd, SignOnStage, TempEntity,
         },
         vfs::Vfs,
     },
@@ -297,6 +298,9 @@ struct ClientState {
     // static entities
     static_entities: Vec<ClientEntity>,
 
+    // all active particles
+    particles: ParticleList,
+
     // visible entities, updated per-frame
     visible_entity_ids: Vec<usize>,
 
@@ -364,6 +368,7 @@ impl ClientState {
             static_sounds: Vec::new(),
             entities: Vec::new(),
             static_entities: Vec::new(),
+            particles: ParticleList::with_capacity(MAX_PARTICLES),
             visible_entity_ids: Vec::new(),
             light_styles: HashMap::new(),
             stats: [0; MAX_STATS],
@@ -1285,7 +1290,9 @@ impl Client {
                     ));
                 }
 
-                ServerCmd::TempEntity { temp_entity } => self.spawn_temp_entity(&temp_entity),
+                ServerCmd::TempEntity { temp_entity } => {
+                    self.spawn_temp_entity(self.state.time, &temp_entity)
+                }
 
                 ServerCmd::StuffText { text } => self.console.borrow_mut().stuff_text(text),
 
@@ -1834,8 +1841,89 @@ impl Client {
         .unwrap();
     }
 
-    pub fn spawn_temp_entity(&self, _temp_entity: &TempEntity) {
-        warn!("Temporary entities not yet implemented!");
+    pub fn spawn_temp_entity(&mut self, time: Duration, temp_entity: &TempEntity) {
+        use TempEntity::*;
+        match temp_entity {
+            Point { kind, origin } => {
+                use PointEntityKind::*;
+                match kind {
+                    // projectile impacts
+                    WizSpike | KnightSpike | Spike | SuperSpike | Gunshot => {
+                        let (color, count) = match kind {
+                            // TODO: start wizard/hit.wav
+                            WizSpike => (20, 30),
+
+                            // TODO: start hknight/hit.wav
+                            KnightSpike => (226, 20),
+
+                            // TODO: for Spike and SuperSpike, start one of:
+                            // - 26.67%: weapons/tink1.wav
+                            // - 20.0%: weapons/ric1.wav
+                            // - 20.0%: weapons/ric2.wav
+                            // - 20.0%: weapons/ric3.wav
+                            Spike => (0, 10),
+                            SuperSpike => (0, 20),
+
+                            // no sound
+                            Gunshot => (0, 20),
+                            _ => unreachable!(),
+                        };
+
+                        self.state.particles.create_projectile_impact(
+                            self.state.time,
+                            *origin,
+                            Vector3::zero(),
+                            color,
+                            count,
+                        );
+                    }
+
+                    Explosion => {
+                        self.state.particles.create_explosion(time, *origin);
+                        // TODO: dynamic light here
+                        // TODO: start weapons/r_exp3
+                    }
+
+                    ColorExplosion {
+                        color_start,
+                        color_len,
+                    } => self.state.particles.create_color_explosion(
+                        time,
+                        *origin,
+                        (*color_start)..=(*color_start + *color_len - 1),
+                    ),
+
+                    TarExplosion => {
+                        self.state.particles.create_spawn_explosion(time, *origin);
+                        // TODO: start weapons/r_exp3 (same sound as rocket explosion)
+                    }
+
+                    LavaSplash => self.state.particles.create_lava_splash(time, *origin),
+                    Teleport => self.state.particles.create_teleporter_warp(time, *origin),
+                }
+            }
+
+            Beam { kind, start, end } => {
+                use BeamEntityKind::*;
+                match kind {
+                    Lightning { model_id } => {
+                        let model_name = format!(
+                            "progs/bolt{}.mdl",
+                            match model_id {
+                                1 => "",
+                                2 => "2",
+                                3 => "3",
+                                x => panic!("invalid lightning model id: {}", x),
+                            }
+                        );
+                        // TODO: spawn beam
+                    }
+                    Grapple => {
+                        // TODO: spawn beam
+                    }
+                }
+            }
+        }
     }
 
     pub fn items(&self) -> ItemFlags {
