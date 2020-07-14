@@ -1,4 +1,4 @@
-// Copyright © 2018 Cormac O'Brien
+// Copyright © 2020 Cormac O'Brien
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -19,6 +19,7 @@
 // SOFTWARE.
 
 mod cvars;
+pub mod entity;
 pub mod error;
 pub mod input;
 pub mod menu;
@@ -64,7 +65,7 @@ use crate::{
     },
 };
 
-use cgmath::{Angle, Deg, Euler, InnerSpace, Matrix4, Vector3, Zero};
+use cgmath::{Angle, Deg, InnerSpace, Matrix4, Vector3, Zero};
 use chrono::Duration;
 use failure::{Error, ResultExt};
 use flame;

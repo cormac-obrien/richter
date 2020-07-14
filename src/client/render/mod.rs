@@ -29,12 +29,20 @@
 ///     - `BrushPipeline`
 ///     - `SpritePipeline`
 ///   - Output: `InitialPassTarget`
+/// - Deferred lighting pass
+///   - Inputs:
+///     - `DeferredPipeline`
+///   - Output: `DeferredPassTarget`
 /// - Final pass
 ///   - Inputs:
 ///     - `PostProcessPipeline`
 ///     - `QuadPipeline`
 ///     - `GlyphPipeline`
-///   - Output: `FinalPassTarget`, which is resolved onto the framebuffer
+///   - Output: `FinalPassTarget`
+/// - Blit to swap chain
+///   - Inputs:
+///     - `BlitPipeline`
+///   - Output: `SwapChainTarget`
 // mod atlas;
 mod blit;
 mod cvars;
@@ -54,7 +62,7 @@ pub use pipeline::Pipeline;
 pub use postprocess::PostProcessRenderer;
 pub use target::{RenderTarget, RenderTargetResolve, SwapChainTarget};
 pub use ui::{hud::HudState, UiOverlay, UiRenderer, UiState};
-pub use world::{Camera, WorldRenderer};
+pub use world::{Camera, WorldRenderer, deferred::{DeferredRenderer, DeferredUniforms}};
 
 use std::{
     borrow::Cow,
@@ -66,12 +74,13 @@ use std::{
 use crate::{
     client::render::{
         blit::BlitPipeline,
-        target::{FinalPassTarget, InitialPassTarget},
+        target::{DeferredPassTarget, FinalPassTarget, InitialPassTarget},
         ui::{glyph::GlyphPipeline, quad::QuadPipeline},
         uniform::DynamicUniformBuffer,
         world::{
             alias::AliasPipeline,
             brush::BrushPipeline,
+            deferred::DeferredPipeline,
             postprocess::{self, PostProcessPipeline},
             sprite::SpritePipeline,
             EntityUniforms,
@@ -84,7 +93,7 @@ use failure::Error;
 
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const DIFFUSE_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
-const NORMAL_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
+const NORMAL_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 const DIFFUSE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const FULLBRIGHT_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -220,56 +229,12 @@ impl std::convert::From<winit::dpi::PhysicalSize<u32>> for Extent2d {
     }
 }
 
-/// Create a texture suitable for use as a color attachment.
-///
-/// This texture can be resolved using a swap chain texture as its target.
-pub fn create_color_attachment(
-    device: &wgpu::Device,
-    width: u32,
-    height: u32,
-    sample_count: u32,
-) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("color attachment"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth: 1,
-        },
-        mip_level_count: 1,
-        sample_count,
-        dimension: wgpu::TextureDimension::D2,
-        format: DIFFUSE_ATTACHMENT_FORMAT,
-        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-    })
-}
-
-/// Create a texture suitable for use as a depth attachment.
-pub fn create_depth_attachment(
-    device: &wgpu::Device,
-    width: u32,
-    height: u32,
-    sample_count: u32,
-) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("depth attachment"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth: 1,
-        },
-        mip_level_count: 1,
-        sample_count,
-        dimension: wgpu::TextureDimension::D2,
-        format: DEPTH_ATTACHMENT_FORMAT,
-        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-    })
-}
-
 pub struct GraphicsState {
     device: wgpu::Device,
     queue: wgpu::Queue,
+
     initial_pass_target: InitialPassTarget,
+    deferred_pass_target: DeferredPassTarget,
     final_pass_target: FinalPassTarget,
 
     world_bind_group_layouts: Vec<wgpu::BindGroupLayout>,
@@ -286,6 +251,7 @@ pub struct GraphicsState {
     alias_pipeline: AliasPipeline,
     brush_pipeline: BrushPipeline,
     sprite_pipeline: SpritePipeline,
+    deferred_pipeline: DeferredPipeline,
     postprocess_pipeline: PostProcessPipeline,
     glyph_pipeline: GlyphPipeline,
     quad_pipeline: QuadPipeline,
@@ -313,6 +279,7 @@ impl GraphicsState {
         let mut compiler = shaderc::Compiler::new().unwrap();
 
         let initial_pass_target = InitialPassTarget::new(&device, size, sample_count);
+        let deferred_pass_target = DeferredPassTarget::new(&device, size, sample_count);
         let final_pass_target = FinalPassTarget::new(&device, size, sample_count);
 
         let frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -413,6 +380,7 @@ impl GraphicsState {
             &world_bind_group_layouts,
             sample_count,
         );
+        let deferred_pipeline = DeferredPipeline::new(&device, &mut compiler, sample_count);
         let postprocess_pipeline = PostProcessPipeline::new(&device, &mut compiler, sample_count);
         let quad_pipeline = QuadPipeline::new(&device, &mut compiler, sample_count);
         let glyph_pipeline = GlyphPipeline::new(&device, &mut compiler, sample_count);
@@ -435,6 +403,7 @@ impl GraphicsState {
             device,
             queue,
             initial_pass_target,
+            deferred_pass_target,
             final_pass_target,
             frame_uniform_buffer,
             entity_uniform_buffer,
@@ -447,6 +416,7 @@ impl GraphicsState {
             alias_pipeline,
             brush_pipeline,
             sprite_pipeline,
+            deferred_pipeline,
             postprocess_pipeline,
             glyph_pipeline,
             quad_pipeline,
@@ -521,6 +491,8 @@ impl GraphicsState {
             &self.world_bind_group_layouts,
             sample_count,
         );
+        self.deferred_pipeline
+            .rebuild(&self.device, &mut self.compiler.borrow_mut(), sample_count);
         self.postprocess_pipeline.rebuild(
             &self.device,
             &mut self.compiler.borrow_mut(),
@@ -544,6 +516,10 @@ impl GraphicsState {
 
     pub fn initial_pass_target(&self) -> &InitialPassTarget {
         &self.initial_pass_target
+    }
+
+    pub fn deferred_pass_target(&self) -> &DeferredPassTarget {
+        &self.deferred_pass_target
     }
 
     pub fn final_pass_target(&self) -> &FinalPassTarget {
@@ -598,6 +574,10 @@ impl GraphicsState {
 
     pub fn sprite_pipeline(&self) -> &SpritePipeline {
         &self.sprite_pipeline
+    }
+
+    pub fn deferred_pipeline(&self) -> &DeferredPipeline {
+        &self.deferred_pipeline
     }
 
     pub fn postprocess_pipeline(&self) -> &PostProcessPipeline {

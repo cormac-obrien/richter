@@ -1,5 +1,6 @@
 pub mod alias;
 pub mod brush;
+pub mod deferred;
 pub mod postprocess;
 pub mod sprite;
 
@@ -28,7 +29,7 @@ use crate::{
     },
 };
 
-use cgmath::{Deg, Euler, Matrix4, SquareMatrix as _, Vector3, Vector4};
+use cgmath::{Deg, Euler, InnerSpace, Matrix4, SquareMatrix as _, Vector3, Vector4};
 use chrono::Duration;
 
 lazy_static! {
@@ -100,6 +101,7 @@ pub struct Camera {
     origin: Vector3<f32>,
     angles: Angles,
     transform: Matrix4<f32>,
+    clipping_planes: [Vector4<f32>; 6],
 }
 
 impl Camera {
@@ -110,14 +112,33 @@ impl Camera {
     ) -> Camera {
         // convert coordinates
         let converted_origin = Vector3::new(-origin.y, origin.z, -origin.x);
+
         // translate the world by inverse of camera position
         let translation = Matrix4::from_translation(-converted_origin);
         let rotation = angles.mat4_wgpu();
+        let transform = projection * rotation * translation;
+
+        // see https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
+        let clipping_planes = [
+            // left
+            transform.w + transform.x,
+            // right
+            transform.w - transform.x,
+            // bottom
+            transform.w + transform.y,
+            // top
+            transform.w - transform.y,
+            // near
+            transform.w + transform.z,
+            // far
+            transform.w - transform.z,
+        ];
 
         Camera {
             origin,
             angles,
-            transform: projection * rotation * translation,
+            transform,
+            clipping_planes,
         }
     }
 
@@ -131,6 +152,18 @@ impl Camera {
 
     pub fn transform(&self) -> Matrix4<f32> {
         self.transform
+    }
+
+    // TODO: this seems to be too lenient
+    /// Determines whether a point falls outside the viewing frustum.
+    pub fn cull_point(&self, p: Vector3<f32>) -> bool {
+        for plane in self.clipping_planes.iter() {
+            if (self.transform * p.extend(1.0)).dot(*plane) < 0.0 {
+                return true;
+            }
+        }
+
+        false
     }
 }
 
@@ -385,14 +418,14 @@ impl WorldRenderer {
                         pitch: -cam_angles.pitch,
                         roll: angles.x,
                         yaw: -cam_angles.yaw,
-                    }.mat4_quake()
+                    }
+                    .mat4_quake()
                 }
             },
 
             _ => Matrix4::from(Euler::new(angles.x, angles.y, angles.z)),
         };
 
-        Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x))
-            * rotation
+        Matrix4::from_translation(Vector3::new(-origin.y, origin.z, -origin.x)) * rotation
     }
 }

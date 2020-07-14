@@ -34,9 +34,9 @@ use richter::{
         input::{Input, InputFocus},
         menu::Menu,
         render::{
-            Camera, Extent2d, GraphicsState, HudState, PostProcessRenderer, RenderTarget as _,
-            RenderTargetResolve as _, SwapChainTarget, UiOverlay, UiRenderer, UiState,
-            WorldRenderer,
+            Camera, DeferredRenderer, DeferredUniforms, Extent2d, GraphicsState, HudState,
+            PostProcessRenderer, RenderTarget as _, RenderTargetResolve as _, SwapChainTarget,
+            UiOverlay, UiRenderer, UiState, WorldRenderer,
         },
         trace::TraceFrame,
         Client,
@@ -48,7 +48,7 @@ use richter::{
     },
 };
 
-use cgmath;
+use cgmath::{self, SquareMatrix};
 use chrono::{Duration, Utc};
 use failure::Error;
 use log::info;
@@ -68,6 +68,7 @@ enum InGameFocus {
 struct InGameState {
     cmds: Rc<RefCell<CmdRegistry>>,
     world_renderer: WorldRenderer,
+    deferred_renderer: DeferredRenderer,
     postprocess_renderer: PostProcessRenderer,
     ui_renderer: Rc<UiRenderer>,
     focus: Rc<Cell<InGameFocus>>,
@@ -77,6 +78,7 @@ impl InGameState {
     pub fn new(
         cmds: Rc<RefCell<CmdRegistry>>,
         world_renderer: WorldRenderer,
+        deferred_renderer: DeferredRenderer,
         postprocess_renderer: PostProcessRenderer,
         ui_renderer: Rc<UiRenderer>,
         focus: InGameFocus,
@@ -125,6 +127,7 @@ impl InGameState {
         InGameState {
             cmds,
             world_renderer,
+            deferred_renderer,
             postprocess_renderer,
             ui_renderer,
             focus: focus_rc,
@@ -215,14 +218,22 @@ impl Game {
                     &mut self.cvars.borrow_mut(),
                 );
 
-                let postprocess_renderer = PostProcessRenderer::new(
+                let deferred_renderer = DeferredRenderer::new(
                     gfx_state,
                     gfx_state.initial_pass_target().diffuse_view(),
+                    gfx_state.initial_pass_target().normal_view(),
+                    gfx_state.initial_pass_target().depth_view(),
+                );
+
+                let postprocess_renderer = PostProcessRenderer::new(
+                    gfx_state,
+                    gfx_state.deferred_pass_target().color_view(),
                 );
 
                 self.state = GameState::InGame(InGameState::new(
                     self.cmds.clone(),
                     world_renderer,
+                    deferred_renderer,
                     postprocess_renderer,
                     self.ui_renderer.clone(),
                     InGameFocus::Game,
@@ -237,11 +248,14 @@ impl Game {
 
             GameState::InGame(ref state) => {
                 // set the proper focus
-                self.input.borrow_mut().set_focus(match state.focus.get() {
-                    InGameFocus::Game => InputFocus::Game,
-                    InGameFocus::Menu => InputFocus::Menu,
-                    InGameFocus::Console => InputFocus::Console,
-                }).unwrap();
+                self.input
+                    .borrow_mut()
+                    .set_focus(match state.focus.get() {
+                        InGameFocus::Game => InputFocus::Game,
+                        InGameFocus::Menu => InputFocus::Menu,
+                        InGameFocus::Console => InputFocus::Console,
+                    })
+                    .unwrap();
             }
         }
 
@@ -274,12 +288,12 @@ impl Game {
                 let aspect_ratio = width as f32 / height as f32;
                 let fov_x = self.cvars.borrow().get_value("fov").unwrap();
                 let fov_y = math::fov_x_to_fov_y(cgmath::Deg(fov_x), aspect_ratio).unwrap();
-                let perspective = cgmath::perspective(fov_y, aspect_ratio, 4.0, 4096.0);
 
+                let projection = cgmath::perspective(fov_y, aspect_ratio, 4.0, 4096.0);
                 let camera = Camera::new(
                     self.client.view_origin(),
                     self.client.view_angles(self.client.time()).unwrap(),
-                    perspective,
+                    projection,
                 );
 
                 info!("Beginning render pass");
@@ -302,6 +316,21 @@ impl Game {
                         self.client.lightstyle_values().unwrap().as_slice(),
                         &self.cvars.borrow(),
                     );
+                }
+
+                // deferred lighting pass
+                {
+                    let deferred_pass_builder =
+                        gfx_state.deferred_pass_target().render_pass_builder();
+                    let mut deferred_pass =
+                        encoder.begin_render_pass(&deferred_pass_builder.descriptor());
+                    let uniforms = DeferredUniforms {
+                        inv_projection: projection.invert().unwrap().into(),
+                    };
+
+                    state
+                        .deferred_renderer
+                        .record_draw(gfx_state, &mut deferred_pass, uniforms);
                 }
 
                 let ui_state = UiState::InGame {
