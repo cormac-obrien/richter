@@ -43,13 +43,14 @@ use std::{
 
 use crate::{
     client::{
-        entity::particle::{Particles, MAX_PARTICLES},
+        entity::{particle::{Particles, MAX_PARTICLES}, Beam, ClientEntity},
         input::game::{Action, GameInput},
         sound::{AudioSource, Channel, Listener, StaticSound},
         trace::{TraceEntity, TraceFrame},
         view::{IdleVars, KickVars, RollVars, View},
     },
     common::{
+        alloc::LinkedSlab,
         bsp,
         console::{CmdRegistry, Console, CvarRegistry},
         engine,
@@ -100,86 +101,6 @@ struct PlayerInfo {
     frags: i32,
     colors: PlayerColor,
     // translations: [u8; VID_GRADES],
-}
-
-#[derive(Debug)]
-pub struct ClientEntity {
-    force_link: bool,
-    baseline: EntityState,
-
-    msg_time: Duration,
-    msg_origins: [Vector3<f32>; 2],
-    origin: Vector3<f32>,
-    msg_angles: [Vector3<Deg<f32>>; 2],
-    angles: Vector3<Deg<f32>>,
-    model_id: usize,
-    frame_id: usize,
-    skin_id: usize,
-    sync_base: Duration,
-    effects: EntityEffects,
-    // vis_frame: usize,
-}
-
-impl ClientEntity {
-    pub fn from_baseline(baseline: EntityState) -> ClientEntity {
-        ClientEntity {
-            force_link: false,
-            baseline: baseline.clone(),
-            msg_time: Duration::zero(),
-            msg_origins: [Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0)],
-            origin: baseline.origin,
-            msg_angles: [
-                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            ],
-            angles: baseline.angles,
-            model_id: baseline.model_id,
-            frame_id: baseline.frame_id,
-            skin_id: baseline.skin_id,
-            sync_base: Duration::zero(),
-            effects: baseline.effects,
-        }
-    }
-
-    pub fn uninitialized() -> ClientEntity {
-        ClientEntity {
-            force_link: false,
-            baseline: EntityState::uninitialized(),
-            msg_time: Duration::zero(),
-            msg_origins: [Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0)],
-            origin: Vector3::new(0.0, 0.0, 0.0),
-            msg_angles: [
-                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            ],
-            angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            model_id: 0,
-            frame_id: 0,
-            skin_id: 0,
-            sync_base: Duration::zero(),
-            effects: EntityEffects::empty(),
-        }
-    }
-
-    pub fn get_origin(&self) -> Vector3<f32> {
-        self.origin
-    }
-
-    pub fn get_angles(&self) -> Vector3<Deg<f32>> {
-        self.angles
-    }
-
-    pub fn get_model_id(&self) -> usize {
-        self.model_id
-    }
-
-    pub fn get_frame_id(&self) -> usize {
-        self.frame_id
-    }
-
-    pub fn get_skin_id(&self) -> usize {
-        self.skin_id
-    }
 }
 
 struct ClientChannel {
@@ -292,11 +213,11 @@ struct ClientState {
     // ambient sounds (infinite looping, static position)
     static_sounds: Vec<StaticSound>,
 
-    // client-side entities
+    // entities and entity-like things
     entities: Vec<ClientEntity>,
-
-    // static entities
     static_entities: Vec<ClientEntity>,
+    temp_entities: LinkedSlab<Entity>,
+    beams: LinkedSlab<Beam>,
 
     // all active particles
     particles: Particles,
