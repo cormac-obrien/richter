@@ -43,7 +43,7 @@ use std::{
 
 use crate::{
     client::{
-        entity::particle::{ParticleList, MAX_PARTICLES},
+        entity::particle::{Particles, MAX_PARTICLES},
         input::game::{Action, GameInput},
         sound::{AudioSource, Channel, Listener, StaticSound},
         trace::{TraceEntity, TraceFrame},
@@ -299,7 +299,7 @@ struct ClientState {
     static_entities: Vec<ClientEntity>,
 
     // all active particles
-    particles: ParticleList,
+    particles: Particles,
 
     // visible entities, updated per-frame
     visible_entity_ids: Vec<usize>,
@@ -368,7 +368,7 @@ impl ClientState {
             static_sounds: Vec::new(),
             entities: Vec::new(),
             static_entities: Vec::new(),
-            particles: ParticleList::with_capacity(MAX_PARTICLES),
+            particles: Particles::with_capacity(MAX_PARTICLES),
             visible_entity_ids: Vec::new(),
             light_styles: HashMap::new(),
             stats: [0; MAX_STATS],

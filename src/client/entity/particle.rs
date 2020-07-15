@@ -22,7 +22,11 @@ use std::{cell::RefCell, collections::HashSet, ops::RangeInclusive};
 
 use crate::{
     client::ClientEntity,
-    common::{engine, math::{self, VERTEX_NORMAL_COUNT}},
+    common::{
+        alloc::LinkedSlab,
+        engine,
+        math::{self, VERTEX_NORMAL_COUNT},
+    },
 };
 
 use cgmath::{InnerSpace as _, Vector3, Zero as _};
@@ -32,7 +36,6 @@ use rand::{
     rngs::SmallRng,
     SeedableRng,
 };
-use slab::Slab;
 
 lazy_static! {
     static ref COLOR_RAMP_EXPLOSION_FAST: ColorRamp = ColorRamp {
@@ -211,12 +214,9 @@ pub enum TrailKind {
 ///
 /// Space for new particles is allocated from an internal [`Slab`](slab::Slab) of fixed
 /// size.
-pub struct ParticleList {
+pub struct Particles {
     // allocation pool
-    slab: RefCell<Slab<Particle>>,
-
-    // set of live particles
-    live: RefCell<HashSet<usize>>,
+    slab: RefCell<LinkedSlab<Particle>>,
 
     // random number generator
     rng: SmallRng,
@@ -224,28 +224,24 @@ pub struct ParticleList {
     angle_velocities: [Vector3<f32>; VERTEX_NORMAL_COUNT],
 }
 
-impl ParticleList {
+impl Particles {
     /// Create a new particle list with the given capacity.
     ///
     /// This determines the capacity of both the underlying `Slab` and the set of
     /// live particles.
-    pub fn with_capacity(capacity: usize) -> ParticleList {
+    pub fn with_capacity(capacity: usize) -> Particles {
         lazy_static! {
             // avelocities initialized with (rand() & 255) * 0.01;
             static ref VELOCITY_DISTRIBUTION: Uniform<f32> = Uniform::new(0.0, 2.56);
         }
 
-        let slab = RefCell::new(Slab::with_capacity(capacity.min(MAX_PARTICLES)));
-
-        // TODO: tune capacity
-        let live = RefCell::new(HashSet::with_capacity(capacity.min(MAX_PARTICLES)));
+        let slab = RefCell::new(LinkedSlab::with_capacity(capacity.min(MAX_PARTICLES)));
 
         let rng = SmallRng::from_entropy();
 
         let angle_velocities = [Vector3::zero(); VERTEX_NORMAL_COUNT];
-        let mut list = ParticleList {
+        let mut list = Particles {
             slab,
-            live,
             rng,
             angle_velocities,
         };
@@ -261,18 +257,18 @@ impl ParticleList {
     // TODO: come up with a better eviction policy
     // the original engine ignores new particles if at capacity, but it's not ideal
     pub fn insert(&mut self, particle: Particle) -> bool {
+        // check capacity
         if self.slab.borrow().len() == self.slab.borrow().capacity() {
             return false;
         }
 
-        let slab_id = self.slab.borrow_mut().insert(particle);
-        self.live.borrow_mut().insert(slab_id);
+        // insert it
+        self.slab.borrow_mut().insert(particle);
         true
     }
 
-    /// Clears all values.
+    /// Clears all particles.
     pub fn clear(&mut self) {
-        self.live.borrow_mut().clear();
         self.slab.borrow_mut().clear();
     }
 
@@ -282,21 +278,9 @@ impl ParticleList {
     /// function's return value indicates whether the particle should be retained
     /// or not.
     pub fn update(&mut self, time: Duration, frame_time: Duration, sv_gravity: f32) {
-        self.live.borrow_mut().retain(|part_id| {
-            let retain = match self.slab.borrow_mut().get_mut(*part_id) {
-                Some(part) => part.update(time, frame_time, sv_gravity),
-                None => unreachable!(
-                    "ParticleList::update: no Particle with id {} in slab",
-                    part_id
-                ),
-            };
-
-            if !retain {
-                self.slab.borrow_mut().remove(*part_id);
-            }
-
-            retain
-        });
+        self.slab
+            .borrow_mut()
+            .retain(|_, particle| particle.update(time, frame_time, sv_gravity));
     }
 
     fn scatter(&mut self, origin: Vector3<f32>, scatter_distr: &Uniform<f32>) -> Vector3<f32> {
@@ -687,7 +671,7 @@ mod tests {
 
     #[test]
     fn test_particle_list_update() {
-        let mut list = ParticleList::with_capacity(10);
+        let mut list = Particles::with_capacity(10);
         let exp_times = vec![10, 5, 2, 7, 3];
         for exp in exp_times.iter() {
             list.insert(Particle {
