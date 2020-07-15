@@ -27,5 +27,5 @@ void main() {
   vec3 in_normal = texelFetch(sampler2DMS(u_normal, u_sampler), texcoord, gl_SampleID).xyz;
   float in_depth = texelFetch(sampler2DMS(u_depth, u_sampler), texcoord, gl_SampleID).x;
   vec3 position = reconstruct_position(in_depth);
-  color_attachment = vec4(position, 1.0);
+  color_attachment = in_color;
 }

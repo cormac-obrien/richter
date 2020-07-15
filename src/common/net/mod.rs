@@ -331,6 +331,7 @@ pub enum TempEntity {
     },
     Beam {
         kind: BeamEntityKind,
+        entity_id: i16,
         start: Vector3<f32>,
         end: Vector3<f32>,
     },
@@ -401,11 +402,13 @@ impl TempEntity {
                         _ => unreachable!(),
                     },
                 },
+                entity_id: reader.read_i16::<LittleEndian>()?,
                 start: read_coord_vector3(reader)?,
                 end: read_coord_vector3(reader)?,
             },
             Code::Grapple => Beam {
                 kind: BeamEntityKind::Grapple,
+                entity_id: reader.read_i16::<LittleEndian>()?,
                 start: read_coord_vector3(reader)?,
                 end: read_coord_vector3(reader)?,
             },
@@ -461,7 +464,7 @@ impl TempEntity {
                 write_coord_vector3(writer, origin)?;
             }
 
-            TempEntity::Beam { kind, start, end } => {
+            TempEntity::Beam { kind, entity_id, start, end } => {
                 let code = match kind {
                     BeamEntityKind::Lightning { model_id } => match model_id {
                         1 => Code::Lightning1,
@@ -472,6 +475,7 @@ impl TempEntity {
                     },
                     BeamEntityKind::Grapple => Code::Grapple,
                 };
+                writer.write_i16::<LittleEndian>(entity_id)?;
                 writer.write_u8(code as u8)?;
                 write_coord_vector3(writer, start)?;
                 write_coord_vector3(writer, end)?;

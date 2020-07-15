@@ -43,7 +43,10 @@ use std::{
 
 use crate::{
     client::{
-        entity::{particle::{Particles, MAX_PARTICLES}, Beam, ClientEntity},
+        entity::{
+            particle::{Particles, MAX_PARTICLES},
+            Beam, ClientEntity, MAX_BEAMS, MAX_STATIC_ENTITIES, MAX_TEMP_ENTITIES,
+        },
         input::game::{Action, GameInput},
         sound::{AudioSource, Channel, Listener, StaticSound},
         trace::{TraceEntity, TraceFrame},
@@ -71,12 +74,15 @@ use cgmath::{Angle, Deg, InnerSpace, Matrix4, Vector3, Zero};
 use chrono::Duration;
 use failure::{Error, ResultExt};
 use flame;
+use rand::{
+    distributions::{Distribution as _, Uniform},
+    Rng,
+};
 
 // connections are tried 3 times, see
 // https://github.com/id-Software/Quake/blob/master/WinQuake/net_dgrm.c#L1248
 const MAX_CONNECT_ATTEMPTS: usize = 3;
 const MAX_STATS: usize = 32;
-const MAX_STATIC_ENTITIES: usize = 128;
 
 const DEFAULT_SOUND_PACKET_VOLUME: u8 = 255;
 const DEFAULT_SOUND_PACKET_ATTENUATION: f32 = 1.0;
@@ -206,6 +212,8 @@ struct ClientState {
 
     // model precache
     models: Vec<Model>,
+    // name-to-id map
+    model_names: HashMap<String, usize>,
 
     // audio source precache
     sounds: Vec<AudioSource>,
@@ -216,10 +224,8 @@ struct ClientState {
     // entities and entity-like things
     entities: Vec<ClientEntity>,
     static_entities: Vec<ClientEntity>,
-    temp_entities: LinkedSlab<Entity>,
-    beams: LinkedSlab<Beam>,
-
-    // all active particles
+    temp_entities: Vec<ClientEntity>,
+    beams: [Option<Beam>; MAX_BEAMS],
     particles: Particles,
 
     // visible entities, updated per-frame
@@ -281,6 +287,7 @@ impl ClientState {
         Ok(ClientState {
             vfs: vfs.clone(),
             models: vec![Model::none()],
+            model_names: HashMap::new(),
             sounds: vec![AudioSource::load(&vfs, "misc/null.wav").context(
                 ClientErrorKind::ResourceNotLoaded {
                     name: "misc/null.wav".to_string(),
@@ -289,6 +296,8 @@ impl ClientState {
             static_sounds: Vec::new(),
             entities: Vec::new(),
             static_entities: Vec::new(),
+            temp_entities: Vec::new(),
+            beams: [None; MAX_BEAMS],
             particles: Particles::with_capacity(MAX_PARTICLES),
             visible_entity_ids: Vec::new(),
             light_styles: HashMap::new(),
@@ -658,11 +667,11 @@ impl Client {
         Ok(())
     }
 
-    /// Spawn an entity with the given ID, also spawning any uninitialized entities between the former
-    /// last entity and the new one.
-    // TODO: skipping entities indicates that the entities have been freed by the server. it may
-    // make more sense to use a HashMap to store entities by ID since the lookup table is relatively
-    // sparse.
+    /// Spawn an entity with the given ID, also spawning any uninitialized
+    /// entities between the former last entity and the new one.
+    // TODO: skipping entities indicates that the entities have been freed by
+    // the server. it may make more sense to use a HashMap to store entities by
+    // ID since the lookup table is relatively sparse.
     pub fn spawn_entities(
         &mut self,
         ent_id: u16,
@@ -799,68 +808,36 @@ impl Client {
                     self.state.msg_velocity[0].y = velocity_y.unwrap_or(0.0);
                     self.state.msg_velocity[0].z = velocity_z.unwrap_or(0.0);
 
-                    if items != self.state.items {
+                    let item_diff = items - self.state.items;
+                    if !item_diff.is_empty() {
                         // item flags have changed, something got picked up
+                        let bits = item_diff.bits();
                         for i in 0..net::MAX_ITEMS {
-                            if (items.bits() & 1 << i) != 0
-                                && (self.state.items.bits() & 1 << i) == 0
-                            {
+                            if bits & 1 << i != 0 {
                                 // item with flag value `i` was picked up
                                 self.state.item_get_time[i] = self.state.time;
                             }
                         }
-
-                        self.state.items = items;
                     }
+                    self.state.items = items;
 
                     self.state.on_ground = on_ground;
                     self.state.in_water = in_water;
 
                     self.state.stats[ClientStat::WeaponFrame as usize] =
                         weapon_frame.unwrap_or(0) as i32;
-
-                    // TODO: these ClientStat conditionals should be convertible to a method
-
-                    let armor = armor.unwrap_or(0);
-                    if self.state.stats[ClientStat::Armor as usize] != armor as i32 {
-                        self.state.stats[ClientStat::Armor as usize] = armor as i32;
-                    }
-
-                    let weapon = weapon.unwrap_or(0);
-                    if self.state.stats[ClientStat::Weapon as usize] != weapon as i32 {
-                        self.state.stats[ClientStat::Weapon as usize] = weapon as i32;
-                    }
-
-                    if self.state.stats[ClientStat::Health as usize] != health as i32 {
-                        self.state.stats[ClientStat::Health as usize] = health as i32;
-                    }
-
-                    if self.state.stats[ClientStat::Ammo as usize] != ammo as i32 {
-                        self.state.stats[ClientStat::Ammo as usize] = ammo as i32;
-                    }
-
-                    if self.state.stats[ClientStat::Shells as usize] != ammo_shells as i32 {
-                        self.state.stats[ClientStat::Shells as usize] = ammo_shells as i32;
-                    }
-
-                    if self.state.stats[ClientStat::Nails as usize] != ammo_nails as i32 {
-                        self.state.stats[ClientStat::Nails as usize] = ammo_nails as i32;
-                    }
-
-                    if self.state.stats[ClientStat::Rockets as usize] != ammo_rockets as i32 {
-                        self.state.stats[ClientStat::Rockets as usize] = ammo_rockets as i32;
-                    }
-
-                    if self.state.stats[ClientStat::Cells as usize] != ammo_cells as i32 {
-                        self.state.stats[ClientStat::Cells as usize] = ammo_cells as i32;
-                    }
+                    self.state.stats[ClientStat::Armor as usize] = armor.unwrap_or(0) as i32;
+                    self.state.stats[ClientStat::Weapon as usize] = weapon.unwrap_or(0) as i32;
+                    self.state.stats[ClientStat::Health as usize] = health as i32;
+                    self.state.stats[ClientStat::Ammo as usize] = ammo as i32;
+                    self.state.stats[ClientStat::Shells as usize] = ammo_shells as i32;
+                    self.state.stats[ClientStat::Nails as usize] = ammo_nails as i32;
+                    self.state.stats[ClientStat::Rockets as usize] = ammo_rockets as i32;
+                    self.state.stats[ClientStat::Cells as usize] = ammo_cells as i32;
 
                     // TODO: this behavior assumes the `standard_quake` behavior and will likely
                     // break with the mission packs
-                    if self.state.stats[ClientStat::ActiveWeapon as usize] != active_weapon as i32 {
-                        self.state.stats[ClientStat::ActiveWeapon as usize] = active_weapon as i32;
-                        // TODO: update status bar
-                    }
+                    self.state.stats[ClientStat::ActiveWeapon as usize] = active_weapon as i32;
                 }
 
                 ServerCmd::Damage {
@@ -1407,6 +1384,12 @@ impl Client {
             // TODO: send keepalive message?
         }
 
+        for (id, model) in self.state.models.iter().enumerate() {
+            new_client_state
+                .model_names
+                .insert(model.name().to_owned(), id);
+        }
+
         // parse sound precache
         for ref snd_name in sound_precache {
             debug!("Loading sound {}", snd_name);
@@ -1541,6 +1524,52 @@ impl Client {
 
     pub fn get_lerp_factor(&mut self) -> f32 {
         self.state.lerp_factor
+    }
+
+    pub fn update_temp_entities(&mut self) {
+        lazy_static! {
+            static ref ANGLE_DISTRIBUTION: Uniform<f32> = Uniform::new(0.0, 360.0);
+        }
+
+        self.state.temp_entities.clear();
+        for id in 0..self.state.beams.len() {
+            // remove beam if expired
+            if self.state.beams[id].map_or(false, |b| b.expire < self.state.time) {
+                self.state.beams[id] = None;
+                continue;
+            }
+
+            let view_ent = self.view_ent();
+            if let Some(ref mut beam) = self.state.beams[id] {
+                // keep lightning gun bolts fixed to player
+                if beam.entity_id == view_ent {
+                    beam.start = self.state.entities[view_ent].origin;
+                }
+
+                let vec = beam.end - beam.start;
+                let yaw = Deg::from(cgmath::Rad(vec.y.atan2(vec.x))).normalize();
+                let forward = (vec.x.powf(2.0) + vec.y.powf(2.0)).sqrt();
+                let pitch = Deg::from(cgmath::Rad(vec.z.atan2(forward))).normalize();
+
+                let len = vec.magnitude();
+                let direction = vec.normalize();
+                for interval in 0..(len / 30.0) as i32 {
+                    let mut ent = ClientEntity::uninitialized();
+                    ent.origin = beam.start + 30.0 * interval as f32 * direction;
+                    ent.angles = Vector3::new(
+                        pitch,
+                        yaw,
+                        Deg(ANGLE_DISTRIBUTION.sample(&mut rand::thread_rng())),
+                    );
+
+                    if self.state.temp_entities.len() < MAX_TEMP_ENTITIES {
+                        self.state.temp_entities.push(ent);
+                    } else {
+                        warn!("too many temp entities!");
+                    }
+                }
+            }
+        }
     }
 
     pub fn relink_entities(&mut self) {
@@ -1698,15 +1727,13 @@ impl Client {
         self.state.time = self.state.time + frame_time;
         self.update_time();
         self.relink_entities();
+        self.update_temp_entities();
         self.send()?;
 
         if self.signon == SignOnStage::Done {
             self.state.update_listener();
             self.state.update_sound_spatialization();
             self.update_color_shifts(frame_time);
-
-            let orig = self.state.entities[self.state.view.entity_id()].origin;
-            println!("{},{}", engine::duration_to_f32(self.state.time), orig.x);
         }
         // TODO: CL_UpdateTEnts
 
@@ -1718,6 +1745,7 @@ impl Client {
             .visible_entity_ids
             .iter()
             .map(move |i| &self.state.entities[*i])
+            .chain(self.state.temp_entities.iter())
     }
 
     pub fn register_cmds(&self, cmds: &mut CmdRegistry) {
@@ -1762,10 +1790,46 @@ impl Client {
         .unwrap();
     }
 
+    pub fn spawn_beam(
+        &mut self,
+        time: Duration,
+        entity_id: usize,
+        model_id: usize,
+        start: Vector3<f32>,
+        end: Vector3<f32>,
+    ) {
+        // always override beam with same entity_id if it exists
+        // otherwise use the first free slot
+        let mut free = None;
+        for i in 0..self.state.beams.len() {
+            if let Some(ref mut beam) = self.state.beams[i] {
+                if beam.entity_id == entity_id {
+                    beam.model_id = model_id;
+                    beam.expire = time + Duration::milliseconds(200);
+                    beam.start = start;
+                    beam.end = end;
+                }
+            } else if free.is_none() {
+                free = Some(i);
+            }
+        }
+
+        if let Some(i) = free {
+            self.state.beams[i] = Some(Beam {
+                entity_id,
+                model_id,
+                expire: time + Duration::milliseconds(200),
+                start,
+                end,
+            });
+        } else {
+            warn!("No free beam slots!");
+        }
+    }
+
     pub fn spawn_temp_entity(&mut self, time: Duration, temp_entity: &TempEntity) {
-        use TempEntity::*;
         match temp_entity {
-            Point { kind, origin } => {
+            TempEntity::Point { kind, origin } => {
                 use PointEntityKind::*;
                 match kind {
                     // projectile impacts
@@ -1824,25 +1888,33 @@ impl Client {
                 }
             }
 
-            Beam { kind, start, end } => {
+            TempEntity::Beam {
+                kind,
+                entity_id,
+                start,
+                end,
+            } => {
                 use BeamEntityKind::*;
-                match kind {
-                    Lightning { model_id } => {
-                        let model_name = format!(
-                            "progs/bolt{}.mdl",
-                            match model_id {
-                                1 => "",
-                                2 => "2",
-                                3 => "3",
-                                x => panic!("invalid lightning model id: {}", x),
-                            }
-                        );
-                        // TODO: spawn beam
-                    }
-                    Grapple => {
-                        // TODO: spawn beam
-                    }
-                }
+                let model_name = match kind {
+                    Lightning { model_id } => format!(
+                        "progs/bolt{}.mdl",
+                        match model_id {
+                            1 => "",
+                            2 => "2",
+                            3 => "3",
+                            x => panic!("invalid lightning model id: {}", x),
+                        }
+                    ),
+                    Grapple => "progs/beam.mdl".to_string(),
+                };
+
+                self.spawn_beam(
+                    time,
+                    *entity_id as usize,
+                    *self.state.model_names.get(&model_name).unwrap(),
+                    *start,
+                    *end,
+                );
             }
         }
     }

@@ -26,6 +26,8 @@ use cgmath::{Deg, Vector3};
 use chrono::Duration;
 
 pub const MAX_BEAMS: usize = 24;
+pub const MAX_TEMP_ENTITIES: usize = 64;
+pub const MAX_STATIC_ENTITIES: usize = 128;
 
 #[derive(Debug)]
 pub struct ClientEntity {
@@ -128,6 +130,7 @@ impl Light {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
 pub struct Beam {
     pub entity_id: usize,
     pub model_id: usize,
