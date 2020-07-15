@@ -20,11 +20,16 @@
 
 pub mod particle;
 
-use crate::common::net::{EntityState, EntityEffects};
+use crate::common::{
+    engine,
+    alloc::LinkedSlab,
+    net::{EntityEffects, EntityState},
+};
 
 use cgmath::{Deg, Vector3};
 use chrono::Duration;
 
+pub const MAX_LIGHTS: usize = 32;
 pub const MAX_BEAMS: usize = 24;
 pub const MAX_TEMP_ENTITIES: usize = 64;
 pub const MAX_STATIC_ENTITIES: usize = 128;
@@ -43,6 +48,7 @@ pub struct ClientEntity {
     pub skin_id: usize,
     pub sync_base: Duration,
     pub effects: EntityEffects,
+    pub light_id: Option<usize>,
     // vis_frame: usize,
 }
 
@@ -64,6 +70,7 @@ impl ClientEntity {
             skin_id: baseline.skin_id,
             sync_base: Duration::zero(),
             effects: baseline.effects,
+            light_id: None,
         }
     }
 
@@ -84,6 +91,7 @@ impl ClientEntity {
             skin_id: 0,
             sync_base: Duration::zero(),
             effects: EntityEffects::empty(),
+            light_id: None,
         }
     }
 
@@ -108,25 +116,127 @@ impl ClientEntity {
     }
 }
 
-pub struct Light {
+/// A descriptor used to spawn dynamic lights.
+pub struct LightDesc {
+    /// The origin of the light.
     pub origin: Vector3<f32>,
-    pub radius: f32,
+
+    /// The initial radius of the light.
+    pub init_radius: f32,
+
+    /// The rate of radius decay in units/second.
     pub decay_rate: f32,
-    pub min_light: f32,
-    pub expire: Duration,
+
+    /// If the radius decays to this value, the light is ignored.
+    pub min_radius: Option<f32>,
+
+    /// Time-to-live of the light.
+    pub ttl: Duration,
+}
+
+/// A dynamic point light.
+pub struct Light {
+    origin: Vector3<f32>,
+    init_radius: f32,
+    decay_rate: f32,
+    min_radius: Option<f32>,
+    spawned: Duration,
+    ttl: Duration,
 }
 
 impl Light {
+    /// Create a light from a `LightDesc` at the specified time.
+    pub fn from_desc(time: Duration, desc: LightDesc) -> Light {
+        Light {
+            origin: desc.origin,
+            init_radius: desc.init_radius,
+            decay_rate: desc.decay_rate,
+            min_radius: desc.min_radius,
+            spawned: time,
+            ttl: desc.ttl,
+        }
+    }
+
+    /// Return the origin of the light.
     pub fn origin(&self) -> Vector3<f32> {
         self.origin
     }
 
-    pub fn radius(&self) -> f32 {
-        self.radius
+    /// Return the radius of the light for the given time.
+    ///
+    /// If the radius would decay to a negative value, returns 0.
+    pub fn radius(&self, time: Duration) -> f32 {
+        let lived = time - self.spawned;
+        let decay = self.decay_rate * engine::duration_to_f32(lived);
+        let radius = (self.init_radius - decay).min(0.0);
+
+        if let Some(min) = self.min_radius {
+            if radius < min {
+                return 0.0;
+            }
+        }
+
+        radius
     }
 
-    pub fn decay_rate(&self) -> f32 {
-        self.decay_rate
+    /// Returns `true` if the light should be retained at the specified time.
+    pub fn retain(&mut self, time: Duration) -> bool {
+        self.spawned + self.ttl > time
+    }
+}
+
+/// A set of active dynamic lights.
+pub struct Lights {
+    slab: LinkedSlab<Light>,
+}
+
+impl Lights {
+    /// Create an empty set of lights with the given capacity.
+    pub fn with_capacity(capacity: usize) -> Lights {
+        Lights {
+            slab: LinkedSlab::with_capacity(capacity),
+        }
+    }
+
+    /// Return a reference to the light with the given key, or `None` if no
+    /// such light exists.
+    pub fn get(&self, key: usize) -> Option<&Light> {
+        self.slab.get(key)
+    }
+
+    /// Return a mutable reference to the light with the given key, or `None`
+    /// if no such light exists.
+    pub fn get_mut(&mut self, key: usize) -> Option<&mut Light> {
+        self.slab.get_mut(key)
+    }
+
+    /// Insert a new light into the set of lights.
+    ///
+    /// Returns a key corresponding to the newly inserted light.
+    ///
+    /// If `key` is `Some` and there is an existing light with that key, then
+    /// the light will be overwritten with the new value.
+    pub fn insert(&mut self, time: Duration, desc: LightDesc, key: Option<usize>) -> usize {
+        if let Some(k) = key {
+            if let Some(key_light) = self.slab.get_mut(k) {
+                *key_light = Light::from_desc(time, desc);
+                return k;
+            }
+        }
+
+        self.slab.insert(Light::from_desc(time, desc))
+    }
+
+    /// Return an iterator over the active lights.
+    pub fn iter(&self) -> impl Iterator<Item = &Light> {
+        self.slab.iter()
+    }
+
+    /// Updates the set of dynamic lights for the specified time.
+    ///
+    /// This will deallocate any lights which have outlived their time-to-live.
+    pub fn update(&mut self, time: Duration) {
+        self.slab.retain(|_, light| light.retain(time));
     }
 }
 

@@ -44,8 +44,9 @@ use std::{
 use crate::{
     client::{
         entity::{
-            particle::{Particles, MAX_PARTICLES},
-            Beam, ClientEntity, MAX_BEAMS, MAX_STATIC_ENTITIES, MAX_TEMP_ENTITIES,
+            particle::{Particles, TrailKind, MAX_PARTICLES},
+            Beam, ClientEntity, LightDesc, Lights, MAX_BEAMS, MAX_LIGHTS, MAX_STATIC_ENTITIES,
+            MAX_TEMP_ENTITIES,
         },
         input::game::{Action, GameInput},
         sound::{AudioSource, Channel, Listener, StaticSound},
@@ -225,6 +226,7 @@ struct ClientState {
     entities: Vec<ClientEntity>,
     static_entities: Vec<ClientEntity>,
     temp_entities: Vec<ClientEntity>,
+    lights: Lights,
     beams: [Option<Beam>; MAX_BEAMS],
     particles: Particles,
 
@@ -297,6 +299,7 @@ impl ClientState {
             entities: Vec::new(),
             static_entities: Vec::new(),
             temp_entities: Vec::new(),
+            lights: Lights::with_capacity(MAX_LIGHTS),
             beams: [None; MAX_BEAMS],
             particles: Particles::with_capacity(MAX_PARTICLES),
             visible_entity_ids: Vec::new(),
@@ -1462,8 +1465,12 @@ impl Client {
         self.state.time
     }
 
-    pub fn update_time(&mut self) {
+    pub fn update_time(&mut self, frame_time: Duration) {
         let _guard = flame::start_guard("Client::update_time");
+
+        // advance client time by frame duration
+        self.state.time = self.state.time + frame_time;
+
         // TODO: don't lerp if cls.timedemo != 0 (???) or server is running on this host
         if self.cvars.borrow().get_value("cl_nolerp").unwrap() != 0.0 {
             self.state.time = self.state.msg_times[0];
@@ -1573,6 +1580,11 @@ impl Client {
     }
 
     pub fn relink_entities(&mut self) {
+        lazy_static! {
+            static ref MFLASH_DIMLIGHT_DISTRIBUTION: Uniform<f32> = Uniform::new(200.0, 232.0);
+            static ref BRIGHTLIGHT_DISTRIBUTION: Uniform<f32> = Uniform::new(400.0, 432.0);
+        }
+
         let _guard = flame::start_guard("Client::relink_entities");
         let lerp_factor = self.get_lerp_factor();
 
@@ -1606,7 +1618,7 @@ impl Client {
                 continue;
             }
 
-            let _old_origin = ent.origin;
+            let prev_origin = ent.origin;
 
             if ent.force_link {
                 trace!("force link on entity {}", ent_id);
@@ -1615,8 +1627,8 @@ impl Client {
             } else {
                 let origin_delta = ent.msg_origins[0] - ent.msg_origins[1];
                 let ent_lerp_factor = if origin_delta.magnitude2() > 10_000.0 {
-                    // if the entity moved more than 100 units in one frame, assume it was teleported
-                    // and don't lerp anything
+                    // if the entity moved more than 100 units in one frame,
+                    // assume it was teleported and don't lerp anything
                     1.0
                 } else {
                     lerp_factor
@@ -1631,15 +1643,109 @@ impl Client {
                 }
             }
 
-            if self.state.models[ent.model_id].has_flag(ModelFlags::ROTATE) {
+            let model = &self.state.models[ent.model_id];
+            if model.has_flag(ModelFlags::ROTATE) {
                 ent.angles[1] = obj_rotate;
             }
 
-            // TODO: apply various effects (lights, particles, trails...)
+            if ent.effects.contains(EntityEffects::BRIGHT_FIELD) {
+                self.state
+                    .particles
+                    .create_entity_field(self.state.time, ent);
+            }
+
+            // TODO: cache a SmallRng in Client
+            let mut rng = rand::thread_rng();
+
+            // TODO: factor out EntityEffects->LightDesc mapping
+            if ent.effects.contains(EntityEffects::MUZZLE_FLASH) {
+                // TODO: angle and move origin to muzzle
+                ent.light_id = Some(self.state.lights.insert(
+                    self.state.time,
+                    LightDesc {
+                        origin: ent.origin + Vector3::new(0.0, 0.0, 16.0),
+                        init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut rng),
+                        decay_rate: 0.0,
+                        min_radius: Some(32.0),
+                        ttl: Duration::milliseconds(100),
+                    },
+                    ent.light_id,
+                ));
+            }
+
+            if ent.effects.contains(EntityEffects::BRIGHT_LIGHT) {
+                ent.light_id = Some(self.state.lights.insert(
+                    self.state.time,
+                    LightDesc {
+                        origin: ent.origin,
+                        init_radius: BRIGHTLIGHT_DISTRIBUTION.sample(&mut rng),
+                        decay_rate: 0.0,
+                        min_radius: None,
+                        ttl: Duration::milliseconds(1),
+                    },
+                    ent.light_id,
+                ));
+            }
+
+            if ent.effects.contains(EntityEffects::DIM_LIGHT) {
+                ent.light_id = Some(self.state.lights.insert(
+                    self.state.time,
+                    LightDesc {
+                        origin: ent.origin,
+                        init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut rng),
+                        decay_rate: 0.0,
+                        min_radius: None,
+                        ttl: Duration::milliseconds(1),
+                    },
+                    ent.light_id,
+                ));
+            }
+
+            // check if this entity leaves a trail
+            let trail_kind = if model.has_flag(ModelFlags::GIB) {
+                Some(TrailKind::Blood)
+            } else if model.has_flag(ModelFlags::ZOMGIB) {
+                Some(TrailKind::BloodSlight)
+            } else if model.has_flag(ModelFlags::TRACER) {
+                Some(TrailKind::TracerGreen)
+            } else if model.has_flag(ModelFlags::TRACER2) {
+                Some(TrailKind::TracerRed)
+            } else if model.has_flag(ModelFlags::ROCKET) {
+                ent.light_id = Some(self.state.lights.insert(
+                    self.state.time,
+                    LightDesc {
+                        origin: ent.origin,
+                        init_radius: 200.0,
+                        decay_rate: 0.0,
+                        min_radius: None,
+                        ttl: Duration::milliseconds(10),
+                    },
+                    ent.light_id,
+                ));
+                Some(TrailKind::Rocket)
+            } else if model.has_flag(ModelFlags::GRENADE) {
+                Some(TrailKind::Smoke)
+            } else if model.has_flag(ModelFlags::TRACER3) {
+                Some(TrailKind::Vore)
+            } else {
+                None
+            };
+
+            // if the entity leaves a trail, generate it
+            if let Some(kind) = trail_kind {
+                self.state.particles.create_trail(
+                    self.state.time,
+                    prev_origin,
+                    ent.origin,
+                    kind,
+                    false,
+                );
+            }
 
             // mark entity for rendering
             self.state.visible_entity_ids.push(ent_id);
 
+            // enable lerp for next frame
             ent.force_link = false;
         }
     }
@@ -1724,18 +1830,38 @@ impl Client {
     pub fn frame(&mut self, frame_time: Duration) -> Result<(), Error> {
         debug!("frame time: {}ms", frame_time.num_milliseconds());
         self.parse_server_msg()?;
-        self.state.time = self.state.time + frame_time;
-        self.update_time();
+
+        // update timing information
+        self.update_time(frame_time);
+
+        // interpolate entity data
         self.relink_entities();
+
+        // update temp entities (lightning, etc.)
         self.update_temp_entities();
+
+        // remove expired lights
+        self.state.lights.update(self.state.time);
+
+        // apply physics and remove expired particles
+        self.state
+            .particles
+            .update(self.state.time, frame_time, self.cvar_value("sv_gravity")?);
+
+        // respond to the server
         self.send()?;
 
+        // these all require the player entity to have spawned
         if self.signon == SignOnStage::Done {
+            // update ear positions
             self.state.update_listener();
+
+            // spatialize sounds for new ear positions
             self.state.update_sound_spatialization();
+
+            // update camera color shifts for new position/effects
             self.update_color_shifts(frame_time);
         }
-        // TODO: CL_UpdateTEnts
 
         Ok(())
     }
@@ -1865,18 +1991,42 @@ impl Client {
 
                     Explosion => {
                         self.state.particles.create_explosion(time, *origin);
-                        // TODO: dynamic light here
+                        self.state.lights.insert(
+                            time,
+                            LightDesc {
+                                origin: *origin,
+                                init_radius: 350.0,
+                                decay_rate: 300.0,
+                                min_radius: None,
+                                ttl: Duration::milliseconds(500),
+                            },
+                            None,
+                        );
                         // TODO: start weapons/r_exp3
                     }
 
                     ColorExplosion {
                         color_start,
                         color_len,
-                    } => self.state.particles.create_color_explosion(
-                        time,
-                        *origin,
-                        (*color_start)..=(*color_start + *color_len - 1),
-                    ),
+                    } => {
+                        self.state.particles.create_color_explosion(
+                            time,
+                            *origin,
+                            (*color_start)..=(*color_start + *color_len - 1),
+                        );
+                        self.state.lights.insert(
+                            time,
+                            LightDesc {
+                                origin: *origin,
+                                init_radius: 350.0,
+                                decay_rate: 300.0,
+                                min_radius: None,
+                                ttl: Duration::milliseconds(500),
+                            },
+                            None,
+                        );
+                        // TODO: start weapons/r_exp3
+                    }
 
                     TarExplosion => {
                         self.state.particles.create_spawn_explosion(time, *origin);
