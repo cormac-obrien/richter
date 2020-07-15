@@ -18,6 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub mod alloc;
 pub mod bsp;
 pub mod console;
 pub mod engine;
