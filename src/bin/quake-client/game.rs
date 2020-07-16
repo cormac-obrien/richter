@@ -31,12 +31,13 @@ use crate::{
 
 use richter::{
     client::{
+        entity::MAX_LIGHTS,
         input::{Input, InputFocus},
         menu::Menu,
         render::{
             Camera, DeferredRenderer, DeferredUniforms, Extent2d, GraphicsState, HudState,
-            PostProcessRenderer, RenderTarget as _, RenderTargetResolve as _, SwapChainTarget,
-            UiOverlay, UiRenderer, UiState, WorldRenderer,
+            PointLight, PostProcessRenderer, RenderTarget as _, RenderTargetResolve as _,
+            SwapChainTarget, UiOverlay, UiRenderer, UiState, WorldRenderer,
         },
         trace::TraceFrame,
         Client,
@@ -48,8 +49,8 @@ use richter::{
     },
 };
 
-use cgmath::{self, SquareMatrix};
-use chrono::{Duration, Utc};
+use cgmath::{self, SquareMatrix as _, Vector3, Zero as _};
+use chrono::Duration;
 use failure::Error;
 use log::info;
 
@@ -66,11 +67,9 @@ enum InGameFocus {
 }
 
 struct InGameState {
-    cmds: Rc<RefCell<CmdRegistry>>,
     world_renderer: WorldRenderer,
     deferred_renderer: DeferredRenderer,
     postprocess_renderer: PostProcessRenderer,
-    ui_renderer: Rc<UiRenderer>,
     focus: Rc<Cell<InGameFocus>>,
 }
 
@@ -80,7 +79,6 @@ impl InGameState {
         world_renderer: WorldRenderer,
         deferred_renderer: DeferredRenderer,
         postprocess_renderer: PostProcessRenderer,
-        ui_renderer: Rc<UiRenderer>,
         focus: InGameFocus,
     ) -> InGameState {
         let focus_rc = Rc::new(Cell::new(focus));
@@ -125,11 +123,9 @@ impl InGameState {
             .unwrap();
 
         InGameState {
-            cmds,
             world_renderer,
             deferred_renderer,
             postprocess_renderer,
-            ui_renderer,
             focus: focus_rc,
         }
     }
@@ -222,6 +218,7 @@ impl Game {
                     gfx_state,
                     gfx_state.initial_pass_target().diffuse_view(),
                     gfx_state.initial_pass_target().normal_view(),
+                    gfx_state.initial_pass_target().light_view(),
                     gfx_state.initial_pass_target().depth_view(),
                 );
 
@@ -235,7 +232,6 @@ impl Game {
                     world_renderer,
                     deferred_renderer,
                     postprocess_renderer,
-                    self.ui_renderer.clone(),
                     InGameFocus::Game,
                 ));
             }
@@ -324,8 +320,31 @@ impl Game {
                         gfx_state.deferred_pass_target().render_pass_builder();
                     let mut deferred_pass =
                         encoder.begin_render_pass(&deferred_pass_builder.descriptor());
+
+                    let mut lights = [PointLight {
+                        origin: Vector3::zero(),
+                        radius: 0.0,
+                    }; MAX_LIGHTS];
+
+                    let mut light_count = 0;
+                    for (light_id, light) in self.client.iter_lights().enumerate() {
+                        light_count += 1;
+                        let light_origin = light.origin();
+                        let converted_origin = Vector3::new(
+                            -light_origin.y,
+                            light_origin.z,
+                            -light_origin.x,
+                        );
+                        lights[light_id].origin =
+                            (camera.view() * converted_origin.extend(1.0)).truncate();
+                        lights[light_id].radius = light.radius(self.client.time());
+                    }
+
                     let uniforms = DeferredUniforms {
                         inv_projection: projection.invert().unwrap().into(),
+                        light_count,
+                        _pad: [0; 3],
+                        lights,
                     };
 
                     state

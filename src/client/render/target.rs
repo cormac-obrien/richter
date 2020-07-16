@@ -19,9 +19,11 @@
 // SOFTWARE.
 
 use crate::client::render::{
-    Extent2d, DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
+    Extent2d, DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT, LIGHT_ATTACHMENT_FORMAT,
+    NORMAL_ATTACHMENT_FORMAT,
 };
 
+// TODO: collapse these into a single definition
 /// Create a texture suitable for use as a color attachment.
 ///
 /// The resulting texture will have the OUTPUT_ATTACHMENT flag as well as
@@ -54,12 +56,33 @@ pub fn create_normal_attachment(
     usage: wgpu::TextureUsage,
 ) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("geometry attachment"),
+        label: Some("normal attachment"),
         size: size.into(),
         mip_level_count: 1,
         sample_count,
         dimension: wgpu::TextureDimension::D2,
         format: NORMAL_ATTACHMENT_FORMAT,
+        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | usage,
+    })
+}
+
+/// Create a texture suitable for use as a light attachment.
+///
+/// The resulting texture will have the OUTPUT_ATTACHMENT flag as well as
+/// any flags specified by `usage`.
+pub fn create_light_attachment(
+    device: &wgpu::Device,
+    size: Extent2d,
+    sample_count: u32,
+    usage: wgpu::TextureUsage,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("light attachment"),
+        size: size.into(),
+        mip_level_count: 1,
+        sample_count,
+        dimension: wgpu::TextureDimension::D2,
+        format: LIGHT_ATTACHMENT_FORMAT,
         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | usage,
     })
 }
@@ -122,6 +145,8 @@ pub struct InitialPassTarget {
     diffuse_view: wgpu::TextureView,
     normal_attachment: wgpu::Texture,
     normal_view: wgpu::TextureView,
+    light_attachment: wgpu::Texture,
+    light_view: wgpu::TextureView,
     depth_attachment: wgpu::Texture,
     depth_view: wgpu::TextureView,
 }
@@ -132,11 +157,14 @@ impl InitialPassTarget {
             create_color_attachment(device, size, sample_count, wgpu::TextureUsage::SAMPLED);
         let normal_attachment =
             create_normal_attachment(device, size, sample_count, wgpu::TextureUsage::SAMPLED);
+        let light_attachment =
+            create_light_attachment(device, size, sample_count, wgpu::TextureUsage::SAMPLED);
         let depth_attachment =
             create_depth_attachment(device, size, sample_count, wgpu::TextureUsage::SAMPLED);
 
         let diffuse_view = diffuse_attachment.create_default_view();
         let normal_view = normal_attachment.create_default_view();
+        let light_view = light_attachment.create_default_view();
         let depth_view = depth_attachment.create_default_view();
 
         InitialPassTarget {
@@ -146,6 +174,8 @@ impl InitialPassTarget {
             diffuse_view,
             normal_attachment,
             normal_view,
+            light_attachment,
+            light_view,
             depth_attachment,
             depth_view,
         }
@@ -175,6 +205,14 @@ impl InitialPassTarget {
         &self.normal_view
     }
 
+    pub fn light_attachment(&self) -> &wgpu::Texture {
+        &self.light_attachment
+    }
+
+    pub fn light_view(&self) -> &wgpu::TextureView {
+        &self.light_view
+    }
+
     pub fn depth_attachment(&self) -> &wgpu::Texture {
         &self.depth_attachment
     }
@@ -198,6 +236,14 @@ impl RenderTarget for InitialPassTarget {
                 },
                 wgpu::RenderPassColorAttachmentDescriptor {
                     attachment: self.normal_view(),
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: true,
+                    },
+                },
+                wgpu::RenderPassColorAttachmentDescriptor {
+                    attachment: self.light_view(),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -258,16 +304,14 @@ impl DeferredPassTarget {
 impl RenderTarget for DeferredPassTarget {
     fn render_pass_builder<'a>(&'a self) -> RenderPassBuilder {
         RenderPassBuilder {
-            color_attachments: vec![
-                wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: self.color_view(),
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: true,
-                    },
+            color_attachments: vec![wgpu::RenderPassColorAttachmentDescriptor {
+                attachment: self.color_view(),
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: true,
                 },
-            ],
+            }],
             depth_attachment: None,
         }
     }

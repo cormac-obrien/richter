@@ -38,8 +38,9 @@ layout(set = 3, binding = 0) uniform texture2D u_lightmap_texture[4];
 
 layout(location = 0) out vec4 diffuse_attachment;
 layout(location = 1) out vec4 normal_attachment;
+layout(location = 2) out vec4 light_attachment;
 
-vec4 blend_light(vec4 color) {
+float calc_light() {
     float light = 0.0;
     for (int i = 0; i < 4 && f_lightmap_anim[i] != LIGHTMAP_ANIM_END; i++) {
         uint umap = uint(texture(
@@ -51,17 +52,13 @@ vec4 blend_light(vec4 color) {
         light += float(min(ulight >> 8, 255)) / 256.0;
     }
 
-    if (frame_uniforms.r_lightmap) {
-        return vec4(light.rrr, 1.0);
-    } else {
-        return vec4(color.rgb * light.rrr, 1.0);
-    }
+    return light.r;
 }
 
 void main() {
     switch (texture_uniforms.kind) {
         case TEXTURE_KIND_REGULAR:
-            vec4 base_color = texture(
+            diffuse_attachment = texture(
                 sampler2D(u_diffuse_texture, u_diffuse_sampler),
                 f_diffuse
             );
@@ -72,9 +69,10 @@ void main() {
             ).r;
 
             if (fullbright != 0.0) {
-                diffuse_attachment = base_color;
+                light_attachment = vec4(1.0, 1.0, 1.0, 1.0);
             } else {
-                diffuse_attachment = blend_light(base_color);
+                float light = calc_light();
+                light_attachment = vec4(light, light, light, 1.0);
             }
             break;
 
@@ -91,6 +89,7 @@ void main() {
                 sampler2D(u_diffuse_texture, u_diffuse_sampler),
                 warp_texcoord
             );
+            light_attachment = vec4(1.0, 1.0, 1.0, 1.0);
             break;
 
         case TEXTURE_KIND_SKY:
@@ -115,6 +114,7 @@ void main() {
                 cloud_factor = 1.0;
             }
             diffuse_attachment = mix(sky_color, cloud_color, cloud_factor);
+            light_attachment = vec4(1.0, 1.0, 1.0, 1.0);
             break;
 
         // not possible

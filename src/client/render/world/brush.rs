@@ -26,7 +26,7 @@ use crate::{
         warp,
         world::BindGroupLayoutId,
         Camera, GraphicsState, LightmapData, Pipeline, TextureData, DEPTH_ATTACHMENT_FORMAT,
-        DIFFUSE_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
+        DIFFUSE_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT, LIGHT_ATTACHMENT_FORMAT,
     },
     common::{
         bsp::{BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTextureMipmap},
@@ -222,6 +222,13 @@ impl Pipeline for BrushPipeline {
             // normal attachment
             wgpu::ColorStateDescriptor {
                 format: NORMAL_ATTACHMENT_FORMAT,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::ALL,
+            },
+            // light attachment
+            wgpu::ColorStateDescriptor {
+                format: LIGHT_ATTACHMENT_FORMAT,
                 alpha_blend: wgpu::BlendDescriptor::REPLACE,
                 color_blend: wgpu::BlendDescriptor::REPLACE,
                 write_mask: wgpu::ColorWrite::ALL,

@@ -62,7 +62,7 @@ pub use pipeline::Pipeline;
 pub use postprocess::PostProcessRenderer;
 pub use target::{RenderTarget, RenderTargetResolve, SwapChainTarget};
 pub use ui::{hud::HudState, UiOverlay, UiRenderer, UiState};
-pub use world::{Camera, WorldRenderer, deferred::{DeferredRenderer, DeferredUniforms}};
+pub use world::{Camera, WorldRenderer, deferred::{PointLight, DeferredRenderer, DeferredUniforms}};
 
 use std::{
     borrow::Cow,
@@ -94,6 +94,7 @@ use failure::Error;
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const DIFFUSE_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 const NORMAL_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+const LIGHT_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 const DIFFUSE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const FULLBRIGHT_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;

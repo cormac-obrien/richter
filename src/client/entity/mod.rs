@@ -21,14 +21,15 @@
 pub mod particle;
 
 use crate::common::{
-    engine,
     alloc::LinkedSlab,
+    engine,
     net::{EntityEffects, EntityState},
 };
 
 use cgmath::{Deg, Vector3};
 use chrono::Duration;
 
+// if this is changed, it must also be changed in deferred.frag
 pub const MAX_LIGHTS: usize = 32;
 pub const MAX_BEAMS: usize = 24;
 pub const MAX_TEMP_ENTITIES: usize = 64;
@@ -117,6 +118,7 @@ impl ClientEntity {
 }
 
 /// A descriptor used to spawn dynamic lights.
+#[derive(Clone, Debug)]
 pub struct LightDesc {
     /// The origin of the light.
     pub origin: Vector3<f32>,
@@ -135,6 +137,7 @@ pub struct LightDesc {
 }
 
 /// A dynamic point light.
+#[derive(Clone, Debug)]
 pub struct Light {
     origin: Vector3<f32>,
     init_radius: f32,
@@ -168,7 +171,7 @@ impl Light {
     pub fn radius(&self, time: Duration) -> f32 {
         let lived = time - self.spawned;
         let decay = self.decay_rate * engine::duration_to_f32(lived);
-        let radius = (self.init_radius - decay).min(0.0);
+        let radius = (self.init_radius - decay).max(0.0);
 
         if let Some(min) = self.min_radius {
             if radius < min {

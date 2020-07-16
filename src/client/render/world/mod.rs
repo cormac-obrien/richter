@@ -100,44 +100,43 @@ pub enum BindGroupLayoutId {
 pub struct Camera {
     origin: Vector3<f32>,
     angles: Angles,
-    transform: Matrix4<f32>,
+    view: Matrix4<f32>,
+    view_projection: Matrix4<f32>,
     clipping_planes: [Vector4<f32>; 6],
 }
 
 impl Camera {
-    pub fn new(
-        origin: Vector3<f32>,
-        angles: Angles,
-        projection: Matrix4<f32>,
-    ) -> Camera {
+    pub fn new(origin: Vector3<f32>, angles: Angles, projection: Matrix4<f32>) -> Camera {
         // convert coordinates
         let converted_origin = Vector3::new(-origin.y, origin.z, -origin.x);
 
         // translate the world by inverse of camera position
         let translation = Matrix4::from_translation(-converted_origin);
         let rotation = angles.mat4_wgpu();
-        let transform = projection * rotation * translation;
+        let view = rotation * translation;
+        let view_projection = projection * view;
 
         // see https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
         let clipping_planes = [
             // left
-            transform.w + transform.x,
+            view_projection.w + view_projection.x,
             // right
-            transform.w - transform.x,
+            view_projection.w - view_projection.x,
             // bottom
-            transform.w + transform.y,
+            view_projection.w + view_projection.y,
             // top
-            transform.w - transform.y,
+            view_projection.w - view_projection.y,
             // near
-            transform.w + transform.z,
+            view_projection.w + view_projection.z,
             // far
-            transform.w - transform.z,
+            view_projection.w - view_projection.z,
         ];
 
         Camera {
             origin,
             angles,
-            transform,
+            view,
+            view_projection,
             clipping_planes,
         }
     }
@@ -150,15 +149,19 @@ impl Camera {
         self.angles
     }
 
-    pub fn transform(&self) -> Matrix4<f32> {
-        self.transform
+    pub fn view(&self) -> Matrix4<f32> {
+        self.view
+    }
+
+    pub fn view_projection(&self) -> Matrix4<f32> {
+        self.view_projection
     }
 
     // TODO: this seems to be too lenient
     /// Determines whether a point falls outside the viewing frustum.
     pub fn cull_point(&self, p: Vector3<f32>) -> bool {
         for plane in self.clipping_planes.iter() {
-            if (self.transform * p.extend(1.0)).dot(*plane) < 0.0 {
+            if (self.view_projection() * p.extend(1.0)).dot(*plane) < 0.0 {
                 return true;
             }
         }
@@ -301,7 +304,7 @@ impl WorldRenderer {
 
         trace!("Updating entity uniform buffer");
         let world_uniforms = EntityUniforms {
-            transform: camera.transform(),
+            transform: camera.view_projection(),
             model: Matrix4::identity(),
         };
         state
@@ -399,7 +402,7 @@ impl WorldRenderer {
     fn calculate_mvp_transform(&self, camera: &Camera, entity: &ClientEntity) -> Matrix4<f32> {
         let model_transform = self.calculate_model_transform(camera, entity);
 
-        camera.transform() * model_transform
+        camera.view_projection() * model_transform
     }
 
     fn calculate_model_transform(&self, camera: &Camera, entity: &ClientEntity) -> Matrix4<f32> {

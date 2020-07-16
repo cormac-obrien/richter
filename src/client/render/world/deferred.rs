@@ -1,9 +1,12 @@
 use std::{mem::size_of, num::NonZeroU64};
 
-use cgmath::{Matrix4, SquareMatrix};
+use cgmath::{Matrix4, SquareMatrix as _, Vector3, Zero as _};
 
 use crate::{
-    client::render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState},
+    client::{
+        entity::MAX_LIGHTS,
+        render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState},
+    },
     common::util::any_as_bytes,
 };
 
@@ -39,7 +42,7 @@ lazy_static! {
                 },
             ),
 
-            // depth buffer
+            // light buffer
             wgpu::BindGroupLayoutEntry::new(
                 3,
                 wgpu::ShaderStage::FRAGMENT,
@@ -50,9 +53,20 @@ lazy_static! {
                 },
             ),
 
-            // uniform buffer
+            // depth buffer
             wgpu::BindGroupLayoutEntry::new(
                 4,
+                wgpu::ShaderStage::FRAGMENT,
+                wgpu::BindingType::SampledTexture {
+                    dimension: wgpu::TextureViewDimension::D2,
+                    component_type: wgpu::TextureComponentType::Float,
+                    multisampled: true,
+                },
+            ),
+
+            // uniform buffer
+            wgpu::BindGroupLayoutEntry::new(
+                5,
                 wgpu::ShaderStage::FRAGMENT,
                 wgpu::BindingType::UniformBuffer {
                     dynamic: false,
@@ -65,10 +79,20 @@ lazy_static! {
     ];
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct PointLight {
+    pub origin: Vector3<f32>,
+    pub radius: f32,
+}
+
 #[repr(C, align(256))]
 #[derive(Clone, Copy, Debug)]
 pub struct DeferredUniforms {
     pub inv_projection: [[f32; 4]; 4],
+    pub light_count: u32,
+    pub _pad: [u32; 3],
+    pub lights: [PointLight; MAX_LIGHTS],
 }
 
 pub struct DeferredPipeline {
@@ -89,6 +113,12 @@ impl DeferredPipeline {
             unsafe {
                 any_as_bytes(&DeferredUniforms {
                     inv_projection: Matrix4::identity().into(),
+                    light_count: 0,
+                    _pad: [0; 3],
+                    lights: [PointLight {
+                        origin: Vector3::zero(),
+                        radius: 0.0,
+                    }; MAX_LIGHTS],
                 })
             },
             wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
@@ -181,6 +211,7 @@ impl DeferredRenderer {
         state: &GraphicsState,
         diffuse_buffer: &wgpu::TextureView,
         normal_buffer: &wgpu::TextureView,
+        light_buffer: &wgpu::TextureView,
         depth_buffer: &wgpu::TextureView,
     ) -> DeferredRenderer {
         let bind_group = state
@@ -204,14 +235,19 @@ impl DeferredRenderer {
                         binding: 2,
                         resource: wgpu::BindingResource::TextureView(normal_buffer),
                     },
-                    // depth buffer
+                    // light buffer
                     wgpu::Binding {
                         binding: 3,
+                        resource: wgpu::BindingResource::TextureView(light_buffer),
+                    },
+                    // depth buffer
+                    wgpu::Binding {
+                        binding: 4,
                         resource: wgpu::BindingResource::TextureView(depth_buffer),
                     },
                     // uniform buffer
                     wgpu::Binding {
-                        binding: 4,
+                        binding: 5,
                         resource: wgpu::BindingResource::Buffer(
                             state.deferred_pipeline().uniform_buffer().slice(..),
                         ),

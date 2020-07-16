@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::{cell::RefCell, collections::HashSet, ops::RangeInclusive};
+use std::ops::RangeInclusive;
 
 use crate::{
     client::ClientEntity,
@@ -216,7 +216,7 @@ pub enum TrailKind {
 /// size.
 pub struct Particles {
     // allocation pool
-    slab: RefCell<LinkedSlab<Particle>>,
+    slab: LinkedSlab<Particle>,
 
     // random number generator
     rng: SmallRng,
@@ -235,22 +235,21 @@ impl Particles {
             static ref VELOCITY_DISTRIBUTION: Uniform<f32> = Uniform::new(0.0, 2.56);
         }
 
-        let slab = RefCell::new(LinkedSlab::with_capacity(capacity.min(MAX_PARTICLES)));
-
+        let slab = LinkedSlab::with_capacity(capacity.min(MAX_PARTICLES));
         let rng = SmallRng::from_entropy();
-
         let angle_velocities = [Vector3::zero(); VERTEX_NORMAL_COUNT];
-        let mut list = Particles {
+
+        let mut particles = Particles {
             slab,
             rng,
             angle_velocities,
         };
 
         for i in 0..angle_velocities.len() {
-            list.angle_velocities[i] = list.random_vector3(&VELOCITY_DISTRIBUTION);
+            particles.angle_velocities[i] = particles.random_vector3(&VELOCITY_DISTRIBUTION);
         }
 
-        list
+        particles
     }
 
     /// Insert a particle into the live list.
@@ -258,18 +257,22 @@ impl Particles {
     // the original engine ignores new particles if at capacity, but it's not ideal
     pub fn insert(&mut self, particle: Particle) -> bool {
         // check capacity
-        if self.slab.borrow().len() == self.slab.borrow().capacity() {
+        if self.slab.len() == self.slab.capacity() {
             return false;
         }
 
         // insert it
-        self.slab.borrow_mut().insert(particle);
+        self.slab.insert(particle);
         true
     }
 
     /// Clears all particles.
     pub fn clear(&mut self) {
-        self.slab.borrow_mut().clear();
+        self.slab.clear();
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Particle> {
+        self.slab.iter()
     }
 
     /// Update all live particles, deleting any that are expired.
@@ -279,7 +282,6 @@ impl Particles {
     /// or not.
     pub fn update(&mut self, time: Duration, frame_time: Duration, sv_gravity: f32) {
         self.slab
-            .borrow_mut()
             .retain(|_, particle| particle.update(time, frame_time, sv_gravity));
     }
 

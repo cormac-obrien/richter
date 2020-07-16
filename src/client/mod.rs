@@ -44,9 +44,9 @@ use std::{
 use crate::{
     client::{
         entity::{
-            particle::{Particles, TrailKind, MAX_PARTICLES},
-            Beam, ClientEntity, LightDesc, Lights, MAX_BEAMS, MAX_LIGHTS, MAX_STATIC_ENTITIES,
-            MAX_TEMP_ENTITIES,
+            particle::{Particle, Particles, TrailKind, MAX_PARTICLES},
+            Beam, ClientEntity, Light, LightDesc, Lights, MAX_BEAMS, MAX_LIGHTS,
+            MAX_STATIC_ENTITIES, MAX_TEMP_ENTITIES,
         },
         input::game::{Action, GameInput},
         sound::{AudioSource, Channel, Listener, StaticSound},
@@ -54,7 +54,6 @@ use crate::{
         view::{IdleVars, KickVars, RollVars, View},
     },
     common::{
-        alloc::LinkedSlab,
         bsp,
         console::{CmdRegistry, Console, CvarRegistry},
         engine,
@@ -1872,6 +1871,14 @@ impl Client {
             .iter()
             .map(move |i| &self.state.entities[*i])
             .chain(self.state.temp_entities.iter())
+    }
+
+    pub fn iter_lights(&self) -> impl Iterator<Item = &Light> {
+        self.state.lights.iter()
+    }
+
+    pub fn iter_particles(&self) -> impl Iterator<Item = &Particle> {
+        self.state.particles.iter()
     }
 
     pub fn register_cmds(&self, cmds: &mut CmdRegistry) {
