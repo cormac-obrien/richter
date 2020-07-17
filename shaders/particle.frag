@@ -3,7 +3,7 @@
 layout(location = 0) in vec2 f_texcoord;
 
 layout(push_constant) uniform PushConstants {
-  uint color;
+  layout(offset = 64) uint color;
 } push_constants;
 
 layout(set = 0, binding = 0) uniform sampler u_sampler;
@@ -15,8 +15,7 @@ layout(location = 2) out vec4 light_attachment;
 
 void main() {
   vec4 tex_color = texture(
-                           sampler2D(u_texture[push_constants.color], u_sampler),
-    //sampler2D(u_texture[push_constants.color], u_sampler),
+    sampler2D(u_texture[push_constants.color], u_sampler),
     f_texcoord
   );
 

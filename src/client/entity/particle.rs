@@ -485,15 +485,17 @@ impl Particles {
 
         for _ in 0..count {
             let scatter = self.random_vector3(&SCATTER_DISTRIBUTION);
-            let color = color & !7 + COLOR_DISTRIBUTION.sample(&mut self.rng);
+
+            // picks any color in the block of 8 the original color belongs to.
+            // e.g., if the color argument is 17, picks randomly in [16, 23]
+            let color = (color & !7) + COLOR_DISTRIBUTION.sample(&mut self.rng);
+
             let ttl = Duration::milliseconds(TTL_DISTRIBUTION.sample(&mut self.rng));
 
             self.insert(Particle {
                 kind: ParticleKind::Grav,
                 origin: origin + scatter,
                 velocity: 15.0 * direction,
-                // picks any color in the block of 8 the original color belongs to.
-                // e.g., if the color argument is 17, picks randomly in [16, 23]
                 color,
                 spawned: time,
                 expire: time + ttl,
