@@ -24,9 +24,8 @@ use crate::{
     client::render::{
         uniform::{DynamicUniformBuffer, DynamicUniformBufferBlock},
         warp,
-        world::BindGroupLayoutId,
-        Camera, GraphicsState, LightmapData, Pipeline, TextureData, DEPTH_ATTACHMENT_FORMAT,
-        DIFFUSE_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT, LIGHT_ATTACHMENT_FORMAT,
+        world::{BindGroupLayoutId, WorldPipelineBase},
+        Camera, GraphicsState, LightmapData, Pipeline, TextureData,
     },
     common::{
         bsp::{BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTextureMipmap},
@@ -35,7 +34,8 @@ use crate::{
     },
 };
 
-use cgmath::{InnerSpace as _, Vector3};
+use bumpalo::Bump;
+use cgmath::{InnerSpace as _, Matrix4, Vector3};
 use failure::Error;
 use num::FromPrimitive;
 use strum::IntoEnumIterator as _;
@@ -100,6 +100,7 @@ lazy_static! {
 
 pub struct BrushPipeline {
     pipeline: wgpu::RenderPipeline,
+    vertex_push_constants: Bump,
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
     texture_uniform_buffer: DynamicUniformBuffer<TextureUniforms>,
     texture_uniform_blocks: Vec<DynamicUniformBufferBlock<TextureUniforms>>,
@@ -124,6 +125,8 @@ impl BrushPipeline {
 
         BrushPipeline {
             pipeline,
+            // TODO: pick a starting capacity
+            vertex_push_constants: Bump::new(),
             bind_group_layouts,
             texture_uniform_buffer,
             texture_uniform_blocks,
@@ -142,6 +145,14 @@ impl BrushPipeline {
             .chain(self.bind_group_layouts.iter())
             .collect();
         self.pipeline = BrushPipeline::recreate(device, compiler, &layout_refs, sample_count);
+    }
+
+    pub fn reset(&mut self) {
+        self.vertex_push_constants.reset();
+    }
+
+    pub fn alloc_vertex_push_constants(&self, vpc: VertexPushConstants) -> &VertexPushConstants {
+        self.vertex_push_constants.alloc(vpc)
     }
 
     pub fn pipeline(&self) -> &wgpu::RenderPipeline {
@@ -166,7 +177,18 @@ impl BrushPipeline {
     }
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct VertexPushConstants {
+    pub transform: Matrix4<f32>,
+    pub model: Matrix4<f32>,
+}
+
 impl Pipeline for BrushPipeline {
+    type VertexPushConstants = VertexPushConstants;
+    type SharedPushConstants = ();
+    type FragmentPushConstants = ();
+
     fn name() -> &'static str {
         "brush"
     }
@@ -186,24 +208,18 @@ impl Pipeline for BrushPipeline {
             // group 2: updated per-texture
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("brush per-texture bind group"),
-                bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
             },
             // group 3: updated per-face
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("brush per-face bind group"),
-                bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[1],
+                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[1],
             },
         ]
     }
 
     fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {
-        Some(wgpu::RasterizationStateDescriptor {
-            front_face: wgpu::FrontFace::Cw,
-            cull_mode: wgpu::CullMode::Back,
-            depth_bias: 0,
-            depth_bias_slope_scale: 0.0,
-            depth_bias_clamp: 0.0,
-        })
+        WorldPipelineBase::rasterization_state_descriptor()
     }
 
     fn primitive_topology() -> wgpu::PrimitiveTopology {
@@ -211,41 +227,11 @@ impl Pipeline for BrushPipeline {
     }
 
     fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
-        vec![
-            // diffuse attachment
-            wgpu::ColorStateDescriptor {
-                format: DIFFUSE_ATTACHMENT_FORMAT,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
-                write_mask: wgpu::ColorWrite::ALL,
-            },
-            // normal attachment
-            wgpu::ColorStateDescriptor {
-                format: NORMAL_ATTACHMENT_FORMAT,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
-                write_mask: wgpu::ColorWrite::ALL,
-            },
-            // light attachment
-            wgpu::ColorStateDescriptor {
-                format: LIGHT_ATTACHMENT_FORMAT,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
-                write_mask: wgpu::ColorWrite::ALL,
-            },
-        ]
+        WorldPipelineBase::color_state_descriptors()
     }
 
     fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
-        Some(wgpu::DepthStencilStateDescriptor {
-            format: DEPTH_ATTACHMENT_FORMAT,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::LessEqual,
-            stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-            stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-            stencil_read_mask: 0,
-            stencil_write_mask: 0,
-        })
+        WorldPipelineBase::depth_stencil_state_descriptor()
     }
 
     // NOTE: if the vertex format is changed, this descriptor must also be changed accordingly.
@@ -524,18 +510,22 @@ impl BrushRendererBuilder {
         let desc = wgpu::BindGroupDescriptor {
             label: Some("per-texture bind group"),
             layout,
-            bindings: &[
-                wgpu::Binding {
+            entries: &[
+                wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(&tex.diffuse_view),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&tex.fullbright_view),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Buffer(tex_unif_buf.buffer().slice(..)),
+                    resource: wgpu::BindingResource::Buffer(
+                        tex_unif_buf
+                            .buffer()
+                            .slice(..size_of::<TextureUniforms>() as wgpu::BufferAddress),
+                    ),
                 },
             ],
         };
@@ -555,7 +545,7 @@ impl BrushRendererBuilder {
         let desc = wgpu::BindGroupDescriptor {
             label: Some("per-face bind group"),
             layout,
-            bindings: &[wgpu::Binding {
+            entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::TextureViewArray(&lightmap_views[..]),
             }],

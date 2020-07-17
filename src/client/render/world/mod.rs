@@ -1,6 +1,7 @@
 pub mod alias;
 pub mod brush;
 pub mod deferred;
+pub mod particle;
 pub mod postprocess;
 pub mod sprite;
 
@@ -8,14 +9,17 @@ use std::{cell::RefCell, mem::size_of};
 
 use crate::{
     client::{
+        entity::particle::Particle,
         render::{
+            pipeline::Pipeline,
             uniform::{DynamicUniformBufferBlock, UniformArrayUint, UniformBool},
             world::{
-                alias::AliasRenderer,
-                brush::{BrushRenderer, BrushRendererBuilder},
-                sprite::SpriteRenderer,
+                alias::{AliasPipeline, AliasRenderer},
+                brush::{BrushPipeline, BrushRenderer, BrushRendererBuilder},
+                sprite::{SpritePipeline, SpriteRenderer},
             },
-            GraphicsState,
+            GraphicsState, DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT,
+            LIGHT_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
         },
         ClientEntity,
     },
@@ -29,7 +33,8 @@ use crate::{
     },
 };
 
-use cgmath::{Deg, Euler, InnerSpace, Matrix4, SquareMatrix as _, Vector3, Vector4};
+use bumpalo::Bump;
+use cgmath::{Euler, InnerSpace, Matrix4, SquareMatrix as _, Vector3, Vector4};
 use chrono::Duration;
 
 lazy_static! {
@@ -79,14 +84,95 @@ lazy_static! {
         // group 0: updated per-frame
         wgpu::BindGroupLayoutDescriptor {
             label: Some("per-frame bind group"),
-            bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+            entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
         },
         // group 1: updated per-entity
         wgpu::BindGroupLayoutDescriptor {
             label: Some("brush per-entity bind group"),
-            bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[1],
+            entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[1],
         },
     ];
+}
+
+struct WorldPipelineBase;
+
+impl Pipeline for WorldPipelineBase {
+    type VertexPushConstants = ();
+    type SharedPushConstants = ();
+    type FragmentPushConstants = ();
+
+    fn name() -> &'static str {
+        "world"
+    }
+
+    fn vertex_shader() -> &'static str {
+        ""
+    }
+
+    fn fragment_shader() -> &'static str {
+        ""
+    }
+
+    fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
+        // TODO
+        vec![]
+    }
+
+    fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {
+        Some(wgpu::RasterizationStateDescriptor {
+            front_face: wgpu::FrontFace::Cw,
+            cull_mode: wgpu::CullMode::None,
+            depth_bias: 0,
+            depth_bias_slope_scale: 0.0,
+            depth_bias_clamp: 0.0,
+        })
+    }
+
+    fn primitive_topology() -> wgpu::PrimitiveTopology {
+        wgpu::PrimitiveTopology::TriangleList
+    }
+
+    fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
+        vec![
+            // diffuse attachment
+            wgpu::ColorStateDescriptor {
+                format: DIFFUSE_ATTACHMENT_FORMAT,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::ALL,
+            },
+            // normal attachment
+            wgpu::ColorStateDescriptor {
+                format: NORMAL_ATTACHMENT_FORMAT,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::ALL,
+            },
+            // light attachment
+            wgpu::ColorStateDescriptor {
+                format: LIGHT_ATTACHMENT_FORMAT,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::ALL,
+            },
+        ]
+    }
+
+    fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
+        Some(wgpu::DepthStencilStateDescriptor {
+            format: DEPTH_ATTACHMENT_FORMAT,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+            stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+            stencil_read_mask: 0,
+            stencil_write_mask: 0,
+        })
+    }
+
+    fn vertex_buffer_descriptors() -> Vec<wgpu::VertexBufferDescriptor<'static>> {
+        Vec::new()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -331,17 +417,20 @@ impl WorldRenderer {
         state.entity_uniform_buffer().flush(state.queue());
     }
 
-    pub fn render_pass<'a, I>(
+    pub fn render_pass<'a, E, P>(
         &'a self,
         state: &'a GraphicsState,
         pass: &mut wgpu::RenderPass<'a>,
+        bump: &'a Bump,
         camera: &Camera,
         time: Duration,
-        entities: I,
+        entities: E,
+        particles: P,
         lightstyle_values: &[u32],
         cvars: &CvarRegistry,
     ) where
-        I: Iterator<Item = &'a ClientEntity> + Clone,
+        E: Iterator<Item = &'a ClientEntity> + Clone,
+        P: Iterator<Item = &'a Particle>,
     {
         let _guard = flame::start_guard("Renderer::render_pass");
         {
@@ -363,6 +452,16 @@ impl WorldRenderer {
 
             // draw world
             info!("Drawing world");
+            pass.set_pipeline(state.brush_pipeline().pipeline());
+            BrushPipeline::set_push_constants(
+                pass,
+                Some(bump.alloc(brush::VertexPushConstants {
+                    transform: camera.view_projection(),
+                    model: Matrix4::identity(),
+                })),
+                None,
+                None,
+            );
             pass.set_bind_group(
                 BindGroupLayoutId::PerEntity as u32,
                 &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
@@ -380,17 +479,35 @@ impl WorldRenderer {
                 );
 
                 match self.renderer_for_entity(&ent) {
-                    EntityRenderer::Brush(ref bmodel) => bmodel.record_draw(state, pass, camera),
+                    EntityRenderer::Brush(ref bmodel) => {
+                        pass.set_pipeline(state.brush_pipeline().pipeline());
+                        BrushPipeline::set_push_constants(
+                            pass,
+                            Some(bump.alloc(brush::VertexPushConstants {
+                                transform: self.calculate_mvp_transform(camera, ent),
+                                model: self.calculate_model_transform(camera, ent),
+                            })),
+                            None,
+                            None,
+                        );
+                        bmodel.record_draw(state, pass, camera);
+                    }
                     EntityRenderer::Alias(ref alias) => {
+                        pass.set_pipeline(state.alias_pipeline().pipeline());
+                        AliasPipeline::set_push_constants(pass, None, None, None);
                         alias.record_draw(state, pass, time, ent.get_frame_id(), ent.get_skin_id())
                     }
                     EntityRenderer::Sprite(ref sprite) => {
+                        pass.set_pipeline(state.sprite_pipeline().pipeline());
+                        SpritePipeline::set_push_constants(pass, None, None, None);
                         sprite.record_draw(state, pass, ent.get_frame_id(), time)
                     }
                     _ => warn!("non-brush renderers not implemented!"),
                     // _ => unimplemented!(),
                 }
             }
+
+            state.particle_pipeline().record_draw(pass, &bump, camera, particles);
         }
     }
 

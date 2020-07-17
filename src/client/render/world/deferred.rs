@@ -156,6 +156,10 @@ impl DeferredPipeline {
 }
 
 impl Pipeline for DeferredPipeline {
+    type VertexPushConstants = ();
+    type SharedPushConstants = ();
+    type FragmentPushConstants = ();
+
     fn name() -> &'static str {
         "deferred"
     }
@@ -163,7 +167,7 @@ impl Pipeline for DeferredPipeline {
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
         vec![wgpu::BindGroupLayoutDescriptor {
             label: Some("deferred bind group"),
-            bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+            entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
         }]
     }
 
@@ -219,34 +223,34 @@ impl DeferredRenderer {
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("deferred bind group"),
                 layout: &state.deferred_pipeline().bind_group_layouts()[0],
-                bindings: &[
+                entries: &[
                     // sampler
-                    wgpu::Binding {
+                    wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
                     },
                     // diffuse buffer
-                    wgpu::Binding {
+                    wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::TextureView(diffuse_buffer),
                     },
                     // normal buffer
-                    wgpu::Binding {
+                    wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::TextureView(normal_buffer),
                     },
                     // light buffer
-                    wgpu::Binding {
+                    wgpu::BindGroupEntry {
                         binding: 3,
                         resource: wgpu::BindingResource::TextureView(light_buffer),
                     },
                     // depth buffer
-                    wgpu::Binding {
+                    wgpu::BindGroupEntry {
                         binding: 4,
                         resource: wgpu::BindingResource::TextureView(depth_buffer),
                     },
                     // uniform buffer
-                    wgpu::Binding {
+                    wgpu::BindGroupEntry {
                         binding: 5,
                         resource: wgpu::BindingResource::Buffer(
                             state.deferred_pipeline().uniform_buffer().slice(..),

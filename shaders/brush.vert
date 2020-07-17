@@ -10,6 +10,11 @@ layout(location = 2) in vec2 a_diffuse;
 layout(location = 3) in vec2 a_lightmap;
 layout(location = 4) in uvec4 a_lightmap_anim;
 
+layout(push_constant) uniform PushConstants {
+  mat4 transform;
+  mat4 model;
+} push_constants;
+
 layout(location = 0) out vec3 f_normal;
 layout(location = 1) out vec2 f_diffuse;
 layout(location = 2) out vec2 f_lightmap;
@@ -20,11 +25,6 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     vec4 camera_pos;
     float time;
 } frame_uniforms;
-
-layout(set = 1, binding = 0) uniform EntityUniforms {
-    mat4 u_transform;
-    mat4 u_model;
-} entity_uniforms;
 
 layout(set = 2, binding = 2) uniform TextureUniforms {
     uint kind;
@@ -48,9 +48,9 @@ void main() {
         f_diffuse = a_diffuse;
     }
 
-    f_normal = mat3(transpose(inverse(entity_uniforms.u_model))) * convert(a_normal);
+    f_normal = mat3(transpose(inverse(push_constants.model))) * convert(a_normal);
     f_lightmap = a_lightmap;
     f_lightmap_anim = a_lightmap_anim;
-    gl_Position = entity_uniforms.u_transform * vec4(convert(a_position), 1.0);
+    gl_Position = push_constants.transform * vec4(convert(a_position), 1.0);
 
 }

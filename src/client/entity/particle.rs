@@ -198,6 +198,14 @@ impl Particle {
             }
         }
     }
+
+    pub fn origin(&self) -> Vector3<f32> {
+        self.origin
+    }
+
+    pub fn color(&self) -> u8 {
+        self.color
+    }
 }
 
 pub enum TrailKind {

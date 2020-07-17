@@ -185,6 +185,10 @@ impl QuadPipeline {
 }
 
 impl Pipeline for QuadPipeline {
+    type VertexPushConstants = ();
+    type SharedPushConstants = ();
+    type FragmentPushConstants = ();
+
     fn name() -> &'static str {
         "quad"
     }
@@ -194,17 +198,17 @@ impl Pipeline for QuadPipeline {
             // group 0: per-frame
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("per-frame quad bind group"),
-                bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
             },
             // group 1: per-texture
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("per-texture quad bind group"),
-                bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[1],
+                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[1],
             },
             // group 2: per-quad
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("per-texture quad bind group"),
-                bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[2],
+                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[2],
             },
         ]
     }
@@ -285,7 +289,7 @@ impl QuadTexture {
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &state.quad_pipeline().bind_group_layouts()[1],
-                bindings: &[wgpu::Binding {
+                entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(&texture_view),
                 }],
@@ -338,7 +342,7 @@ impl QuadRenderer {
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("quad sampler bind group"),
                 layout: &state.quad_pipeline().bind_group_layouts()[0],
-                bindings: &[wgpu::Binding {
+                entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
                 }],
@@ -348,10 +352,14 @@ impl QuadRenderer {
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("quad transform bind group"),
                 layout: &state.quad_pipeline().bind_group_layouts()[2],
-                bindings: &[wgpu::Binding {
+                entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer(
-                        state.quad_pipeline().uniform_buffer().buffer().slice(..),
+                        state
+                            .quad_pipeline()
+                            .uniform_buffer()
+                            .buffer()
+                            .slice(..size_of::<QuadUniforms>() as wgpu::BufferAddress),
                     ),
                 }],
             });

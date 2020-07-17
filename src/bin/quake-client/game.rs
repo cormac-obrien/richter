@@ -49,6 +49,7 @@ use richter::{
     },
 };
 
+use bumpalo::Bump;
 use cgmath::{self, SquareMatrix as _, Vector3, Zero as _};
 use chrono::Duration;
 use failure::Error;
@@ -149,6 +150,7 @@ pub struct Game {
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
     ui_renderer: Rc<UiRenderer>,
+    render_pass_bump: Bump,
     state: GameState,
     input: Rc<RefCell<Input>>,
     client: Client,
@@ -189,6 +191,8 @@ impl Game {
             cvars,
             cmds,
             ui_renderer,
+            // TODO: specify a capacity
+            render_pass_bump: Bump::new(),
             state: GameState::Loading,
             input,
             client,
@@ -268,7 +272,7 @@ impl Game {
     }
 
     pub fn render(
-        &self,
+        &mut self,
         gfx_state: &GraphicsState,
         color_attachment_view: &wgpu::TextureView,
         width: u32,
@@ -276,6 +280,9 @@ impl Game {
         console: &Console,
         menu: &Menu,
     ) {
+        // we don't need to keep this data between frames
+        self.render_pass_bump.reset();
+
         match self.state {
             // TODO: loading screen
             GameState::Loading => (),
@@ -306,9 +313,11 @@ impl Game {
                     state.world_renderer.render_pass(
                         gfx_state,
                         &mut init_pass,
+                        &self.render_pass_bump,
                         &camera,
                         self.client.time(),
                         self.client.iter_visible_entities(),
+                        self.client.iter_particles(),
                         self.client.lightstyle_values().unwrap().as_slice(),
                         &self.cvars.borrow(),
                     );
