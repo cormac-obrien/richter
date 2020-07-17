@@ -102,6 +102,10 @@ impl PostProcessPipeline {
 }
 
 impl Pipeline for PostProcessPipeline {
+    type VertexPushConstants = ();
+    type SharedPushConstants = ();
+    type FragmentPushConstants = ();
+
     fn name() -> &'static str {
         "postprocess"
     }
@@ -109,7 +113,7 @@ impl Pipeline for PostProcessPipeline {
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
         vec![wgpu::BindGroupLayoutDescriptor {
             label: Some("postprocess bind group"),
-            bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+            entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
         }]
     }
 
@@ -159,20 +163,20 @@ impl PostProcessRenderer {
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("postprocess bind group"),
                 layout: &state.postprocess_pipeline().bind_group_layouts()[0],
-                bindings: &[
+                entries: &[
                     // sampler
-                    wgpu::Binding {
+                    wgpu::BindGroupEntry {
                         binding: 0,
                         // TODO: might need a dedicated sampler if downsampling
                         resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
                     },
                     // color buffer
-                    wgpu::Binding {
+                    wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::TextureView(color_buffer),
                     },
                     // uniform buffer
-                    wgpu::Binding {
+                    wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::Buffer(
                             state.postprocess_pipeline().uniform_buffer().slice(..),

@@ -43,6 +43,11 @@ use std::{
 
 use crate::{
     client::{
+        entity::{
+            particle::{Particle, Particles, TrailKind, MAX_PARTICLES},
+            Beam, ClientEntity, Light, LightDesc, Lights, MAX_BEAMS, MAX_LIGHTS,
+            MAX_STATIC_ENTITIES, MAX_TEMP_ENTITIES,
+        },
         input::game::{Action, GameInput},
         sound::{AudioSource, Channel, Listener, StaticSound},
         trace::{TraceEntity, TraceFrame},
@@ -57,9 +62,9 @@ use crate::{
         net::{
             self,
             connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION},
-            BlockingMode, ButtonFlags, ClientCmd, ClientStat, ColorShift, EntityEffects,
-            EntityState, GameType, ItemFlags, NetError, PlayerColor, QSocket, ServerCmd,
-            SignOnStage, TempEntity,
+            BeamEntityKind, BlockingMode, ButtonFlags, ClientCmd, ClientStat, ColorShift,
+            EntityEffects, EntityState, GameType, ItemFlags, NetError, PlayerColor,
+            PointEntityKind, QSocket, ServerCmd, SignOnStage, TempEntity,
         },
         vfs::Vfs,
     },
@@ -69,12 +74,15 @@ use cgmath::{Angle, Deg, InnerSpace, Matrix4, Vector3, Zero};
 use chrono::Duration;
 use failure::{Error, ResultExt};
 use flame;
+use rand::{
+    distributions::{Distribution as _, Uniform},
+    Rng,
+};
 
 // connections are tried 3 times, see
 // https://github.com/id-Software/Quake/blob/master/WinQuake/net_dgrm.c#L1248
 const MAX_CONNECT_ATTEMPTS: usize = 3;
 const MAX_STATS: usize = 32;
-const MAX_STATIC_ENTITIES: usize = 128;
 
 const DEFAULT_SOUND_PACKET_VOLUME: u8 = 255;
 const DEFAULT_SOUND_PACKET_ATTENUATION: f32 = 1.0;
@@ -99,86 +107,6 @@ struct PlayerInfo {
     frags: i32,
     colors: PlayerColor,
     // translations: [u8; VID_GRADES],
-}
-
-#[derive(Debug)]
-pub struct ClientEntity {
-    force_link: bool,
-    baseline: EntityState,
-
-    msg_time: Duration,
-    msg_origins: [Vector3<f32>; 2],
-    origin: Vector3<f32>,
-    msg_angles: [Vector3<Deg<f32>>; 2],
-    angles: Vector3<Deg<f32>>,
-    model_id: usize,
-    frame_id: usize,
-    skin_id: usize,
-    sync_base: Duration,
-    effects: EntityEffects,
-    // vis_frame: usize,
-}
-
-impl ClientEntity {
-    pub fn from_baseline(baseline: EntityState) -> ClientEntity {
-        ClientEntity {
-            force_link: false,
-            baseline: baseline.clone(),
-            msg_time: Duration::zero(),
-            msg_origins: [Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0)],
-            origin: baseline.origin,
-            msg_angles: [
-                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            ],
-            angles: baseline.angles,
-            model_id: baseline.model_id,
-            frame_id: baseline.frame_id,
-            skin_id: baseline.skin_id,
-            sync_base: Duration::zero(),
-            effects: baseline.effects,
-        }
-    }
-
-    pub fn uninitialized() -> ClientEntity {
-        ClientEntity {
-            force_link: false,
-            baseline: EntityState::uninitialized(),
-            msg_time: Duration::zero(),
-            msg_origins: [Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0)],
-            origin: Vector3::new(0.0, 0.0, 0.0),
-            msg_angles: [
-                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-                Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            ],
-            angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            model_id: 0,
-            frame_id: 0,
-            skin_id: 0,
-            sync_base: Duration::zero(),
-            effects: EntityEffects::empty(),
-        }
-    }
-
-    pub fn get_origin(&self) -> Vector3<f32> {
-        self.origin
-    }
-
-    pub fn get_angles(&self) -> Vector3<Deg<f32>> {
-        self.angles
-    }
-
-    pub fn get_model_id(&self) -> usize {
-        self.model_id
-    }
-
-    pub fn get_frame_id(&self) -> usize {
-        self.frame_id
-    }
-
-    pub fn get_skin_id(&self) -> usize {
-        self.skin_id
-    }
 }
 
 struct ClientChannel {
@@ -284,6 +212,8 @@ struct ClientState {
 
     // model precache
     models: Vec<Model>,
+    // name-to-id map
+    model_names: HashMap<String, usize>,
 
     // audio source precache
     sounds: Vec<AudioSource>,
@@ -291,11 +221,13 @@ struct ClientState {
     // ambient sounds (infinite looping, static position)
     static_sounds: Vec<StaticSound>,
 
-    // client-side entities
+    // entities and entity-like things
     entities: Vec<ClientEntity>,
-
-    // static entities
     static_entities: Vec<ClientEntity>,
+    temp_entities: Vec<ClientEntity>,
+    lights: Lights,
+    beams: [Option<Beam>; MAX_BEAMS],
+    particles: Particles,
 
     // visible entities, updated per-frame
     visible_entity_ids: Vec<usize>,
@@ -356,6 +288,7 @@ impl ClientState {
         Ok(ClientState {
             vfs: vfs.clone(),
             models: vec![Model::none()],
+            model_names: HashMap::new(),
             sounds: vec![AudioSource::load(&vfs, "misc/null.wav").context(
                 ClientErrorKind::ResourceNotLoaded {
                     name: "misc/null.wav".to_string(),
@@ -364,6 +297,10 @@ impl ClientState {
             static_sounds: Vec::new(),
             entities: Vec::new(),
             static_entities: Vec::new(),
+            temp_entities: Vec::new(),
+            lights: Lights::with_capacity(MAX_LIGHTS),
+            beams: [None; MAX_BEAMS],
+            particles: Particles::with_capacity(MAX_PARTICLES),
             visible_entity_ids: Vec::new(),
             light_styles: HashMap::new(),
             stats: [0; MAX_STATS],
@@ -732,11 +669,11 @@ impl Client {
         Ok(())
     }
 
-    /// Spawn an entity with the given ID, also spawning any uninitialized entities between the former
-    /// last entity and the new one.
-    // TODO: skipping entities indicates that the entities have been freed by the server. it may
-    // make more sense to use a HashMap to store entities by ID since the lookup table is relatively
-    // sparse.
+    /// Spawn an entity with the given ID, also spawning any uninitialized
+    /// entities between the former last entity and the new one.
+    // TODO: skipping entities indicates that the entities have been freed by
+    // the server. it may make more sense to use a HashMap to store entities by
+    // ID since the lookup table is relatively sparse.
     pub fn spawn_entities(
         &mut self,
         ent_id: u16,
@@ -873,68 +810,36 @@ impl Client {
                     self.state.msg_velocity[0].y = velocity_y.unwrap_or(0.0);
                     self.state.msg_velocity[0].z = velocity_z.unwrap_or(0.0);
 
-                    if items != self.state.items {
+                    let item_diff = items - self.state.items;
+                    if !item_diff.is_empty() {
                         // item flags have changed, something got picked up
+                        let bits = item_diff.bits();
                         for i in 0..net::MAX_ITEMS {
-                            if (items.bits() & 1 << i) != 0
-                                && (self.state.items.bits() & 1 << i) == 0
-                            {
+                            if bits & 1 << i != 0 {
                                 // item with flag value `i` was picked up
                                 self.state.item_get_time[i] = self.state.time;
                             }
                         }
-
-                        self.state.items = items;
                     }
+                    self.state.items = items;
 
                     self.state.on_ground = on_ground;
                     self.state.in_water = in_water;
 
                     self.state.stats[ClientStat::WeaponFrame as usize] =
                         weapon_frame.unwrap_or(0) as i32;
-
-                    // TODO: these ClientStat conditionals should be convertible to a method
-
-                    let armor = armor.unwrap_or(0);
-                    if self.state.stats[ClientStat::Armor as usize] != armor as i32 {
-                        self.state.stats[ClientStat::Armor as usize] = armor as i32;
-                    }
-
-                    let weapon = weapon.unwrap_or(0);
-                    if self.state.stats[ClientStat::Weapon as usize] != weapon as i32 {
-                        self.state.stats[ClientStat::Weapon as usize] = weapon as i32;
-                    }
-
-                    if self.state.stats[ClientStat::Health as usize] != health as i32 {
-                        self.state.stats[ClientStat::Health as usize] = health as i32;
-                    }
-
-                    if self.state.stats[ClientStat::Ammo as usize] != ammo as i32 {
-                        self.state.stats[ClientStat::Ammo as usize] = ammo as i32;
-                    }
-
-                    if self.state.stats[ClientStat::Shells as usize] != ammo_shells as i32 {
-                        self.state.stats[ClientStat::Shells as usize] = ammo_shells as i32;
-                    }
-
-                    if self.state.stats[ClientStat::Nails as usize] != ammo_nails as i32 {
-                        self.state.stats[ClientStat::Nails as usize] = ammo_nails as i32;
-                    }
-
-                    if self.state.stats[ClientStat::Rockets as usize] != ammo_rockets as i32 {
-                        self.state.stats[ClientStat::Rockets as usize] = ammo_rockets as i32;
-                    }
-
-                    if self.state.stats[ClientStat::Cells as usize] != ammo_cells as i32 {
-                        self.state.stats[ClientStat::Cells as usize] = ammo_cells as i32;
-                    }
+                    self.state.stats[ClientStat::Armor as usize] = armor.unwrap_or(0) as i32;
+                    self.state.stats[ClientStat::Weapon as usize] = weapon.unwrap_or(0) as i32;
+                    self.state.stats[ClientStat::Health as usize] = health as i32;
+                    self.state.stats[ClientStat::Ammo as usize] = ammo as i32;
+                    self.state.stats[ClientStat::Shells as usize] = ammo_shells as i32;
+                    self.state.stats[ClientStat::Nails as usize] = ammo_nails as i32;
+                    self.state.stats[ClientStat::Rockets as usize] = ammo_rockets as i32;
+                    self.state.stats[ClientStat::Cells as usize] = ammo_cells as i32;
 
                     // TODO: this behavior assumes the `standard_quake` behavior and will likely
                     // break with the mission packs
-                    if self.state.stats[ClientStat::ActiveWeapon as usize] != active_weapon as i32 {
-                        self.state.stats[ClientStat::ActiveWeapon as usize] = active_weapon as i32;
-                        // TODO: update status bar
-                    }
+                    self.state.stats[ClientStat::ActiveWeapon as usize] = active_weapon as i32;
                 }
 
                 ServerCmd::Damage {
@@ -1285,7 +1190,9 @@ impl Client {
                     ));
                 }
 
-                ServerCmd::TempEntity { temp_entity } => self.spawn_temp_entity(&temp_entity),
+                ServerCmd::TempEntity { temp_entity } => {
+                    self.spawn_temp_entity(self.state.time, &temp_entity)
+                }
 
                 ServerCmd::StuffText { text } => self.console.borrow_mut().stuff_text(text),
 
@@ -1479,6 +1386,12 @@ impl Client {
             // TODO: send keepalive message?
         }
 
+        for (id, model) in self.state.models.iter().enumerate() {
+            new_client_state
+                .model_names
+                .insert(model.name().to_owned(), id);
+        }
+
         // parse sound precache
         for ref snd_name in sound_precache {
             debug!("Loading sound {}", snd_name);
@@ -1551,8 +1464,12 @@ impl Client {
         self.state.time
     }
 
-    pub fn update_time(&mut self) {
+    pub fn update_time(&mut self, frame_time: Duration) {
         let _guard = flame::start_guard("Client::update_time");
+
+        // advance client time by frame duration
+        self.state.time = self.state.time + frame_time;
+
         // TODO: don't lerp if cls.timedemo != 0 (???) or server is running on this host
         if self.cvars.borrow().get_value("cl_nolerp").unwrap() != 0.0 {
             self.state.time = self.state.msg_times[0];
@@ -1615,7 +1532,58 @@ impl Client {
         self.state.lerp_factor
     }
 
+    pub fn update_temp_entities(&mut self) {
+        lazy_static! {
+            static ref ANGLE_DISTRIBUTION: Uniform<f32> = Uniform::new(0.0, 360.0);
+        }
+
+        self.state.temp_entities.clear();
+        for id in 0..self.state.beams.len() {
+            // remove beam if expired
+            if self.state.beams[id].map_or(false, |b| b.expire < self.state.time) {
+                self.state.beams[id] = None;
+                continue;
+            }
+
+            let view_ent = self.view_ent();
+            if let Some(ref mut beam) = self.state.beams[id] {
+                // keep lightning gun bolts fixed to player
+                if beam.entity_id == view_ent {
+                    beam.start = self.state.entities[view_ent].origin;
+                }
+
+                let vec = beam.end - beam.start;
+                let yaw = Deg::from(cgmath::Rad(vec.y.atan2(vec.x))).normalize();
+                let forward = (vec.x.powf(2.0) + vec.y.powf(2.0)).sqrt();
+                let pitch = Deg::from(cgmath::Rad(vec.z.atan2(forward))).normalize();
+
+                let len = vec.magnitude();
+                let direction = vec.normalize();
+                for interval in 0..(len / 30.0) as i32 {
+                    let mut ent = ClientEntity::uninitialized();
+                    ent.origin = beam.start + 30.0 * interval as f32 * direction;
+                    ent.angles = Vector3::new(
+                        pitch,
+                        yaw,
+                        Deg(ANGLE_DISTRIBUTION.sample(&mut rand::thread_rng())),
+                    );
+
+                    if self.state.temp_entities.len() < MAX_TEMP_ENTITIES {
+                        self.state.temp_entities.push(ent);
+                    } else {
+                        warn!("too many temp entities!");
+                    }
+                }
+            }
+        }
+    }
+
     pub fn relink_entities(&mut self) {
+        lazy_static! {
+            static ref MFLASH_DIMLIGHT_DISTRIBUTION: Uniform<f32> = Uniform::new(200.0, 232.0);
+            static ref BRIGHTLIGHT_DISTRIBUTION: Uniform<f32> = Uniform::new(400.0, 432.0);
+        }
+
         let _guard = flame::start_guard("Client::relink_entities");
         let lerp_factor = self.get_lerp_factor();
 
@@ -1649,7 +1617,7 @@ impl Client {
                 continue;
             }
 
-            let _old_origin = ent.origin;
+            let prev_origin = ent.origin;
 
             if ent.force_link {
                 trace!("force link on entity {}", ent_id);
@@ -1658,8 +1626,8 @@ impl Client {
             } else {
                 let origin_delta = ent.msg_origins[0] - ent.msg_origins[1];
                 let ent_lerp_factor = if origin_delta.magnitude2() > 10_000.0 {
-                    // if the entity moved more than 100 units in one frame, assume it was teleported
-                    // and don't lerp anything
+                    // if the entity moved more than 100 units in one frame,
+                    // assume it was teleported and don't lerp anything
                     1.0
                 } else {
                     lerp_factor
@@ -1674,15 +1642,109 @@ impl Client {
                 }
             }
 
-            if self.state.models[ent.model_id].has_flag(ModelFlags::ROTATE) {
+            let model = &self.state.models[ent.model_id];
+            if model.has_flag(ModelFlags::ROTATE) {
                 ent.angles[1] = obj_rotate;
             }
 
-            // TODO: apply various effects (lights, particles, trails...)
+            if ent.effects.contains(EntityEffects::BRIGHT_FIELD) {
+                self.state
+                    .particles
+                    .create_entity_field(self.state.time, ent);
+            }
+
+            // TODO: cache a SmallRng in Client
+            let mut rng = rand::thread_rng();
+
+            // TODO: factor out EntityEffects->LightDesc mapping
+            if ent.effects.contains(EntityEffects::MUZZLE_FLASH) {
+                // TODO: angle and move origin to muzzle
+                ent.light_id = Some(self.state.lights.insert(
+                    self.state.time,
+                    LightDesc {
+                        origin: ent.origin + Vector3::new(0.0, 0.0, 16.0),
+                        init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut rng),
+                        decay_rate: 0.0,
+                        min_radius: Some(32.0),
+                        ttl: Duration::milliseconds(100),
+                    },
+                    ent.light_id,
+                ));
+            }
+
+            if ent.effects.contains(EntityEffects::BRIGHT_LIGHT) {
+                ent.light_id = Some(self.state.lights.insert(
+                    self.state.time,
+                    LightDesc {
+                        origin: ent.origin,
+                        init_radius: BRIGHTLIGHT_DISTRIBUTION.sample(&mut rng),
+                        decay_rate: 0.0,
+                        min_radius: None,
+                        ttl: Duration::milliseconds(1),
+                    },
+                    ent.light_id,
+                ));
+            }
+
+            if ent.effects.contains(EntityEffects::DIM_LIGHT) {
+                ent.light_id = Some(self.state.lights.insert(
+                    self.state.time,
+                    LightDesc {
+                        origin: ent.origin,
+                        init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut rng),
+                        decay_rate: 0.0,
+                        min_radius: None,
+                        ttl: Duration::milliseconds(1),
+                    },
+                    ent.light_id,
+                ));
+            }
+
+            // check if this entity leaves a trail
+            let trail_kind = if model.has_flag(ModelFlags::GIB) {
+                Some(TrailKind::Blood)
+            } else if model.has_flag(ModelFlags::ZOMGIB) {
+                Some(TrailKind::BloodSlight)
+            } else if model.has_flag(ModelFlags::TRACER) {
+                Some(TrailKind::TracerGreen)
+            } else if model.has_flag(ModelFlags::TRACER2) {
+                Some(TrailKind::TracerRed)
+            } else if model.has_flag(ModelFlags::ROCKET) {
+                ent.light_id = Some(self.state.lights.insert(
+                    self.state.time,
+                    LightDesc {
+                        origin: ent.origin,
+                        init_radius: 200.0,
+                        decay_rate: 0.0,
+                        min_radius: None,
+                        ttl: Duration::milliseconds(10),
+                    },
+                    ent.light_id,
+                ));
+                Some(TrailKind::Rocket)
+            } else if model.has_flag(ModelFlags::GRENADE) {
+                Some(TrailKind::Smoke)
+            } else if model.has_flag(ModelFlags::TRACER3) {
+                Some(TrailKind::Vore)
+            } else {
+                None
+            };
+
+            // if the entity leaves a trail, generate it
+            if let Some(kind) = trail_kind {
+                self.state.particles.create_trail(
+                    self.state.time,
+                    prev_origin,
+                    ent.origin,
+                    kind,
+                    false,
+                );
+            }
 
             // mark entity for rendering
             self.state.visible_entity_ids.push(ent_id);
 
+            // enable lerp for next frame
             ent.force_link = false;
         }
     }
@@ -1767,20 +1829,38 @@ impl Client {
     pub fn frame(&mut self, frame_time: Duration) -> Result<(), Error> {
         debug!("frame time: {}ms", frame_time.num_milliseconds());
         self.parse_server_msg()?;
-        self.state.time = self.state.time + frame_time;
-        self.update_time();
+
+        // update timing information
+        self.update_time(frame_time);
+
+        // interpolate entity data
         self.relink_entities();
+
+        // update temp entities (lightning, etc.)
+        self.update_temp_entities();
+
+        // remove expired lights
+        self.state.lights.update(self.state.time);
+
+        // apply physics and remove expired particles
+        self.state
+            .particles
+            .update(self.state.time, frame_time, self.cvar_value("sv_gravity")?);
+
+        // respond to the server
         self.send()?;
 
+        // these all require the player entity to have spawned
         if self.signon == SignOnStage::Done {
+            // update ear positions
             self.state.update_listener();
-            self.state.update_sound_spatialization();
-            self.update_color_shifts(frame_time);
 
-            let orig = self.state.entities[self.state.view.entity_id()].origin;
-            println!("{},{}", engine::duration_to_f32(self.state.time), orig.x);
+            // spatialize sounds for new ear positions
+            self.state.update_sound_spatialization();
+
+            // update camera color shifts for new position/effects
+            self.update_color_shifts(frame_time);
         }
-        // TODO: CL_UpdateTEnts
 
         Ok(())
     }
@@ -1790,6 +1870,15 @@ impl Client {
             .visible_entity_ids
             .iter()
             .map(move |i| &self.state.entities[*i])
+            .chain(self.state.temp_entities.iter())
+    }
+
+    pub fn iter_lights(&self) -> impl Iterator<Item = &Light> {
+        self.state.lights.iter()
+    }
+
+    pub fn iter_particles(&self) -> impl Iterator<Item = &Particle> {
+        self.state.particles.iter()
     }
 
     pub fn register_cmds(&self, cmds: &mut CmdRegistry) {
@@ -1834,8 +1923,157 @@ impl Client {
         .unwrap();
     }
 
-    pub fn spawn_temp_entity(&self, _temp_entity: &TempEntity) {
-        warn!("Temporary entities not yet implemented!");
+    pub fn spawn_beam(
+        &mut self,
+        time: Duration,
+        entity_id: usize,
+        model_id: usize,
+        start: Vector3<f32>,
+        end: Vector3<f32>,
+    ) {
+        // always override beam with same entity_id if it exists
+        // otherwise use the first free slot
+        let mut free = None;
+        for i in 0..self.state.beams.len() {
+            if let Some(ref mut beam) = self.state.beams[i] {
+                if beam.entity_id == entity_id {
+                    beam.model_id = model_id;
+                    beam.expire = time + Duration::milliseconds(200);
+                    beam.start = start;
+                    beam.end = end;
+                }
+            } else if free.is_none() {
+                free = Some(i);
+            }
+        }
+
+        if let Some(i) = free {
+            self.state.beams[i] = Some(Beam {
+                entity_id,
+                model_id,
+                expire: time + Duration::milliseconds(200),
+                start,
+                end,
+            });
+        } else {
+            warn!("No free beam slots!");
+        }
+    }
+
+    pub fn spawn_temp_entity(&mut self, time: Duration, temp_entity: &TempEntity) {
+        match temp_entity {
+            TempEntity::Point { kind, origin } => {
+                use PointEntityKind::*;
+                match kind {
+                    // projectile impacts
+                    WizSpike | KnightSpike | Spike | SuperSpike | Gunshot => {
+                        let (color, count) = match kind {
+                            // TODO: start wizard/hit.wav
+                            WizSpike => (20, 30),
+
+                            // TODO: start hknight/hit.wav
+                            KnightSpike => (226, 20),
+
+                            // TODO: for Spike and SuperSpike, start one of:
+                            // - 26.67%: weapons/tink1.wav
+                            // - 20.0%: weapons/ric1.wav
+                            // - 20.0%: weapons/ric2.wav
+                            // - 20.0%: weapons/ric3.wav
+                            Spike => (0, 10),
+                            SuperSpike => (0, 20),
+
+                            // no sound
+                            Gunshot => (0, 20),
+                            _ => unreachable!(),
+                        };
+
+                        self.state.particles.create_projectile_impact(
+                            self.state.time,
+                            *origin,
+                            Vector3::zero(),
+                            color,
+                            count,
+                        );
+                    }
+
+                    Explosion => {
+                        self.state.particles.create_explosion(time, *origin);
+                        self.state.lights.insert(
+                            time,
+                            LightDesc {
+                                origin: *origin,
+                                init_radius: 350.0,
+                                decay_rate: 300.0,
+                                min_radius: None,
+                                ttl: Duration::milliseconds(500),
+                            },
+                            None,
+                        );
+                        // TODO: start weapons/r_exp3
+                    }
+
+                    ColorExplosion {
+                        color_start,
+                        color_len,
+                    } => {
+                        self.state.particles.create_color_explosion(
+                            time,
+                            *origin,
+                            (*color_start)..=(*color_start + *color_len - 1),
+                        );
+                        self.state.lights.insert(
+                            time,
+                            LightDesc {
+                                origin: *origin,
+                                init_radius: 350.0,
+                                decay_rate: 300.0,
+                                min_radius: None,
+                                ttl: Duration::milliseconds(500),
+                            },
+                            None,
+                        );
+                        // TODO: start weapons/r_exp3
+                    }
+
+                    TarExplosion => {
+                        self.state.particles.create_spawn_explosion(time, *origin);
+                        // TODO: start weapons/r_exp3 (same sound as rocket explosion)
+                    }
+
+                    LavaSplash => self.state.particles.create_lava_splash(time, *origin),
+                    Teleport => self.state.particles.create_teleporter_warp(time, *origin),
+                }
+            }
+
+            TempEntity::Beam {
+                kind,
+                entity_id,
+                start,
+                end,
+            } => {
+                use BeamEntityKind::*;
+                let model_name = match kind {
+                    Lightning { model_id } => format!(
+                        "progs/bolt{}.mdl",
+                        match model_id {
+                            1 => "",
+                            2 => "2",
+                            3 => "3",
+                            x => panic!("invalid lightning model id: {}", x),
+                        }
+                    ),
+                    Grapple => "progs/beam.mdl".to_string(),
+                };
+
+                self.spawn_beam(
+                    time,
+                    *entity_id as usize,
+                    *self.state.model_names.get(&model_name).unwrap(),
+                    *start,
+                    *end,
+                );
+            }
+        }
     }
 
     pub fn items(&self) -> ItemFlags {

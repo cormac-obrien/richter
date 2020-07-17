@@ -62,7 +62,10 @@ pub use pipeline::Pipeline;
 pub use postprocess::PostProcessRenderer;
 pub use target::{RenderTarget, RenderTargetResolve, SwapChainTarget};
 pub use ui::{hud::HudState, UiOverlay, UiRenderer, UiState};
-pub use world::{Camera, WorldRenderer, deferred::{DeferredRenderer, DeferredUniforms}};
+pub use world::{
+    deferred::{DeferredRenderer, DeferredUniforms, PointLight},
+    Camera, WorldRenderer,
+};
 
 use std::{
     borrow::Cow,
@@ -81,6 +84,7 @@ use crate::{
             alias::AliasPipeline,
             brush::BrushPipeline,
             deferred::DeferredPipeline,
+            particle::ParticlePipeline,
             postprocess::{self, PostProcessPipeline},
             sprite::SpritePipeline,
             EntityUniforms,
@@ -94,6 +98,7 @@ use failure::Error;
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const DIFFUSE_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 const NORMAL_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+const LIGHT_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 const DIFFUSE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const FULLBRIGHT_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -252,6 +257,7 @@ pub struct GraphicsState {
     brush_pipeline: BrushPipeline,
     sprite_pipeline: SpritePipeline,
     deferred_pipeline: DeferredPipeline,
+    particle_pipeline: ParticlePipeline,
     postprocess_pipeline: PostProcessPipeline,
     glyph_pipeline: GlyphPipeline,
     quad_pipeline: QuadPipeline,
@@ -331,7 +337,7 @@ impl GraphicsState {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("per-frame bind group"),
                 layout: &world_bind_group_layouts[world::BindGroupLayoutId::PerFrame as usize],
-                bindings: &[wgpu::Binding {
+                entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer(frame_uniform_buffer.slice(..)),
                 }],
@@ -339,21 +345,21 @@ impl GraphicsState {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("brush per-entity bind group"),
                 layout: &world_bind_group_layouts[world::BindGroupLayoutId::PerEntity as usize],
-                bindings: &[
-                    wgpu::Binding {
+                entries: &[
+                    wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::Buffer(
                             entity_uniform_buffer
                                 .borrow()
                                 .buffer()
-                                .slice(0..entity_uniform_buffer.borrow().block_size().get()),
+                                .slice(..size_of::<EntityUniforms>() as wgpu::BufferAddress),
                         ),
                     },
-                    wgpu::Binding {
+                    wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
                     },
-                    wgpu::Binding {
+                    wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::Sampler(&lightmap_sampler),
                     },
@@ -381,6 +387,8 @@ impl GraphicsState {
             sample_count,
         );
         let deferred_pipeline = DeferredPipeline::new(&device, &mut compiler, sample_count);
+        let particle_pipeline =
+            ParticlePipeline::new(&device, &queue, &mut compiler, sample_count, &palette);
         let postprocess_pipeline = PostProcessPipeline::new(&device, &mut compiler, sample_count);
         let quad_pipeline = QuadPipeline::new(&device, &mut compiler, sample_count);
         let glyph_pipeline = GlyphPipeline::new(&device, &mut compiler, sample_count);
@@ -417,6 +425,7 @@ impl GraphicsState {
             brush_pipeline,
             sprite_pipeline,
             deferred_pipeline,
+            particle_pipeline,
             postprocess_pipeline,
             glyph_pipeline,
             quad_pipeline,
@@ -578,6 +587,10 @@ impl GraphicsState {
 
     pub fn deferred_pipeline(&self) -> &DeferredPipeline {
         &self.deferred_pipeline
+    }
+
+    pub fn particle_pipeline(&self) -> &ParticlePipeline {
+        &self.particle_pipeline
     }
 
     pub fn postprocess_pipeline(&self) -> &PostProcessPipeline {

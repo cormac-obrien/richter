@@ -91,7 +91,7 @@ struct ClientProgram {
 }
 
 impl ClientProgram {
-    pub async fn new(window: Window, audio_device: rodio::Device) -> ClientProgram {
+    pub async fn new(window: Window, audio_device: rodio::Device, trace: bool) -> ClientProgram {
         let mut vfs = Vfs::new();
 
         // add basedir first
@@ -132,25 +132,32 @@ impl ClientProgram {
         let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
         let surface = unsafe { instance.create_surface(&window) };
         let adapter = instance
-            .request_adapter(
-                &wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::HighPerformance,
-                    compatible_surface: Some(&surface),
-                },
-                wgpu::UnsafeFeatures::disallow(),
-            )
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+            })
             .await
             .unwrap();
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::SAMPLED_TEXTURE_BINDING_ARRAY
+                    features: wgpu::Features::PUSH_CONSTANTS
+                        | wgpu::Features::SAMPLED_TEXTURE_BINDING_ARRAY
                         | wgpu::Features::SAMPLED_TEXTURE_ARRAY_DYNAMIC_INDEXING
                         | wgpu::Features::SAMPLED_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
-                    limits: wgpu::Limits::default(),
+                    limits: wgpu::Limits {
+                        max_sampled_textures_per_shader_stage: 256,
+                        max_uniform_buffer_binding_size: 65536,
+                        max_push_constant_size: 256,
+                        ..Default::default()
+                    },
                     shader_validation: true,
                 },
-                Some(Path::new("./trace/")),
+                if trace {
+                    Some(Path::new("./trace/"))
+                } else {
+                    None
+                },
             )
             .await
             .unwrap();
@@ -348,6 +355,9 @@ impl Program for ClientProgram {
 
 #[derive(StructOpt, Debug)]
 struct Opt {
+    #[structopt(long)]
+    trace: bool,
+
     #[structopt(name = "SERVER")]
     server: String,
 }
@@ -382,7 +392,8 @@ fn main() {
         }
     };
 
-    let mut client_program = futures::executor::block_on(ClientProgram::new(window, audio_device));
+    let mut client_program =
+        futures::executor::block_on(ClientProgram::new(window, audio_device, opt.trace));
     client_program.connect(opt.server);
     let mut host = Host::new(client_program);
 

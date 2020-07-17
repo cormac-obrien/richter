@@ -2,8 +2,8 @@ use std::{mem::size_of, ops::Range};
 
 use crate::{
     client::render::{
-        world::BindGroupLayoutId, GraphicsState, Pipeline, TextureData, DEPTH_ATTACHMENT_FORMAT,
-        DIFFUSE_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
+        world::{BindGroupLayoutId, WorldPipelineBase},
+        GraphicsState, Pipeline, TextureData,
     },
     common::{
         mdl::{self, AliasModel},
@@ -77,6 +77,10 @@ impl AliasPipeline {
 }
 
 impl Pipeline for AliasPipeline {
+    type VertexPushConstants = ();
+    type SharedPushConstants = ();
+    type FragmentPushConstants = ();
+
     fn name() -> &'static str {
         "alias"
     }
@@ -94,19 +98,13 @@ impl Pipeline for AliasPipeline {
             // group 2: updated per-texture
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("brush per-texture chain bind group"),
-                bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
             },
         ]
     }
 
     fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {
-        Some(wgpu::RasterizationStateDescriptor {
-            front_face: wgpu::FrontFace::Cw,
-            cull_mode: wgpu::CullMode::Back,
-            depth_bias: 0,
-            depth_bias_slope_scale: 0.0,
-            depth_bias_clamp: 0.0,
-        })
+        WorldPipelineBase::rasterization_state_descriptor()
     }
 
     fn primitive_topology() -> wgpu::PrimitiveTopology {
@@ -114,34 +112,11 @@ impl Pipeline for AliasPipeline {
     }
 
     fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
-        vec![
-            // diffuse attachment
-            wgpu::ColorStateDescriptor {
-                format: DIFFUSE_ATTACHMENT_FORMAT,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
-                write_mask: wgpu::ColorWrite::ALL,
-            },
-            // normal attachment
-            wgpu::ColorStateDescriptor {
-                format: NORMAL_ATTACHMENT_FORMAT,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
-                write_mask: wgpu::ColorWrite::ALL,
-            },
-        ]
+        WorldPipelineBase::color_state_descriptors()
     }
 
     fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
-        Some(wgpu::DepthStencilStateDescriptor {
-            format: DEPTH_ATTACHMENT_FORMAT,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::LessEqual,
-            stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-            stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-            stencil_read_mask: 0,
-            stencil_write_mask: 0,
-        })
+        WorldPipelineBase::depth_stencil_state_descriptor()
     }
 
     // NOTE: if the vertex format is changed, this descriptor must also be changed accordingly.
@@ -370,7 +345,7 @@ impl AliasRenderer {
                             // TODO: per-pipeline bind group layout ids
                             layout: &state.alias_pipeline().bind_group_layouts()
                                 [BindGroupLayoutId::PerTexture as usize - 2],
-                            bindings: &[wgpu::Binding {
+                            entries: &[wgpu::BindGroupEntry {
                                 binding: 0,
                                 resource: wgpu::BindingResource::TextureView(&diffuse_view),
                             }],
@@ -404,7 +379,7 @@ impl AliasRenderer {
                                     label: None,
                                     layout: &state.alias_pipeline().bind_group_layouts()
                                         [BindGroupLayoutId::PerTexture as usize - 2],
-                                    bindings: &[wgpu::Binding {
+                                    entries: &[wgpu::BindGroupEntry {
                                         binding: 0,
                                         resource: wgpu::BindingResource::TextureView(&diffuse_view),
                                     }],

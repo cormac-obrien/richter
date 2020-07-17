@@ -56,12 +56,12 @@ impl BlitPipeline {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("blit bind group"),
             layout: &bind_group_layouts[0],
-            bindings: &[
-                wgpu::Binding {
+            entries: &[
+                wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Sampler(&sampler),
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(input),
                 },
@@ -103,6 +103,10 @@ impl BlitPipeline {
 }
 
 impl Pipeline for BlitPipeline {
+    type VertexPushConstants = ();
+    type SharedPushConstants = ();
+    type FragmentPushConstants = ();
+
     fn name() -> &'static str {
         "blit"
     }
@@ -110,7 +114,7 @@ impl Pipeline for BlitPipeline {
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
         vec![wgpu::BindGroupLayoutDescriptor {
             label: Some("blit bind group"),
-            bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+            entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
         }]
     }
 

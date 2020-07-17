@@ -116,6 +116,10 @@ impl GlyphPipeline {
 }
 
 impl Pipeline for GlyphPipeline {
+    type VertexPushConstants = ();
+    type SharedPushConstants = ();
+    type FragmentPushConstants = ();
+
     fn name() -> &'static str {
         "glyph"
     }
@@ -131,7 +135,7 @@ impl Pipeline for GlyphPipeline {
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
         vec![wgpu::BindGroupLayoutDescriptor {
             label: Some("glyph constant bind group"),
-            bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+            entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
         }]
     }
 
@@ -246,12 +250,12 @@ impl GlyphRenderer {
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("glyph constant bind group"),
                 layout: &state.glyph_pipeline().bind_group_layouts()[0],
-                bindings: &[
-                    wgpu::Binding {
+                entries: &[
+                    wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
                     },
-                    wgpu::Binding {
+                    wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::TextureViewArray(&texture_views[..]),
                     },

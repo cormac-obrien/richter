@@ -2,8 +2,8 @@ use std::mem::size_of;
 
 use crate::{
     client::render::{
-        world::BindGroupLayoutId, GraphicsState, Pipeline, TextureData, DEPTH_ATTACHMENT_FORMAT,
-        DIFFUSE_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
+        world::{BindGroupLayoutId, WorldPipelineBase},
+        GraphicsState, Pipeline, TextureData,
     },
     common::{
         sprite::{SpriteFrame, SpriteKind, SpriteModel, SpriteSubframe},
@@ -101,6 +101,10 @@ impl SpritePipeline {
 }
 
 impl Pipeline for SpritePipeline {
+    type VertexPushConstants = ();
+    type SharedPushConstants = ();
+    type FragmentPushConstants = ();
+
     fn name() -> &'static str {
         "sprite"
     }
@@ -120,19 +124,13 @@ impl Pipeline for SpritePipeline {
             // group 2: updated per-texture
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("sprite per-texture chain bind group"),
-                bindings: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
             },
         ]
     }
 
     fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {
-        Some(wgpu::RasterizationStateDescriptor {
-            front_face: wgpu::FrontFace::Cw,
-            cull_mode: wgpu::CullMode::None,
-            depth_bias: 0,
-            depth_bias_slope_scale: 0.0,
-            depth_bias_clamp: 0.0,
-        })
+        WorldPipelineBase::rasterization_state_descriptor()
     }
 
     fn primitive_topology() -> wgpu::PrimitiveTopology {
@@ -140,32 +138,11 @@ impl Pipeline for SpritePipeline {
     }
 
     fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
-        vec![
-            wgpu::ColorStateDescriptor {
-                format: DIFFUSE_ATTACHMENT_FORMAT,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
-                write_mask: wgpu::ColorWrite::ALL,
-            },
-            wgpu::ColorStateDescriptor {
-                format: NORMAL_ATTACHMENT_FORMAT,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
-                write_mask: wgpu::ColorWrite::ALL,
-            },
-        ]
+        WorldPipelineBase::color_state_descriptors()
     }
 
     fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
-        Some(wgpu::DepthStencilStateDescriptor {
-            format: DEPTH_ATTACHMENT_FORMAT,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::LessEqual,
-            stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-            stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-            stencil_read_mask: 0,
-            stencil_write_mask: 0,
-        })
+        WorldPipelineBase::depth_stencil_state_descriptor()
     }
 
     // NOTE: if the vertex format is changed, this descriptor must also be changed accordingly.
@@ -266,7 +243,7 @@ impl Frame {
                     label: None,
                     layout: &state.sprite_pipeline().bind_group_layouts()
                         [BindGroupLayoutId::PerTexture as usize - 2],
-                    bindings: &[wgpu::Binding {
+                    entries: &[wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::TextureView(&diffuse_view),
                     }],

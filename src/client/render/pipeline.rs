@@ -18,6 +18,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use std::mem::size_of;
+
+use crate::common::util::{any_as_u32_slice, Pod};
+
 /// The `Pipeline` trait, which allows render pipelines to be defined more-or-less declaratively.
 
 fn create_shader<S>(
@@ -41,9 +45,16 @@ where
 ///
 /// This trait's methods are used to define the pipeline's behavior in a more-or-less declarative
 /// style, leaving the actual creation to the default implementation of `Pipeline::create()`.
-///
-/// In most cases, pipelines can simply be defined by implementing this trait on a unit struct.
 pub trait Pipeline {
+    /// Push constants used for the vertex stage of the pipeline.
+    type VertexPushConstants: Pod;
+
+    /// Push constants shared between the vertex and fragment stages of the pipeline.
+    type SharedPushConstants: Pod;
+
+    /// Push constants used for the fragment stage of the pipeline.
+    type FragmentPushConstants: Pod;
+
     /// The name of this pipeline.
     fn name() -> &'static str;
 
@@ -71,6 +82,77 @@ pub trait Pipeline {
     /// Descriptors for the vertex buffers used by the pipeline.
     fn vertex_buffer_descriptors() -> Vec<wgpu::VertexBufferDescriptor<'static>>;
 
+    fn vertex_push_constant_range() -> wgpu::PushConstantRange {
+        let range = wgpu::PushConstantRange {
+            stages: wgpu::ShaderStage::VERTEX,
+            range: 0..size_of::<Self::VertexPushConstants>() as u32
+                + size_of::<Self::SharedPushConstants>() as u32,
+        };
+        debug!("vertex push constant range: {:#?}", &range);
+        range
+    }
+
+    fn fragment_push_constant_range() -> wgpu::PushConstantRange {
+        let range = wgpu::PushConstantRange {
+            stages: wgpu::ShaderStage::FRAGMENT,
+            range: size_of::<Self::VertexPushConstants>() as u32
+                ..size_of::<Self::VertexPushConstants>() as u32
+                    + size_of::<Self::SharedPushConstants>() as u32
+                    + size_of::<Self::FragmentPushConstants>() as u32,
+        };
+        debug!("fragment push constant range: {:#?}", &range);
+        range
+    }
+
+    fn push_constant_ranges() -> Vec<wgpu::PushConstantRange> {
+        let vpc_size = size_of::<Self::VertexPushConstants>();
+        let spc_size = size_of::<Self::SharedPushConstants>();
+        let fpc_size = size_of::<Self::FragmentPushConstants>();
+
+        match (vpc_size, spc_size, fpc_size) {
+            (0, 0, 0) => Vec::new(),
+            (_, 0, 0) => vec![Self::vertex_push_constant_range()],
+            (0, 0, _) => vec![Self::fragment_push_constant_range()],
+            _ => vec![
+                Self::vertex_push_constant_range(),
+                Self::fragment_push_constant_range(),
+            ],
+        }
+    }
+
+    /// Ensures that the associated push constant types have the proper size and
+    /// alignment.
+    fn validate_push_constant_types(limits: wgpu::Limits) {
+        let pc_alignment = wgpu::PUSH_CONSTANT_ALIGNMENT as usize;
+        let max_pc_size = limits.max_push_constant_size as usize;
+        let vpc_size = size_of::<Self::VertexPushConstants>();
+        let spc_size = size_of::<Self::SharedPushConstants>();
+        let fpc_size = size_of::<Self::FragmentPushConstants>();
+        assert_eq!(
+            vpc_size % pc_alignment,
+            0,
+            "Vertex push constant size must be a multiple of {} bytes",
+            wgpu::PUSH_CONSTANT_ALIGNMENT,
+        );
+        assert_eq!(
+            spc_size % pc_alignment,
+            0,
+            "Shared push constant size must be a multiple of {} bytes",
+            wgpu::PUSH_CONSTANT_ALIGNMENT,
+        );
+        assert_eq!(
+            fpc_size % pc_alignment,
+            0,
+            "Fragment push constant size must be a multiple of {} bytes",
+            wgpu::PUSH_CONSTANT_ALIGNMENT,
+        );
+        assert!(
+            vpc_size + spc_size + fpc_size < max_pc_size,
+            "Combined size of push constants must be less than push constant size limit of {}",
+            max_pc_size
+        );
+    }
+
     /// Constructs a `RenderPipeline` and a list of `BindGroupLayout`s from the associated methods.
     ///
     /// `bind_group_layout_prefix` specifies a list of `BindGroupLayout`s to be prefixed onto those
@@ -82,6 +164,8 @@ pub trait Pipeline {
         bind_group_layout_prefix: &[wgpu::BindGroupLayout],
         sample_count: u32,
     ) -> (wgpu::RenderPipeline, Vec<wgpu::BindGroupLayout>) {
+        Self::validate_push_constant_types(device.limits());
+
         info!("Creating {} pipeline", Self::name());
         let bind_group_layouts = Self::bind_group_layout_descriptors()
             .iter()
@@ -100,8 +184,10 @@ pub trait Pipeline {
                 .chain(bind_group_layouts.iter())
                 .collect();
             info!("{} layouts total", layouts.len());
+            let ranges = Self::push_constant_ranges();
             let desc = wgpu::PipelineLayoutDescriptor {
                 bind_group_layouts: &layouts,
+                push_constant_ranges: &ranges,
             };
             device.create_pipeline_layout(&desc)
         };
@@ -157,8 +243,15 @@ pub trait Pipeline {
         bind_group_layouts: &[&wgpu::BindGroupLayout],
         sample_count: u32,
     ) -> wgpu::RenderPipeline {
-        let pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { bind_group_layouts });
+        Self::validate_push_constant_types(device.limits());
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts,
+            push_constant_ranges: &[
+                Self::vertex_push_constant_range(),
+                Self::fragment_push_constant_range(),
+            ],
+        });
         let vertex_shader = create_shader(
             device,
             compiler,
@@ -197,5 +290,62 @@ pub trait Pipeline {
         });
 
         pipeline
+    }
+
+    /// Set the push constant data for a render pass.
+    ///
+    /// For each argument, if the value is `Some`, then the corresponding push
+    /// constant range is updated. If the value is `None`, the corresponding push
+    /// constant range is cleared.
+    fn set_push_constants<'a>(
+        pass: &mut wgpu::RenderPass<'a>,
+        vpc: Option<&'a Self::VertexPushConstants>,
+        spc: Option<&'a Self::SharedPushConstants>,
+        fpc: Option<&'a Self::FragmentPushConstants>,
+    ) {
+        let vpc_offset = 0;
+        let spc_offset = vpc_offset + size_of::<Self::VertexPushConstants>() as u32;
+        let fpc_offset = spc_offset + size_of::<Self::SharedPushConstants>() as u32;
+
+        // these push constant size checks are known statically and will be
+        // compiled out
+
+        if size_of::<Self::VertexPushConstants>() > 0 {
+            let data: &[u32] = vpc.map_or(&[], |v| unsafe { any_as_u32_slice(v) });
+            trace!(
+                "Update vertex push constants at offset {} with data {:?}",
+                vpc_offset,
+                data
+            );
+            pass.set_push_constants(
+                wgpu::ShaderStage::VERTEX,
+                vpc_offset,
+                data,
+            );
+        }
+
+        if size_of::<Self::SharedPushConstants>() > 0 {
+            let data: &[u32] = spc.map_or(&[], |s| unsafe { any_as_u32_slice(s) });
+            trace!(
+                "Update shared push constants at offset {} with data {:?}",
+                spc_offset,
+                data
+            );
+            pass.set_push_constants(
+                wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+                spc_offset,
+                data,
+            );
+        }
+
+        if size_of::<Self::FragmentPushConstants>() > 0 {
+            let data: &[u32] = fpc.map_or(&[], |f| unsafe { any_as_u32_slice(f) });
+            trace!(
+                "Update fragment push constants at offset {} with data {:?}",
+                fpc_offset,
+                data
+            );
+            pass.set_push_constants(wgpu::ShaderStage::FRAGMENT, fpc_offset, data);
+        }
     }
 }
