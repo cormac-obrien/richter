@@ -164,13 +164,11 @@ impl Mixer {
                     // TODO: don't clobber player sounds with monster sounds
 
                     // keep track of which sound started the earliest
-                    if chan.start_time
-                        < match self.channels[oldest] {
-                            Some(ref o) => o.start_time,
-                            None => Duration::zero(),
-                        }
-                    {
-                        oldest = i;
+                    match self.channels[oldest] {
+                        Some(ref o) => if chan.start_time < o.start_time {
+                            oldest = i;
+                        },
+                        None => oldest = i,
                     }
                 }
 
