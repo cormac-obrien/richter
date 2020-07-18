@@ -23,7 +23,7 @@ pub mod particle;
 use crate::common::{
     alloc::LinkedSlab,
     engine,
-    net::{EntityEffects, EntityState},
+    net::{EntityEffects, EntityState, EntityUpdate},
 };
 
 use cgmath::{Deg, Vector3};
@@ -45,8 +45,10 @@ pub struct ClientEntity {
     pub msg_angles: [Vector3<Deg<f32>>; 2],
     pub angles: Vector3<Deg<f32>>,
     pub model_id: usize,
+    model_changed: bool,
     pub frame_id: usize,
     pub skin_id: usize,
+    colormap: Option<u8>,
     pub sync_base: Duration,
     pub effects: EntityEffects,
     pub light_id: Option<usize>,
@@ -67,8 +69,10 @@ impl ClientEntity {
             ],
             angles: baseline.angles,
             model_id: baseline.model_id,
+            model_changed: false,
             frame_id: baseline.frame_id,
             skin_id: baseline.skin_id,
+            colormap: None,
             sync_base: Duration::zero(),
             effects: baseline.effects,
             light_id: None,
@@ -88,12 +92,69 @@ impl ClientEntity {
             ],
             angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
             model_id: 0,
+            model_changed: false,
             frame_id: 0,
             skin_id: 0,
+            colormap: None,
             sync_base: Duration::zero(),
             effects: EntityEffects::empty(),
             light_id: None,
         }
+    }
+
+    /// Update the entity with values from the server.
+    ///
+    /// `msg_times` specifies the last two message times from the server, where
+    /// `msg_times[0]` is more recent.
+    pub fn update(&mut self, msg_times: [Duration; 2], update: EntityUpdate) {
+        // enable lerping
+        self.force_link = false;
+
+        if update.no_lerp || self.msg_time != msg_times[1] {
+            self.force_link = true;
+        }
+
+        self.msg_time = msg_times[0];
+
+        // fill in missing values from baseline
+        let new_state = update.to_entity_state(&self.baseline);
+
+        self.msg_origins[1] = self.msg_origins[0];
+        self.msg_origins[0] = new_state.origin;
+        self.msg_angles[1] = self.msg_angles[0];
+        self.msg_angles[0] = new_state.angles;
+
+        if self.model_id != new_state.model_id {
+            self.model_changed = true;
+            self.force_link = true;
+            self.model_id = new_state.model_id;
+        }
+
+        self.frame_id = new_state.frame_id;
+        self.skin_id = new_state.skin_id;
+        self.effects = new_state.effects;
+        self.colormap = update.colormap;
+
+        if self.force_link {
+            self.msg_origins[1] = self.msg_origins[0];
+            self.origin = self.msg_origins[0];
+            self.msg_angles[1] = self.msg_angles[0];
+            self.angles = self.msg_angles[0];
+        }
+    }
+
+    /// Returns the timestamp of the last message that updated this entity.
+    pub fn msg_time(&self) -> Duration {
+        self.msg_time
+    }
+
+    /// Returns true if the last update to this entity changed its model.
+    pub fn model_changed(&self) -> bool {
+        self.model_changed
+    }
+
+    pub fn colormap(&self) -> Option<u8> {
+        self.colormap
     }
 
     pub fn get_origin(&self) -> Vector3<f32> {
@@ -104,7 +165,7 @@ impl ClientEntity {
         self.angles
     }
 
-    pub fn get_model_id(&self) -> usize {
+    pub fn model_id(&self) -> usize {
         self.model_id
     }
 

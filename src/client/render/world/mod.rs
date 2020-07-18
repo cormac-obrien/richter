@@ -513,7 +513,7 @@ impl WorldRenderer {
 
     fn renderer_for_entity(&self, ent: &ClientEntity) -> &EntityRenderer {
         // subtract 1 from index because world entity isn't counted
-        &self.entity_renderers[ent.get_model_id() - 1]
+        &self.entity_renderers[ent.model_id() - 1]
     }
 
     fn calculate_mvp_transform(&self, camera: &Camera, entity: &ClientEntity) -> Matrix4<f32> {

@@ -231,11 +231,14 @@ struct ClientState {
     entities: Vec<ClientEntity>,
     static_entities: Vec<ClientEntity>,
     temp_entities: Vec<ClientEntity>,
+    // dynamic point lights
     lights: Lights,
+    // lightning bolts and grappling hook cable
     beams: [Option<Beam>; MAX_BEAMS],
+    // particle effects
     particles: Particles,
 
-    // visible entities, updated per-frame
+    // visible entities, rebuilt per-frame
     visible_entity_ids: Vec<usize>,
 
     light_styles: HashMap<u8, String>,
@@ -276,11 +279,7 @@ struct ClientState {
     intermission: Option<IntermissionKind>,
     // completed_time: Duration,
 
-    // last_received_message: f32,
-
     // level_name: String,
-    // view_ent: usize,
-
     // server_info: ServerInfo,
 
     // worldmodel: Model,
@@ -909,8 +908,6 @@ impl Client {
                         self.handle_signon(signon)?;
                     }
 
-                    let mut force_link = false;
-
                     let ent_id = ent_update.ent_id as usize;
                     if ent_id >= self.state.entities.len() {
                         self.spawn_entities(
@@ -932,26 +929,16 @@ impl Client {
                         )?;
                     }
 
-                    // did we get an update for this entity last frame?
-                    if self.state.entities[ent_id].msg_time != self.state.msg_times[1] {
-                        // if not, we can't lerp
-                        force_link = true;
-                    }
+                    self.state.entities[ent_id].update(self.state.msg_times, ent_update);
 
-                    // update entity update time
-                    self.state.entities[ent_id].msg_time = self.state.msg_times[0];
-
-                    let new_state =
-                        ent_update.to_entity_state(&self.state.entities[ent_id].baseline);
-
-                    if self.state.entities[ent_id].model_id != new_state.model_id {
-                        // model has changed
-                        self.state.entities[ent_id].model_id = new_state.model_id;
-                        match self.state.models[new_state.model_id].kind() {
-                            &ModelKind::None => force_link = true,
+                    if self.state.entities[ent_id].model_changed() {
+                        let model = &self.state.models[self.state.entities[ent_id].model_id()];
+                        match model.kind() {
+                            // don't bother updating if it has no model
+                            &ModelKind::None => (),
                             _ => {
                                 self.state.entities[ent_id].sync_base =
-                                    match self.state.models[new_state.model_id].sync_type() {
+                                    match model.sync_type() {
                                         SyncType::Sync => Duration::zero(),
                                         SyncType::Rand => unimplemented!(), // TODO
                                     }
@@ -959,10 +946,7 @@ impl Client {
                         }
                     }
 
-                    self.state.entities[ent_id].frame_id = new_state.frame_id;
-                    if new_state.colormap == 0 {
-                        // TODO: use default colormap
-                    } else {
+                    if let Some(c) = self.state.entities[ent_id].colormap() {
                         // only players may have custom colormaps
                         ensure!(
                             ent_id <= self.state.max_players,
@@ -971,35 +955,6 @@ impl Client {
                         );
 
                         // TODO: set player custom colormaps
-                    }
-
-                    self.state.entities[ent_id].skin_id = new_state.skin_id;
-                    self.state.entities[ent_id].effects = new_state.effects;
-
-                    // save previous origin and angles
-                    self.state.entities[ent_id].msg_origins[1] =
-                        self.state.entities[ent_id].msg_origins[0];
-                    self.state.entities[ent_id].msg_angles[1] =
-                        self.state.entities[ent_id].msg_angles[0];
-
-                    // update origin and angles
-                    self.state.entities[ent_id].msg_origins[0] = new_state.origin;
-                    self.state.entities[ent_id].msg_angles[0] = new_state.angles;
-
-                    if ent_update.no_lerp {
-                        force_link = true;
-                    }
-
-                    if force_link {
-                        self.state.entities[ent_id].msg_origins[1] =
-                            self.state.entities[ent_id].msg_origins[0];
-                        self.state.entities[ent_id].origin =
-                            self.state.entities[ent_id].msg_origins[0];
-                        self.state.entities[ent_id].msg_angles[1] =
-                            self.state.entities[ent_id].msg_angles[0];
-                        self.state.entities[ent_id].angles =
-                            self.state.entities[ent_id].msg_angles[0];
-                        self.state.entities[ent_id].force_link = true;
                     }
                 }
 
