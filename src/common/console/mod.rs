@@ -511,15 +511,13 @@ impl Console {
 
     pub fn send_char(&mut self, c: char) -> Result<(), Error> {
         match c {
-            // ignore grave key
-            '`' => (),
+            // ignore grave and escape keys
+            '`' | '\x1b' => (),
 
             '\r' => {
-                // cap with a newline
-                self.input.insert('\n');
-
-                // push this line to the execution buffer
-                let entered = self.get_string();
+                // cap with a newline and push to the execution buffer
+                let mut entered = self.get_string();
+                entered.push('\n');
                 self.buffer.borrow_mut().push_str(&entered);
 
                 // add the current input to the history
@@ -544,6 +542,10 @@ impl Console {
         }
 
         Ok(())
+    }
+
+    pub fn cursor(&self) -> usize {
+        self.input.curs
     }
 
     pub fn cursor_right(&mut self) {

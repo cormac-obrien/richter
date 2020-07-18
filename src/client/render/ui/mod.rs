@@ -135,7 +135,7 @@ impl UiRenderer {
                 }
                 UiOverlay::Console(console) => {
                     self.console_renderer
-                        .generate_commands(console, quad_commands, glyph_commands)
+                        .generate_commands(console, time, quad_commands, glyph_commands)
                 }
             }
         }
