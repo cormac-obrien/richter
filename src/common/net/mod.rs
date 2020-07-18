@@ -252,14 +252,6 @@ pub struct ColorShift {
     pub percent: i32,
 }
 
-#[derive(FromPrimitive)]
-pub enum IntermissionKind {
-    None = 0,
-    Intermission = 1,
-    Finale = 2,
-    Cutscene = 3,
-}
-
 #[derive(Copy, Clone, Debug, Eq, FromPrimitive, PartialEq)]
 pub enum ClientStat {
     Health = 0,

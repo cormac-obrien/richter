@@ -34,7 +34,7 @@ pub use self::{
 };
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashMap,
     io::{BufReader, Read},
     net::ToSocketAddrs,
@@ -107,6 +107,12 @@ struct PlayerInfo {
     frags: i32,
     colors: PlayerColor,
     // translations: [u8; VID_GRADES],
+}
+
+pub enum IntermissionKind {
+    Intermission = 1,
+    Finale = 2,
+    Cutscene = 3,
 }
 
 struct ClientChannel {
@@ -267,7 +273,7 @@ struct ClientState {
     // paused: bool,
     on_ground: bool,
     in_water: bool,
-    // intermission: IntermissionKind,
+    intermission: Option<IntermissionKind>,
     // completed_time: Duration,
 
     // last_received_message: f32,
@@ -374,6 +380,7 @@ impl ClientState {
             velocity: Vector3::zero(),
             on_ground: false,
             in_water: false,
+            intermission: None,
             mixer: Mixer::new(audio_device.clone()),
             listener: Listener::new(),
         })
@@ -426,12 +433,17 @@ pub struct Client {
 
     qsock: QSocket,
     compose: Vec<u8>,
-    signon: SignOnStage,
+    signon: Rc<Cell<SignOnStage>>,
 
     state: ClientState,
 }
 
 impl Client {
+    /// Implements the `reconnect` command.
+    fn cmd_reconnect(signon: Rc<Cell<SignOnStage>>) -> Box<dyn Fn(&[&str])> {
+        Box::new(move |_| signon.set(SignOnStage::Not))
+    }
+
     pub fn connect<A>(
         server_addrs: A,
         vfs: Rc<Vfs>,
@@ -443,6 +455,11 @@ impl Client {
     where
         A: ToSocketAddrs,
     {
+        // set up reconnect
+        let signon = Rc::new(Cell::new(SignOnStage::Not));
+        cmds.borrow_mut()
+            .insert_or_replace("reconnect", Client::cmd_reconnect(signon.clone()))?;
+
         let mut con_sock = ConnectSocket::bind("0.0.0.0:0")?;
         let server_addr = server_addrs
             .to_socket_addrs()
@@ -528,7 +545,7 @@ impl Client {
             audio_device: audio_device.clone(),
             qsock,
             compose: Vec::new(),
-            signon: SignOnStage::Not,
+            signon,
             state: ClientState::new(vfs.clone(), audio_device.clone())?,
         })
     }
@@ -733,7 +750,7 @@ impl Client {
 
     pub fn parse_server_msg(&mut self) -> Result<(), Error> {
         let _guard = flame::start_guard("Client::parse_server_msg");
-        let msg = self.qsock.recv_msg(match self.signon {
+        let msg = self.qsock.recv_msg(match self.signon.get() {
             // if we're in the game, don't block waiting for messages
             SignOnStage::Done => BlockingMode::NonBlocking,
 
@@ -900,9 +917,9 @@ impl Client {
                     no_lerp,
                 } => {
                     // first update signals the last sign-on stage
-                    if self.signon == SignOnStage::Begin {
-                        self.signon = SignOnStage::Done;
-                        let signon = self.signon;
+                    if self.signon.get() == SignOnStage::Begin {
+                        self.signon.set(SignOnStage::Done);
+                        let signon = self.signon.get();
                         self.handle_signon(signon)?;
                     }
 
@@ -1033,6 +1050,9 @@ impl Client {
                 }
 
                 ServerCmd::FoundSecret => self.state.stats[ClientStat::FoundSecrets as usize] += 1,
+                ServerCmd::Intermission => {
+                    self.state.intermission = Some(IntermissionKind::Intermission)
+                }
                 ServerCmd::KilledMonster => {
                     self.state.stats[ClientStat::KilledMonsters as usize] += 1
                 }
@@ -1042,9 +1062,28 @@ impl Client {
                     let _ = self.state.light_styles.insert(id, value);
                 }
 
-                ServerCmd::Particle { .. } => {
-                    // TODO: spawn particle effects
-                    warn!("Particle effects not implemented!");
+                ServerCmd::Particle {
+                    origin,
+                    direction,
+                    count,
+                    color,
+                } => {
+                    match count {
+                        // if count is 255, this is an explosion
+                        255 => self
+                            .state
+                            .particles
+                            .create_explosion(self.state.time, origin),
+
+                        // otherwise it's an impact
+                        _ => self.state.particles.create_projectile_impact(
+                            self.state.time,
+                            origin,
+                            direction,
+                            color,
+                            count as usize,
+                        ),
+                    }
                 }
 
                 ServerCmd::Print { text } => {
@@ -1342,7 +1381,7 @@ impl Client {
             }
         }
 
-        self.signon = stage;
+        self.signon.set(stage);
 
         Ok(())
     }
@@ -1424,18 +1463,18 @@ impl Client {
     }
 
     pub fn signon_stage(&self) -> SignOnStage {
-        self.signon
+        self.signon.get()
     }
 
     pub fn entities(&self) -> Option<&[ClientEntity]> {
-        match self.signon {
+        match self.signon.get() {
             SignOnStage::Done => Some(&self.state.entities),
             _ => None,
         }
     }
 
     pub fn models(&self) -> Option<&[Model]> {
-        match self.signon {
+        match self.signon.get() {
             SignOnStage::Done => Some(&self.state.models),
             _ => None,
         }
@@ -1851,7 +1890,7 @@ impl Client {
         self.send()?;
 
         // these all require the player entity to have spawned
-        if self.signon == SignOnStage::Done {
+        if self.signon.get() == SignOnStage::Done {
             // update ear positions
             self.state.update_listener();
 
@@ -2218,5 +2257,12 @@ impl Client {
         }
 
         trace
+    }
+}
+
+impl std::ops::Drop for Client {
+    fn drop(&mut self) {
+        // if this errors, it was already removed so we don't care
+        let _ = self.cmds.borrow_mut().remove("reconnect");
     }
 }

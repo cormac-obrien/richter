@@ -86,7 +86,7 @@ impl InGameState {
         let toggleconsole_focus = focus_rc.clone();
 
         cmds.borrow_mut()
-            .insert(
+            .insert_or_replace(
                 "toggleconsole",
                 Box::new(move |_| match toggleconsole_focus.get() {
                     InGameFocus::Game => {
@@ -107,7 +107,7 @@ impl InGameState {
         let togglemenu_focus = focus_rc.clone();
 
         cmds.borrow_mut()
-            .insert(
+            .insert_or_replace(
                 "togglemenu",
                 Box::new(move |_| match togglemenu_focus.get() {
                     InGameFocus::Game => {
@@ -204,6 +204,11 @@ impl Game {
     // advance the simulation
     pub fn frame(&mut self, gfx_state: &GraphicsState, frame_duration: Duration) {
         self.client.frame(frame_duration).unwrap();
+
+        // make sure we set loading state for reconnects
+        if self.client.signon_stage() != SignOnStage::Done {
+            self.state = GameState::Loading;
+        }
 
         if let GameState::Loading = self.state {
             println!("loading...");
