@@ -901,21 +901,7 @@ impl Client {
 
                 ServerCmd::Disconnect => self.disconnect(),
 
-                ServerCmd::FastUpdate {
-                    ent_id,
-                    model_id,
-                    frame_id,
-                    colormap,
-                    skin_id,
-                    effects,
-                    origin_x,
-                    pitch,
-                    origin_y,
-                    yaw,
-                    origin_z,
-                    roll,
-                    no_lerp,
-                } => {
+                ServerCmd::FastUpdate(ent_update) => {
                     // first update signals the last sign-on stage
                     if self.signon.get() == SignOnStage::Begin {
                         self.signon.set(SignOnStage::Done);
@@ -925,23 +911,23 @@ impl Client {
 
                     let mut force_link = false;
 
-                    let ent_id = ent_id as usize;
+                    let ent_id = ent_update.ent_id as usize;
                     if ent_id >= self.state.entities.len() {
                         self.spawn_entities(
                             ent_id as u16,
-                            model_id.unwrap_or(0),
-                            frame_id.unwrap_or(0),
-                            colormap.unwrap_or(0),
-                            skin_id.unwrap_or(0),
+                            ent_update.model_id.unwrap_or(0),
+                            ent_update.frame_id.unwrap_or(0),
+                            ent_update.colormap.unwrap_or(0),
+                            ent_update.skin_id.unwrap_or(0),
                             Vector3::new(
-                                origin_x.unwrap_or(0.0),
-                                origin_y.unwrap_or(0.0),
-                                origin_z.unwrap_or(0.0),
+                                ent_update.origin_x.unwrap_or(0.0),
+                                ent_update.origin_y.unwrap_or(0.0),
+                                ent_update.origin_z.unwrap_or(0.0),
                             ),
                             Vector3::new(
-                                pitch.unwrap_or(Deg(0.0)),
-                                yaw.unwrap_or(Deg(0.0)),
-                                roll.unwrap_or(Deg(0.0)),
+                                ent_update.pitch.unwrap_or(Deg(0.0)),
+                                ent_update.yaw.unwrap_or(Deg(0.0)),
+                                ent_update.roll.unwrap_or(Deg(0.0)),
                             ),
                         )?;
                     }
@@ -955,7 +941,7 @@ impl Client {
                     // update entity update time
                     self.state.entities[ent_id].msg_time = self.state.msg_times[0];
 
-                    let new_model_id = match model_id {
+                    let new_model_id = match ent_update.model_id {
                         Some(m_id) => {
                             ensure!(
                                 (m_id as usize) < self.state.models.len(),
@@ -985,12 +971,15 @@ impl Client {
                         }
                     }
 
-                    self.state.entities[ent_id].frame_id = frame_id
+                    self.state.entities[ent_id].frame_id = ent_update
+                        .frame_id
                         .map(|x| x as usize)
                         .unwrap_or(self.state.entities[ent_id].baseline.frame_id);
 
-                    let new_colormap =
-                        colormap.unwrap_or(self.state.entities[ent_id].baseline.colormap) as usize;
+                    let new_colormap = ent_update
+                        .colormap
+                        .unwrap_or(self.state.entities[ent_id].baseline.colormap)
+                        as usize;
                     if new_colormap == 0 {
                         // TODO: use default colormap
                     } else {
@@ -1004,11 +993,13 @@ impl Client {
                         // TODO: set player custom colormaps
                     }
 
-                    self.state.entities[ent_id].skin_id = skin_id
+                    self.state.entities[ent_id].skin_id = ent_update
+                        .skin_id
                         .map(|x| x as usize)
                         .unwrap_or(self.state.entities[ent_id].baseline.skin_id);
-                    self.state.entities[ent_id].effects =
-                        effects.unwrap_or(self.state.entities[ent_id].baseline.effects);
+                    self.state.entities[ent_id].effects = ent_update
+                        .effects
+                        .unwrap_or(self.state.entities[ent_id].baseline.effects);
 
                     // save previous origin and angles
                     self.state.entities[ent_id].msg_origins[1] =
@@ -1017,22 +1008,28 @@ impl Client {
                         self.state.entities[ent_id].msg_angles[0];
 
                     // update origin
-                    self.state.entities[ent_id].msg_origins[0].x =
-                        origin_x.unwrap_or(self.state.entities[ent_id].baseline.origin.x);
-                    self.state.entities[ent_id].msg_origins[0].y =
-                        origin_y.unwrap_or(self.state.entities[ent_id].baseline.origin.y);
-                    self.state.entities[ent_id].msg_origins[0].z =
-                        origin_z.unwrap_or(self.state.entities[ent_id].baseline.origin.z);
+                    self.state.entities[ent_id].msg_origins[0].x = ent_update
+                        .origin_x
+                        .unwrap_or(self.state.entities[ent_id].baseline.origin.x);
+                    self.state.entities[ent_id].msg_origins[0].y = ent_update
+                        .origin_y
+                        .unwrap_or(self.state.entities[ent_id].baseline.origin.y);
+                    self.state.entities[ent_id].msg_origins[0].z = ent_update
+                        .origin_z
+                        .unwrap_or(self.state.entities[ent_id].baseline.origin.z);
 
                     // update angles
-                    self.state.entities[ent_id].msg_angles[0][0] =
-                        pitch.unwrap_or(self.state.entities[ent_id].baseline.angles[0]);
-                    self.state.entities[ent_id].msg_angles[0][1] =
-                        yaw.unwrap_or(self.state.entities[ent_id].baseline.angles[1]);
-                    self.state.entities[ent_id].msg_angles[0][2] =
-                        roll.unwrap_or(self.state.entities[ent_id].baseline.angles[2]);
+                    self.state.entities[ent_id].msg_angles[0][0] = ent_update
+                        .pitch
+                        .unwrap_or(self.state.entities[ent_id].baseline.angles[0]);
+                    self.state.entities[ent_id].msg_angles[0][1] = ent_update
+                        .yaw
+                        .unwrap_or(self.state.entities[ent_id].baseline.angles[1]);
+                    self.state.entities[ent_id].msg_angles[0][2] = ent_update
+                        .roll
+                        .unwrap_or(self.state.entities[ent_id].baseline.angles[2]);
 
-                    if no_lerp {
+                    if ent_update.no_lerp {
                         force_link = true;
                     }
 
