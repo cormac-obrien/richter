@@ -941,29 +941,17 @@ impl Client {
                     // update entity update time
                     self.state.entities[ent_id].msg_time = self.state.msg_times[0];
 
-                    let new_model_id = match ent_update.model_id {
-                        Some(m_id) => {
-                            ensure!(
-                                (m_id as usize) < self.state.models.len(),
-                                "Update for entity {}: model ID {} is out of range",
-                                ent_id,
-                                m_id
-                            );
+                    let new_state =
+                        ent_update.to_entity_state(&self.state.entities[ent_id].baseline);
 
-                            m_id as usize
-                        }
-
-                        None => self.state.entities[ent_id].baseline.model_id,
-                    };
-
-                    if self.state.entities[ent_id].model_id != new_model_id {
+                    if self.state.entities[ent_id].model_id != new_state.model_id {
                         // model has changed
-                        self.state.entities[ent_id].model_id = new_model_id;
-                        match self.state.models[new_model_id].kind() {
+                        self.state.entities[ent_id].model_id = new_state.model_id;
+                        match self.state.models[new_state.model_id].kind() {
                             &ModelKind::None => force_link = true,
                             _ => {
                                 self.state.entities[ent_id].sync_base =
-                                    match self.state.models[new_model_id].sync_type() {
+                                    match self.state.models[new_state.model_id].sync_type() {
                                         SyncType::Sync => Duration::zero(),
                                         SyncType::Rand => unimplemented!(), // TODO
                                     }
@@ -971,21 +959,13 @@ impl Client {
                         }
                     }
 
-                    self.state.entities[ent_id].frame_id = ent_update
-                        .frame_id
-                        .map(|x| x as usize)
-                        .unwrap_or(self.state.entities[ent_id].baseline.frame_id);
-
-                    let new_colormap = ent_update
-                        .colormap
-                        .unwrap_or(self.state.entities[ent_id].baseline.colormap)
-                        as usize;
-                    if new_colormap == 0 {
+                    self.state.entities[ent_id].frame_id = new_state.frame_id;
+                    if new_state.colormap == 0 {
                         // TODO: use default colormap
                     } else {
                         // only players may have custom colormaps
                         ensure!(
-                            new_colormap <= self.state.max_players,
+                            ent_id <= self.state.max_players,
                             "Attempted to assign custom colormap to entity with ID {}",
                             ent_id,
                         );
@@ -993,13 +973,8 @@ impl Client {
                         // TODO: set player custom colormaps
                     }
 
-                    self.state.entities[ent_id].skin_id = ent_update
-                        .skin_id
-                        .map(|x| x as usize)
-                        .unwrap_or(self.state.entities[ent_id].baseline.skin_id);
-                    self.state.entities[ent_id].effects = ent_update
-                        .effects
-                        .unwrap_or(self.state.entities[ent_id].baseline.effects);
+                    self.state.entities[ent_id].skin_id = new_state.skin_id;
+                    self.state.entities[ent_id].effects = new_state.effects;
 
                     // save previous origin and angles
                     self.state.entities[ent_id].msg_origins[1] =
@@ -1007,27 +982,9 @@ impl Client {
                     self.state.entities[ent_id].msg_angles[1] =
                         self.state.entities[ent_id].msg_angles[0];
 
-                    // update origin
-                    self.state.entities[ent_id].msg_origins[0].x = ent_update
-                        .origin_x
-                        .unwrap_or(self.state.entities[ent_id].baseline.origin.x);
-                    self.state.entities[ent_id].msg_origins[0].y = ent_update
-                        .origin_y
-                        .unwrap_or(self.state.entities[ent_id].baseline.origin.y);
-                    self.state.entities[ent_id].msg_origins[0].z = ent_update
-                        .origin_z
-                        .unwrap_or(self.state.entities[ent_id].baseline.origin.z);
-
-                    // update angles
-                    self.state.entities[ent_id].msg_angles[0][0] = ent_update
-                        .pitch
-                        .unwrap_or(self.state.entities[ent_id].baseline.angles[0]);
-                    self.state.entities[ent_id].msg_angles[0][1] = ent_update
-                        .yaw
-                        .unwrap_or(self.state.entities[ent_id].baseline.angles[1]);
-                    self.state.entities[ent_id].msg_angles[0][2] = ent_update
-                        .roll
-                        .unwrap_or(self.state.entities[ent_id].baseline.angles[2]);
+                    // update origin and angles
+                    self.state.entities[ent_id].msg_origins[0] = new_state.origin;
+                    self.state.entities[ent_id].msg_angles[0] = new_state.angles;
 
                     if ent_update.no_lerp {
                         force_link = true;

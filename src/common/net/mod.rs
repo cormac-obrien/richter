@@ -514,6 +514,20 @@ pub struct EntityState {
     pub effects: EntityEffects,
 }
 
+impl EntityState {
+    pub fn uninitialized() -> EntityState {
+        EntityState {
+            origin: Vector3::new(0.0, 0.0, 0.0),
+            angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
+            model_id: 0,
+            frame_id: 0,
+            colormap: 0,
+            skin_id: 0,
+            effects: EntityEffects::empty(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct EntityUpdate {
     pub ent_id: u16,
@@ -531,16 +545,26 @@ pub struct EntityUpdate {
     pub no_lerp: bool,
 }
 
-impl EntityState {
-    pub fn uninitialized() -> EntityState {
+impl EntityUpdate {
+    /// Create an `EntityState` from this update, filling in any `None` values
+    /// from the specified baseline state.
+    pub fn to_entity_state(&self, baseline: &EntityState) -> EntityState {
         EntityState {
-            origin: Vector3::new(0.0, 0.0, 0.0),
-            angles: Vector3::new(Deg(0.0), Deg(0.0), Deg(0.0)),
-            model_id: 0,
-            frame_id: 0,
-            colormap: 0,
-            skin_id: 0,
-            effects: EntityEffects::empty(),
+            origin: Vector3::new(
+                self.origin_x.unwrap_or(baseline.origin.x),
+                self.origin_y.unwrap_or(baseline.origin.y),
+                self.origin_z.unwrap_or(baseline.origin.z),
+            ),
+            angles: Vector3::new(
+                self.pitch.unwrap_or(baseline.angles[0]),
+                self.yaw.unwrap_or(baseline.angles[1]),
+                self.roll.unwrap_or(baseline.angles[2]),
+            ),
+            model_id: self.model_id.map_or(baseline.model_id, |m| m as usize),
+            frame_id: self.frame_id.map_or(baseline.frame_id, |f| f as usize),
+            skin_id: self.skin_id.map_or(baseline.skin_id, |s| s as usize),
+            effects: self.effects.unwrap_or(baseline.effects),
+            colormap: self.colormap.unwrap_or(baseline.colormap),
         }
     }
 }
