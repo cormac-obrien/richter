@@ -87,9 +87,9 @@ impl View {
         self.input_angles
     }
 
-    pub fn update_msg_angles(&mut self, msg_angles: Angles) {
-        self.msg_angles[1] = self.msg_angles[0];
-        self.msg_angles[0] = msg_angles;
+    /// Update the current input angles with a new value.
+    pub fn update_input_angles(&mut self, input_angles: Angles) {
+        self.input_angles = input_angles;
     }
 
     pub fn handle_input(

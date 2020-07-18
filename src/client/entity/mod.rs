@@ -165,6 +165,16 @@ impl ClientEntity {
         self.angles
     }
 
+    /// Set this entity's angles to the specified value.
+    ///
+    /// This overwrites both the current and previous angle values, disabling
+    /// interpolation.
+    pub fn set_angles(&mut self, angles: Vector3<Deg<f32>>) {
+        self.msg_angles[0] = angles;
+        self.msg_angles[1] = angles;
+        self.angles = angles;
+    }
+
     pub fn model_id(&self) -> usize {
         self.model_id
     }

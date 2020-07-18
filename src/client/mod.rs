@@ -1018,7 +1018,9 @@ impl Client {
 
                 ServerCmd::SetAngle { angles } => {
                     debug!("Set view angles to {:?}", angles);
-                    self.state.view.update_msg_angles(Angles {
+                    let view_ent = self.view_ent();
+                    self.state.entities[view_ent].set_angles(angles);
+                    self.state.view.update_input_angles(Angles {
                         pitch: angles.x,
                         roll: angles.z,
                         yaw: angles.y,
