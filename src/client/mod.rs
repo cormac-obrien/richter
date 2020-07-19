@@ -109,6 +109,7 @@ struct PlayerInfo {
     // translations: [u8; VID_GRADES],
 }
 
+#[derive(Copy, Clone, Debug)]
 pub enum IntermissionKind {
     Intermission = 1,
     Finale = 2,
@@ -579,6 +580,7 @@ impl Client {
         self.state.view.handle_input(
             frame_time,
             game_input,
+            self.state.intermission,
             mlook,
             self.cvar_value("cl_anglespeedkey")?,
             self.cvar_value("cl_pitchspeed")?,
@@ -1397,6 +1399,7 @@ impl Client {
     pub fn view_angles(&self, time: Duration) -> Result<Angles, ClientError> {
         Ok(self.state.view.angles(
             time,
+            self.state.intermission,
             self.state.velocity,
             self.idle_vars()?,
             self.kick_vars()?,

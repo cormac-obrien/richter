@@ -10,6 +10,7 @@ use crate::{
 
 use cgmath::{Angle as _, Deg, Euler, InnerSpace as _, Matrix3, Vector3};
 use chrono::Duration;
+use super::IntermissionKind;
 
 pub struct View {
     // entity "holding" the camera
@@ -96,6 +97,7 @@ impl View {
         &mut self,
         frame_time: Duration,
         game_input: &GameInput,
+        intermission: Option<IntermissionKind>,
         mlook: bool,
         cl_anglespeedkey: f32,
         cl_pitchspeed: f32,
@@ -109,6 +111,11 @@ impl View {
         } else {
             frame_time_f32
         };
+
+        // ignore camera controls during intermission
+        if intermission.is_some() {
+            return;
+        }
 
         if !game_input.action_state(Action::Strafe) {
             let right_factor = game_input.action_state(Action::Right) as i32 as f32;
@@ -162,8 +169,9 @@ impl View {
     pub fn angles(
         &self,
         time: Duration,
+        intermission: Option<IntermissionKind>,
         velocity: Vector3<f32>,
-        idle_vars: IdleVars,
+        mut idle_vars: IdleVars,
         kick_vars: KickVars,
         roll_vars: RollVars,
     ) -> Angles {
@@ -175,6 +183,11 @@ impl View {
 
         let kick_factor = duration_to_f32(self.damage_time - time).max(0.0) / kick_vars.v_kicktime;
         let damage_angles = self.damage_angles * kick_factor;
+
+        // always idle during intermission
+        if intermission.is_some() {
+            idle_vars.v_idlescale = 1.0;
+        }
         let idle_angles = idle(time, idle_vars);
 
         self.input_angles + move_angles + damage_angles + self.punch_angles + idle_angles
