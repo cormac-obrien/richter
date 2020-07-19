@@ -25,10 +25,8 @@ mod trace;
 
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
-    env,
     net::ToSocketAddrs,
     path::Path,
-    process::exit,
     rc::Rc,
 };
 
