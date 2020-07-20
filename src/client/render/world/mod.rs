@@ -464,7 +464,7 @@ impl WorldRenderer {
             &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
             &[self.world_uniform_block.offset()],
         );
-        self.worldmodel_renderer.record_draw(state, pass, &bump, camera);
+        self.worldmodel_renderer.record_draw(state, pass, &bump, time, camera);
 
         // draw entities
         info!("Drawing entities");
@@ -487,7 +487,7 @@ impl WorldRenderer {
                         Retain,
                         Retain,
                     );
-                    bmodel.record_draw(state, pass, &bump, camera);
+                    bmodel.record_draw(state, pass, &bump, time, camera);
                 }
                 EntityRenderer::Alias(ref alias) => {
                     pass.set_pipeline(state.alias_pipeline().pipeline());

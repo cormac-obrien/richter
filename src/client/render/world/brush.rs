@@ -18,18 +18,24 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::{borrow::Cow, cell::Cell, collections::HashMap, mem::size_of, ops::Range, rc::Rc};
+use std::{
+    borrow::Cow,
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    mem::size_of,
+    ops::Range,
+    rc::Rc,
+};
 
 use crate::{
     client::render::{
         pipeline::PushConstantUpdate,
-        uniform::{DynamicUniformBuffer, DynamicUniformBufferBlock},
         warp,
         world::{BindGroupLayoutId, WorldPipelineBase},
         Camera, GraphicsState, LightmapData, Pipeline, TextureData,
     },
     common::{
-        bsp::{BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTextureMipmap},
+        bsp::{BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTexture, BspTextureMipmap},
         math,
         util::any_slice_as_bytes,
     },
@@ -37,10 +43,9 @@ use crate::{
 
 use bumpalo::Bump;
 use cgmath::{InnerSpace as _, Matrix4, Vector3};
+use chrono::Duration;
 use failure::Error;
 use num::FromPrimitive;
-use strum::IntoEnumIterator as _;
-use strum_macros::EnumIter;
 
 lazy_static! {
     static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 2] = [
@@ -253,19 +258,38 @@ struct BrushVertex {
 }
 
 #[repr(u32)]
-#[derive(EnumIter, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum TextureKind {
     Normal = 0,
     Warp = 1,
     Sky = 2,
 }
 
-pub struct BrushTexture {
+pub struct BrushTextureFrame {
+    bind_group_id: usize,
     diffuse: wgpu::Texture,
     fullbright: wgpu::Texture,
     diffuse_view: wgpu::TextureView,
     fullbright_view: wgpu::TextureView,
     kind: TextureKind,
+}
+
+pub enum BrushTexture {
+    Static(BrushTextureFrame),
+    Animated {
+        total_duration: Duration,
+        frames: Vec<BrushTextureFrame>,
+        frame_durations: Vec<Duration>,
+    },
+}
+
+impl BrushTexture {
+    fn kind(&self) -> TextureKind {
+        match self {
+            BrushTexture::Static(ref frame) => frame.kind,
+            BrushTexture::Animated { ref frames, .. } => frames[0].kind,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -309,7 +333,7 @@ pub struct BrushRendererBuilder {
 
     leaves: Option<Vec<BrushLeaf>>,
 
-    per_texture_bind_groups: Vec<wgpu::BindGroup>,
+    per_texture_bind_groups: RefCell<Vec<wgpu::BindGroup>>,
     per_face_bind_groups: Vec<wgpu::BindGroup>,
 
     vertices: Vec<BrushVertex>,
@@ -335,7 +359,7 @@ impl BrushRendererBuilder {
             } else {
                 None
             },
-            per_texture_bind_groups: Vec::new(),
+            per_texture_bind_groups: RefCell::new(Vec::new()),
             per_face_bind_groups: Vec::new(),
             vertices: Vec::new(),
             faces: Vec::new(),
@@ -458,12 +482,11 @@ impl BrushRendererBuilder {
     fn create_per_texture_bind_group(
         &self,
         state: &GraphicsState,
-        texture_id: usize,
+        tex: &BrushTextureFrame,
     ) -> wgpu::BindGroup {
         let layout = &state
             .brush_pipeline()
             .bind_group_layout(BindGroupLayoutId::PerTexture);
-        let tex = &self.textures[texture_id];
         let desc = wgpu::BindGroupDescriptor {
             label: Some("per-texture bind group"),
             layout,
@@ -502,58 +525,91 @@ impl BrushRendererBuilder {
         state.device().create_bind_group(&desc)
     }
 
+    pub fn create_brush_texture_frame(
+        &self,
+        state: &GraphicsState,
+        tex: &BspTexture,
+    ) -> BrushTextureFrame {
+        // TODO: upload mipmaps
+
+        let (diffuse_data, fullbright_data) = state
+            .palette()
+            .translate(tex.mipmap(BspTextureMipmap::from_usize(0).unwrap()));
+
+        let (width, height) = tex.dimensions();
+        let diffuse =
+            state.create_texture(None, width, height, &TextureData::Diffuse(diffuse_data));
+        let fullbright = state.create_texture(
+            None,
+            width,
+            height,
+            &TextureData::Fullbright(fullbright_data),
+        );
+
+        let diffuse_view = diffuse.create_default_view();
+        let fullbright_view = fullbright.create_default_view();
+
+        let kind = if tex.name().starts_with("sky") {
+            TextureKind::Sky
+        } else if tex.name().starts_with("*") {
+            TextureKind::Warp
+        } else {
+            TextureKind::Normal
+        };
+
+        let mut frame = BrushTextureFrame {
+            bind_group_id: 0,
+            diffuse,
+            fullbright,
+            diffuse_view,
+            fullbright_view,
+            kind,
+        };
+
+        // generate texture bind group
+        let per_texture_bind_group = self.create_per_texture_bind_group(state, &frame);
+        let bind_group_id = self.per_texture_bind_groups.borrow().len();
+        self.per_texture_bind_groups
+            .borrow_mut()
+            .push(per_texture_bind_group);
+
+        frame.bind_group_id = bind_group_id;
+        frame
+    }
+
     pub fn build(mut self, state: &GraphicsState) -> Result<BrushRenderer, Error> {
         // create the diffuse and fullbright textures
-        for (tex_id, tex) in self.bsp_data.textures().iter().enumerate() {
-            // let mut diffuses = Vec::new();
-            // let mut fullbrights = Vec::new();
-            // for i in 0..bsp::MIPLEVELS {
-            //     let (diffuse_data, fullbright_data) = self
-            //         .state
-            //         .palette()
-            //         .translate(tex.mipmap(BspTextureMipmap::from_usize(i).unwrap()));
-            //     diffuses.push(diffuse_data);
-            //     fullbrights.push(fullbright_data);
-            // }
+        for tex in self.bsp_data.textures().iter() {
+            let brush_texture = match tex.animation() {
+                // sequence animated textures
+                Some(anim) => {
+                    let mut total_duration = anim.time_end - anim.time_start;
+                    let mut frames = vec![self.create_brush_texture_frame(state, tex)];
+                    let mut frame_durations = vec![total_duration];
 
-            let (diffuse_data, fullbright_data) = state
-                .palette()
-                .translate(tex.mipmap(BspTextureMipmap::from_usize(0).unwrap()));
+                    let mut frame_id = anim.next;
+                    // end loop once it wraps around to first frame
+                    while self.bsp_data.textures[frame_id].name() != tex.name() {
+                        let frame_tex = &self.bsp_data.textures[frame_id];
+                        let frame_anim = frame_tex.animation().unwrap();
+                        let frame_duration = frame_anim.time_end - frame_anim.time_start;
+                        frames.push(self.create_brush_texture_frame(state, frame_tex));
+                        frame_durations.push(frame_duration);
+                        total_duration = total_duration + frame_duration;
+                        frame_id = frame_anim.next;
+                    }
 
-            let (width, height) = tex.dimensions();
-            let diffuse =
-                state.create_texture(None, width, height, &TextureData::Diffuse(diffuse_data));
-            let fullbright = state.create_texture(
-                None,
-                width,
-                height,
-                &TextureData::Fullbright(fullbright_data),
-            );
+                    BrushTexture::Animated {
+                        total_duration,
+                        frames,
+                        frame_durations,
+                    }
+                }
 
-            let diffuse_view = diffuse.create_default_view();
-            let fullbright_view = fullbright.create_default_view();
-
-            let kind = if tex.name().starts_with("sky") {
-                TextureKind::Sky
-            } else if tex.name().starts_with("*") {
-                TextureKind::Warp
-            } else {
-                TextureKind::Normal
+                None => BrushTexture::Static(self.create_brush_texture_frame(state, tex)),
             };
 
-            let texture = BrushTexture {
-                diffuse,
-                fullbright,
-                diffuse_view,
-                fullbright_view,
-                kind,
-            };
-
-            self.textures.push(texture);
-
-            // generate texture bind group
-            let per_texture_bind_group = self.create_per_texture_bind_group(state, tex_id);
-            self.per_texture_bind_groups.push(per_texture_bind_group);
+            self.textures.push(brush_texture);
         }
 
         // generate faces, vertices and lightmaps
@@ -585,7 +641,7 @@ impl BrushRendererBuilder {
             bsp_data: self.bsp_data,
             vertex_buffer,
             leaves: self.leaves,
-            per_texture_bind_groups: self.per_texture_bind_groups,
+            per_texture_bind_groups: self.per_texture_bind_groups.into_inner(),
             per_face_bind_groups: self.per_face_bind_groups,
             texture_chains: self.texture_chains,
             faces: self.faces,
@@ -621,6 +677,7 @@ impl BrushRenderer {
         state: &'a GraphicsState,
         pass: &mut wgpu::RenderPass<'a>,
         bump: &'a Bump,
+        time: Duration,
         camera: &Camera,
     ) {
         pass.set_pipeline(state.brush_pipeline().pipeline());
@@ -649,13 +706,40 @@ impl BrushRenderer {
                 pass,
                 Retain,
                 Update(bump.alloc(SharedPushConstants {
-                    texture_kind: self.textures[*tex_id].kind as u32,
+                    texture_kind: self.textures[*tex_id].kind() as u32,
                 })),
                 Retain,
             );
+
+            let bind_group_id = match &self.textures[*tex_id] {
+                BrushTexture::Static(ref frame) => frame.bind_group_id,
+                BrushTexture::Animated {
+                    total_duration,
+                    frames,
+                    frame_durations,
+                } => {
+                    let time_ms = time.num_milliseconds();
+                    let total_ms = total_duration.num_milliseconds();
+                    debug!("total_ms = {}", total_ms);
+                    let mut anim_ms = if total_ms == 0 { 0 } else { time_ms % total_ms };
+                    debug!("anim_ms = {}", anim_ms);
+                    let mut bind_group_id = frames[0].bind_group_id;
+
+                    for (frame, frame_duration) in frames.iter().zip(frame_durations.iter()) {
+                        anim_ms -= frame_duration.num_milliseconds();
+                        if anim_ms < 0 {
+                            bind_group_id = frame.bind_group_id;
+                            break;
+                        }
+                    }
+
+                    bind_group_id
+                }
+            };
+
             pass.set_bind_group(
                 BindGroupLayoutId::PerTexture as u32,
-                &self.per_texture_bind_groups[*tex_id],
+                &self.per_texture_bind_groups[bind_group_id],
                 &[],
             );
 
