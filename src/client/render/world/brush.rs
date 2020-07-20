@@ -181,7 +181,7 @@ impl BrushPipeline {
 #[derive(Copy, Clone, Debug)]
 pub struct VertexPushConstants {
     pub transform: Matrix4<f32>,
-    pub model: Matrix4<f32>,
+    pub model_view: Matrix4<f32>,
 }
 
 impl Pipeline for BrushPipeline {

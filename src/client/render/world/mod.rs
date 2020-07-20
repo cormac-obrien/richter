@@ -453,7 +453,7 @@ impl WorldRenderer {
             pass,
             Some(bump.alloc(brush::VertexPushConstants {
                 transform: camera.view_projection(),
-                model: Matrix4::identity(),
+                model_view: camera.view(),
             })),
             None,
             None,
@@ -481,7 +481,7 @@ impl WorldRenderer {
                         pass,
                         Some(bump.alloc(brush::VertexPushConstants {
                             transform: self.calculate_mvp_transform(camera, ent),
-                            model: self.calculate_model_transform(camera, ent),
+                            model_view: self.calculate_mv_transform(camera, ent),
                         })),
                         None,
                         None,
@@ -517,6 +517,12 @@ impl WorldRenderer {
         let model_transform = self.calculate_model_transform(camera, entity);
 
         camera.view_projection() * model_transform
+    }
+
+    fn calculate_mv_transform(&self, camera: &Camera, entity: &ClientEntity) -> Matrix4<f32> {
+        let model_transform = self.calculate_model_transform(camera, entity);
+
+        camera.view() * model_transform
     }
 
     fn calculate_model_transform(&self, camera: &Camera, entity: &ClientEntity) -> Matrix4<f32> {

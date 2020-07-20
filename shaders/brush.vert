@@ -12,7 +12,7 @@ layout(location = 4) in uvec4 a_lightmap_anim;
 
 layout(push_constant) uniform PushConstants {
   mat4 transform;
-  mat4 model;
+  mat4 model_view;
 } push_constants;
 
 layout(location = 0) out vec3 f_normal;
@@ -48,7 +48,7 @@ void main() {
         f_diffuse = a_diffuse;
     }
 
-    f_normal = mat3(transpose(inverse(push_constants.model))) * convert(a_normal);
+    f_normal = mat3(transpose(inverse(push_constants.model_view))) * convert(a_normal);
     f_lightmap = a_lightmap;
     f_lightmap_anim = a_lightmap_anim;
     gl_Position = push_constants.transform * vec4(convert(a_position), 1.0);
