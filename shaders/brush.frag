@@ -14,6 +14,10 @@ layout(location = 1) in vec2 f_diffuse; // also used for fullbright
 layout(location = 2) in vec2 f_lightmap;
 flat layout(location = 3) in uvec4 f_lightmap_anim;
 
+layout(push_constant) uniform PushConstants {
+  layout(offset = 128) uint texture_kind;
+} push_constants;
+
 // set 0: per-frame
 layout(set = 0, binding = 0) uniform FrameUniforms {
     float light_anim_frames[64];
@@ -58,7 +62,7 @@ vec4 calc_light() {
 }
 
 void main() {
-    switch (texture_uniforms.kind) {
+    switch (push_constants.texture_kind) {
         case TEXTURE_KIND_REGULAR:
             diffuse_attachment = texture(
                 sampler2D(u_diffuse_texture, u_diffuse_sampler),

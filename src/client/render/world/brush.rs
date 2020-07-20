@@ -22,6 +22,7 @@ use std::{borrow::Cow, cell::Cell, collections::HashMap, mem::size_of, ops::Rang
 
 use crate::{
     client::render::{
+        pipeline::PushConstantUpdate,
         uniform::{DynamicUniformBuffer, DynamicUniformBufferBlock},
         warp,
         world::{BindGroupLayoutId, WorldPipelineBase},
@@ -64,21 +65,6 @@ lazy_static! {
                     multisampled: false,
                 },
             ),
-            // texture kind
-            wgpu::BindGroupLayoutEntry::new(
-                2,
-                wgpu::ShaderStage::all(),
-                wgpu::BindingType::UniformBuffer {
-                    dynamic: true,
-                    min_binding_size:
-                        Some(
-                            std::num::NonZeroU64::new(
-                                size_of::<TextureUniforms>() as u64
-                            )
-                            .unwrap(),
-                        ),
-                },
-            ),
         ],
         vec![
             // lightmap texture array
@@ -100,10 +86,7 @@ lazy_static! {
 
 pub struct BrushPipeline {
     pipeline: wgpu::RenderPipeline,
-    vertex_push_constants: Bump,
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    texture_uniform_buffer: DynamicUniformBuffer<TextureUniforms>,
-    texture_uniform_blocks: Vec<DynamicUniformBufferBlock<TextureUniforms>>,
 }
 
 impl BrushPipeline {
@@ -117,19 +100,10 @@ impl BrushPipeline {
         let (pipeline, bind_group_layouts) =
             BrushPipeline::create(device, compiler, world_bind_group_layouts, sample_count);
 
-        let mut texture_uniform_buffer = DynamicUniformBuffer::new(&device);
-        let texture_uniform_blocks = TextureKind::iter()
-            .map(|kind| texture_uniform_buffer.allocate(TextureUniforms { kind }))
-            .collect();
-        texture_uniform_buffer.flush(&queue);
-
         BrushPipeline {
             pipeline,
             // TODO: pick a starting capacity
-            vertex_push_constants: Bump::new(),
             bind_group_layouts,
-            texture_uniform_buffer,
-            texture_uniform_blocks,
         }
     }
 
@@ -147,14 +121,6 @@ impl BrushPipeline {
         self.pipeline = BrushPipeline::recreate(device, compiler, &layout_refs, sample_count);
     }
 
-    pub fn reset(&mut self) {
-        self.vertex_push_constants.reset();
-    }
-
-    pub fn alloc_vertex_push_constants(&self, vpc: VertexPushConstants) -> &VertexPushConstants {
-        self.vertex_push_constants.alloc(vpc)
-    }
-
     pub fn pipeline(&self) -> &wgpu::RenderPipeline {
         &self.pipeline
     }
@@ -167,14 +133,6 @@ impl BrushPipeline {
         assert!(id as usize >= BindGroupLayoutId::PerTexture as usize);
         &self.bind_group_layouts[id as usize - BindGroupLayoutId::PerTexture as usize]
     }
-
-    pub fn texture_uniform_buffer(&self) -> &DynamicUniformBuffer<TextureUniforms> {
-        &self.texture_uniform_buffer
-    }
-
-    pub fn texture_uniform_blocks(&self) -> &[DynamicUniformBufferBlock<TextureUniforms>] {
-        &self.texture_uniform_blocks
-    }
 }
 
 #[repr(C)]
@@ -184,9 +142,15 @@ pub struct VertexPushConstants {
     pub model_view: Matrix4<f32>,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct SharedPushConstants {
+    pub texture_kind: u32,
+}
+
 impl Pipeline for BrushPipeline {
     type VertexPushConstants = VertexPushConstants;
-    type SharedPushConstants = ();
+    type SharedPushConstants = SharedPushConstants;
     type FragmentPushConstants = ();
 
     fn name() -> &'static str {
@@ -294,12 +258,6 @@ pub enum TextureKind {
     Normal = 0,
     Warp = 1,
     Sky = 2,
-}
-
-#[repr(C, align(256))]
-#[derive(Clone, Copy, Debug)]
-pub struct TextureUniforms {
-    pub kind: TextureKind,
 }
 
 pub struct BrushTexture {
@@ -506,7 +464,6 @@ impl BrushRendererBuilder {
             .brush_pipeline()
             .bind_group_layout(BindGroupLayoutId::PerTexture);
         let tex = &self.textures[texture_id];
-        let tex_unif_buf = state.brush_pipeline().texture_uniform_buffer();
         let desc = wgpu::BindGroupDescriptor {
             label: Some("per-texture bind group"),
             layout,
@@ -518,14 +475,6 @@ impl BrushRendererBuilder {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&tex.fullbright_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(
-                        tex_unif_buf
-                            .buffer()
-                            .slice(..size_of::<TextureUniforms>() as wgpu::BufferAddress),
-                    ),
                 },
             ],
         };
@@ -671,6 +620,7 @@ impl BrushRenderer {
         &'a self,
         state: &'a GraphicsState,
         pass: &mut wgpu::RenderPass<'a>,
+        bump: &'a Bump,
         camera: &Camera,
     ) {
         pass.set_pipeline(state.brush_pipeline().pipeline());
@@ -694,12 +644,19 @@ impl BrushRenderer {
         }
 
         for (tex_id, face_ids) in self.texture_chains.iter() {
+            use PushConstantUpdate::*;
+            BrushPipeline::set_push_constants(
+                pass,
+                Retain,
+                Update(bump.alloc(SharedPushConstants {
+                    texture_kind: self.textures[*tex_id].kind as u32,
+                })),
+                Retain,
+            );
             pass.set_bind_group(
                 BindGroupLayoutId::PerTexture as u32,
                 &self.per_texture_bind_groups[*tex_id],
-                &[state.brush_pipeline().texture_uniform_blocks()
-                    [self.textures[*tex_id].kind as usize]
-                    .offset()],
+                &[],
             );
 
             for face_id in face_ids.iter() {

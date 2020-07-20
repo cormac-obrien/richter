@@ -5,7 +5,7 @@ use crate::{
         entity::particle::Particle,
         render::{
             create_texture,
-            pipeline::Pipeline,
+            pipeline::{Pipeline, PushConstantUpdate},
             world::{Camera, WorldPipelineBase},
             Palette, TextureData,
         },
@@ -191,6 +191,8 @@ impl ParticlePipeline {
     ) where
         P: Iterator<Item = &'b Particle>,
     {
+        use PushConstantUpdate::*;
+
         pass.set_pipeline(self.pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.set_bind_group(0, &self.bind_group, &[]);
@@ -210,11 +212,11 @@ impl ParticlePipeline {
                 Matrix4::from_translation([-q_origin.y, q_origin.z, -q_origin.x].into());
             Self::set_push_constants(
                 pass,
-                Some(bump.alloc(VertexPushConstants {
+                Update(bump.alloc(VertexPushConstants {
                     transform: camera.view_projection() * translation * rotation,
                 })),
-                None,
-                Some(bump.alloc(FragmentPushConstants {
+                Retain,
+                Update(bump.alloc(FragmentPushConstants {
                     color: particle.color() as u32,
                 })),
             );

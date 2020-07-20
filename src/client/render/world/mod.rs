@@ -11,7 +11,7 @@ use crate::{
     client::{
         entity::particle::Particle,
         render::{
-            pipeline::Pipeline,
+            pipeline::{Pipeline, PushConstantUpdate},
             uniform::{DynamicUniformBufferBlock, UniformArrayFloat, UniformBool},
             world::{
                 alias::{AliasPipeline, AliasRenderer},
@@ -430,6 +430,7 @@ impl WorldRenderer {
         E: Iterator<Item = &'a ClientEntity> + Clone,
         P: Iterator<Item = &'a Particle>,
     {
+        use PushConstantUpdate::*;
         info!("Updating uniform buffers");
         self.update_uniform_buffers(
             state,
@@ -451,19 +452,19 @@ impl WorldRenderer {
         pass.set_pipeline(state.brush_pipeline().pipeline());
         BrushPipeline::set_push_constants(
             pass,
-            Some(bump.alloc(brush::VertexPushConstants {
+            Update(bump.alloc(brush::VertexPushConstants {
                 transform: camera.view_projection(),
                 model_view: camera.view(),
             })),
-            None,
-            None,
+            Clear,
+            Clear,
         );
         pass.set_bind_group(
             BindGroupLayoutId::PerEntity as u32,
             &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
             &[self.world_uniform_block.offset()],
         );
-        self.worldmodel_renderer.record_draw(state, pass, camera);
+        self.worldmodel_renderer.record_draw(state, pass, &bump, camera);
 
         // draw entities
         info!("Drawing entities");
@@ -479,23 +480,23 @@ impl WorldRenderer {
                     pass.set_pipeline(state.brush_pipeline().pipeline());
                     BrushPipeline::set_push_constants(
                         pass,
-                        Some(bump.alloc(brush::VertexPushConstants {
+                        Update(bump.alloc(brush::VertexPushConstants {
                             transform: self.calculate_mvp_transform(camera, ent),
                             model_view: self.calculate_mv_transform(camera, ent),
                         })),
-                        None,
-                        None,
+                        Retain,
+                        Retain,
                     );
-                    bmodel.record_draw(state, pass, camera);
+                    bmodel.record_draw(state, pass, &bump, camera);
                 }
                 EntityRenderer::Alias(ref alias) => {
                     pass.set_pipeline(state.alias_pipeline().pipeline());
-                    AliasPipeline::set_push_constants(pass, None, None, None);
+                    AliasPipeline::set_push_constants(pass, Clear, Clear, Clear);
                     alias.record_draw(state, pass, time, ent.get_frame_id(), ent.get_skin_id())
                 }
                 EntityRenderer::Sprite(ref sprite) => {
                     pass.set_pipeline(state.sprite_pipeline().pipeline());
-                    SpritePipeline::set_push_constants(pass, None, None, None);
+                    SpritePipeline::set_push_constants(pass, Clear, Clear, Clear);
                     sprite.record_draw(state, pass, ent.get_frame_id(), time)
                 }
                 _ => warn!("non-brush renderers not implemented!"),
