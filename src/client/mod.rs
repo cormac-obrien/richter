@@ -1708,6 +1708,41 @@ impl Client {
             // enable lerp for next frame
             ent.force_link = false;
         }
+
+        // apply effects to static entities as well
+        for ent in self.state.static_entities.iter_mut() {
+            let mut rng = rand::thread_rng();
+
+            if ent.effects.contains(EntityEffects::BRIGHT_LIGHT) {
+                debug!("spawn bright light on static entity");
+                ent.light_id = Some(self.state.lights.insert(
+                    self.state.time,
+                    LightDesc {
+                        origin: ent.origin,
+                        init_radius: BRIGHTLIGHT_DISTRIBUTION.sample(&mut rng),
+                        decay_rate: 0.0,
+                        min_radius: None,
+                        ttl: Duration::milliseconds(1),
+                    },
+                    ent.light_id,
+                ));
+            }
+
+            if ent.effects.contains(EntityEffects::DIM_LIGHT) {
+                debug!("spawn dim light on static entity");
+                ent.light_id = Some(self.state.lights.insert(
+                    self.state.time,
+                    LightDesc {
+                        origin: ent.origin,
+                        init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut rng),
+                        decay_rate: 0.0,
+                        min_radius: None,
+                        ttl: Duration::milliseconds(1),
+                    },
+                    ent.light_id,
+                ));
+            }
+        }
     }
 
     fn view_leaf_contents(&self) -> bsp::BspLeafContents {
@@ -1832,6 +1867,7 @@ impl Client {
             .iter()
             .map(move |i| &self.state.entities[*i])
             .chain(self.state.temp_entities.iter())
+            .chain(self.state.static_entities.iter())
     }
 
     pub fn iter_lights(&self) -> impl Iterator<Item = &Light> {
@@ -2073,7 +2109,7 @@ impl Client {
         self.state.face_anim_time
     }
 
-    pub fn lightstyle_values(&self) -> Result<Vec<u32>, Error> {
+    pub fn lightstyle_values(&self) -> Result<Vec<f32>, Error> {
         let mut values = Vec::new();
 
         for lightstyle_id in 0..64 {
@@ -2087,8 +2123,9 @@ impl Client {
                     };
 
                     values.push(match frame {
-                        Some(f) => (ls.as_bytes()[f] - 'a' as u8) as u32 * 22,
-                        None => 256,
+                        // 'z' - 'a' = 25, so divide by 12.5 to get range [0, 2]
+                        Some(f) => (ls.as_bytes()[f] - 'a' as u8) as f32 / 12.5,
+                        None => 1.0,
                     })
                 }
 

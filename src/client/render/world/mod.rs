@@ -12,7 +12,7 @@ use crate::{
         entity::particle::Particle,
         render::{
             pipeline::Pipeline,
-            uniform::{DynamicUniformBufferBlock, UniformArrayUint, UniformBool},
+            uniform::{DynamicUniformBufferBlock, UniformArrayFloat, UniformBool},
             world::{
                 alias::{AliasPipeline, AliasRenderer},
                 brush::{BrushPipeline, BrushRenderer, BrushRendererBuilder},
@@ -261,7 +261,7 @@ impl Camera {
 // TODO: derive Debug once const generics are stable
 pub struct FrameUniforms {
     // TODO: pack frame values into a [Vector4<f32>; 16],
-    lightmap_anim_frames: [UniformArrayUint; 64],
+    lightmap_anim_frames: [UniformArrayFloat; 64],
     camera_pos: Vector4<f32>,
     time: f32,
 
@@ -363,7 +363,7 @@ impl WorldRenderer {
         camera: &Camera,
         time: Duration,
         entities: I,
-        lightstyle_values: &[u32],
+        lightstyle_values: &[f32],
         cvars: &CvarRegistry,
     ) where
         I: Iterator<Item = &'a ClientEntity>,
@@ -374,9 +374,9 @@ impl WorldRenderer {
             .write_buffer(state.frame_uniform_buffer(), 0, unsafe {
                 any_as_bytes(&FrameUniforms {
                     lightmap_anim_frames: {
-                        let mut frames = [UniformArrayUint::new(0); 64];
+                        let mut frames = [UniformArrayFloat::new(0.0); 64];
                         for i in 0..64 {
-                            frames[i] = UniformArrayUint::new(lightstyle_values[i]);
+                            frames[i] = UniformArrayFloat::new(lightstyle_values[i]);
                         }
                         frames
                     },
@@ -424,7 +424,7 @@ impl WorldRenderer {
         time: Duration,
         entities: E,
         particles: P,
-        lightstyle_values: &[u32],
+        lightstyle_values: &[f32],
         cvars: &CvarRegistry,
     ) where
         E: Iterator<Item = &'a ClientEntity> + Clone,

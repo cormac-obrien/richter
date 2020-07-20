@@ -41,12 +41,14 @@ void main() {
   ivec2 texcoord = ivec2(vec2(dims) * a_texcoord);
   vec4 in_color = texelFetch(sampler2DMS(u_diffuse, u_sampler), texcoord, gl_SampleID);
   vec3 in_normal = texelFetch(sampler2DMS(u_normal, u_sampler), texcoord, gl_SampleID).xyz;
-  float in_light = texelFetch(sampler2DMS(u_light, u_sampler), texcoord, gl_SampleID).x;
+  // scale up by 2.0 (see brush.frag)
+  vec4 in_light = 2.0 * texelFetch(sampler2DMS(u_light, u_sampler), texcoord, gl_SampleID);
   float in_depth = texelFetch(sampler2DMS(u_depth, u_sampler), texcoord, gl_SampleID).x;
   vec3 position = reconstruct_position(in_depth);
 
   vec4 out_color = in_color;
-  float light = in_light;
+
+  float light = in_light.x + in_light.y + in_light.z + in_light.w;
   for (uint i = 0; i < u_deferred.light_count && i < MAX_LIGHTS; i++) {
     vec4 dlight = u_deferred.lights[i];
     float dist = abs(distance(dlight_origin(dlight), position));
@@ -58,7 +60,8 @@ void main() {
     }
   }
 
-  light = min(light, 1.0);
+  // allow 200% light saturation
+  light = min(light, 2.0);
 
   color_attachment = vec4(out_color.rgb * light, 1.0);
 }

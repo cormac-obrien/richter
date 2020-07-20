@@ -35,13 +35,13 @@ impl UniformBool {
 // uniform float array elements are aligned as if they were vec4s
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug)]
-pub struct UniformArrayUint {
-    value: u32,
+pub struct UniformArrayFloat {
+    value: f32,
 }
 
-impl UniformArrayUint {
-    pub fn new(value: u32) -> UniformArrayUint {
-        UniformArrayUint { value }
+impl UniformArrayFloat {
+    pub fn new(value: f32) -> UniformArrayFloat {
+        UniformArrayFloat { value }
     }
 }
 
