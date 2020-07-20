@@ -97,7 +97,7 @@ impl View {
         &mut self,
         frame_time: Duration,
         game_input: &GameInput,
-        intermission: Option<IntermissionKind>,
+        intermission: Option<&IntermissionKind>,
         mlook: bool,
         cl_anglespeedkey: f32,
         cl_pitchspeed: f32,
@@ -169,7 +169,7 @@ impl View {
     pub fn angles(
         &self,
         time: Duration,
-        intermission: Option<IntermissionKind>,
+        intermission: Option<&IntermissionKind>,
         velocity: Vector3<f32>,
         mut idle_vars: IdleVars,
         kick_vars: KickVars,

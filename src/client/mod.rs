@@ -109,11 +109,11 @@ struct PlayerInfo {
     // translations: [u8; VID_GRADES],
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum IntermissionKind {
-    Intermission = 1,
-    Finale = 2,
-    Cutscene = 3,
+    Intermission,
+    Finale { text: String },
+    Cutscene { text: String },
 }
 
 struct ClientChannel {
@@ -166,9 +166,11 @@ impl Mixer {
 
                     // keep track of which sound started the earliest
                     match self.channels[oldest] {
-                        Some(ref o) => if chan.start_time < o.start_time {
-                            oldest = i;
-                        },
+                        Some(ref o) => {
+                            if chan.start_time < o.start_time {
+                                oldest = i;
+                            }
+                        }
                         None => oldest = i,
                     }
                 }
@@ -276,7 +278,8 @@ struct ClientState {
     on_ground: bool,
     in_water: bool,
     intermission: Option<IntermissionKind>,
-    // completed_time: Duration,
+    start_time: Duration,
+    completion_time: Option<Duration>,
 
     // level_name: String,
     // server_info: ServerInfo,
@@ -379,6 +382,8 @@ impl ClientState {
             on_ground: false,
             in_water: false,
             intermission: None,
+            start_time: Duration::zero(),
+            completion_time: None,
             mixer: Mixer::new(audio_device.clone()),
             listener: Listener::new(),
         })
@@ -580,7 +585,7 @@ impl Client {
         self.state.view.handle_input(
             frame_time,
             game_input,
-            self.state.intermission,
+            self.state.intermission.as_ref(),
             mlook,
             self.cvar_value("cl_anglespeedkey")?,
             self.cvar_value("cl_pitchspeed")?,
@@ -858,6 +863,11 @@ impl Client {
                     self.state.stats[ClientStat::ActiveWeapon as usize] = active_weapon as i32;
                 }
 
+                ServerCmd::Cutscene { text } => {
+                    self.state.intermission = Some(IntermissionKind::Cutscene { text });
+                    self.state.completion_time = Some(self.state.time);
+                }
+
                 ServerCmd::Damage {
                     armor,
                     blood,
@@ -937,11 +947,10 @@ impl Client {
                             // don't bother updating if it has no model
                             &ModelKind::None => (),
                             _ => {
-                                self.state.entities[ent_id].sync_base =
-                                    match model.sync_type() {
-                                        SyncType::Sync => Duration::zero(),
-                                        SyncType::Rand => unimplemented!(), // TODO
-                                    }
+                                self.state.entities[ent_id].sync_base = match model.sync_type() {
+                                    SyncType::Sync => Duration::zero(),
+                                    SyncType::Rand => unimplemented!(), // TODO
+                                }
                             }
                         }
                     }
@@ -958,9 +967,15 @@ impl Client {
                     }
                 }
 
+                ServerCmd::Finale { text } => {
+                    self.state.intermission = Some(IntermissionKind::Finale { text });
+                    self.state.completion_time = Some(self.state.time);
+                }
+
                 ServerCmd::FoundSecret => self.state.stats[ClientStat::FoundSecrets as usize] += 1,
                 ServerCmd::Intermission => {
-                    self.state.intermission = Some(IntermissionKind::Intermission)
+                    self.state.intermission = Some(IntermissionKind::Intermission);
+                    self.state.completion_time = Some(self.state.time);
                 }
                 ServerCmd::KilledMonster => {
                     self.state.stats[ClientStat::KilledMonsters as usize] += 1
@@ -1288,7 +1303,8 @@ impl Client {
             }
             SignOnStage::Done => {
                 debug!("Signon complete");
-                // TODO: end load screen and start render loop
+                // TODO: end load screen
+                self.state.start_time = self.state.time;
             }
         }
 
@@ -1399,7 +1415,7 @@ impl Client {
     pub fn view_angles(&self, time: Duration) -> Result<Angles, ClientError> {
         Ok(self.state.view.angles(
             time,
-            self.state.intermission,
+            self.state.intermission.as_ref(),
             self.state.velocity,
             self.idle_vars()?,
             self.kick_vars()?,
@@ -2025,6 +2041,18 @@ impl Client {
                 );
             }
         }
+    }
+
+    pub fn intermission(&self) -> Option<&IntermissionKind> {
+        self.state.intermission.as_ref()
+    }
+
+    pub fn start_time(&self) -> Duration {
+        self.state.start_time
+    }
+
+    pub fn completion_time(&self) -> Option<Duration> {
+        self.state.completion_time
     }
 
     pub fn items(&self) -> ItemFlags {
