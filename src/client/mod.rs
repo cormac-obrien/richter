@@ -73,7 +73,6 @@ use crate::{
 use cgmath::{Angle, Deg, InnerSpace, Matrix4, Vector3, Zero};
 use chrono::Duration;
 use failure::{Error, ResultExt};
-use flame;
 use rand::{
     distributions::{Distribution as _, Uniform},
     Rng,
@@ -664,7 +663,6 @@ impl Client {
     }
 
     pub fn send(&mut self) -> Result<(), Error> {
-        let _guard = flame::start_guard("Client::send");
         if self.qsock.can_send() && !self.compose.is_empty() {
             self.qsock.begin_send_msg(&self.compose)?;
             self.compose.clear();
@@ -753,7 +751,6 @@ impl Client {
     }
 
     pub fn parse_server_msg(&mut self) -> Result<(), Error> {
-        let _guard = flame::start_guard("Client::parse_server_msg");
         let msg = self.qsock.recv_msg(match self.signon.get() {
             // if we're in the game, don't block waiting for messages
             SignOnStage::Done => BlockingMode::NonBlocking,
@@ -1432,8 +1429,6 @@ impl Client {
     }
 
     pub fn update_time(&mut self, frame_time: Duration) {
-        let _guard = flame::start_guard("Client::update_time");
-
         // advance client time by frame duration
         self.state.time = self.state.time + frame_time;
 
@@ -1551,7 +1546,6 @@ impl Client {
             static ref BRIGHTLIGHT_DISTRIBUTION: Uniform<f32> = Uniform::new(400.0, 432.0);
         }
 
-        let _guard = flame::start_guard("Client::relink_entities");
         let lerp_factor = self.get_lerp_factor();
 
         self.state.velocity = self.state.msg_velocity[1]

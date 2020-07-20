@@ -289,8 +289,6 @@ impl Program for ClientProgram {
     }
 
     fn frame(&mut self, frame_duration: Duration) {
-        let _guard = flame::start_guard("ClientProgram::frame");
-
         // recreate swapchain if needed
         if self.window_dimensions_changed.get() {
             self.window_dimensions_changed.set(false);

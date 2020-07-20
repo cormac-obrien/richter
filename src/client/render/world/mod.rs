@@ -368,8 +368,6 @@ impl WorldRenderer {
     ) where
         I: Iterator<Item = &'a ClientEntity>,
     {
-        let _guard = flame::start_guard("Renderer::update_uniform");
-
         trace!("Updating frame uniform buffer");
         state
             .queue()
@@ -432,83 +430,82 @@ impl WorldRenderer {
         E: Iterator<Item = &'a ClientEntity> + Clone,
         P: Iterator<Item = &'a Particle>,
     {
-        let _guard = flame::start_guard("Renderer::render_pass");
-        {
-            info!("Updating uniform buffers");
-            self.update_uniform_buffers(
-                state,
-                camera,
-                time,
-                entities.clone(),
-                lightstyle_values,
-                cvars,
-            );
+        info!("Updating uniform buffers");
+        self.update_uniform_buffers(
+            state,
+            camera,
+            time,
+            entities.clone(),
+            lightstyle_values,
+            cvars,
+        );
 
-            pass.set_bind_group(
-                BindGroupLayoutId::PerFrame as u32,
-                &state.world_bind_groups()[BindGroupLayoutId::PerFrame as usize],
-                &[],
-            );
+        pass.set_bind_group(
+            BindGroupLayoutId::PerFrame as u32,
+            &state.world_bind_groups()[BindGroupLayoutId::PerFrame as usize],
+            &[],
+        );
 
-            // draw world
-            info!("Drawing world");
-            pass.set_pipeline(state.brush_pipeline().pipeline());
-            BrushPipeline::set_push_constants(
-                pass,
-                Some(bump.alloc(brush::VertexPushConstants {
-                    transform: camera.view_projection(),
-                    model: Matrix4::identity(),
-                })),
-                None,
-                None,
-            );
+        // draw world
+        info!("Drawing world");
+        pass.set_pipeline(state.brush_pipeline().pipeline());
+        BrushPipeline::set_push_constants(
+            pass,
+            Some(bump.alloc(brush::VertexPushConstants {
+                transform: camera.view_projection(),
+                model: Matrix4::identity(),
+            })),
+            None,
+            None,
+        );
+        pass.set_bind_group(
+            BindGroupLayoutId::PerEntity as u32,
+            &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
+            &[self.world_uniform_block.offset()],
+        );
+        self.worldmodel_renderer.record_draw(state, pass, camera);
+
+        // draw entities
+        info!("Drawing entities");
+        for (ent_pos, ent) in entities.enumerate() {
             pass.set_bind_group(
                 BindGroupLayoutId::PerEntity as u32,
                 &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
-                &[self.world_uniform_block.offset()],
+                &[self.entity_uniform_blocks.borrow()[ent_pos].offset()],
             );
-            self.worldmodel_renderer.record_draw(state, pass, camera);
 
-            // draw entities
-            info!("Drawing entities");
-            for (ent_pos, ent) in entities.enumerate() {
-                pass.set_bind_group(
-                    BindGroupLayoutId::PerEntity as u32,
-                    &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
-                    &[self.entity_uniform_blocks.borrow()[ent_pos].offset()],
-                );
-
-                match self.renderer_for_entity(&ent) {
-                    EntityRenderer::Brush(ref bmodel) => {
-                        pass.set_pipeline(state.brush_pipeline().pipeline());
-                        BrushPipeline::set_push_constants(
-                            pass,
-                            Some(bump.alloc(brush::VertexPushConstants {
-                                transform: self.calculate_mvp_transform(camera, ent),
-                                model: self.calculate_model_transform(camera, ent),
-                            })),
-                            None,
-                            None,
-                        );
-                        bmodel.record_draw(state, pass, camera);
-                    }
-                    EntityRenderer::Alias(ref alias) => {
-                        pass.set_pipeline(state.alias_pipeline().pipeline());
-                        AliasPipeline::set_push_constants(pass, None, None, None);
-                        alias.record_draw(state, pass, time, ent.get_frame_id(), ent.get_skin_id())
-                    }
-                    EntityRenderer::Sprite(ref sprite) => {
-                        pass.set_pipeline(state.sprite_pipeline().pipeline());
-                        SpritePipeline::set_push_constants(pass, None, None, None);
-                        sprite.record_draw(state, pass, ent.get_frame_id(), time)
-                    }
-                    _ => warn!("non-brush renderers not implemented!"),
-                    // _ => unimplemented!(),
+            match self.renderer_for_entity(&ent) {
+                EntityRenderer::Brush(ref bmodel) => {
+                    pass.set_pipeline(state.brush_pipeline().pipeline());
+                    BrushPipeline::set_push_constants(
+                        pass,
+                        Some(bump.alloc(brush::VertexPushConstants {
+                            transform: self.calculate_mvp_transform(camera, ent),
+                            model: self.calculate_model_transform(camera, ent),
+                        })),
+                        None,
+                        None,
+                    );
+                    bmodel.record_draw(state, pass, camera);
                 }
+                EntityRenderer::Alias(ref alias) => {
+                    pass.set_pipeline(state.alias_pipeline().pipeline());
+                    AliasPipeline::set_push_constants(pass, None, None, None);
+                    alias.record_draw(state, pass, time, ent.get_frame_id(), ent.get_skin_id())
+                }
+                EntityRenderer::Sprite(ref sprite) => {
+                    pass.set_pipeline(state.sprite_pipeline().pipeline());
+                    SpritePipeline::set_push_constants(pass, None, None, None);
+                    sprite.record_draw(state, pass, ent.get_frame_id(), time)
+                }
+                _ => warn!("non-brush renderers not implemented!"),
+                // _ => unimplemented!(),
             }
-
-            state.particle_pipeline().record_draw(pass, &bump, camera, particles);
         }
+
+        state
+            .particle_pipeline()
+            .record_draw(pass, &bump, camera, particles);
     }
 
     fn renderer_for_entity(&self, ent: &ClientEntity) -> &EntityRenderer {

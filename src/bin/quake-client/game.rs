@@ -438,7 +438,6 @@ impl Game {
 
                 let command_buffer = encoder.finish();
                 {
-                    let _submit_guard = flame::start_guard("Submit and poll");
                     gfx_state.queue().submit(vec![command_buffer]);
                     gfx_state.device().poll(wgpu::Maintain::Wait);
                 }
