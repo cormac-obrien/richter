@@ -25,10 +25,8 @@ mod trace;
 
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
-    env,
     net::ToSocketAddrs,
     path::Path,
-    process::exit,
     rc::Rc,
 };
 
@@ -291,8 +289,6 @@ impl Program for ClientProgram {
     }
 
     fn frame(&mut self, frame_duration: Duration) {
-        let _guard = flame::start_guard("ClientProgram::frame");
-
         // recreate swapchain if needed
         if self.window_dimensions_changed.get() {
             self.window_dimensions_changed.set(false);

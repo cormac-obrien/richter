@@ -27,7 +27,6 @@ extern crate combine;
 extern crate env_logger;
 #[macro_use]
 extern crate failure;
-extern crate flame;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]

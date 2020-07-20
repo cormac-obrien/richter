@@ -252,14 +252,6 @@ pub struct ColorShift {
     pub percent: i32,
 }
 
-#[derive(FromPrimitive)]
-pub enum IntermissionKind {
-    None = 0,
-    Intermission = 1,
-    Finale = 2,
-    Cutscene = 3,
-}
-
 #[derive(Copy, Clone, Debug, Eq, FromPrimitive, PartialEq)]
 pub enum ClientStat {
     Health = 0,
@@ -464,7 +456,12 @@ impl TempEntity {
                 write_coord_vector3(writer, origin)?;
             }
 
-            TempEntity::Beam { kind, entity_id, start, end } => {
+            TempEntity::Beam {
+                kind,
+                entity_id,
+                start,
+                end,
+            } => {
                 let code = match kind {
                     BeamEntityKind::Lightning { model_id } => match model_id {
                         1 => Code::Lightning1,
@@ -527,6 +524,47 @@ impl EntityState {
             colormap: 0,
             skin_id: 0,
             effects: EntityEffects::empty(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EntityUpdate {
+    pub ent_id: u16,
+    pub model_id: Option<u8>,
+    pub frame_id: Option<u8>,
+    pub colormap: Option<u8>,
+    pub skin_id: Option<u8>,
+    pub effects: Option<EntityEffects>,
+    pub origin_x: Option<f32>,
+    pub pitch: Option<Deg<f32>>,
+    pub origin_y: Option<f32>,
+    pub yaw: Option<Deg<f32>>,
+    pub origin_z: Option<f32>,
+    pub roll: Option<Deg<f32>>,
+    pub no_lerp: bool,
+}
+
+impl EntityUpdate {
+    /// Create an `EntityState` from this update, filling in any `None` values
+    /// from the specified baseline state.
+    pub fn to_entity_state(&self, baseline: &EntityState) -> EntityState {
+        EntityState {
+            origin: Vector3::new(
+                self.origin_x.unwrap_or(baseline.origin.x),
+                self.origin_y.unwrap_or(baseline.origin.y),
+                self.origin_z.unwrap_or(baseline.origin.z),
+            ),
+            angles: Vector3::new(
+                self.pitch.unwrap_or(baseline.angles[0]),
+                self.yaw.unwrap_or(baseline.angles[1]),
+                self.roll.unwrap_or(baseline.angles[2]),
+            ),
+            model_id: self.model_id.map_or(baseline.model_id, |m| m as usize),
+            frame_id: self.frame_id.map_or(baseline.frame_id, |f| f as usize),
+            skin_id: self.skin_id.map_or(baseline.skin_id, |s| s as usize),
+            effects: self.effects.unwrap_or(baseline.effects),
+            colormap: self.colormap.unwrap_or(baseline.colormap),
         }
     }
 }
@@ -740,21 +778,7 @@ pub enum ServerCmd {
     Cutscene {
         text: String,
     },
-    FastUpdate {
-        ent_id: u16,
-        model_id: Option<u8>,
-        frame_id: Option<u8>,
-        colormap: Option<u8>,
-        skin_id: Option<u8>,
-        effects: Option<EntityEffects>,
-        origin_x: Option<f32>,
-        pitch: Option<Deg<f32>>,
-        origin_y: Option<f32>,
-        yaw: Option<Deg<f32>>,
-        origin_z: Option<f32>,
-        roll: Option<Deg<f32>>,
-        no_lerp: bool,
-    },
+    FastUpdate(EntityUpdate),
 }
 
 impl ServerCmd {
@@ -795,7 +819,7 @@ impl ServerCmd {
             ServerCmd::SellScreen => ServerCmdCode::SellScreen,
             ServerCmd::Cutscene { .. } => ServerCmdCode::Cutscene,
             // TODO: figure out a more elegant way of doing this
-            ServerCmd::FastUpdate { .. } => panic!("FastUpdate has no code"),
+            ServerCmd::FastUpdate(_) => panic!("FastUpdate has no code"),
         };
 
         code as u8
@@ -926,7 +950,7 @@ impl ServerCmd {
 
             let no_lerp = update_flags.contains(UpdateFlags::NO_LERP);
 
-            return Ok(Some(ServerCmd::FastUpdate {
+            return Ok(Some(ServerCmd::FastUpdate(EntityUpdate {
                 ent_id,
                 model_id,
                 frame_id,
@@ -940,7 +964,7 @@ impl ServerCmd {
                 origin_z,
                 roll,
                 no_lerp,
-            }));
+            })));
         }
 
         let code = match ServerCmdCode::from_u8(code_num) {
@@ -1806,7 +1830,7 @@ impl ServerCmd {
             }
 
             // TODO
-            ServerCmd::FastUpdate { .. } => unimplemented!(),
+            ServerCmd::FastUpdate(_) => unimplemented!(),
         }
 
         Ok(())

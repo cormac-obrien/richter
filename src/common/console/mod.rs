@@ -248,17 +248,25 @@ impl CvarRegistry {
         S: AsRef<str>,
     {
         let name = name.as_ref();
-        let cvars = self.cvars.borrow();
-        let cvar = cvars.get(name).ok_or(ConsoleErrorKind::NoSuchCvar {
+        let mut cvars = self.cvars.borrow_mut();
+        let cvar = cvars.get_mut(name).ok_or(ConsoleErrorKind::NoSuchCvar {
             name: name.to_owned(),
         })?;
-        let val = cvar
-            .val
-            .parse::<f32>()
-            .context(ConsoleErrorKind::CvarParseFailed {
-                name: name.to_owned(),
-                value: cvar.val.clone(),
-            })?;
+
+        // try parsing as f32
+        let val_string = cvar.val.clone();
+        let val = match val_string.parse::<f32>() {
+            Ok(v) => Ok(v),
+            // if parse fails, reset to default valud and try again
+            Err(_) => {
+                cvar.val = cvar.default.clone();
+                cvar.val.parse::<f32>()
+            }
+        }
+        .context(ConsoleErrorKind::CvarParseFailed {
+            name: name.to_owned(),
+            value: cvar.val.clone(),
+        })?;
 
         Ok(val)
     }
@@ -511,15 +519,13 @@ impl Console {
 
     pub fn send_char(&mut self, c: char) -> Result<(), Error> {
         match c {
-            // ignore grave key
-            '`' => (),
+            // ignore grave and escape keys
+            '`' | '\x1b' => (),
 
             '\r' => {
-                // cap with a newline
-                self.input.insert('\n');
-
-                // push this line to the execution buffer
-                let entered = self.get_string();
+                // cap with a newline and push to the execution buffer
+                let mut entered = self.get_string();
+                entered.push('\n');
                 self.buffer.borrow_mut().push_str(&entered);
 
                 // add the current input to the history
@@ -544,6 +550,10 @@ impl Console {
         }
 
         Ok(())
+    }
+
+    pub fn cursor(&self) -> usize {
+        self.input.curs
     }
 
     pub fn cursor_right(&mut self) {
@@ -670,7 +680,7 @@ impl<'a> Tokenizer<'a> {
     /// ```
     pub fn new(input: &'a str) -> Tokenizer<'a> {
         Tokenizer {
-            input: input,
+            input,
             byte_offset: 0,
         }
     }

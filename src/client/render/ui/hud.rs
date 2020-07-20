@@ -1,15 +1,21 @@
 use std::collections::HashMap;
 
 use crate::{
-    client::render::{
-        ui::{
-            glyph::GlyphRendererCommand,
-            layout::{Anchor, Layout, ScreenPosition, Size},
-            quad::{QuadRendererCommand, QuadTexture},
+    client::{
+        render::{
+            ui::{
+                glyph::GlyphRendererCommand,
+                layout::{Anchor, Layout, ScreenPosition, Size},
+                quad::{QuadRendererCommand, QuadTexture},
+            },
+            GraphicsState,
         },
-        GraphicsState,
+        IntermissionKind,
     },
-    common::net::{ClientStat, ItemFlags},
+    common::{
+        net::{ClientStat, ItemFlags},
+        wad::QPic,
+    },
 };
 
 use chrono::Duration;
@@ -17,11 +23,27 @@ use num::FromPrimitive as _;
 use strum::IntoEnumIterator as _;
 use strum_macros::EnumIter;
 
-pub struct HudState<'a> {
-    pub items: ItemFlags,
-    pub item_pickup_time: &'a [Duration],
-    pub stats: &'a [i32],
-    pub face_anim_time: Duration,
+// intermission overlay size
+const OVERLAY_WIDTH: i32 = 320;
+const OVERLAY_HEIGHT: i32 = 200;
+
+const OVERLAY_X_OFS: i32 = -OVERLAY_WIDTH / 2;
+const OVERLAY_Y_OFS: i32 = -OVERLAY_HEIGHT / 2;
+
+const OVERLAY_ANCHOR: Anchor = Anchor::CENTER;
+
+pub enum HudState<'a> {
+    InGame {
+        items: ItemFlags,
+        item_pickup_time: &'a [Duration],
+        stats: &'a [i32],
+        face_anim_time: Duration,
+    },
+    Intermission {
+        kind: &'a IntermissionKind,
+        completion_duration: Duration,
+        stats: &'a [i32],
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -39,6 +61,10 @@ enum HudTextureId {
     StatusBar,
     InvBar,
     ScoreBar,
+
+    // these are not in gfx.wad
+    Complete,
+    Intermission,
 }
 
 impl std::fmt::Display for HudTextureId {
@@ -58,6 +84,10 @@ impl std::fmt::Display for HudTextureId {
             StatusBar => write!(f, "SBAR"),
             InvBar => write!(f, "IBAR"),
             ScoreBar => write!(f, "SCOREBAR"),
+
+            // these are not in gfx.wad
+            Complete => write!(f, "gfx/complete.lmp"),
+            Intermission => write!(f, "gfx/inter.lmp"),
         }
     }
 }
@@ -160,6 +190,7 @@ pub struct HudRenderer {
 }
 
 impl HudRenderer {
+    /// Construct a new `HudRenderer`.
     pub fn new(state: &GraphicsState) -> HudRenderer {
         use HudTextureId::*;
         let mut ids = Vec::new();
@@ -220,10 +251,18 @@ impl HudRenderer {
             textures.insert(id, texture);
         }
 
+        // new id list for textures not in gfx.wad
+        let ids = vec![Complete, Intermission];
+        for id in ids.into_iter() {
+            debug!("Opening {}", id);
+            let qpic = QPic::load(state.vfs().open(&format!("{}", id)).unwrap()).unwrap();
+            textures.insert(id, QuadTexture::from_qpic(state, &qpic));
+        }
+
         HudRenderer { textures }
     }
 
-    fn generate_number_commands<'a>(
+    fn cmd_number<'a>(
         &'a self,
         number: i32,
         alt_color: bool,
@@ -231,6 +270,7 @@ impl HudRenderer {
         screen_anchor: Anchor,
         screen_x_ofs: i32,
         screen_y_ofs: i32,
+        quad_anchor: Anchor,
         scale: f32,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
     ) {
@@ -265,63 +305,97 @@ impl HudRenderer {
                         x_ofs: screen_x_ofs + place_ofs + 24 * chr_id as i32,
                         y_ofs: screen_y_ofs,
                     },
-                    anchor: Anchor::BOTTOM_LEFT,
+                    anchor: quad_anchor,
                     size: Size::Scale { factor: scale },
                 },
             });
         }
     }
 
-    pub fn generate_commands<'state, 'a>(
+    // Draw a quad on the status bar.
+    //
+    // `x_ofs` and `y_ofs` are specified relative to the bottom-left corner of
+    // the status bar.
+    fn cmd_sbar_quad<'a>(
         &'a self,
-        hud_state: &HudState<'a>,
+        texture_id: HudTextureId,
+        x_ofs: i32,
+        y_ofs: i32,
+        scale: f32,
+        quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
+    ) {
+        quad_cmds.push(QuadRendererCommand {
+            texture: self.textures.get(&texture_id).unwrap(),
+            layout: Layout {
+                position: ScreenPosition::Relative {
+                    anchor: Anchor::BOTTOM_CENTER,
+                    x_ofs: OVERLAY_X_OFS + x_ofs,
+                    y_ofs,
+                },
+                anchor: Anchor::BOTTOM_LEFT,
+                size: Size::Scale { factor: scale },
+            },
+        });
+    }
+
+    // Draw a quad on the status bar.
+    //
+    // `x_ofs` and `y_ofs` are specified relative to the bottom-left corner of
+    // the status bar.
+    fn cmd_sbar_number<'a>(
+        &'a self,
+        number: i32,
+        alt_color: bool,
+        max_digits: usize,
+        x_ofs: i32,
+        y_ofs: i32,
+        scale: f32,
+        quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
+    ) {
+        self.cmd_number(
+            number,
+            alt_color,
+            max_digits,
+            Anchor::BOTTOM_CENTER,
+            OVERLAY_X_OFS + x_ofs,
+            y_ofs,
+            Anchor::BOTTOM_LEFT,
+            scale,
+            quad_cmds,
+        );
+    }
+
+    // Draw the status bar.
+    fn cmd_sbar<'a>(
+        &'a self,
         time: Duration,
+        items: ItemFlags,
+        item_pickup_time: &'a [Duration],
+        stats: &'a [i32],
+        face_anim_time: Duration,
+        scale: f32,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,
     ) {
         use HudTextureId::*;
 
-        // TODO: get from cvar
-        let scale = 2.0;
-
         let sbar = self.textures.get(&StatusBar).unwrap();
         let sbar_x_ofs = -(sbar.width() as i32) / 2;
 
-        // status bar
-        quad_cmds.push(QuadRendererCommand {
-            texture: sbar,
-            layout: Layout {
-                position: ScreenPosition::Absolute(Anchor::BOTTOM_CENTER),
-                anchor: Anchor::BOTTOM_CENTER,
-                size: Size::Scale { factor: scale },
-            },
-        });
+        // status bar background
+        self.cmd_sbar_quad(StatusBar, 0, 0, scale, quad_cmds);
 
-        // inventory bar
-        quad_cmds.push(QuadRendererCommand {
-            texture: self.textures.get(&InvBar).unwrap(),
-            layout: Layout {
-                position: ScreenPosition::Relative {
-                    anchor: Anchor::BOTTOM_CENTER,
-                    x_ofs: 0,
-                    y_ofs: sbar.height() as i32,
-                },
-                anchor: Anchor::BOTTOM_CENTER,
-                size: Size::Scale { factor: scale },
-            },
-        });
+        // inventory bar background
+        self.cmd_sbar_quad(InvBar, 0, sbar.height() as i32, scale, quad_cmds);
 
-        // weapons
+        // weapon slots
         for i in 0..7 {
-            if hud_state
-                .items
-                .contains(ItemFlags::from_bits(ItemFlags::SHOTGUN.bits() << i).unwrap())
-            {
+            if items.contains(ItemFlags::from_bits(ItemFlags::SHOTGUN.bits() << i).unwrap()) {
                 let id = WeaponId::from_usize(i).unwrap();
-                let pickup_time = hud_state.item_pickup_time[i];
+                let pickup_time = item_pickup_time[i];
                 let delta = time - pickup_time;
                 let frame = if delta >= Duration::milliseconds(100) {
-                    if hud_state.stats[ClientStat::ActiveWeapon as usize] as u32
+                    if stats[ClientStat::ActiveWeapon as usize] as u32
                         == ItemFlags::SHOTGUN.bits() << i
                     {
                         WeaponFrame::Active
@@ -334,24 +408,19 @@ impl HudRenderer {
                     }
                 };
 
-                quad_cmds.push(QuadRendererCommand {
-                    texture: self.textures.get(&Weapon { id, frame }).unwrap(),
-                    layout: Layout {
-                        position: ScreenPosition::Relative {
-                            anchor: Anchor::BOTTOM_CENTER,
-                            x_ofs: sbar_x_ofs + 24 * i as i32,
-                            y_ofs: sbar.height() as i32,
-                        },
-                        anchor: Anchor::BOTTOM_LEFT,
-                        size: Size::Scale { factor: scale },
-                    },
-                });
+                self.cmd_sbar_quad(
+                    Weapon { id, frame },
+                    24 * i as i32,
+                    sbar.height() as i32,
+                    scale,
+                    quad_cmds,
+                );
             }
         }
 
         // ammo counters
         for i in 0..4 {
-            let ammo_str = format!("{: >3}", hud_state.stats[ClientStat::Shells as usize + i]);
+            let ammo_str = format!("{: >3}", stats[ClientStat::Shells as usize + i]);
             for (chr_id, chr) in ammo_str.chars().enumerate() {
                 if chr != ' ' {
                     glyph_cmds.push(GlyphRendererCommand::Glyph {
@@ -368,12 +437,9 @@ impl HudRenderer {
             }
         }
 
-        // items
+        // items (keys and powerups)
         for i in 0..6 {
-            if hud_state
-                .items
-                .contains(ItemFlags::from_bits(ItemFlags::KEY_1.bits() << i).unwrap())
-            {
+            if items.contains(ItemFlags::from_bits(ItemFlags::KEY_1.bits() << i).unwrap()) {
                 quad_cmds.push(QuadRendererCommand {
                     texture: self
                         .textures
@@ -396,10 +462,7 @@ impl HudRenderer {
 
         // sigils
         for i in 0..4 {
-            if hud_state
-                .items
-                .contains(ItemFlags::from_bits(ItemFlags::SIGIL_1.bits() << i).unwrap())
-            {
+            if items.contains(ItemFlags::from_bits(ItemFlags::SIGIL_1.bits() << i).unwrap()) {
                 quad_cmds.push(QuadRendererCommand {
                     texture: self.textures.get(&Sigil { id: i }).unwrap(),
                     layout: Layout {
@@ -416,97 +479,44 @@ impl HudRenderer {
         }
 
         // armor
-        if hud_state.items.contains(ItemFlags::INVULNERABILITY) {
-            self.generate_number_commands(
-                666,
-                true,
-                3,
-                Anchor::BOTTOM_CENTER,
-                sbar_x_ofs,
-                0,
-                scale,
-                quad_cmds,
-            );
+        let armor_width = self.textures.get(&Armor { id: 0 }).unwrap().width() as i32;
+        if items.contains(ItemFlags::INVULNERABILITY) {
+            self.cmd_sbar_number(666, true, 3, armor_width, 0, scale, quad_cmds);
         // TODO draw_disc
         } else {
-            let armor = hud_state.stats[ClientStat::Armor as usize];
-            self.generate_number_commands(
-                armor,
-                armor <= 25,
-                3,
-                Anchor::BOTTOM_CENTER,
-                sbar_x_ofs + self.textures.get(&Armor { id: 0 }).unwrap().width() as i32,
-                0,
-                scale,
-                quad_cmds,
-            );
+            let armor = stats[ClientStat::Armor as usize];
+            self.cmd_sbar_number(armor, armor <= 25, 3, armor_width, 0, scale, quad_cmds);
 
             let mut armor_id = None;
             for i in (0..3).rev() {
-                if hud_state
-                    .items
-                    .contains(ItemFlags::from_bits(ItemFlags::ARMOR_1.bits() << i).unwrap())
-                {
+                if items.contains(ItemFlags::from_bits(ItemFlags::ARMOR_1.bits() << i).unwrap()) {
                     armor_id = Some(Armor { id: i });
                     break;
                 }
             }
 
             if let Some(a) = armor_id {
-                quad_cmds.push(QuadRendererCommand {
-                    texture: self.textures.get(&a).unwrap(),
-                    layout: Layout {
-                        position: ScreenPosition::Relative {
-                            anchor: Anchor::BOTTOM_CENTER,
-                            x_ofs: sbar_x_ofs,
-                            y_ofs: 0,
-                        },
-                        anchor: Anchor::BOTTOM_LEFT,
-                        size: Size::Scale { factor: scale },
-                    },
-                });
+                self.cmd_sbar_quad(a, 0, 0, scale, quad_cmds);
             }
         }
 
         // health
-        let health = hud_state.stats[ClientStat::Health as usize];
-        self.generate_number_commands(
-            health,
-            health <= 25,
-            3,
-            Anchor::BOTTOM_CENTER,
-            sbar_x_ofs + 136,
-            0,
-            scale,
-            quad_cmds,
-        );
+        let health = stats[ClientStat::Health as usize];
+        self.cmd_sbar_number(health, health <= 25, 3, 136, 0, scale, quad_cmds);
 
-        let ammo = hud_state.stats[ClientStat::Ammo as usize];
-        self.generate_number_commands(
-            ammo,
-            ammo <= 10,
-            3,
-            Anchor::BOTTOM_CENTER,
-            sbar_x_ofs + 248,
-            0,
-            scale,
-            quad_cmds,
-        );
+        let ammo = stats[ClientStat::Ammo as usize];
+        self.cmd_sbar_number(ammo, ammo <= 10, 3, 248, 0, scale, quad_cmds);
 
-        // TODO: render face
-        let face = if hud_state
-            .items
-            .contains(ItemFlags::INVISIBILITY | ItemFlags::INVULNERABILITY)
-        {
+        let face = if items.contains(ItemFlags::INVISIBILITY | ItemFlags::INVULNERABILITY) {
             FaceId::InvisibleInvulnerable
-        } else if hud_state.items.contains(ItemFlags::QUAD) {
+        } else if items.contains(ItemFlags::QUAD) {
             FaceId::QuadDamage
-        } else if hud_state.items.contains(ItemFlags::INVISIBILITY) {
+        } else if items.contains(ItemFlags::INVISIBILITY) {
             FaceId::Invisible
-        } else if hud_state.items.contains(ItemFlags::INVULNERABILITY) {
+        } else if items.contains(ItemFlags::INVULNERABILITY) {
             FaceId::Invulnerable
         } else {
-            let health = hud_state.stats[ClientStat::Health as usize];
+            let health = stats[ClientStat::Health as usize];
             let frame = 4 - if health >= 100 {
                 4
             } else {
@@ -514,23 +524,12 @@ impl HudRenderer {
             };
 
             FaceId::Normal {
-                pain: hud_state.face_anim_time > time,
+                pain: face_anim_time > time,
                 frame,
             }
         };
 
-        quad_cmds.push(QuadRendererCommand {
-            texture: self.textures.get(&Face { id: face }).unwrap(),
-            layout: Layout {
-                position: ScreenPosition::Relative {
-                    anchor: Anchor::BOTTOM_CENTER,
-                    x_ofs: sbar_x_ofs + 112,
-                    y_ofs: 0,
-                },
-                anchor: Anchor::BOTTOM_LEFT,
-                size: Size::Scale { factor: scale },
-            },
-        });
+        self.cmd_sbar_quad(Face { id: face }, 112, 0, scale, quad_cmds);
 
         // crosshair
         glyph_cmds.push(GlyphRendererCommand::Glyph {
@@ -539,5 +538,133 @@ impl HudRenderer {
             anchor: Anchor::CENTER,
             scale,
         });
+    }
+
+    // Draw a quad on the intermission overlay.
+    //
+    // `x_ofs` and `y_ofs` are specified relative to the top-left corner of the
+    // overlay.
+    fn cmd_intermission_quad<'a>(
+        &'a self,
+        texture_id: HudTextureId,
+        x_ofs: i32,
+        y_ofs: i32,
+        scale: f32,
+        quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
+    ) {
+        quad_cmds.push(QuadRendererCommand {
+            texture: self.textures.get(&texture_id).unwrap(),
+            layout: Layout {
+                position: ScreenPosition::Relative {
+                    anchor: Anchor::CENTER,
+                    x_ofs: OVERLAY_X_OFS + x_ofs,
+                    y_ofs: OVERLAY_Y_OFS + y_ofs,
+                },
+                anchor: Anchor::TOP_LEFT,
+                size: Size::Scale { factor: scale },
+            },
+        });
+    }
+
+    // Draw a number on the intermission overlay.
+    //
+    // `x_ofs` and `y_ofs` are specified relative to the top-left corner of the
+    // overlay.
+    fn cmd_intermission_number<'a>(
+        &'a self,
+        number: i32,
+        max_digits: usize,
+        x_ofs: i32,
+        y_ofs: i32,
+        scale: f32,
+        quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
+    ) {
+        self.cmd_number(
+            number,
+            false,
+            max_digits,
+            OVERLAY_ANCHOR,
+            OVERLAY_X_OFS + x_ofs,
+            OVERLAY_Y_OFS + y_ofs,
+            Anchor::TOP_LEFT,
+            scale,
+            quad_cmds,
+        );
+    }
+
+    // Draw the intermission overlay.
+    fn cmd_intermission_overlay<'a>(
+        &'a self,
+        _kind: &'a IntermissionKind,
+        completion_duration: Duration,
+        stats: &'a [i32],
+        scale: f32,
+        quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
+    ) {
+        use HudTextureId::*;
+
+        // TODO: check gametype
+
+        self.cmd_intermission_quad(Complete, 64, OVERLAY_HEIGHT - 24, scale, quad_cmds);
+        self.cmd_intermission_quad(Intermission, 0, OVERLAY_HEIGHT - 56, scale, quad_cmds);
+
+        // TODO: completed time
+        let time_y_ofs = OVERLAY_HEIGHT - 64;
+        let minutes = completion_duration.num_minutes() as i32;
+        let seconds = completion_duration.num_seconds() as i32 - 60 * minutes;
+        self.cmd_intermission_number(minutes, 3, 160, time_y_ofs, scale, quad_cmds);
+        self.cmd_intermission_quad(Colon, 234, time_y_ofs, scale, quad_cmds);
+        self.cmd_intermission_number(seconds, 2, 246, time_y_ofs, scale, quad_cmds);
+
+        // secrets
+        let secrets_y_ofs = OVERLAY_HEIGHT - 104;
+        let secrets_found = stats[ClientStat::FoundSecrets as usize];
+        let secrets_total = stats[ClientStat::TotalSecrets as usize];
+        self.cmd_intermission_number(secrets_found, 3, 160, secrets_y_ofs, scale, quad_cmds);
+        self.cmd_intermission_quad(Slash, 232, secrets_y_ofs, scale, quad_cmds);
+        self.cmd_intermission_number(secrets_total, 3, 240, secrets_y_ofs, scale, quad_cmds);
+
+        // monsters
+        let monsters_y_ofs = OVERLAY_HEIGHT - 144;
+        let monsters_killed = stats[ClientStat::KilledMonsters as usize];
+        let monsters_total = stats[ClientStat::TotalMonsters as usize];
+        self.cmd_intermission_number(monsters_killed, 3, 160, monsters_y_ofs, scale, quad_cmds);
+        self.cmd_intermission_quad(Slash, 232, monsters_y_ofs, scale, quad_cmds);
+        self.cmd_intermission_number(monsters_total, 3, 240, monsters_y_ofs, scale, quad_cmds);
+    }
+
+    /// Generate render commands to draw the HUD in the specified state.
+    pub fn generate_commands<'state, 'a>(
+        &'a self,
+        hud_state: &HudState<'a>,
+        time: Duration,
+        quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
+        glyph_cmds: &mut Vec<GlyphRendererCommand>,
+    ) {
+        // TODO: get from cvar
+        let scale = 2.0;
+
+        match hud_state {
+            HudState::InGame {
+                items,
+                item_pickup_time,
+                stats,
+                face_anim_time,
+            } => self.cmd_sbar(
+                time,
+                *items,
+                item_pickup_time,
+                stats,
+                *face_anim_time,
+                scale,
+                quad_cmds,
+                glyph_cmds,
+            ),
+            HudState::Intermission {
+                kind,
+                completion_duration,
+                stats,
+            } => self.cmd_intermission_overlay(kind, *completion_duration, stats, scale, quad_cmds),
+        }
     }
 }

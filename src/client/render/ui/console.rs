@@ -7,8 +7,10 @@ use crate::{
         },
         GraphicsState,
     },
-    common::{console::Console, wad::QPic},
+    common::{console::Console, engine, wad::QPic},
 };
+
+use chrono::Duration;
 
 const PAD_LEFT: i32 = GLYPH_WIDTH as i32;
 
@@ -29,6 +31,7 @@ impl ConsoleRenderer {
     pub fn generate_commands<'a>(
         &'a self,
         console: &Console,
+        time: Duration,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,
     ) {
@@ -72,8 +75,9 @@ impl ConsoleRenderer {
             anchor: Anchor::BOTTOM_LEFT,
             scale,
         });
+        let input_text = console.get_string();
         glyph_cmds.push(GlyphRendererCommand::Text {
-            text: console.get_string(),
+            text: input_text,
             position: ScreenPosition::Relative {
                 anchor: console_anchor,
                 x_ofs: PAD_LEFT + GLYPH_WIDTH as i32,
@@ -82,6 +86,19 @@ impl ConsoleRenderer {
             anchor: Anchor::BOTTOM_LEFT,
             scale,
         });
+        // blink cursor in half-second intervals
+        if engine::duration_to_f32(time).fract() > 0.5 {
+            glyph_cmds.push(GlyphRendererCommand::Glyph {
+                glyph_id: 11,
+                position: ScreenPosition::Relative {
+                    anchor: console_anchor,
+                    x_ofs: PAD_LEFT + (GLYPH_WIDTH * (console.cursor() + 1)) as i32,
+                    y_ofs: 0,
+                },
+                anchor: Anchor::BOTTOM_LEFT,
+                scale,
+            });
+        }
 
         // draw previous output
         for (line_id, line) in console.output().lines().enumerate() {

@@ -86,7 +86,7 @@ impl InGameState {
         let toggleconsole_focus = focus_rc.clone();
 
         cmds.borrow_mut()
-            .insert(
+            .insert_or_replace(
                 "toggleconsole",
                 Box::new(move |_| match toggleconsole_focus.get() {
                     InGameFocus::Game => {
@@ -107,7 +107,7 @@ impl InGameState {
         let togglemenu_focus = focus_rc.clone();
 
         cmds.borrow_mut()
-            .insert(
+            .insert_or_replace(
                 "togglemenu",
                 Box::new(move |_| match togglemenu_focus.get() {
                     InGameFocus::Game => {
@@ -204,6 +204,11 @@ impl Game {
     // advance the simulation
     pub fn frame(&mut self, gfx_state: &GraphicsState, frame_duration: Duration) {
         self.client.frame(frame_duration).unwrap();
+
+        // make sure we set loading state for reconnects
+        if self.client.signon_stage() != SignOnStage::Done {
+            self.state = GameState::Loading;
+        }
 
         if let GameState::Loading = self.state {
             println!("loading...");
@@ -339,11 +344,8 @@ impl Game {
                     for (light_id, light) in self.client.iter_lights().enumerate() {
                         light_count += 1;
                         let light_origin = light.origin();
-                        let converted_origin = Vector3::new(
-                            -light_origin.y,
-                            light_origin.z,
-                            -light_origin.x,
-                        );
+                        let converted_origin =
+                            Vector3::new(-light_origin.y, light_origin.z, -light_origin.x);
                         lights[light_id].origin =
                             (camera.view() * converted_origin.extend(1.0)).truncate();
                         lights[light_id].radius = light.radius(self.client.time());
@@ -362,11 +364,20 @@ impl Game {
                 }
 
                 let ui_state = UiState::InGame {
-                    hud: HudState {
-                        items: self.client.items(),
-                        item_pickup_time: self.client.item_get_time(),
-                        stats: self.client.stats(),
-                        face_anim_time: self.client.face_anim_time(),
+                    hud: match self.client.intermission() {
+                        Some(kind) => HudState::Intermission {
+                            kind,
+                            completion_duration: self.client.completion_time().unwrap()
+                                - self.client.start_time(),
+                            stats: self.client.stats(),
+                        },
+
+                        None => HudState::InGame {
+                            items: self.client.items(),
+                            item_pickup_time: self.client.item_get_time(),
+                            stats: self.client.stats(),
+                            face_anim_time: self.client.face_anim_time(),
+                        },
                     },
                     overlay: match state.focus.get() {
                         InGameFocus::Game => None,
@@ -427,7 +438,6 @@ impl Game {
 
                 let command_buffer = encoder.finish();
                 {
-                    let _submit_guard = flame::start_guard("Submit and poll");
                     gfx_state.queue().submit(vec![command_buffer]);
                     gfx_state.device().poll(wgpu::Maintain::Wait);
                 }

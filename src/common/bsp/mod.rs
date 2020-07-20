@@ -127,7 +127,6 @@ use crate::server::world::{Trace, TraceEnd, TraceStart};
 
 use cgmath::Vector3;
 use chrono::Duration;
-use flame;
 
 pub use self::load::load;
 
@@ -859,7 +858,6 @@ impl BspData {
     }
 
     pub fn get_pvs(&self, leaf_id: usize, leaf_count: usize) -> Vec<usize> {
-        let _guard = flame::start_guard("BspData::get_pvs");
         // leaf 0 is outside the map, everything is visible
         if leaf_id == 0 {
             return Vec::new();

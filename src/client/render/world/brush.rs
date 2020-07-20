@@ -673,7 +673,6 @@ impl BrushRenderer {
         pass: &mut wgpu::RenderPass<'a>,
         camera: &Camera,
     ) {
-        let _guard = flame::start_guard("BrushRenderer::record_draw");
         pass.set_pipeline(state.brush_pipeline().pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
@@ -695,7 +694,6 @@ impl BrushRenderer {
         }
 
         for (tex_id, face_ids) in self.texture_chains.iter() {
-            let _tex_guard = flame::start_guard("texture chain");
             pass.set_bind_group(
                 BindGroupLayoutId::PerTexture as u32,
                 &self.per_texture_bind_groups[*tex_id],

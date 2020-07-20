@@ -93,9 +93,6 @@ where
                 // TODO:
                 // - host_writeconfig
                 // - others...
-                let mut flame_file =
-                    std::io::BufWriter::new(std::fs::File::create("flame.html").unwrap());
-                flame::dump_html(&mut flame_file).unwrap();
             }
 
             e => self.program.handle_event(e, _target, control_flow),

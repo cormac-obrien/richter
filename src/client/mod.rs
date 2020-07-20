@@ -34,7 +34,7 @@ pub use self::{
 };
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashMap,
     io::{BufReader, Read},
     net::ToSocketAddrs,
@@ -73,7 +73,6 @@ use crate::{
 use cgmath::{Angle, Deg, InnerSpace, Matrix4, Vector3, Zero};
 use chrono::Duration;
 use failure::{Error, ResultExt};
-use flame;
 use rand::{
     distributions::{Distribution as _, Uniform},
     Rng,
@@ -107,6 +106,13 @@ struct PlayerInfo {
     frags: i32,
     colors: PlayerColor,
     // translations: [u8; VID_GRADES],
+}
+
+#[derive(Clone, Debug)]
+pub enum IntermissionKind {
+    Intermission,
+    Finale { text: String },
+    Cutscene { text: String },
 }
 
 struct ClientChannel {
@@ -158,13 +164,13 @@ impl Mixer {
                     // TODO: don't clobber player sounds with monster sounds
 
                     // keep track of which sound started the earliest
-                    if chan.start_time
-                        < match self.channels[oldest] {
-                            Some(ref o) => o.start_time,
-                            None => Duration::zero(),
+                    match self.channels[oldest] {
+                        Some(ref o) => {
+                            if chan.start_time < o.start_time {
+                                oldest = i;
+                            }
                         }
-                    {
-                        oldest = i;
+                        None => oldest = i,
                     }
                 }
 
@@ -225,11 +231,14 @@ struct ClientState {
     entities: Vec<ClientEntity>,
     static_entities: Vec<ClientEntity>,
     temp_entities: Vec<ClientEntity>,
+    // dynamic point lights
     lights: Lights,
+    // lightning bolts and grappling hook cable
     beams: [Option<Beam>; MAX_BEAMS],
+    // particle effects
     particles: Particles,
 
-    // visible entities, updated per-frame
+    // visible entities, rebuilt per-frame
     visible_entity_ids: Vec<usize>,
 
     light_styles: HashMap<u8, String>,
@@ -267,14 +276,11 @@ struct ClientState {
     // paused: bool,
     on_ground: bool,
     in_water: bool,
-    // intermission: IntermissionKind,
-    // completed_time: Duration,
-
-    // last_received_message: f32,
+    intermission: Option<IntermissionKind>,
+    start_time: Duration,
+    completion_time: Option<Duration>,
 
     // level_name: String,
-    // view_ent: usize,
-
     // server_info: ServerInfo,
 
     // worldmodel: Model,
@@ -374,6 +380,9 @@ impl ClientState {
             velocity: Vector3::zero(),
             on_ground: false,
             in_water: false,
+            intermission: None,
+            start_time: Duration::zero(),
+            completion_time: None,
             mixer: Mixer::new(audio_device.clone()),
             listener: Listener::new(),
         })
@@ -426,12 +435,17 @@ pub struct Client {
 
     qsock: QSocket,
     compose: Vec<u8>,
-    signon: SignOnStage,
+    signon: Rc<Cell<SignOnStage>>,
 
     state: ClientState,
 }
 
 impl Client {
+    /// Implements the `reconnect` command.
+    fn cmd_reconnect(signon: Rc<Cell<SignOnStage>>) -> Box<dyn Fn(&[&str])> {
+        Box::new(move |_| signon.set(SignOnStage::Not))
+    }
+
     pub fn connect<A>(
         server_addrs: A,
         vfs: Rc<Vfs>,
@@ -443,6 +457,11 @@ impl Client {
     where
         A: ToSocketAddrs,
     {
+        // set up reconnect
+        let signon = Rc::new(Cell::new(SignOnStage::Not));
+        cmds.borrow_mut()
+            .insert_or_replace("reconnect", Client::cmd_reconnect(signon.clone()))?;
+
         let mut con_sock = ConnectSocket::bind("0.0.0.0:0")?;
         let server_addr = server_addrs
             .to_socket_addrs()
@@ -528,7 +547,7 @@ impl Client {
             audio_device: audio_device.clone(),
             qsock,
             compose: Vec::new(),
-            signon: SignOnStage::Not,
+            signon,
             state: ClientState::new(vfs.clone(), audio_device.clone())?,
         })
     }
@@ -565,6 +584,7 @@ impl Client {
         self.state.view.handle_input(
             frame_time,
             game_input,
+            self.state.intermission.as_ref(),
             mlook,
             self.cvar_value("cl_anglespeedkey")?,
             self.cvar_value("cl_pitchspeed")?,
@@ -643,7 +663,6 @@ impl Client {
     }
 
     pub fn send(&mut self) -> Result<(), Error> {
-        let _guard = flame::start_guard("Client::send");
         if self.qsock.can_send() && !self.compose.is_empty() {
             self.qsock.begin_send_msg(&self.compose)?;
             self.compose.clear();
@@ -732,8 +751,7 @@ impl Client {
     }
 
     pub fn parse_server_msg(&mut self) -> Result<(), Error> {
-        let _guard = flame::start_guard("Client::parse_server_msg");
-        let msg = self.qsock.recv_msg(match self.signon {
+        let msg = self.qsock.recv_msg(match self.signon.get() {
             // if we're in the game, don't block waiting for messages
             SignOnStage::Done => BlockingMode::NonBlocking,
 
@@ -842,6 +860,11 @@ impl Client {
                     self.state.stats[ClientStat::ActiveWeapon as usize] = active_weapon as i32;
                 }
 
+                ServerCmd::Cutscene { text } => {
+                    self.state.intermission = Some(IntermissionKind::Cutscene { text });
+                    self.state.completion_time = Some(self.state.time);
+                }
+
                 ServerCmd::Damage {
                     armor,
                     blood,
@@ -884,155 +907,73 @@ impl Client {
 
                 ServerCmd::Disconnect => self.disconnect(),
 
-                ServerCmd::FastUpdate {
-                    ent_id,
-                    model_id,
-                    frame_id,
-                    colormap,
-                    skin_id,
-                    effects,
-                    origin_x,
-                    pitch,
-                    origin_y,
-                    yaw,
-                    origin_z,
-                    roll,
-                    no_lerp,
-                } => {
+                ServerCmd::FastUpdate(ent_update) => {
                     // first update signals the last sign-on stage
-                    if self.signon == SignOnStage::Begin {
-                        self.signon = SignOnStage::Done;
-                        let signon = self.signon;
+                    if self.signon.get() == SignOnStage::Begin {
+                        self.signon.set(SignOnStage::Done);
+                        let signon = self.signon.get();
                         self.handle_signon(signon)?;
                     }
 
-                    let mut force_link = false;
-
-                    let ent_id = ent_id as usize;
+                    let ent_id = ent_update.ent_id as usize;
                     if ent_id >= self.state.entities.len() {
                         self.spawn_entities(
                             ent_id as u16,
-                            model_id.unwrap_or(0),
-                            frame_id.unwrap_or(0),
-                            colormap.unwrap_or(0),
-                            skin_id.unwrap_or(0),
+                            ent_update.model_id.unwrap_or(0),
+                            ent_update.frame_id.unwrap_or(0),
+                            ent_update.colormap.unwrap_or(0),
+                            ent_update.skin_id.unwrap_or(0),
                             Vector3::new(
-                                origin_x.unwrap_or(0.0),
-                                origin_y.unwrap_or(0.0),
-                                origin_z.unwrap_or(0.0),
+                                ent_update.origin_x.unwrap_or(0.0),
+                                ent_update.origin_y.unwrap_or(0.0),
+                                ent_update.origin_z.unwrap_or(0.0),
                             ),
                             Vector3::new(
-                                pitch.unwrap_or(Deg(0.0)),
-                                yaw.unwrap_or(Deg(0.0)),
-                                roll.unwrap_or(Deg(0.0)),
+                                ent_update.pitch.unwrap_or(Deg(0.0)),
+                                ent_update.yaw.unwrap_or(Deg(0.0)),
+                                ent_update.roll.unwrap_or(Deg(0.0)),
                             ),
                         )?;
                     }
 
-                    // did we get an update for this entity last frame?
-                    if self.state.entities[ent_id].msg_time != self.state.msg_times[1] {
-                        // if not, we can't lerp
-                        force_link = true;
-                    }
+                    self.state.entities[ent_id].update(self.state.msg_times, ent_update);
 
-                    // update entity update time
-                    self.state.entities[ent_id].msg_time = self.state.msg_times[0];
-
-                    let new_model_id = match model_id {
-                        Some(m_id) => {
-                            ensure!(
-                                (m_id as usize) < self.state.models.len(),
-                                "Update for entity {}: model ID {} is out of range",
-                                ent_id,
-                                m_id
-                            );
-
-                            m_id as usize
-                        }
-
-                        None => self.state.entities[ent_id].baseline.model_id,
-                    };
-
-                    if self.state.entities[ent_id].model_id != new_model_id {
-                        // model has changed
-                        self.state.entities[ent_id].model_id = new_model_id;
-                        match self.state.models[new_model_id].kind() {
-                            &ModelKind::None => force_link = true,
+                    if self.state.entities[ent_id].model_changed() {
+                        let model = &self.state.models[self.state.entities[ent_id].model_id()];
+                        match model.kind() {
+                            // don't bother updating if it has no model
+                            &ModelKind::None => (),
                             _ => {
-                                self.state.entities[ent_id].sync_base =
-                                    match self.state.models[new_model_id].sync_type() {
-                                        SyncType::Sync => Duration::zero(),
-                                        SyncType::Rand => unimplemented!(), // TODO
-                                    }
+                                self.state.entities[ent_id].sync_base = match model.sync_type() {
+                                    SyncType::Sync => Duration::zero(),
+                                    SyncType::Rand => unimplemented!(), // TODO
+                                }
                             }
                         }
                     }
 
-                    self.state.entities[ent_id].frame_id = frame_id
-                        .map(|x| x as usize)
-                        .unwrap_or(self.state.entities[ent_id].baseline.frame_id);
-
-                    let new_colormap =
-                        colormap.unwrap_or(self.state.entities[ent_id].baseline.colormap) as usize;
-                    if new_colormap == 0 {
-                        // TODO: use default colormap
-                    } else {
+                    if let Some(c) = self.state.entities[ent_id].colormap() {
                         // only players may have custom colormaps
                         ensure!(
-                            new_colormap <= self.state.max_players,
+                            ent_id <= self.state.max_players,
                             "Attempted to assign custom colormap to entity with ID {}",
                             ent_id,
                         );
 
                         // TODO: set player custom colormaps
                     }
+                }
 
-                    self.state.entities[ent_id].skin_id = skin_id
-                        .map(|x| x as usize)
-                        .unwrap_or(self.state.entities[ent_id].baseline.skin_id);
-                    self.state.entities[ent_id].effects =
-                        effects.unwrap_or(self.state.entities[ent_id].baseline.effects);
-
-                    // save previous origin and angles
-                    self.state.entities[ent_id].msg_origins[1] =
-                        self.state.entities[ent_id].msg_origins[0];
-                    self.state.entities[ent_id].msg_angles[1] =
-                        self.state.entities[ent_id].msg_angles[0];
-
-                    // update origin
-                    self.state.entities[ent_id].msg_origins[0].x =
-                        origin_x.unwrap_or(self.state.entities[ent_id].baseline.origin.x);
-                    self.state.entities[ent_id].msg_origins[0].y =
-                        origin_y.unwrap_or(self.state.entities[ent_id].baseline.origin.y);
-                    self.state.entities[ent_id].msg_origins[0].z =
-                        origin_z.unwrap_or(self.state.entities[ent_id].baseline.origin.z);
-
-                    // update angles
-                    self.state.entities[ent_id].msg_angles[0][0] =
-                        pitch.unwrap_or(self.state.entities[ent_id].baseline.angles[0]);
-                    self.state.entities[ent_id].msg_angles[0][1] =
-                        yaw.unwrap_or(self.state.entities[ent_id].baseline.angles[1]);
-                    self.state.entities[ent_id].msg_angles[0][2] =
-                        roll.unwrap_or(self.state.entities[ent_id].baseline.angles[2]);
-
-                    if no_lerp {
-                        force_link = true;
-                    }
-
-                    if force_link {
-                        self.state.entities[ent_id].msg_origins[1] =
-                            self.state.entities[ent_id].msg_origins[0];
-                        self.state.entities[ent_id].origin =
-                            self.state.entities[ent_id].msg_origins[0];
-                        self.state.entities[ent_id].msg_angles[1] =
-                            self.state.entities[ent_id].msg_angles[0];
-                        self.state.entities[ent_id].angles =
-                            self.state.entities[ent_id].msg_angles[0];
-                        self.state.entities[ent_id].force_link = true;
-                    }
+                ServerCmd::Finale { text } => {
+                    self.state.intermission = Some(IntermissionKind::Finale { text });
+                    self.state.completion_time = Some(self.state.time);
                 }
 
                 ServerCmd::FoundSecret => self.state.stats[ClientStat::FoundSecrets as usize] += 1,
+                ServerCmd::Intermission => {
+                    self.state.intermission = Some(IntermissionKind::Intermission);
+                    self.state.completion_time = Some(self.state.time);
+                }
                 ServerCmd::KilledMonster => {
                     self.state.stats[ClientStat::KilledMonsters as usize] += 1
                 }
@@ -1042,9 +983,28 @@ impl Client {
                     let _ = self.state.light_styles.insert(id, value);
                 }
 
-                ServerCmd::Particle { .. } => {
-                    // TODO: spawn particle effects
-                    warn!("Particle effects not implemented!");
+                ServerCmd::Particle {
+                    origin,
+                    direction,
+                    count,
+                    color,
+                } => {
+                    match count {
+                        // if count is 255, this is an explosion
+                        255 => self
+                            .state
+                            .particles
+                            .create_explosion(self.state.time, origin),
+
+                        // otherwise it's an impact
+                        _ => self.state.particles.create_projectile_impact(
+                            self.state.time,
+                            origin,
+                            direction,
+                            color,
+                            count as usize,
+                        ),
+                    }
                 }
 
                 ServerCmd::Print { text } => {
@@ -1072,7 +1032,9 @@ impl Client {
 
                 ServerCmd::SetAngle { angles } => {
                     debug!("Set view angles to {:?}", angles);
-                    self.state.view.update_msg_angles(Angles {
+                    let view_ent = self.view_ent();
+                    self.state.entities[view_ent].set_angles(angles);
+                    self.state.view.update_input_angles(Angles {
                         pitch: angles.x,
                         roll: angles.z,
                         yaw: angles.y,
@@ -1338,11 +1300,12 @@ impl Client {
             }
             SignOnStage::Done => {
                 debug!("Signon complete");
-                // TODO: end load screen and start render loop
+                // TODO: end load screen
+                self.state.start_time = self.state.time;
             }
         }
 
-        self.signon = stage;
+        self.signon.set(stage);
 
         Ok(())
     }
@@ -1424,18 +1387,18 @@ impl Client {
     }
 
     pub fn signon_stage(&self) -> SignOnStage {
-        self.signon
+        self.signon.get()
     }
 
     pub fn entities(&self) -> Option<&[ClientEntity]> {
-        match self.signon {
+        match self.signon.get() {
             SignOnStage::Done => Some(&self.state.entities),
             _ => None,
         }
     }
 
     pub fn models(&self) -> Option<&[Model]> {
-        match self.signon {
+        match self.signon.get() {
             SignOnStage::Done => Some(&self.state.models),
             _ => None,
         }
@@ -1449,6 +1412,7 @@ impl Client {
     pub fn view_angles(&self, time: Duration) -> Result<Angles, ClientError> {
         Ok(self.state.view.angles(
             time,
+            self.state.intermission.as_ref(),
             self.state.velocity,
             self.idle_vars()?,
             self.kick_vars()?,
@@ -1465,8 +1429,6 @@ impl Client {
     }
 
     pub fn update_time(&mut self, frame_time: Duration) {
-        let _guard = flame::start_guard("Client::update_time");
-
         // advance client time by frame duration
         self.state.time = self.state.time + frame_time;
 
@@ -1584,7 +1546,6 @@ impl Client {
             static ref BRIGHTLIGHT_DISTRIBUTION: Uniform<f32> = Uniform::new(400.0, 432.0);
         }
 
-        let _guard = flame::start_guard("Client::relink_entities");
         let lerp_factor = self.get_lerp_factor();
 
         self.state.velocity = self.state.msg_velocity[1]
@@ -1851,7 +1812,7 @@ impl Client {
         self.send()?;
 
         // these all require the player entity to have spawned
-        if self.signon == SignOnStage::Done {
+        if self.signon.get() == SignOnStage::Done {
             // update ear positions
             self.state.update_listener();
 
@@ -2076,6 +2037,18 @@ impl Client {
         }
     }
 
+    pub fn intermission(&self) -> Option<&IntermissionKind> {
+        self.state.intermission.as_ref()
+    }
+
+    pub fn start_time(&self) -> Duration {
+        self.state.start_time
+    }
+
+    pub fn completion_time(&self) -> Option<Duration> {
+        self.state.completion_time
+    }
+
     pub fn items(&self) -> ItemFlags {
         self.state.items
     }
@@ -2218,5 +2191,12 @@ impl Client {
         }
 
         trace
+    }
+}
+
+impl std::ops::Drop for Client {
+    fn drop(&mut self) {
+        // if this errors, it was already removed so we don't care
+        let _ = self.cmds.borrow_mut().remove("reconnect");
     }
 }
