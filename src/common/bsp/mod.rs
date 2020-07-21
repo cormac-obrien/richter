@@ -226,6 +226,11 @@ impl BspTexture {
     pub fn mipmap(&self, mipmap: BspTextureMipmap) -> &[u8] {
         &self.mipmaps[mipmap as usize]
     }
+
+    /// Returns this texture's animation data, if any.
+    pub fn animation(&self) -> Option<&BspTextureAnimation> {
+        self.animation.as_ref()
+    }
 }
 
 #[derive(Debug)]

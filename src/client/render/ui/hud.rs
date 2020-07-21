@@ -535,7 +535,7 @@ impl HudRenderer {
         glyph_cmds.push(GlyphRendererCommand::Glyph {
             glyph_id: '+' as u8,
             position: ScreenPosition::Absolute(Anchor::CENTER),
-            anchor: Anchor::CENTER,
+            anchor: Anchor::TOP_LEFT,
             scale,
         });
     }

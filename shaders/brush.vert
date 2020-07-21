@@ -12,7 +12,8 @@ layout(location = 4) in uvec4 a_lightmap_anim;
 
 layout(push_constant) uniform PushConstants {
   mat4 transform;
-  mat4 model;
+  mat4 model_view;
+  uint texture_kind;
 } push_constants;
 
 layout(location = 0) out vec3 f_normal;
@@ -26,17 +27,13 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     float time;
 } frame_uniforms;
 
-layout(set = 2, binding = 2) uniform TextureUniforms {
-    uint kind;
-} texture_uniforms;
-
 // convert from Quake coordinates
 vec3 convert(vec3 from) {
   return vec3(-from.y, from.z, -from.x);
 }
 
 void main() {
-    if (texture_uniforms.kind == TEXTURE_KIND_SKY) {
+    if (push_constants.texture_kind == TEXTURE_KIND_SKY) {
         vec3 dir = a_position - frame_uniforms.camera_pos.xyz;
         dir.z *= 3.0;
 
@@ -48,7 +45,7 @@ void main() {
         f_diffuse = a_diffuse;
     }
 
-    f_normal = mat3(transpose(inverse(push_constants.model))) * convert(a_normal);
+    f_normal = mat3(transpose(inverse(push_constants.model_view))) * convert(a_normal);
     f_lightmap = a_lightmap;
     f_lightmap_anim = a_lightmap_anim;
     gl_Position = push_constants.transform * vec4(convert(a_position), 1.0);

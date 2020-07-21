@@ -11,8 +11,8 @@ use crate::{
     client::{
         entity::particle::Particle,
         render::{
-            pipeline::Pipeline,
-            uniform::{DynamicUniformBufferBlock, UniformArrayUint, UniformBool},
+            pipeline::{Pipeline, PushConstantUpdate},
+            uniform::{DynamicUniformBufferBlock, UniformArrayFloat, UniformBool},
             world::{
                 alias::{AliasPipeline, AliasRenderer},
                 brush::{BrushPipeline, BrushRenderer, BrushRendererBuilder},
@@ -261,7 +261,7 @@ impl Camera {
 // TODO: derive Debug once const generics are stable
 pub struct FrameUniforms {
     // TODO: pack frame values into a [Vector4<f32>; 16],
-    lightmap_anim_frames: [UniformArrayUint; 64],
+    lightmap_anim_frames: [UniformArrayFloat; 64],
     camera_pos: Vector4<f32>,
     time: f32,
 
@@ -363,7 +363,7 @@ impl WorldRenderer {
         camera: &Camera,
         time: Duration,
         entities: I,
-        lightstyle_values: &[u32],
+        lightstyle_values: &[f32],
         cvars: &CvarRegistry,
     ) where
         I: Iterator<Item = &'a ClientEntity>,
@@ -374,9 +374,9 @@ impl WorldRenderer {
             .write_buffer(state.frame_uniform_buffer(), 0, unsafe {
                 any_as_bytes(&FrameUniforms {
                     lightmap_anim_frames: {
-                        let mut frames = [UniformArrayUint::new(0); 64];
+                        let mut frames = [UniformArrayFloat::new(0.0); 64];
                         for i in 0..64 {
-                            frames[i] = UniformArrayUint::new(lightstyle_values[i]);
+                            frames[i] = UniformArrayFloat::new(lightstyle_values[i]);
                         }
                         frames
                     },
@@ -424,12 +424,13 @@ impl WorldRenderer {
         time: Duration,
         entities: E,
         particles: P,
-        lightstyle_values: &[u32],
+        lightstyle_values: &[f32],
         cvars: &CvarRegistry,
     ) where
         E: Iterator<Item = &'a ClientEntity> + Clone,
         P: Iterator<Item = &'a Particle>,
     {
+        use PushConstantUpdate::*;
         info!("Updating uniform buffers");
         self.update_uniform_buffers(
             state,
@@ -451,19 +452,19 @@ impl WorldRenderer {
         pass.set_pipeline(state.brush_pipeline().pipeline());
         BrushPipeline::set_push_constants(
             pass,
-            Some(bump.alloc(brush::VertexPushConstants {
+            Update(bump.alloc(brush::VertexPushConstants {
                 transform: camera.view_projection(),
-                model: Matrix4::identity(),
+                model_view: camera.view(),
             })),
-            None,
-            None,
+            Clear,
+            Clear,
         );
         pass.set_bind_group(
             BindGroupLayoutId::PerEntity as u32,
             &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
             &[self.world_uniform_block.offset()],
         );
-        self.worldmodel_renderer.record_draw(state, pass, camera);
+        self.worldmodel_renderer.record_draw(state, pass, &bump, time, camera);
 
         // draw entities
         info!("Drawing entities");
@@ -479,23 +480,23 @@ impl WorldRenderer {
                     pass.set_pipeline(state.brush_pipeline().pipeline());
                     BrushPipeline::set_push_constants(
                         pass,
-                        Some(bump.alloc(brush::VertexPushConstants {
+                        Update(bump.alloc(brush::VertexPushConstants {
                             transform: self.calculate_mvp_transform(camera, ent),
-                            model: self.calculate_model_transform(camera, ent),
+                            model_view: self.calculate_mv_transform(camera, ent),
                         })),
-                        None,
-                        None,
+                        Retain,
+                        Retain,
                     );
-                    bmodel.record_draw(state, pass, camera);
+                    bmodel.record_draw(state, pass, &bump, time, camera);
                 }
                 EntityRenderer::Alias(ref alias) => {
                     pass.set_pipeline(state.alias_pipeline().pipeline());
-                    AliasPipeline::set_push_constants(pass, None, None, None);
+                    AliasPipeline::set_push_constants(pass, Clear, Clear, Clear);
                     alias.record_draw(state, pass, time, ent.get_frame_id(), ent.get_skin_id())
                 }
                 EntityRenderer::Sprite(ref sprite) => {
                     pass.set_pipeline(state.sprite_pipeline().pipeline());
-                    SpritePipeline::set_push_constants(pass, None, None, None);
+                    SpritePipeline::set_push_constants(pass, Clear, Clear, Clear);
                     sprite.record_draw(state, pass, ent.get_frame_id(), time)
                 }
                 _ => warn!("non-brush renderers not implemented!"),
@@ -517,6 +518,12 @@ impl WorldRenderer {
         let model_transform = self.calculate_model_transform(camera, entity);
 
         camera.view_projection() * model_transform
+    }
+
+    fn calculate_mv_transform(&self, camera: &Camera, entity: &ClientEntity) -> Matrix4<f32> {
+        let model_transform = self.calculate_model_transform(camera, entity);
+
+        camera.view() * model_transform
     }
 
     fn calculate_model_transform(&self, camera: &Camera, entity: &ClientEntity) -> Matrix4<f32> {

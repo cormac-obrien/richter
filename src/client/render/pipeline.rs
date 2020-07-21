@@ -41,6 +41,15 @@ where
     device.create_shader_module(wgpu::ShaderModuleSource::SpirV(spirv.as_binary()))
 }
 
+pub enum PushConstantUpdate<T> {
+    /// Update the push constant to a new value.
+    Update(T),
+    /// Retain the current value of the push constant.
+    Retain,
+    /// Clear the push constant to no value.
+    Clear,
+}
+
 /// A trait describing the behavior of a render pipeline.
 ///
 /// This trait's methods are used to define the pipeline's behavior in a more-or-less declarative
@@ -299,10 +308,12 @@ pub trait Pipeline {
     /// constant range is cleared.
     fn set_push_constants<'a>(
         pass: &mut wgpu::RenderPass<'a>,
-        vpc: Option<&'a Self::VertexPushConstants>,
-        spc: Option<&'a Self::SharedPushConstants>,
-        fpc: Option<&'a Self::FragmentPushConstants>,
+        vpc: PushConstantUpdate<&'a Self::VertexPushConstants>,
+        spc: PushConstantUpdate<&'a Self::SharedPushConstants>,
+        fpc: PushConstantUpdate<&'a Self::FragmentPushConstants>,
     ) {
+        use PushConstantUpdate::*;
+
         let vpc_offset = 0;
         let spc_offset = vpc_offset + size_of::<Self::VertexPushConstants>() as u32;
         let fpc_offset = spc_offset + size_of::<Self::SharedPushConstants>() as u32;
@@ -311,41 +322,61 @@ pub trait Pipeline {
         // compiled out
 
         if size_of::<Self::VertexPushConstants>() > 0 {
-            let data: &[u32] = vpc.map_or(&[], |v| unsafe { any_as_u32_slice(v) });
-            trace!(
-                "Update vertex push constants at offset {} with data {:?}",
-                vpc_offset,
-                data
-            );
-            pass.set_push_constants(
-                wgpu::ShaderStage::VERTEX,
-                vpc_offset,
-                data,
-            );
+            let data = match vpc {
+                Update(v) => Some(unsafe { any_as_u32_slice(v) }),
+                Retain => None,
+                Clear => Some(&[][..]),
+            };
+
+            if let Some(d) = data {
+                trace!(
+                    "Update vertex push constants at offset {} with data {:?}",
+                    vpc_offset,
+                    data
+                );
+
+                pass.set_push_constants(wgpu::ShaderStage::VERTEX, vpc_offset, d);
+            }
         }
 
         if size_of::<Self::SharedPushConstants>() > 0 {
-            let data: &[u32] = spc.map_or(&[], |s| unsafe { any_as_u32_slice(s) });
-            trace!(
-                "Update shared push constants at offset {} with data {:?}",
-                spc_offset,
-                data
-            );
-            pass.set_push_constants(
-                wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
-                spc_offset,
-                data,
-            );
+            let data = match spc {
+                Update(s) => Some(unsafe { any_as_u32_slice(s) }),
+                Retain => None,
+                Clear => Some(&[][..]),
+            };
+
+            if let Some(d) = data {
+                trace!(
+                    "Update shared push constants at offset {} with data {:?}",
+                    spc_offset,
+                    data
+                );
+
+                pass.set_push_constants(
+                    wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+                    spc_offset,
+                    d,
+                );
+            }
         }
 
         if size_of::<Self::FragmentPushConstants>() > 0 {
-            let data: &[u32] = fpc.map_or(&[], |f| unsafe { any_as_u32_slice(f) });
-            trace!(
-                "Update fragment push constants at offset {} with data {:?}",
-                fpc_offset,
-                data
-            );
-            pass.set_push_constants(wgpu::ShaderStage::FRAGMENT, fpc_offset, data);
+            let data = match fpc {
+                Update(f) => Some(unsafe { any_as_u32_slice(f) }),
+                Retain => None,
+                Clear => Some(&[][..]),
+            };
+
+            if let Some(d) = data {
+                trace!(
+                    "Update fragment push constants at offset {} with data {:?}",
+                    fpc_offset,
+                    data
+                );
+
+                pass.set_push_constants(wgpu::ShaderStage::FRAGMENT, fpc_offset, d);
+            }
         }
     }
 }

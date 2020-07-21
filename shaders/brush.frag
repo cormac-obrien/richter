@@ -14,9 +14,13 @@ layout(location = 1) in vec2 f_diffuse; // also used for fullbright
 layout(location = 2) in vec2 f_lightmap;
 flat layout(location = 3) in uvec4 f_lightmap_anim;
 
+layout(push_constant) uniform PushConstants {
+  layout(offset = 128) uint texture_kind;
+} push_constants;
+
 // set 0: per-frame
 layout(set = 0, binding = 0) uniform FrameUniforms {
-    uint light_anim_frames[64]; // range [0, 550]
+    float light_anim_frames[64];
     vec4 camera_pos;
     float time;
     bool r_lightmap;
@@ -40,23 +44,25 @@ layout(location = 0) out vec4 diffuse_attachment;
 layout(location = 1) out vec4 normal_attachment;
 layout(location = 2) out vec4 light_attachment;
 
-float calc_light() {
-    float light = 0.0;
+vec4 calc_light() {
+    vec4 light = vec4(0.0, 0.0, 0.0, 0.0);
     for (int i = 0; i < 4 && f_lightmap_anim[i] != LIGHTMAP_ANIM_END; i++) {
-        uint umap = uint(texture(
+        float map = texture(
             sampler2D(u_lightmap_texture[i], u_lightmap_sampler),
             f_lightmap
-        ).r * 255.0) * 2;
-        uint ustyle = frame_uniforms.light_anim_frames[f_lightmap_anim[i]];
-        uint ulight = umap * ustyle;
-        light += float(min(ulight >> 8, 255)) / 256.0;
+        ).r;
+
+        // range [0, 2]
+        float style = frame_uniforms.light_anim_frames[f_lightmap_anim[i]];
+        light[i] = map * style;
     }
 
-    return light.r;
+    // scale by half so values don't get clamped
+    return light / 2.0;
 }
 
 void main() {
-    switch (texture_uniforms.kind) {
+    switch (push_constants.texture_kind) {
         case TEXTURE_KIND_REGULAR:
             diffuse_attachment = texture(
                 sampler2D(u_diffuse_texture, u_diffuse_sampler),
@@ -71,8 +77,7 @@ void main() {
             if (fullbright != 0.0) {
                 light_attachment = vec4(1.0, 1.0, 1.0, 1.0);
             } else {
-                float light = calc_light();
-                light_attachment = vec4(light, light, light, 1.0);
+                light_attachment = calc_light();
             }
             break;
 
