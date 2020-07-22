@@ -2,15 +2,83 @@
 
 [![Build Status](https://travis-ci.org/cormac-obrien/richter.svg?branch=devel)](https://travis-ci.org/cormac-obrien/richter)
 
-An open-source implementation of the Quake engine in Rust
+A modern implementation of the Quake engine in Rust.
 
-![alt tag](https://i.imgur.com/5zMgZVL.jpg)
+![alt tag](https://i.imgur.com/25nOENn.png)
 
 ## Status
 
-Richter is currently in pre-alpha development. This means that the engine architecture is still
-being designed. The most development time is currently being focused on the client. Neither the
-client nor the server is in a "working" state yet.
+Richter is in pre-alpha development, so it's still under heavy construction.
+However, the client is nearly alpha-ready -- check out the Client section below to see progress.
+
+### Client
+
+The client is capable of connecting to and playing on original Quake servers using `sv_protocol 15`.
+To launch the client, run
+
+```
+$ cargo run --release --bin quake-client <server_ip>:<server_port>
+```
+
+Quake servers run on port 26000 by default.
+I can guarantee compatibility with FitzQuake and its derived engines, as I use the QuakeSpasm server for development (just remember `sv_protocol 15`).
+
+#### Feature checklist
+
+- Networking
+  - [x] NetQuake network protocol implementation (`sv_protocol 15`)
+    - [x] Connection protocol implemented
+    - [x] All in-game server commands handled
+    - [x] Carryover between levels
+  - [ ] FitzQuake extended protocol support (`sv_protocol 666`)
+- Rendering
+  - [x] Deferred dynamic lighting
+  - [x] Particle effects
+  - Brush model (`.bsp`) rendering
+    - Textures
+      - [x] Static textures
+      - [x] Animated textures
+      - [ ] Alternate animated textures
+      - [x] Liquid texture warping
+      - [ ] Sky texture scrolling (currently partial support)
+    - [x] Lightmaps
+    - [x] Occlusion culling
+  - Alias model (`.mdl`) rendering
+    - [x] Keyframe animation
+      - [x] Static keyframes
+      - [x] Animated keyframes
+    - [ ] Keyframe interpolation
+    - [ ] Ambient lighting
+    - [ ] Viewmodel rendering
+  - UI
+    - [x] Console
+    - [x] HUD
+    - [x] Level intermissions
+    - [ ] On-screen messages
+    - [ ] Menus
+- Sound
+  - [x] Loading and playback
+  - [x] Entity sound
+  - [ ] Ambient sound
+  - [x] Spatial attenuation
+  - [ ] Stereo spatialization
+- Console
+  - [x] Line editing
+  - [x] History browsing
+  - [x] Cvar modification
+  - [x] Command execution
+  - [x] Quake script file execution
+- File formats
+  - [x] BSP loader
+  - [x] MDL loader
+  - [x] SPR loader
+  - [x] PAK archive extraction
+  - [x] WAD archive extraction
+
+### Server
+
+The Richter server is still in its early stages, so there's no checklist here yet.
+However, you can still check out the QuakeC bytecode VM in the [`progs` module](https://github.com/cormac-obrien/richter/blob/devel/src/server/progs/mod.rs).
 
 ## Building
 
