@@ -19,15 +19,17 @@ use std::collections::HashMap;
 
 use crate::common::parse::quoted;
 
-use combine::{between, char::string, many, token, ParseError, Parser, Stream};
+use nom::{
+    bytes::complete::tag,
+    character::complete::newline,
+    combinator::map,
+    multi::many0,
+    sequence::{delimited, separated_pair, terminated},
+};
 
 // "name" "value"\n
-pub fn entity_attribute<I>() -> impl Parser<Input = I, Output = (String, String)>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    (quoted(), token(' '), quoted(), token('\n')).map(|(k, _, v, _)| (k, v))
+pub fn entity_attribute(input: &str) -> nom::IResult<&str, (&str, &str)> {
+    terminated(separated_pair(quoted, tag(" "), quoted), newline)(input)
 }
 
 // {
@@ -35,18 +37,14 @@ where
 // "name2" "value2"
 // "name3" "value3"
 // }
-pub fn entity<I>() -> impl Parser<Input = I, Output = HashMap<String, String>>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    between(string("{\n"), string("}\n"), many(entity_attribute()))
+pub fn entity(input: &str) -> nom::IResult<&str, HashMap<&str, &str>> {
+    delimited(
+        terminated(tag("{"), newline),
+        map(many0(entity_attribute), |attrs| attrs.into_iter().collect()),
+        terminated(tag("}"), newline),
+    )(input)
 }
 
-pub fn entities<I>() -> impl Parser<Input = I, Output = Vec<HashMap<String, String>>>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    many(entity())
+pub fn entities(input: &str) -> nom::IResult<&str, Vec<HashMap<&str, &str>>> {
+    many0(entity)(input)
 }

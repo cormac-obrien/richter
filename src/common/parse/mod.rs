@@ -19,111 +19,47 @@ pub mod console;
 pub mod map;
 
 use cgmath::Vector3;
-use combine::{
-    between,
-    char::{alpha_num, string},
-    choice, many, one_of, satisfy, skip_many, token, unexpected, value, ParseError, Parser, Stream,
+use nom::{
+    branch::alt,
+    bytes::complete::{escaped_transform, tag, take_while1},
+    character::complete::{alphanumeric1, one_of, space1},
+    combinator::map,
+    sequence::{delimited, tuple},
 };
 use winit::event::ElementState;
 
 pub use self::{console::commands, map::entities};
 
-fn is_escape(c: char) -> bool {
-    match c {
-        '\\' | '"' | 'n' => true,
-        _ => false,
-    }
+pub fn non_newline_spaces(input: &str) -> nom::IResult<&str, &str> {
+    space1(input)
 }
 
-// parse an escape character
-fn escape<I>() -> impl Parser<Input = I, Output = char>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    satisfy(is_escape).then(|c| match c {
-        '\\' => value('\\').left(),
-        '"' => value('"').left(),
-        'n' => value('\n').left(),
-        _ => unexpected("escape sequence").with(value('?')).right(),
-    })
+fn string_contents(input: &str) -> nom::IResult<&str, &str> {
+    take_while1(|c: char| !"\"".contains(c) && c.is_ascii() && !c.is_ascii_control())(input)
 }
 
-pub fn is_non_newline_space(c: char) -> bool {
-    c.is_whitespace() && !"\n\r".contains(c)
+pub fn quoted(input: &str) -> nom::IResult<&str, &str> {
+    delimited(tag("\""), string_contents, tag("\""))(input)
 }
 
-pub fn non_newline_space<I>() -> impl Parser<Input = I, Output = char>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    satisfy(is_non_newline_space).expected("non-newline whitespace")
-}
-
-pub fn non_newline_spaces<I>() -> impl Parser<Input = I, Output = ()>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    skip_many(non_newline_space()).expected("non-newline whitespaces")
-}
-
-// parse a normal character or an escape sequence
-fn string_char<I>() -> impl Parser<Input = I, Output = char>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    satisfy(|c| c != '"').then(|c| {
-        // if we encounter a backslash
-        if c == '\\' {
-            // return the escape sequence
-            escape().left()
-        } else {
-            value(c).right()
-        }
-    })
-}
-
-// quoted: quote char* quote
-pub fn quoted<I>() -> impl Parser<Input = I, Output = String>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    between(token('"'), token('"'), many(string_char()))
-}
-
-pub fn action<I>() -> impl Parser<Input = I, Output = (ElementState, String)>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    (
-        one_of("+-".chars()).map(|action| match action {
+pub fn action(input: &str) -> nom::IResult<&str, (ElementState, &str)> {
+    tuple((
+        map(one_of("+-"), |c| match c {
             '+' => ElementState::Pressed,
             '-' => ElementState::Released,
             _ => unreachable!(),
         }),
-        many(alpha_num()),
-    )
+        alphanumeric1,
+    ))(input)
 }
 
-pub fn newline<I>() -> impl Parser<Input = I, Output = ()>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    choice((string("\r\n"), string("\n"))).map(|_| ())
+pub fn newline(input: &str) -> nom::IResult<&str, &str> {
+    nom::character::complete::line_ending(input)
 }
 
-pub fn line_ending<I>() -> impl Parser<Input = I, Output = ()>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    choice((newline(), string(";").map(|_| ()))).map(|_| ())
+// TODO: rename to line_terminator and move to console module
+pub fn line_ending(input: &str) -> nom::IResult<&str, &str> {
+    alt((tag(";"), nom::character::complete::line_ending))(input)
 }
 
 pub fn vector3_components<S>(src: S) -> Option<[f32; 3]>
@@ -182,4 +118,27 @@ where
     };
 
     Some(Vector3::new(x, y, z))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_quoted() {
+        let s = "\"hello\"";
+        assert_eq!(quoted(s), Ok(("", "hello")))
+    }
+
+    #[test]
+    fn test_quoted_escape() {
+        let s = "\"hello\\\"\"";
+        assert_eq!(quoted(s), Ok(("", "hello\"")))
+    }
+
+    #[test]
+    fn test_action() {
+        let s = "+up";
+        assert_eq!(action(s), Ok(("", (ElementState::Pressed, "up"))))
+    }
 }

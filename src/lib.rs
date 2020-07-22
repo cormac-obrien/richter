@@ -23,7 +23,6 @@ extern crate bitflags;
 extern crate byteorder;
 extern crate cgmath;
 extern crate chrono;
-extern crate combine;
 extern crate env_logger;
 #[macro_use]
 extern crate failure;
@@ -31,7 +30,6 @@ extern crate failure;
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
-extern crate nom;
 extern crate num;
 #[macro_use]
 extern crate num_derive;
