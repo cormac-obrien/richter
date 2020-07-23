@@ -43,6 +43,7 @@ pub fn register_cvars(cvars: &CvarRegistry) -> Result<(), ConsoleError> {
     cvars.register("fov", "90")?;
     cvars.register_archive("m_pitch", "0.022")?;
     cvars.register_archive("m_yaw", "0.022")?;
+    cvars.register_archive("sensitivity", "3")?;
     cvars.register("v_idlescale", "0")?;
     cvars.register("v_ipitch_cycle", "1")?;
     cvars.register("v_ipitch_level", "0.3")?;
