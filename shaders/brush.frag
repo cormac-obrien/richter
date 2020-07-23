@@ -50,15 +50,15 @@ vec4 calc_light() {
         float map = texture(
             sampler2D(u_lightmap_texture[i], u_lightmap_sampler),
             f_lightmap
-        ).r;
+        ).r * 2.0;
 
-        // range [0, 2]
+        // range [0, 4]
         float style = frame_uniforms.light_anim_frames[f_lightmap_anim[i]];
         light[i] = map * style;
     }
 
-    // scale by half so values don't get clamped
-    return light / 2.0;
+    // scale by quarter so values don't get clamped
+    return light / 4.0;
 }
 
 void main() {
