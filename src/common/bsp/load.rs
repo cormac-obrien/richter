@@ -16,6 +16,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use std::{
+    collections::HashMap,
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
     mem::size_of,
     rc::Rc,
@@ -25,13 +26,14 @@ use crate::common::{
     bsp::{
         BspCollisionHull, BspCollisionNode, BspCollisionNodeChild, BspData, BspEdge,
         BspEdgeDirection, BspEdgeIndex, BspFace, BspFaceSide, BspLeaf, BspLeafContents, BspModel,
-        BspRenderNode, BspRenderNodeChild, BspTexInfo, BspTexture, BspTextureAnimation, MAX_HULLS,
-        MAX_LIGHTSTYLES, MIPLEVELS,
+        BspRenderNode, BspRenderNodeChild, BspTexInfo, BspTexture, MAX_HULLS, MAX_LIGHTSTYLES,
+        MIPLEVELS,
     },
     math::{Axis, Hyperplane},
     model::Model,
 };
 
+use super::{BspTextureFrame, BspTextureKind};
 use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::{InnerSpace, Vector3};
 use chrono::Duration;
@@ -89,6 +91,10 @@ enum BspFileError {
         section: BspFileSectionId,
         size: usize,
     },
+    #[error("invalid BSP texture frame specifier: {0}")]
+    InvalidTextureFrameSpecifier(String),
+    #[error("texture has primary animation with 0 frames: {0}")]
+    EmptyPrimaryAnimation(String),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -200,18 +206,24 @@ impl BspFileTable {
     fn section(&self, section_id: BspFileSectionId) -> BspFileSection {
         self.sections[section_id as usize]
     }
-}
 
-fn check_alignment<S>(seeker: &mut S, ofs: u64) -> Result<(), failure::Error>
-where
-    S: Seek,
-{
-    ensure!(
-        seeker.seek(SeekFrom::Current(0))? == seeker.seek(SeekFrom::Start(ofs))?,
-        "BSP read misaligned"
-    );
+    fn check_end_position<S>(
+        &self,
+        seeker: &mut S,
+        section_id: BspFileSectionId,
+    ) -> Result<(), failure::Error>
+    where
+        S: Seek,
+    {
+        let section = self.section(section_id);
+        ensure!(
+            seeker.seek(SeekFrom::Current(0))?
+                == seeker.seek(SeekFrom::Start(section.offset + section.size as u64))?,
+            "BSP read misaligned"
+        );
 
-    Ok(())
+        Ok(())
+    }
 }
 
 fn read_hyperplane<R>(reader: &mut R) -> Result<Hyperplane, failure::Error>
@@ -232,14 +244,27 @@ where
     Ok(plane)
 }
 
+#[derive(Debug)]
+struct BspFileTexture {
+    name: String,
+    width: u32,
+    height: u32,
+    mipmaps: [Vec<u8>; MIPLEVELS],
+}
+
+// load a textures from the BSP file.
+//
+// converts the texture's name to all lowercase, including its frame specifier
+// if it has one.
 fn load_texture<R>(
     mut reader: &mut R,
     tex_section_ofs: u64,
     tex_ofs: u64,
-) -> Result<BspTexture, failure::Error>
+) -> Result<BspFileTexture, failure::Error>
 where
     R: ReadBytesExt + Seek,
 {
+    // convert texture name from NUL-terminated to str
     let mut tex_name_bytes = [0u8; TEX_NAME_MAX];
     reader.read(&mut tex_name_bytes)?;
     let len = tex_name_bytes
@@ -248,7 +273,7 @@ where
         .find(|&item| item.1 == &0)
         .unwrap_or((TEX_NAME_MAX, &0))
         .0;
-    let tex_name = String::from_utf8(tex_name_bytes[..len].to_vec())?;
+    let tex_name = String::from_utf8(tex_name_bytes[..len].to_vec())?.to_lowercase();
 
     let width = reader.read_u32::<LittleEndian>()?;
     let height = reader.read_u32::<LittleEndian>()?;
@@ -269,12 +294,11 @@ where
             .read_to_end(&mut mipmaps[m])?;
     }
 
-    Ok(BspTexture {
+    Ok(BspFileTexture {
         name: tex_name,
         width,
         height,
         mipmaps,
-        animation: None,
     })
 }
 
@@ -436,7 +460,7 @@ where
     );
     let ent_string =
         String::from_utf8(ent_data).context("Failed to create string from entity data")?;
-    check_alignment(&mut reader, ent_section.offset + ent_section.size as u64)?;
+    table.check_end_position(&mut reader, BspFileSectionId::Entities)?;
 
     // load planes
     reader.seek(SeekFrom::Start(plane_section.offset))?;
@@ -446,10 +470,7 @@ where
     }
     let planes_rc = Rc::new(planes.into_boxed_slice());
 
-    check_alignment(
-        &mut reader,
-        plane_section.offset + plane_section.size as u64,
-    )?;
+    table.check_end_position(&mut reader, BspFileSectionId::Planes)?;
 
     // load textures
     reader.seek(SeekFrom::Start(tex_section.offset))?;
@@ -471,141 +492,193 @@ where
         });
     }
 
-    let mut textures = Vec::with_capacity(tex_count);
-    for t in 0..tex_count {
-        let tex_ofs = match tex_offsets[t] {
-            Some(o) => o,
+    let mut file_textures = Vec::with_capacity(tex_count);
+    for (id, tex_ofs) in tex_offsets.into_iter().enumerate() {
+        match tex_ofs {
+            Some(ofs) => {
+                reader.seek(SeekFrom::Start(tex_section.offset + ofs as u64))?;
+                let texture = load_texture(&mut reader, tex_section.offset as u64, ofs as u64)?;
+                debug!(
+                    "Texture {id:>width$}: {name}",
+                    id = id,
+                    width = (tex_count as f32).log(10.0) as usize,
+                    name = texture.name,
+                );
+
+                file_textures.push(texture);
+            }
 
             None => {
-                textures.push(BspTexture {
+                file_textures.push(BspFileTexture {
                     name: String::new(),
                     width: 0,
                     height: 0,
                     mipmaps: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
-                    animation: None,
                 });
+            }
+        }
+    }
+    table.check_end_position(&mut reader, BspFileSectionId::Textures)?;
 
-                continue;
+    struct BspFileTextureAnimations {
+        primary: Vec<(usize, BspFileTexture)>,
+        alternate: Vec<(usize, BspFileTexture)>,
+    }
+
+    // maps animated texture names to primary and alternate animations
+    // e.g., for textures of the form +#slip, maps "slip" to the ids of
+    // [+0slip, +1slip, ...] and [+aslip, +bslip, ...]
+    let mut anim_file_textures: HashMap<String, BspFileTextureAnimations> = HashMap::new();
+
+    // final texture array
+    let mut textures = Vec::new();
+    // mapping from texture ids on disk to texture ids in memory
+    let mut texture_ids = Vec::new();
+
+    // map file texture ids to actual texture ids
+    let mut static_texture_ids = HashMap::new();
+    let mut animated_texture_ids = HashMap::new();
+
+    debug!("Sequencing textures");
+    for (file_texture_id, file_texture) in file_textures.into_iter().enumerate() {
+        // recognize textures of the form +[frame][stem], where:
+        // - frame is in [0-9A-Za-z]
+        // - stem is the remainder of the string
+        match file_texture.name.strip_prefix("+") {
+            Some(rest) => {
+                let (frame, stem) = rest.split_at(1);
+
+                debug!(
+                    "Sequencing texture {}: {}",
+                    file_texture_id, &file_texture.name
+                );
+
+                let anims =
+                    anim_file_textures
+                        .entry(stem.to_owned())
+                        .or_insert(BspFileTextureAnimations {
+                            primary: Vec::new(),
+                            alternate: Vec::new(),
+                        });
+
+                match frame.chars().nth(0).unwrap() {
+                    '0'..='9' => anims.primary.push((file_texture_id, file_texture)),
+                    // guaranteed to be lowercase by load_texture
+                    'a'..='j' => anims.alternate.push((file_texture_id, file_texture)),
+                    _ => Err(BspFileError::InvalidTextureFrameSpecifier(
+                        file_texture.name.clone(),
+                    ))?,
+                };
+            }
+
+            // if the string doesn't match, it's not animated, so add it as a static texture
+            None => {
+                let BspFileTexture {
+                    name,
+                    width,
+                    height,
+                    mipmaps,
+                } = file_texture;
+
+                let texture_id = textures.len();
+                static_texture_ids.insert(file_texture_id, texture_id);
+
+                textures.push(BspTexture {
+                    name,
+                    width,
+                    height,
+                    kind: BspTextureKind::Static(BspTextureFrame { mipmaps }),
+                });
+            }
+        };
+    }
+
+    // sequence animated textures with the same stem
+    for (
+        name,
+        BspFileTextureAnimations {
+            primary: mut pri,
+            alternate: mut alt,
+        },
+    ) in anim_file_textures.into_iter()
+    {
+        if pri.len() == 0 {
+            Err(BspFileError::EmptyPrimaryAnimation(name.to_owned()))?;
+        }
+
+        // TODO: ensure one-to-one frame specifiers
+        // sort names in ascending order to get the frames ordered correctly
+        pri.sort_unstable_by(|(_, tex), (_, other)| tex.name.cmp(&other.name));
+
+        // TODO: verify width and height?
+        let width = pri[0].1.width;
+        let height = pri[0].1.height;
+
+        // texture id of each frame in the file
+        let mut corresponding_file_ids = Vec::new();
+        let mut primary = Vec::new();
+        for (file_id, file_texture) in pri {
+            debug!(
+                "primary frame: id = {}, name = {}",
+                file_id, file_texture.name
+            );
+            corresponding_file_ids.push(file_id);
+            primary.push(BspTextureFrame {
+                mipmaps: file_texture.mipmaps,
+            });
+        }
+
+        let mut alt_corresp_file_ids = Vec::new();
+        let alternate = match alt.len() {
+            0 => None,
+            _ => {
+                alt.sort_unstable_by(|(_, tex), (_, other)| tex.name.cmp(&other.name));
+                let mut alternate = Vec::new();
+                for (file_id, file_texture) in alt {
+                    alt_corresp_file_ids.push(file_id);
+                    alternate.push(BspTextureFrame {
+                        mipmaps: file_texture.mipmaps,
+                    });
+                }
+                Some(alternate)
             }
         };
 
-        reader.seek(SeekFrom::Start(tex_section.offset + tex_ofs as u64))?;
-        let texture = load_texture(&mut reader, tex_section.offset as u64, tex_ofs as u64)?;
-        debug!(
-            "Texture {id:>width$}: {name}",
-            id = t,
-            width = (tex_count as f32).log(10.0) as usize,
-            name = texture.name(),
-        );
+        // actual id of the animated texture
+        let texture_id = textures.len();
 
-        textures.push(texture);
+        // update map to point other data to the right texture
+        for id in corresponding_file_ids {
+            debug!("map disk texture id {} to texture id {}", id, texture_id);
+            animated_texture_ids.insert(id, texture_id);
+        }
+
+        for id in alt_corresp_file_ids {
+            debug!("map disk texture id {} to texture id {}", id, texture_id);
+            animated_texture_ids.insert(id, texture_id);
+        }
+
+        // push the sequenced texture
+        textures.push(BspTexture {
+            name: name.to_owned(),
+            width,
+            height,
+            kind: BspTextureKind::Animated { primary, alternate },
+        });
     }
 
-    check_alignment(&mut reader, tex_section.offset + tex_section.size as u64)?;
-
-    debug!("Sequencing textures");
-    for t in 0..textures.len() {
-        if !textures[t].name.starts_with("+") || textures[t].animation.is_some() {
-            continue;
-        }
-
-        debug!("Sequencing texture {}", textures[t].name);
-
-        let mut anim1 = [None; MAX_TEXTURE_FRAMES];
-        let mut anim2 = [None; MAX_TEXTURE_FRAMES];
-        let mut anim1_len;
-        let mut anim2_len;
-
-        let mut frame_char = textures[t]
-            .name
-            .chars()
-            .nth(1)
-            .expect("Invalid texture name");
-
-        match frame_char {
-            '0'..='9' => {
-                anim1_len = frame_char.to_digit(10).unwrap() as usize;
-                anim2_len = 0;
-                anim1[anim1_len] = Some(t);
-                anim1_len += 1;
-            }
-
-            'A'..='J' | 'a'..='j' => {
-                frame_char = frame_char.to_ascii_uppercase();
-                anim2_len = frame_char as usize - 'A' as usize;
-                anim1_len = 0;
-                anim2[anim2_len] = Some(t);
-                anim2_len += 1;
-            }
-
-            _ => bail!("Invalid texture frame specifier: U+{:x}", frame_char as u32),
-        }
-
-        for t2 in t + 1..textures.len() {
-            // check if this texture has the same base name
-            if !textures[t2].name.starts_with("+")
-                || textures[t2].name[2..] != textures[t].name[2..]
-            {
-                continue;
-            }
-
-            let mut frame_n_char = textures[t2]
-                .name
-                .chars()
-                .nth(1)
-                .expect("Invalid texture name") as usize;
-
-            match frame_n_char {
-                ASCII_0..=ASCII_9 => {
-                    frame_n_char -= ASCII_0;
-                    anim1[frame_n_char] = Some(t2);
-                    if frame_n_char + 1 > anim1_len {
-                        anim1_len = frame_n_char + 1;
-                    }
-                }
-
-                ASCII_CAPITAL_A..=ASCII_CAPITAL_J | ASCII_SMALL_A..=ASCII_SMALL_J => {
-                    if frame_n_char >= ASCII_SMALL_A && frame_n_char <= ASCII_SMALL_J {
-                        frame_n_char -= ASCII_SMALL_A - ASCII_CAPITAL_A;
-                    }
-                    frame_n_char -= ASCII_CAPITAL_A;
-                    anim2[frame_n_char] = Some(t2);
-                    if frame_n_char + 1 > anim2_len {
-                        anim2_len += 1;
-                    }
-                }
-
-                _ => bail!("Invalid texture frame specifier: U+{:x}", frame_n_char),
-            }
-        }
-
-        for frame in 0..anim1_len {
-            let tex2 = match anim1[frame] {
-                Some(t2) => t2,
-                None => bail!("Missing frame {} of {}", frame, textures[t].name),
-            };
-
-            textures[tex2].animation = Some(BspTextureAnimation {
-                sequence_duration: Duration::milliseconds(TEXTURE_FRAME_LEN_MS * anim1_len as i64),
-                time_start: Duration::milliseconds(TEXTURE_FRAME_LEN_MS * frame as i64),
-                time_end: Duration::milliseconds(TEXTURE_FRAME_LEN_MS * (frame as i64 + 1)),
-                next: anim1[(frame + 1) % anim1_len].unwrap(),
-            });
-        }
-
-        for frame in 0..anim2_len {
-            let tex2 = match anim2[frame] {
-                Some(t2) => t2,
-                None => bail!("Missing frame {} of {}", frame, textures[t].name),
-            };
-
-            textures[tex2].animation = Some(BspTextureAnimation {
-                sequence_duration: Duration::milliseconds(TEXTURE_FRAME_LEN_MS * anim2_len as i64),
-                time_start: Duration::milliseconds(TEXTURE_FRAME_LEN_MS * frame as i64),
-                time_end: Duration::milliseconds(TEXTURE_FRAME_LEN_MS * (frame as i64 + 1)),
-                next: anim2[(frame + 1) % anim2_len].unwrap(),
-            });
-        }
+    // build disk-to-memory texture id map
+    for file_texture_id in 0..tex_count {
+        texture_ids.push(if let Some(id) = static_texture_ids.get(&file_texture_id) {
+            *id
+        } else if let Some(id) = animated_texture_ids.get(&file_texture_id) {
+            *id
+        } else {
+            panic!(
+                "Texture sequencing failed: texture with id {} unaccounted for",
+                file_texture_id
+            );
+        });
     }
 
     reader.seek(SeekFrom::Start(vert_section.offset))?;
@@ -613,7 +686,7 @@ where
     for _ in 0..vert_count {
         vertices.push(read_f32_3(&mut reader)?.into());
     }
-    check_alignment(&mut reader, vert_section.offset + vert_section.size as u64)?;
+    table.check_end_position(&mut reader, BspFileSectionId::Vertices)?;
 
     reader.seek(SeekFrom::Start(vis_section.offset))?;
 
@@ -622,7 +695,7 @@ where
     (&mut reader)
         .take(vis_section.size as u64)
         .read_to_end(&mut vis_data)?;
-    check_alignment(&mut reader, vis_section.offset + vis_section.size as u64)?;
+    table.check_end_position(&mut reader, BspFileSectionId::Visibility)?;
 
     // render nodes
     reader.seek(SeekFrom::Start(render_node_section.offset))?;
@@ -631,21 +704,19 @@ where
     for _ in 0..render_node_count {
         render_nodes.push(load_render_node(&mut reader)?);
     }
-    check_alignment(
-        &mut reader,
-        render_node_section.offset + render_node_section.size as u64,
-    )?;
+    table.check_end_position(&mut reader, BspFileSectionId::RenderNodes)?;
 
     // texinfo
     reader.seek(SeekFrom::Start(texinfo_section.offset))?;
     let mut texinfo = Vec::with_capacity(texinfo_count);
     for _ in 0..texinfo_count {
-        texinfo.push(load_texinfo(&mut reader, tex_count)?);
+        let mut txi = load_texinfo(&mut reader, tex_count)?;
+        // !!! IMPORTANT !!!
+        // remap texture ids from the on-disk ids to our ids
+        txi.tex_id = texture_ids[txi.tex_id];
+        texinfo.push(txi);
     }
-    check_alignment(
-        &mut reader,
-        texinfo_section.offset + texinfo_section.size as u64,
-    )?;
+    table.check_end_position(&mut reader, BspFileSectionId::TextureInfo)?;
 
     reader.seek(SeekFrom::Start(face_section.offset))?;
     let mut faces = Vec::with_capacity(face_count);
@@ -699,17 +770,14 @@ where
             extents: [0, 0],
         });
     }
-    check_alignment(&mut reader, face_section.offset + face_section.size as u64)?;
+    table.check_end_position(&mut reader, BspFileSectionId::Faces)?;
 
     reader.seek(SeekFrom::Start(lightmap_section.offset))?;
     let mut lightmaps = Vec::with_capacity(lightmap_section.size);
     (&mut reader)
         .take(lightmap_section.size as u64)
         .read_to_end(&mut lightmaps)?;
-    check_alignment(
-        &mut reader,
-        lightmap_section.offset + lightmap_section.size as u64,
-    )?;
+    table.check_end_position(&mut reader, BspFileSectionId::Lightmaps)?;
 
     reader.seek(SeekFrom::Start(collision_node_section.offset))?;
 
@@ -816,7 +884,7 @@ where
             sounds,
         });
     }
-    check_alignment(&mut reader, leaf_section.offset + leaf_section.size as u64)?;
+    table.check_end_position(&mut reader, BspFileSectionId::Leaves)?;
 
     reader.seek(SeekFrom::Start(facelist_section.offset))?;
     let mut facelist = Vec::with_capacity(facelist_count);
@@ -841,7 +909,7 @@ where
             ],
         });
     }
-    check_alignment(&mut reader, edge_section.offset + edge_section.size as u64)?;
+    table.check_end_position(&mut reader, BspFileSectionId::Edges)?;
 
     reader.seek(SeekFrom::Start(edgelist_section.offset))?;
     let mut edgelist = Vec::with_capacity(edgelist_count);
@@ -1029,10 +1097,7 @@ where
         });
     }
 
-    check_alignment(
-        &mut reader,
-        model_section.offset + model_section.size as u64,
-    )?;
+    table.check_end_position(&mut reader, BspFileSectionId::Models)?;
 
     let models = brush_models
         .into_iter()

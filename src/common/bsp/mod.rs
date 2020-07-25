@@ -139,6 +139,10 @@ pub const MAX_SOUNDS: usize = 4;
 pub const MIPLEVELS: usize = 4;
 const DIST_EPSILON: f32 = 0.03125;
 
+pub fn frame_duration() -> Duration {
+    Duration::milliseconds(200)
+}
+
 #[derive(Debug)]
 pub enum BspError {
     Io(::std::io::Error),
@@ -187,11 +191,23 @@ pub enum BspTextureMipmap {
 }
 
 #[derive(Debug)]
-pub struct BspTextureAnimation {
-    pub sequence_duration: Duration,
-    pub time_start: Duration,
-    pub time_end: Duration,
-    pub next: usize,
+pub struct BspTextureFrame {
+    mipmaps: [Vec<u8>; MIPLEVELS],
+}
+
+impl BspTextureFrame {
+    pub fn mipmap(&self, level: BspTextureMipmap) -> &[u8] {
+        &self.mipmaps[level as usize]
+    }
+}
+
+#[derive(Debug)]
+pub enum BspTextureKind {
+    Static(BspTextureFrame),
+    Animated {
+        primary: Vec<BspTextureFrame>,
+        alternate: Option<Vec<BspTextureFrame>>,
+    }
 }
 
 #[derive(Debug)]
@@ -199,8 +215,7 @@ pub struct BspTexture {
     name: String,
     width: u32,
     height: u32,
-    mipmaps: [Vec<u8>; MIPLEVELS],
-    animation: Option<BspTextureAnimation>,
+    kind: BspTextureKind,
 }
 
 impl BspTexture {
@@ -222,14 +237,9 @@ impl BspTexture {
         (self.width, self.height)
     }
 
-    /// Returns the texture's mipmap of the specified level.
-    pub fn mipmap(&self, mipmap: BspTextureMipmap) -> &[u8] {
-        &self.mipmaps[mipmap as usize]
-    }
-
     /// Returns this texture's animation data, if any.
-    pub fn animation(&self) -> Option<&BspTextureAnimation> {
-        self.animation.as_ref()
+    pub fn kind(&self) -> &BspTextureKind {
+        &self.kind
     }
 }
 
@@ -796,50 +806,6 @@ impl BspData {
 
     pub fn hulls(&self) -> &[BspCollisionHull] {
         &self.hulls
-    }
-
-    /// Find the index of the appropriate frame of the texture with index `first`.
-    ///
-    /// If the texture is not animated, immediately returns `first`.
-    pub fn texture_frame_for_time(&self, first: usize, time: Duration) -> usize {
-        let frame_time_ms = match self.textures[first].animation {
-            Some(ref a) => {
-                let sequence_ms = a.sequence_duration.num_milliseconds();
-                let time_ms = time.num_milliseconds();
-                time_ms % sequence_ms
-            }
-            None => return first,
-        };
-
-        let mut frame_id = first;
-        loop {
-            // TODO: this destructuring is a bit unwieldy, maybe see if we can change texture
-            // sequences to remove the Option types
-            let start_ms;
-            let end_ms;
-            let next;
-            match self.textures[frame_id].animation {
-                Some(ref a) => {
-                    start_ms = a.time_start.num_milliseconds();
-                    end_ms = a.time_end.num_milliseconds();
-                    next = a.next;
-                }
-                None => panic!("Option::None value in animation sequence"),
-            }
-
-            // debug!("Frame: start {} end {} current {}", start_ms, end_ms, frame_time_ms);
-
-            if frame_time_ms > start_ms && frame_time_ms < end_ms {
-                return frame_id;
-            }
-
-            frame_id = next;
-
-            // if we get in an infinite cycle, just return the first texture.
-            if frame_id == first {
-                return first;
-            }
-        }
     }
 
     /// Locates the leaf containing the given position vector and returns its index.
