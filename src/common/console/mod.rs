@@ -30,7 +30,6 @@ use std::{
 
 use crate::common::parse;
 
-use combine::Parser;
 use failure::{Error, ResultExt};
 
 /// Stores console commands.
@@ -581,7 +580,7 @@ impl Console {
         let text = self.buffer.borrow().to_owned();
         self.buffer.borrow_mut().clear();
 
-        let (commands, _remaining) = parse::commands().easy_parse(text.as_str()).unwrap();
+        let (_remaining, commands) = parse::commands(text.as_str()).unwrap();
 
         for command in commands.iter() {
             debug!("{:?}", command);
@@ -589,7 +588,7 @@ impl Console {
 
         for args in commands {
             if let Some(arg_0) = args.get(0) {
-                let maybe_alias = self.aliases.borrow().get(arg_0).map(|s| s.to_owned());
+                let maybe_alias = self.aliases.borrow().get(*arg_0).map(|a| a.to_owned());
                 match maybe_alias {
                     Some(a) => {
                         self.stuff_text(a);
@@ -597,8 +596,7 @@ impl Console {
                     }
 
                     None => {
-                        let tail_args: Vec<&str> =
-                            (&args[1..]).iter().map(|s| s.as_str()).collect();
+                        let tail_args: Vec<&str> = args.iter().map(|s| s.as_ref()).skip(1).collect();
 
                         if self.cmds.borrow().contains(arg_0) {
                             self.cmds.borrow_mut().exec(arg_0, &tail_args).unwrap();
@@ -657,173 +655,5 @@ impl Console {
 
     pub fn output(&self) -> Ref<ConsoleOutput> {
         self.output.borrow()
-    }
-}
-
-pub struct Tokenizer<'a> {
-    input: &'a str,
-    byte_offset: usize,
-}
-
-impl<'a> Tokenizer<'a> {
-    /// Constructs a command tokenizer with the specified input stream.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # extern crate richter;
-    /// use richter::common::console::Tokenizer;
-    ///
-    /// # fn main() {
-    /// let tokenizer = Tokenizer::new("map e1m1");
-    /// # }
-    /// ```
-    pub fn new(input: &'a str) -> Tokenizer<'a> {
-        Tokenizer {
-            input,
-            byte_offset: 0,
-        }
-    }
-
-    fn get_remaining_input(&self) -> &'a str {
-        &self.input[self.byte_offset..]
-    }
-
-    fn skip_spaces(&mut self) {
-        let iter = self.get_remaining_input().char_indices();
-        match iter.skip_while(|&(_, c)| c.is_whitespace()).next() {
-            Some((i, _)) => self.byte_offset += i,
-            None => self.byte_offset = self.input.len(),
-        }
-    }
-
-    fn try_skip_line_comment(&mut self) -> bool {
-        if self.get_remaining_input().starts_with("//") {
-            match self
-                .get_remaining_input()
-                .char_indices()
-                .skip_while(|&(_, c)| c != '\n')
-                .next()
-            {
-                Some((i, _)) => self.byte_offset += i,
-                None => self.byte_offset = self.input.len(),
-            }
-
-            return true;
-        }
-
-        false
-    }
-}
-
-impl<'a> ::std::iter::Iterator for Tokenizer<'a> {
-    type Item = &'a str;
-
-    /// Returns the next token in the input stream.
-    ///
-    /// This will skip any leading any leading whitespace characters as recognized by the
-    /// `.is_whitespace()` function of `std::char`. Note that the original Quake engine only
-    /// expects ASCII input and recognizes as whitespace any character with a code point less than
-    /// or equal to `U+0020`, including control characters. It will also skip single-line comments
-    /// beginning with `//` and ending with a newline (`U+000A LINE FEED`).
-    ///
-    /// This function *does not* process semicolons in order to split commands.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # extern crate richter;
-    /// use richter::common::console::Tokenizer;
-    ///
-    /// # fn main() {
-    /// let mut tokenizer = Tokenizer::new("map e1m1");
-    /// assert_eq!(tokenizer.next(), Some("map"));
-    /// assert_eq!(tokenizer.next(), Some("e1m1"));
-    /// assert_eq!(tokenizer.next(), None);
-    /// # }
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// The function panics if the end of input is reached and there is an unmatched double-quote.
-    /// This is not permanent behavior.
-    fn next(&mut self) -> Option<&'a str> {
-        loop {
-            // Skip leading whitespace
-            self.skip_spaces();
-
-            // If this line is a comment, move on to the next line
-            if !self.try_skip_line_comment() {
-                break;
-            }
-        }
-
-        let mut char_indices = self.get_remaining_input().char_indices();
-        match char_indices.next() {
-            // On encountering an opening double-quote, find the closing double-quote
-            Some((start_i, '"')) => {
-                let offset = self.byte_offset + start_i;
-                match char_indices.skip_while(|&(_, c)| c != '"').next() {
-                    Some((end_i, '"')) => {
-                        let len = end_i + 1 - start_i;
-                        self.byte_offset += len;
-                        Some(&self.input[offset + 1..offset + len - 1])
-                    }
-
-                    // This case should not be possible
-                    Some(_) => None,
-
-                    // This means an unmatched quote.
-                    // TODO: this should not panic, make it fail gracefully and update the docs
-                    None => panic!("Unmatched quote in Tokenizer::next()"),
-                }
-            }
-
-            // Any other token ends on the next whitespace character
-            Some((start_i, start_char)) => {
-                let offset = self.byte_offset + start_i;
-
-                match char_indices.take_while(|&(_, c)| !c.is_whitespace()).last() {
-                    Some((end_i, _)) => {
-                        let len = end_i + 1 - start_i;
-                        self.byte_offset += len;
-                        Some(&self.input[offset..offset + len])
-                    }
-
-                    // single-character token
-                    None => {
-                        let len = start_char.len_utf8();
-                        self.byte_offset += len;
-                        Some(&self.input[offset..offset + len])
-                    }
-                }
-            }
-
-            // If there are no characters left, tokenizer is at the end of the input stream
-            None => None,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_tokenizer_empty() {
-        let mut tokenizer = Tokenizer::new("");
-        assert_eq!(tokenizer.next(), None);
-    }
-
-    #[test]
-    fn test_tokenizer_whitespace_only() {
-        let mut tokenizer = Tokenizer::new(" \t\n\r");
-        assert_eq!(tokenizer.next(), None);
-    }
-
-    #[test]
-    fn test_tokenizer_comment_only() {
-        let mut tokenizer = Tokenizer::new("// this is a comment");
-        assert_eq!(tokenizer.next(), None);
     }
 }

@@ -51,7 +51,7 @@ use crate::{
         input::game::{Action, GameInput},
         sound::{AudioSource, Channel, Listener, StaticSound},
         trace::{TraceEntity, TraceFrame},
-        view::{IdleVars, KickVars, RollVars, View},
+        view::{IdleVars, KickVars, MouseVars, RollVars, View},
     },
     common::{
         bsp,
@@ -589,8 +589,7 @@ impl Client {
             self.cvar_value("cl_anglespeedkey")?,
             self.cvar_value("cl_pitchspeed")?,
             self.cvar_value("cl_yawspeed")?,
-            self.cvar_value("m_pitch")?,
-            self.cvar_value("m_yaw")?,
+            self.mouse_vars()?,
         );
 
         let cl_sidespeed = self.cvar_value("cl_sidespeed")?;
@@ -2176,6 +2175,14 @@ impl Client {
             v_kickpitch: self.cvar_value("v_kickpitch")?,
             v_kickroll: self.cvar_value("v_kickroll")?,
             v_kicktime: self.cvar_value("v_kicktime")?,
+        })
+    }
+
+    fn mouse_vars(&self) -> Result<MouseVars, ClientError> {
+        Ok(MouseVars {
+            m_pitch: self.cvar_value("m_pitch")?,
+            m_yaw: self.cvar_value("m_yaw")?,
+            sensitivity: self.cvar_value("sensitivity")?,
         })
     }
 

@@ -28,7 +28,6 @@ use crate::common::{
     parse,
 };
 
-use combine::Parser;
 use failure::Error;
 use winit::{
     dpi::LogicalPosition,
@@ -439,9 +438,9 @@ impl FromStr for BindTarget {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match parse::action().parse(s) {
+        match parse::action(s) {
             // first, check if this is an action
-            Ok(((trigger, action_str), _)) => {
+            Ok((_, (trigger, action_str))) => {
                 let action = match Action::from_str(&action_str) {
                     Ok(a) => a,
                     _ => return Ok(BindTarget::ConsoleInput { text: s.to_owned() }),

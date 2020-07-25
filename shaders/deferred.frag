@@ -46,8 +46,8 @@ void main() {
     * texelFetch(sampler2DMS(u_normal, u_sampler), texcoord, gl_SampleID).xyz
     - 1.0;
 
-  // scale up by 2.0 (see brush.frag)
-  vec4 in_light = 2.0 * texelFetch(sampler2DMS(u_light, u_sampler), texcoord, gl_SampleID);
+  // scale up by 4.0 (see brush.frag)
+  vec4 in_light = 4.0 * texelFetch(sampler2DMS(u_light, u_sampler), texcoord, gl_SampleID);
   float in_depth = texelFetch(sampler2DMS(u_depth, u_sampler), texcoord, gl_SampleID).x;
   vec3 position = reconstruct_position(in_depth);
 
@@ -67,7 +67,7 @@ void main() {
   }
 
   // allow 200% light saturation
-  light = min(light, 2.0);
+  light = min(light, 4.0);
 
   color_attachment = vec4(out_color.rgb * light, 1.0);
 }

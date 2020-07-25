@@ -102,8 +102,7 @@ impl View {
         cl_anglespeedkey: f32,
         cl_pitchspeed: f32,
         cl_yawspeed: f32,
-        m_pitch: f32,
-        m_yaw: f32,
+        mouse_vars: MouseVars
     ) {
         let frame_time_f32 = duration_to_f32(frame_time);
         let speed = if game_input.action_state(Action::Speed) {
@@ -129,8 +128,10 @@ impl View {
         self.input_angles.pitch += Deg(speed * cl_pitchspeed * (lookdown_factor - lookup_factor));
 
         if mlook {
-            self.input_angles.pitch += Deg(game_input.mouse_delta().1 as f32 * m_pitch);
-            self.input_angles.yaw -= Deg(game_input.mouse_delta().0 as f32 * m_yaw);
+            let pitch_factor = mouse_vars.m_pitch * mouse_vars.sensitivity;
+            let yaw_factor = mouse_vars.m_yaw * mouse_vars.sensitivity;
+            self.input_angles.pitch += Deg(game_input.mouse_delta().1 as f32 * pitch_factor);
+            self.input_angles.yaw -= Deg(game_input.mouse_delta().0 as f32 * yaw_factor);
         }
 
         if lookup_factor != 0.0 || lookdown_factor != 0.0 {
@@ -197,6 +198,13 @@ impl View {
         // offset the view plane a tiny bit to keep it from intersecting liquid planes
         let view_plane_offset = Vector3::new(1.0 / 32.0, 1.0 / 32.0, 1.0 / 32.0);
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct MouseVars {
+    pub m_pitch: f32,
+    pub m_yaw: f32,
+    pub sensitivity: f32,
 }
 
 #[derive(Clone, Copy, Debug)]

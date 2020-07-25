@@ -35,7 +35,10 @@ use crate::{
         Camera, GraphicsState, LightmapData, Pipeline, TextureData,
     },
     common::{
-        bsp::{BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTexture, BspTextureMipmap},
+        bsp::{
+            self, BspData, BspFace, BspLeaf, BspModel, BspTexInfo, BspTexture, BspTextureKind,
+            BspTextureMipmap,
+        },
         math,
         util::any_slice_as_bytes,
     },
@@ -45,7 +48,6 @@ use bumpalo::Bump;
 use cgmath::{InnerSpace as _, Matrix4, Vector3};
 use chrono::Duration;
 use failure::Error;
-use num::FromPrimitive;
 
 lazy_static! {
     static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 2] = [
@@ -265,6 +267,7 @@ pub enum TextureKind {
     Sky = 2,
 }
 
+/// A single frame of a brush texture.
 pub struct BrushTextureFrame {
     bind_group_id: usize,
     diffuse: wgpu::Texture,
@@ -274,12 +277,18 @@ pub struct BrushTextureFrame {
     kind: TextureKind,
 }
 
+/// A brush texture.
 pub enum BrushTexture {
+    /// A brush texture with a single frame.
     Static(BrushTextureFrame),
+
+    /// A brush texture with multiple frames.
+    ///
+    /// Animated brush textures advance one frame every 200 milliseconds, i.e.,
+    /// they have a framerate of 5 fps.
     Animated {
-        total_duration: Duration,
-        frames: Vec<BrushTextureFrame>,
-        frame_durations: Vec<Duration>,
+        primary: Vec<BrushTextureFrame>,
+        alternate: Option<Vec<BrushTextureFrame>>,
     },
 }
 
@@ -287,7 +296,7 @@ impl BrushTexture {
     fn kind(&self) -> TextureKind {
         match self {
             BrushTexture::Static(ref frame) => frame.kind,
-            BrushTexture::Animated { ref frames, .. } => frames[0].kind,
+            BrushTexture::Animated { ref primary, .. } => primary[0].kind,
         }
     }
 }
@@ -525,18 +534,20 @@ impl BrushRendererBuilder {
         state.device().create_bind_group(&desc)
     }
 
-    pub fn create_brush_texture_frame(
+    fn create_brush_texture_frame<S>(
         &self,
         state: &GraphicsState,
-        tex: &BspTexture,
-    ) -> BrushTextureFrame {
-        // TODO: upload mipmaps
+        mipmap: &[u8],
+        width: u32,
+        height: u32,
+        name: S,
+    ) -> BrushTextureFrame
+    where
+        S: AsRef<str>,
+    {
+        let name = name.as_ref();
 
-        let (diffuse_data, fullbright_data) = state
-            .palette()
-            .translate(tex.mipmap(BspTextureMipmap::from_usize(0).unwrap()));
-
-        let (width, height) = tex.dimensions();
+        let (diffuse_data, fullbright_data) = state.palette().translate(mipmap);
         let diffuse =
             state.create_texture(None, width, height, &TextureData::Diffuse(diffuse_data));
         let fullbright = state.create_texture(
@@ -549,9 +560,9 @@ impl BrushRendererBuilder {
         let diffuse_view = diffuse.create_default_view();
         let fullbright_view = fullbright.create_default_view();
 
-        let kind = if tex.name().starts_with("sky") {
+        let kind = if name.starts_with("sky") {
             TextureKind::Sky
-        } else if tex.name().starts_with("*") {
+        } else if name.starts_with("*") {
             TextureKind::Warp
         } else {
             TextureKind::Normal
@@ -577,39 +588,62 @@ impl BrushRendererBuilder {
         frame
     }
 
+    pub fn create_brush_texture(&self, state: &GraphicsState, tex: &BspTexture) -> BrushTexture {
+        // TODO: upload mipmaps
+        let (width, height) = tex.dimensions();
+
+        match tex.kind() {
+            // sequence animated textures
+            BspTextureKind::Animated { primary, alternate } => {
+                let primary_frames: Vec<_> = primary
+                    .iter()
+                    .map(|f| {
+                        self.create_brush_texture_frame(
+                            state,
+                            f.mipmap(BspTextureMipmap::Full),
+                            width,
+                            height,
+                            tex.name(),
+                        )
+                    })
+                    .collect();
+
+                let alternate_frames: Option<Vec<_>> = alternate.as_ref().map(|a| {
+                    a.iter()
+                        .map(|f| {
+                            self.create_brush_texture_frame(
+                                state,
+                                f.mipmap(BspTextureMipmap::Full),
+                                width,
+                                height,
+                                tex.name(),
+                            )
+                        })
+                        .collect()
+                });
+
+                BrushTexture::Animated {
+                    primary: primary_frames,
+                    alternate: alternate_frames,
+                }
+            }
+
+            BspTextureKind::Static(bsp_tex) => {
+                BrushTexture::Static(self.create_brush_texture_frame(
+                    state,
+                    bsp_tex.mipmap(BspTextureMipmap::Full),
+                    tex.width(),
+                    tex.height(),
+                    tex.name(),
+                ))
+            }
+        }
+    }
+
     pub fn build(mut self, state: &GraphicsState) -> Result<BrushRenderer, Error> {
         // create the diffuse and fullbright textures
         for tex in self.bsp_data.textures().iter() {
-            let brush_texture = match tex.animation() {
-                // sequence animated textures
-                Some(anim) => {
-                    let mut total_duration = anim.time_end - anim.time_start;
-                    let mut frames = vec![self.create_brush_texture_frame(state, tex)];
-                    let mut frame_durations = vec![total_duration];
-
-                    let mut frame_id = anim.next;
-                    // end loop once it wraps around to first frame
-                    while self.bsp_data.textures[frame_id].name() != tex.name() {
-                        let frame_tex = &self.bsp_data.textures[frame_id];
-                        let frame_anim = frame_tex.animation().unwrap();
-                        let frame_duration = frame_anim.time_end - frame_anim.time_start;
-                        frames.push(self.create_brush_texture_frame(state, frame_tex));
-                        frame_durations.push(frame_duration);
-                        total_duration = total_duration + frame_duration;
-                        frame_id = frame_anim.next;
-                    }
-
-                    BrushTexture::Animated {
-                        total_duration,
-                        frames,
-                        frame_durations,
-                    }
-                }
-
-                None => BrushTexture::Static(self.create_brush_texture_frame(state, tex)),
-            };
-
-            self.textures.push(brush_texture);
+            self.textures.push(self.create_brush_texture(state, tex));
         }
 
         // generate faces, vertices and lightmaps
@@ -679,6 +713,7 @@ impl BrushRenderer {
         bump: &'a Bump,
         time: Duration,
         camera: &Camera,
+        frame_id: usize,
     ) {
         pass.set_pipeline(state.brush_pipeline().pipeline());
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
@@ -713,27 +748,22 @@ impl BrushRenderer {
 
             let bind_group_id = match &self.textures[*tex_id] {
                 BrushTexture::Static(ref frame) => frame.bind_group_id,
-                BrushTexture::Animated {
-                    total_duration,
-                    frames,
-                    frame_durations,
-                } => {
+                BrushTexture::Animated { primary, alternate } => {
+                    // if frame is not zero and this texture has an alternate
+                    // animation, use it
+                    let anim = if frame_id == 0 {
+                        primary
+                    } else if let Some(a) = alternate {
+                        a
+                    } else {
+                        primary
+                    };
+
                     let time_ms = time.num_milliseconds();
-                    let total_ms = total_duration.num_milliseconds();
-                    debug!("total_ms = {}", total_ms);
-                    let mut anim_ms = if total_ms == 0 { 0 } else { time_ms % total_ms };
-                    debug!("anim_ms = {}", anim_ms);
-                    let mut bind_group_id = frames[0].bind_group_id;
-
-                    for (frame, frame_duration) in frames.iter().zip(frame_durations.iter()) {
-                        anim_ms -= frame_duration.num_milliseconds();
-                        if anim_ms < 0 {
-                            bind_group_id = frame.bind_group_id;
-                            break;
-                        }
-                    }
-
-                    bind_group_id
+                    let total_ms = (bsp::frame_duration() * anim.len() as i32).num_milliseconds();
+                    let anim_ms = if total_ms == 0 { 0 } else { time_ms % total_ms };
+                    anim[(anim_ms / bsp::frame_duration().num_milliseconds()) as usize]
+                        .bind_group_id
                 }
             };
 

@@ -38,7 +38,7 @@ I can guarantee compatibility with FitzQuake and its derived engines, as I use t
     - Textures
       - [x] Static textures
       - [x] Animated textures
-      - [ ] Alternate animated textures
+      - [x] Alternate animated textures
       - [x] Liquid texture warping
       - [ ] Sky texture scrolling (currently partial support)
     - [x] Lightmaps
