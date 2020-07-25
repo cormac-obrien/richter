@@ -168,8 +168,8 @@ mod test {
 
     #[test]
     fn test_quoted_arg() {
-        let result = arg("\"quoted \\\"argument\\\"\";\n");
-        assert_eq!(result, Ok((";\n", "quoted \"argument\"")));
+        let result = arg("\"quoted argument\";\n");
+        assert_eq!(result, Ok((";\n", "quoted argument")));
     }
 
     #[test]

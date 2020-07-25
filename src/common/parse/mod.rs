@@ -21,7 +21,7 @@ pub mod map;
 use cgmath::Vector3;
 use nom::{
     branch::alt,
-    bytes::complete::{escaped_transform, tag, take_while1},
+    bytes::complete::{tag, take_while1},
     character::complete::{alphanumeric1, one_of, space1},
     combinator::map,
     sequence::{delimited, tuple},
@@ -128,12 +128,6 @@ mod tests {
     fn test_quoted() {
         let s = "\"hello\"";
         assert_eq!(quoted(s), Ok(("", "hello")))
-    }
-
-    #[test]
-    fn test_quoted_escape() {
-        let s = "\"hello\\\"\"";
-        assert_eq!(quoted(s), Ok(("", "hello\"")))
     }
 
     #[test]
