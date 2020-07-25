@@ -20,8 +20,8 @@ use crate::common::parse::quoted;
 use nom::{
     branch::alt,
     bytes::complete::tag,
-    character::complete::{line_ending, multispace1, not_line_ending, one_of, space0},
-    combinator::{map, opt, recognize, verify},
+    character::complete::{line_ending, not_line_ending, one_of, space0},
+    combinator::{opt, recognize},
     multi::{many0, many1},
     sequence::{delimited, preceded, terminated, tuple},
 };
@@ -175,34 +175,19 @@ mod test {
     #[test]
     fn test_command_basic() {
         let result = command("arg_0 arg_1;\n");
-        assert_eq!(
-            result,
-            Ok(("\n", vec!["arg_0", "arg_1"]))
-        );
+        assert_eq!(result, Ok(("\n", vec!["arg_0", "arg_1"])));
     }
 
     #[test]
     fn test_command_quoted() {
         let result = command("bind \"space\" \"+jump\";\n");
-        assert_eq!(
-            result,
-            Ok((
-                "\n",
-                vec!["bind", "space", "+jump"]
-            ))
-        );
+        assert_eq!(result, Ok(("\n", vec!["bind", "space", "+jump"])));
     }
 
     #[test]
     fn test_command_comment() {
         let result = command("bind \"space\" \"+jump\" // bind space to jump\n\n");
-        assert_eq!(
-            result,
-            Ok((
-                "\n",
-                vec!["bind", "space", "+jump"]
-            ))
-        );
+        assert_eq!(result, Ok(("\n", vec!["bind", "space", "+jump"])));
     }
 
     #[test]
@@ -230,12 +215,7 @@ startdemos demo1 demo2 demo3
             vec!["exec", "config.cfg"],
             vec!["exec", "autoexec.cfg"],
             vec!["stuffcmds"],
-            vec![
-                "startdemos",
-                "demo1",
-                "demo2",
-                "demo3",
-            ],
+            vec!["startdemos", "demo1", "demo2", "demo3"],
         ];
 
         let result = commands(script);

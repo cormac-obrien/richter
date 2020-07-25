@@ -207,7 +207,7 @@ pub enum BspTextureKind {
     Animated {
         primary: Vec<BspTextureFrame>,
         alternate: Option<Vec<BspTextureFrame>>,
-    }
+    },
 }
 
 #[derive(Debug)]
