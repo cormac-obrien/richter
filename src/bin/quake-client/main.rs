@@ -25,7 +25,7 @@ mod trace;
 
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
-    net::ToSocketAddrs,
+    net::{SocketAddr, ToSocketAddrs},
     path::Path,
     rc::Rc,
 };
@@ -233,6 +233,34 @@ impl ClientProgram {
         ));
     }
 
+    fn play_demo<S>(&mut self, demo_path: S)
+    where
+        S: AsRef<str>,
+    {
+        let cl = Client::play_demo(
+            demo_path,
+            self.vfs.clone(),
+            self.cvars.clone(),
+            self.cmds.clone(),
+            self.console.clone(),
+            self.audio_device.clone(),
+        )
+        .unwrap();
+
+        cl.register_cmds(&mut self.cmds.borrow_mut());
+
+        self.state.replace(ProgramState::Game(
+            Game::new(
+                self.cvars.clone(),
+                self.cmds.clone(),
+                self.ui_renderer.clone(),
+                self.input.clone(),
+                cl,
+            )
+            .unwrap(),
+        ));
+    }
+
     /// Builds a new swap chain with the specified present mode and the window's current dimensions.
     fn recreate_swap_chain(&self, present_mode: wgpu::PresentMode) {
         let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
@@ -354,8 +382,11 @@ struct Opt {
     #[structopt(long)]
     trace: bool,
 
-    #[structopt(name = "SERVER")]
-    server: String,
+    #[structopt(long)]
+    connect: Option<SocketAddr>,
+
+    #[structopt(long)]
+    demo: Option<String>,
 }
 
 fn main() {
@@ -390,7 +421,12 @@ fn main() {
 
     let mut client_program =
         futures::executor::block_on(ClientProgram::new(window, audio_device, opt.trace));
-    client_program.connect(opt.server);
+    if let Some(ref server) = opt.connect {
+        client_program.connect(server);
+    } else if let Some(ref demo) = opt.demo {
+        client_program.play_demo(demo);
+    }
+
     let mut host = Host::new(client_program);
 
     event_loop.run(move |event, _target, control_flow| {

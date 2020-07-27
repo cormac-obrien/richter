@@ -40,6 +40,7 @@ use std::{
 
 use crate::{
     client::{
+        demo::{DemoServer, DemoServerError},
         entity::{
             particle::{Particle, Particles, TrailKind, MAX_PARTICLES},
             Beam, ClientEntity, Light, LightDesc, Lights, MAX_BEAMS, MAX_LIGHTS,
@@ -69,7 +70,6 @@ use crate::{
 
 use cgmath::{Angle, Deg, InnerSpace, Matrix4, Vector3, Zero};
 use chrono::Duration;
-use demo::DemoServer;
 use rand::{
     distributions::{Distribution as _, Uniform},
     Rng,
@@ -119,6 +119,8 @@ pub enum ClientError {
     TooManyStaticEntities,
     #[error("No such lightmap animation: {0}")]
     NoSuchLightmapAnimation(usize),
+    #[error("Demo server error: {0}")]
+    DemoServer(#[from] DemoServerError),
     #[error("Model error: {0}")]
     Model(#[from] ModelError),
     #[error("Network error: {0}")]
@@ -463,8 +465,11 @@ impl ClientState {
     }
 }
 
-pub enum ClientRemote {
+/// An object that can provide game-state updates to the client.
+pub enum UpdateSource {
+    /// A Quake server.
     Server(QSocket),
+    /// A local server reading updates from a demo file.
     Demo(DemoServer),
 }
 
@@ -475,7 +480,7 @@ pub struct Client {
     console: Rc<RefCell<Console>>,
     audio_device: Rc<rodio::Device>,
 
-    qsock: QSocket,
+    update_src: UpdateSource,
     compose: Vec<u8>,
     signon: Rc<Cell<SignOnStage>>,
 
@@ -500,8 +505,20 @@ impl Client {
         S: AsRef<str>,
     {
         let mut demo_file = vfs.open(demo_path)?;
-        let demo_server = DemoServer::new(&mut demo_file);
-        unimplemented!();
+        let demo_server = DemoServer::new(&mut demo_file)?;
+        let signon = Rc::new(Cell::new(SignOnStage::Not));
+
+        Ok(Client {
+            vfs: vfs.clone(),
+            cvars,
+            cmds,
+            console,
+            audio_device: audio_device.clone(),
+            update_src: UpdateSource::Demo(demo_server),
+            compose: Vec::new(),
+            signon,
+            state: ClientState::new(vfs.clone(), audio_device.clone())?,
+        })
     }
 
     pub fn connect<A>(
@@ -595,7 +612,7 @@ impl Client {
             cmds,
             console,
             audio_device: audio_device.clone(),
-            qsock,
+            update_src: UpdateSource::Server(qsock),
             compose: Vec::new(),
             signon,
             state: ClientState::new(vfs.clone(), audio_device.clone())?,
@@ -626,6 +643,11 @@ impl Client {
         game_input: &mut GameInput,
         frame_time: Duration,
     ) -> Result<(), ClientError> {
+        if let UpdateSource::Demo(_) = self.update_src {
+            // ignore game input during demo playback
+            return Ok(());
+        }
+
         let mlook = game_input.action_state(Action::MLook);
         self.state.view.handle_input(
             frame_time,
@@ -699,7 +721,11 @@ impl Client {
 
         let mut msg = Vec::new();
         move_cmd.serialize(&mut msg)?;
-        self.qsock.send_msg_unreliable(&msg)?;
+
+        match self.update_src {
+            UpdateSource::Server(ref mut qsock) => qsock.send_msg_unreliable(&msg)?,
+            UpdateSource::Demo(_) => unreachable!(),
+        };
 
         // clear mouse and impulse
         game_input.refresh();
@@ -708,9 +734,16 @@ impl Client {
     }
 
     pub fn send(&mut self) -> Result<(), ClientError> {
-        if self.qsock.can_send() && !self.compose.is_empty() {
-            self.qsock.begin_send_msg(&self.compose)?;
-            self.compose.clear();
+        match self.update_src {
+            UpdateSource::Server(ref mut qsock) => {
+                if qsock.can_send() && !self.compose.is_empty() {
+                    qsock.begin_send_msg(&self.compose)?;
+                    self.compose.clear();
+                }
+            }
+
+            // TODO: error here for strictness?
+            UpdateSource::Demo(_) => warn!("Attempted send in demo"),
         }
 
         Ok(())
@@ -796,14 +829,44 @@ impl Client {
     }
 
     pub fn parse_server_msg(&mut self) -> Result<(), ClientError> {
-        let msg = self.qsock.recv_msg(match self.signon.get() {
-            // if we're in the game, don't block waiting for messages
-            SignOnStage::Done => BlockingMode::NonBlocking,
+        let (msg, demo_view_angles) = match self.update_src {
+            UpdateSource::Server(ref mut qsock) => {
+                let msg = qsock.recv_msg(match self.signon.get() {
+                    // if we're in the game, don't block waiting for messages
+                    SignOnStage::Done => BlockingMode::NonBlocking,
 
-            // otherwise, give the server some time to respond
-            // TODO: might make sense to make this a future or something
-            _ => BlockingMode::Timeout(Duration::seconds(5)),
-        })?;
+                    // otherwise, give the server some time to respond
+                    // TODO: might make sense to make this a future or something
+                    _ => BlockingMode::Timeout(Duration::seconds(5)),
+                })?;
+
+                (msg, None)
+            }
+            UpdateSource::Demo(ref mut demo_srv) => {
+                // only get the next update once we've made it all the way to
+                // the previous one
+                if self.state.time >= self.state.msg_times[0] {
+                    let msg_view = match demo_srv.next() {
+                        Some(v) => v,
+                        None => {
+                            self.disconnect();
+                            return Ok(());
+                        }
+                    };
+
+                    let mut view_angles = msg_view.view_angles();
+                    // invert entity angles to get the camera direction right.
+                    // yaw is already inverted.
+                    view_angles.x = -view_angles.x;
+                    view_angles.z = -view_angles.z;
+
+                    // TODO: we shouldn't have to copy the message here
+                    (msg_view.message().to_owned(), Some(view_angles))
+                } else {
+                    (Vec::new(), None)
+                }
+            }
+        };
 
         // no data available at this time
         if msg.is_empty() {
@@ -982,6 +1045,13 @@ impl Client {
                     }
 
                     self.state.entities[ent_id].update(self.state.msg_times, ent_update);
+
+                    // patch view angles in demos
+                    if let Some(angles) = demo_view_angles {
+                        if ent_id == self.view_ent() {
+                            self.state.entities[ent_id].msg_angles[0] = angles;
+                        }
+                    }
 
                     if self.state.entities[ent_id].model_changed() {
                         let model = &self.state.models[self.state.entities[ent_id].model_id()];
@@ -1449,14 +1519,26 @@ impl Client {
     }
 
     pub fn view_angles(&self, time: Duration) -> Result<Angles, ClientError> {
-        Ok(self.state.view.angles(
-            time,
-            self.state.intermission.as_ref(),
-            self.state.velocity,
-            self.idle_vars()?,
-            self.kick_vars()?,
-            self.roll_vars()?,
-        ))
+        let angles = match self.update_src {
+            UpdateSource::Server(_) => self.state.view.angles(
+                time,
+                self.state.intermission.as_ref(),
+                self.state.velocity,
+                self.idle_vars()?,
+                self.kick_vars()?,
+                self.roll_vars()?,
+            ),
+            UpdateSource::Demo(_) => {
+                let v = self.state.entities[self.view_ent()].angles;
+                Angles {
+                    pitch: -v.x,
+                    yaw: v.y,
+                    roll: -v.z,
+                }
+            }
+        };
+
+        Ok(angles)
     }
 
     pub fn view_ent(&self) -> usize {
@@ -1468,9 +1550,6 @@ impl Client {
     }
 
     pub fn update_time(&mut self, frame_time: Duration) {
-        // advance client time by frame duration
-        self.state.time = self.state.time + frame_time;
-
         // TODO: don't lerp if cls.timedemo != 0 (???) or server is running on this host
         if self.cvars.borrow().get_value("cl_nolerp").unwrap() != 0.0 {
             self.state.time = self.state.msg_times[0];
@@ -1635,8 +1714,18 @@ impl Client {
 
                 ent.origin = ent.msg_origins[1] + ent_lerp_factor * origin_delta;
 
+                // assume that entities will not whip around 180+ degrees in one
+                // frame and adjust the delta accordingly. this avoids a bug
+                // where small turns between 0 <-> 359 cause the demo camera to
+                // face backwards for one frame.
                 for i in 0..3 {
-                    let angle_delta = ent.msg_angles[0][i] - ent.msg_angles[1][i];
+                    let mut angle_delta = ent.msg_angles[0][i] - ent.msg_angles[1][i];
+                    if angle_delta > Deg(180.0) {
+                        angle_delta = Deg(360.0) - angle_delta;
+                    } else if angle_delta < Deg(-180.0) {
+                        angle_delta = Deg(360.0) + angle_delta;
+                    }
+
                     ent.angles[i] =
                         (ent.msg_angles[1][i] + angle_delta * ent_lerp_factor).normalize();
                 }
@@ -1862,6 +1951,11 @@ impl Client {
     }
 
     pub fn frame(&mut self, frame_time: Duration) -> Result<(), ClientError> {
+        // advance client time by frame duration.
+        // do this _before_ parsing server messages so that we know when to
+        // request the next message from the demo server.
+        self.state.time = self.state.time + frame_time;
+
         debug!("frame time: {}ms", frame_time.num_milliseconds());
         self.parse_server_msg()?;
 
@@ -1882,8 +1976,10 @@ impl Client {
             .particles
             .update(self.state.time, frame_time, self.cvar_value("sv_gravity")?);
 
-        // respond to the server
-        self.send()?;
+        if let UpdateSource::Server(_) = self.update_src {
+            // respond to the server
+            self.send()?;
+        }
 
         // these all require the player entity to have spawned
         if self.signon.get() == SignOnStage::Done {

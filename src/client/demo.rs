@@ -32,12 +32,12 @@ pub enum DemoServerError {
 
 struct DemoMessage {
     view_angles: Vector3<Deg<f32>>,
-    cmd_range: Range<usize>,
+    msg_range: Range<usize>,
 }
 
 pub struct DemoMessageView<'a> {
     view_angles: Vector3<Deg<f32>>,
-    commands: &'a [ServerCmd],
+    message: &'a [u8],
 }
 
 impl<'a> DemoMessageView<'a> {
@@ -45,15 +45,21 @@ impl<'a> DemoMessageView<'a> {
         self.view_angles
     }
 
-    pub fn iter_commands(&self) -> impl Iterator<Item = &ServerCmd> {
-        self.commands.iter()
+    pub fn message(&self) -> &[u8] {
+        self.message
     }
 }
 
 pub struct DemoServer {
     track_override: Option<u32>,
+
+    // id of next message to "send"
+    message_id: usize,
+
     messages: Vec<DemoMessage>,
-    commands: Vec<ServerCmd>,
+
+    // all message data
+    message_data: Vec<u8>,
 }
 
 impl DemoServer {
@@ -97,11 +103,12 @@ impl DemoServer {
         };
         // TODO: verify that track exists
 
-        let mut commands = Vec::new();
+        let mut message_data = Vec::new();
         let mut messages = Vec::new();
 
         // read all messages
         while let Ok(msg_len) = dem_reader.read_u32::<LittleEndian>() {
+            // get view angles
             let view_angles_f32 = read_f32_3(&mut dem_reader)?;
             let view_angles = Vector3::new(
                 Deg(view_angles_f32[0]),
@@ -109,64 +116,38 @@ impl DemoServer {
                 Deg(view_angles_f32[2]),
             );
 
-            // clear and read next message
-            buf.clear();
-            if msg_len as usize > buf.capacity() {
-                Err(DemoServerError::MessageTooLong(msg_len))?;
-            }
+            // read next message
+            let msg_start = message_data.len();
             for _ in 0..msg_len {
-                // won't panic since we checked the message length against capacity
-                buf.push(dem_reader.read_u8()?);
+                message_data.push(dem_reader.read_u8()?);
             }
-            let mut msg_reader = BufReader::new(buf.as_slice());
-
-            // read commands
-            let cmd_start = commands.len();
-            while let Some(cmd) = ServerCmd::deserialize(&mut msg_reader)? {
-                commands.push(cmd);
-            }
-            let cmd_end = commands.len();
+            let msg_end = message_data.len();
 
             messages.push(DemoMessage {
                 view_angles,
-                cmd_range: cmd_start..cmd_end,
+                msg_range: msg_start..msg_end,
             });
         }
 
         Ok(DemoServer {
             track_override,
+            message_id: 0,
             messages,
-            commands,
+            message_data,
         })
     }
 
-    pub fn iter_messages(&self) -> DemoIterator {
-        DemoIterator {
-            message_id: 0,
-            messages: &self.messages,
-            commands: &self.commands,
-        }
-    }
-}
-
-pub struct DemoIterator<'a> {
-    message_id: usize,
-    messages: &'a [DemoMessage],
-    commands: &'a [ServerCmd],
-}
-
-impl<'a> Iterator for DemoIterator<'a> {
-    type Item = DemoMessageView<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
+    pub fn next(&mut self) -> Option<DemoMessageView> {
         if self.message_id >= self.messages.len() {
             return None;
         }
 
         let msg = &self.messages[self.message_id];
+        self.message_id += 1;
+
         Some(DemoMessageView {
             view_angles: msg.view_angles,
-            commands: &self.commands[msg.cmd_range.clone()],
+            message: &self.message_data[msg.msg_range.clone()],
         })
     }
 }
