@@ -65,24 +65,24 @@ pub struct DemoServer {
 impl DemoServer {
     pub fn new(file: &mut VirtualFile) -> Result<DemoServer, DemoServerError> {
         let mut dem_reader = BufReader::new(file);
-        let mut buf = ArrayVec::<[u8; net::MAX_MESSAGE]>::new();
 
+        let mut buf = ArrayVec::<[u8; 3]>::new();
         // copy CD track number (terminated by newline) into buffer
-        for i in 0..3 {
+        for i in 0..buf.capacity() {
             match dem_reader.read_u8()? {
                 b'\n' => break,
                 // cannot panic because we won't exceed capacity with a loop this small
                 b => buf.push(b),
             }
 
-            if i > 1 {
+            if i >= buf.capacity() - 1 {
                 // CD track would be more than 2 digits long, which is impossible
                 Err(DemoServerError::InvalidCdTrack)?;
             }
         }
 
         let track_override = {
-            let track_str = match std::str::from_utf8(&buf[..buf.len() - 1]) {
+            let track_str = match std::str::from_utf8(&buf) {
                 Ok(s) => s,
                 Err(_) => Err(DemoServerError::InvalidCdTrack)?,
             };
