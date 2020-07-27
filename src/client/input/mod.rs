@@ -78,7 +78,7 @@ impl Input {
             _ => {
                 if self.window_focused {
                     match self.current_focus {
-                        InputFocus::Game => self.game_input.handle_event(event)?,
+                        InputFocus::Game => self.game_input.handle_event(event),
                         InputFocus::Console => self.console_input.handle_event(event)?,
                         InputFocus::Menu => self.menu_input.handle_event(event)?,
                     }

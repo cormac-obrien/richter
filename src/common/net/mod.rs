@@ -37,7 +37,7 @@ use cgmath::{Deg, Vector3, Zero};
 use chrono::Duration;
 use num::FromPrimitive;
 
-const MAX_MESSAGE: usize = 8192;
+pub const MAX_MESSAGE: usize = 8192;
 const MAX_DATAGRAM: usize = 1024;
 const HEADER_SIZE: usize = 8;
 const MAX_PACKET: usize = HEADER_SIZE + MAX_DATAGRAM;

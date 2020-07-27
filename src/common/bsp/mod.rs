@@ -128,7 +128,7 @@ use crate::server::world::{Trace, TraceEnd, TraceStart};
 use cgmath::Vector3;
 use chrono::Duration;
 
-pub use self::load::load;
+pub use self::load::{load, BspFileError};
 
 // this is 4 in the original source, but the 4th hull is never used.
 const MAX_HULLS: usize = 3;

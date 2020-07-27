@@ -14,14 +14,22 @@ However, the client is nearly alpha-ready -- check out the Client section below 
 ### Client
 
 The client is capable of connecting to and playing on original Quake servers using `sv_protocol 15`.
-To launch the client, run
+To connect to a Quake server, run
 
 ```
-$ cargo run --release --bin quake-client <server_ip>:<server_port>
+$ cargo run --release --bin quake-client -- --connect <server_ip>:<server_port>
 ```
 
 Quake servers run on port 26000 by default.
 I can guarantee compatibility with FitzQuake and its derived engines, as I use the QuakeSpasm server for development (just remember `sv_protocol 15`).
+
+The client also supports demo playback using the `--demo` option:
+
+```
+$ cargo run --release --bin quake-client -- --demo <demo_file>
+```
+
+This works for demos in the PAK archives (e.g. `demo1.dem`) or any demos you happen to have placed in the `id1` directory.
 
 #### Feature checklist
 
@@ -68,6 +76,9 @@ I can guarantee compatibility with FitzQuake and its derived engines, as I use t
   - [x] Cvar modification
   - [x] Command execution
   - [x] Quake script file execution
+- Demos
+  - [x] Demo playback
+  - [ ] Demo recording
 - File formats
   - [x] BSP loader
   - [x] MDL loader

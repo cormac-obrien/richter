@@ -15,10 +15,27 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use crate::common::{bsp::BspModel, mdl, mdl::AliasModel, sprite, sprite::SpriteModel, vfs::Vfs};
+use crate::common::{
+    bsp::{BspFileError, BspModel},
+    mdl::{self, AliasModel, MdlFileError},
+    sprite::{self, SpriteModel},
+    vfs::{Vfs, VfsError},
+};
 
 use cgmath::Vector3;
-use failure::Error;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum ModelError {
+    #[error("BSP file error: {0}")]
+    BspFile(#[from] BspFileError),
+    #[error("MDL file error: {0}")]
+    MdlFile(#[from] MdlFileError),
+    #[error("SPR file error")]
+    SprFile,
+    #[error("Virtual filesystem error: {0}")]
+    Vfs(#[from] VfsError),
+}
 
 #[derive(Debug, FromPrimitive)]
 pub enum SyncType {
@@ -68,7 +85,7 @@ impl Model {
         &self.kind
     }
 
-    pub fn load<S>(vfs: &Vfs, name: S) -> Result<Model, Error>
+    pub fn load<S>(vfs: &Vfs, name: S) -> Result<Model, ModelError>
     where
         S: AsRef<str>,
     {

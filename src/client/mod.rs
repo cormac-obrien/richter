@@ -19,8 +19,8 @@
 // SOFTWARE.
 
 mod cvars;
+mod demo;
 pub mod entity;
-pub mod error;
 pub mod input;
 pub mod menu;
 pub mod render;
@@ -28,10 +28,7 @@ pub mod sound;
 pub mod trace;
 pub mod view;
 
-pub use self::{
-    cvars::register_cvars,
-    error::{ClientError, ClientErrorKind},
-};
+pub use self::cvars::register_cvars;
 
 use std::{
     cell::{Cell, RefCell},
@@ -43,6 +40,7 @@ use std::{
 
 use crate::{
     client::{
+        demo::{DemoServer, DemoServerError},
         entity::{
             particle::{Particle, Particles, TrailKind, MAX_PARTICLES},
             Beam, ClientEntity, Light, LightDesc, Lights, MAX_BEAMS, MAX_LIGHTS,
@@ -55,10 +53,10 @@ use crate::{
     },
     common::{
         bsp,
-        console::{CmdRegistry, Console, CvarRegistry},
+        console::{CmdRegistry, Console, ConsoleError, CvarRegistry},
         engine,
         math::Angles,
-        model::{Model, ModelFlags, ModelKind, SyncType},
+        model::{Model, ModelError, ModelFlags, ModelKind, SyncType},
         net::{
             self,
             connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION},
@@ -66,17 +64,18 @@ use crate::{
             EntityEffects, EntityState, GameType, ItemFlags, NetError, PlayerColor,
             PointEntityKind, QSocket, ServerCmd, SignOnStage, TempEntity,
         },
-        vfs::Vfs,
+        vfs::{Vfs, VfsError},
     },
 };
 
 use cgmath::{Angle, Deg, InnerSpace, Matrix4, Vector3, Zero};
 use chrono::Duration;
-use failure::{Error, ResultExt};
 use rand::{
     distributions::{Distribution as _, Uniform},
     Rng,
 };
+use sound::SoundError;
+use thiserror::Error;
 
 // connections are tried 3 times, see
 // https://github.com/id-Software/Quake/blob/master/WinQuake/net_dgrm.c#L1248
@@ -87,6 +86,50 @@ const DEFAULT_SOUND_PACKET_VOLUME: u8 = 255;
 const DEFAULT_SOUND_PACKET_ATTENUATION: f32 = 1.0;
 
 const MAX_CHANNELS: usize = 128;
+
+#[derive(Error, Debug)]
+pub enum ClientError {
+    #[error("Connection rejected: {0}")]
+    ConnectionRejected(String),
+    #[error("Couldn't read cvar value: {0}")]
+    Cvar(ConsoleError),
+    #[error("Server sent an invalid port number ({0})")]
+    InvalidConnectPort(i32),
+    #[error("Server sent an invalid connect response")]
+    InvalidConnectResponse,
+    #[error("Invalid server address")]
+    InvalidServerAddress,
+    #[error("No response from server")]
+    NoResponse,
+    #[error("Unrecognized protocol: {0}")]
+    UnrecognizedProtocol(i32),
+    #[error("No client with ID {0}")]
+    NoSuchClient(usize),
+    #[error("No player with ID {0}")]
+    NoSuchPlayer(usize),
+    #[error("No entity with ID {0}")]
+    NoSuchEntity(usize),
+    #[error("Null entity access")]
+    NullEntity,
+    #[error("Entity already exists: {0}")]
+    EntityExists(usize),
+    #[error("Invalid view entity: {0}")]
+    InvalidViewEntity(usize),
+    #[error("Too many static entities")]
+    TooManyStaticEntities,
+    #[error("No such lightmap animation: {0}")]
+    NoSuchLightmapAnimation(usize),
+    #[error("Demo server error: {0}")]
+    DemoServer(#[from] DemoServerError),
+    #[error("Model error: {0}")]
+    Model(#[from] ModelError),
+    #[error("Network error: {0}")]
+    Network(#[from] NetError),
+    #[error("Failed to load sound: {0}")]
+    Sound(#[from] SoundError),
+    #[error("Virtual filesystem error: {0}")]
+    Vfs(#[from] VfsError),
+}
 
 #[derive(Debug, FromPrimitive)]
 enum ColorShiftCode {
@@ -295,11 +338,7 @@ impl ClientState {
             vfs: vfs.clone(),
             models: vec![Model::none()],
             model_names: HashMap::new(),
-            sounds: vec![AudioSource::load(&vfs, "misc/null.wav").context(
-                ClientErrorKind::ResourceNotLoaded {
-                    name: "misc/null.wav".to_string(),
-                },
-            )?],
+            sounds: vec![AudioSource::load(&vfs, "misc/null.wav")?],
             static_sounds: Vec::new(),
             entities: Vec::new(),
             static_entities: Vec::new(),
@@ -426,6 +465,14 @@ impl ClientState {
     }
 }
 
+/// An object that can provide game-state updates to the client.
+pub enum UpdateSource {
+    /// A Quake server.
+    Server(QSocket),
+    /// A local server reading updates from a demo file.
+    Demo(DemoServer),
+}
+
 pub struct Client {
     vfs: Rc<Vfs>,
     cvars: Rc<RefCell<CvarRegistry>>,
@@ -433,7 +480,7 @@ pub struct Client {
     console: Rc<RefCell<Console>>,
     audio_device: Rc<rodio::Device>,
 
-    qsock: QSocket,
+    update_src: UpdateSource,
     compose: Vec<u8>,
     signon: Rc<Cell<SignOnStage>>,
 
@@ -446,6 +493,34 @@ impl Client {
         Box::new(move |_| signon.set(SignOnStage::Not))
     }
 
+    pub fn play_demo<S>(
+        demo_path: S,
+        vfs: Rc<Vfs>,
+        cvars: Rc<RefCell<CvarRegistry>>,
+        cmds: Rc<RefCell<CmdRegistry>>,
+        console: Rc<RefCell<Console>>,
+        audio_device: Rc<rodio::Device>,
+    ) -> Result<Client, ClientError>
+    where
+        S: AsRef<str>,
+    {
+        let mut demo_file = vfs.open(demo_path)?;
+        let demo_server = DemoServer::new(&mut demo_file)?;
+        let signon = Rc::new(Cell::new(SignOnStage::Not));
+
+        Ok(Client {
+            vfs: vfs.clone(),
+            cvars,
+            cmds,
+            console,
+            audio_device: audio_device.clone(),
+            update_src: UpdateSource::Demo(demo_server),
+            compose: Vec::new(),
+            signon,
+            state: ClientState::new(vfs.clone(), audio_device.clone())?,
+        })
+    }
+
     pub fn connect<A>(
         server_addrs: A,
         vfs: Rc<Vfs>,
@@ -453,21 +528,20 @@ impl Client {
         cmds: Rc<RefCell<CmdRegistry>>,
         console: Rc<RefCell<Console>>,
         audio_device: Rc<rodio::Device>,
-    ) -> Result<Client, Error>
+    ) -> Result<Client, ClientError>
     where
         A: ToSocketAddrs,
     {
         // set up reconnect
         let signon = Rc::new(Cell::new(SignOnStage::Not));
         cmds.borrow_mut()
-            .insert_or_replace("reconnect", Client::cmd_reconnect(signon.clone()))?;
+            .insert_or_replace("reconnect", Client::cmd_reconnect(signon.clone()));
 
         let mut con_sock = ConnectSocket::bind("0.0.0.0:0")?;
-        let server_addr = server_addrs
-            .to_socket_addrs()
-            .context(ClientErrorKind::InvalidServerAddress)?
-            .next()
-            .unwrap();
+        let server_addr = match server_addrs.to_socket_addrs() {
+            Ok(ref mut a) => a.next().ok_or(ClientError::InvalidServerAddress),
+            Err(_) => Err(ClientError::InvalidServerAddress),
+        }?;
 
         let mut response = None;
 
@@ -507,16 +581,11 @@ impl Client {
             }
         }
 
-        // make sure we actually got a response
-        // TODO: specific error for this. Shouldn't be fatal.
-        ensure!(response.is_some(), "No response");
-
-        // we can unwrap this because we just checked it
-        let port = match response.unwrap() {
-            // if the server accepted our connect request, make sure the port number makes sense
+        let port = match response.ok_or(ClientError::NoResponse)? {
             Response::Accept(accept) => {
+                // validate port number
                 if accept.port < 0 || accept.port >= std::u16::MAX as i32 {
-                    Err(ClientErrorKind::InvalidConnectPort { port: accept.port })?
+                    Err(ClientError::InvalidConnectPort(accept.port))?;
                 }
 
                 debug!("Connection accepted on port {}", accept.port);
@@ -524,13 +593,11 @@ impl Client {
             }
 
             // our request was rejected.
-            Response::Reject(reject) => Err(ClientErrorKind::ConnectionRejected {
-                message: reject.message,
-            })?,
+            Response::Reject(reject) => Err(ClientError::ConnectionRejected(reject.message))?,
 
             // the server sent back a response that doesn't make sense here (i.e. something other
             // than an Accept or Reject).
-            r => Err(ClientErrorKind::InvalidConnectResponse)?,
+            r => Err(ClientError::InvalidConnectResponse)?,
         };
 
         let mut new_addr = server_addr;
@@ -545,7 +612,7 @@ impl Client {
             cmds,
             console,
             audio_device: audio_device.clone(),
-            qsock,
+            update_src: UpdateSource::Server(qsock),
             compose: Vec::new(),
             signon,
             state: ClientState::new(vfs.clone(), audio_device.clone())?,
@@ -556,9 +623,8 @@ impl Client {
         unimplemented!();
     }
 
-    pub fn add_cmd(&mut self, cmd: ClientCmd) -> Result<(), Error> {
+    pub fn add_cmd(&mut self, cmd: ClientCmd) -> Result<(), ClientError> {
         cmd.serialize(&mut self.compose)?;
-
         Ok(())
     }
 
@@ -566,20 +632,22 @@ impl Client {
     where
         S: AsRef<str>,
     {
-        Ok(self
-            .cvars
+        self.cvars
             .borrow()
             .get_value(name.as_ref())
-            .context(ClientErrorKind::Cvar {
-                name: name.as_ref().to_string(),
-            })?)
+            .map_err(ClientError::Cvar)
     }
 
     pub fn handle_input(
         &mut self,
         game_input: &mut GameInput,
         frame_time: Duration,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ClientError> {
+        if let UpdateSource::Demo(_) = self.update_src {
+            // ignore game input during demo playback
+            return Ok(());
+        }
+
         let mlook = game_input.action_state(Action::MLook);
         self.state.view.handle_input(
             frame_time,
@@ -653,35 +721,48 @@ impl Client {
 
         let mut msg = Vec::new();
         move_cmd.serialize(&mut msg)?;
-        self.qsock.send_msg_unreliable(&msg)?;
+
+        match self.update_src {
+            UpdateSource::Server(ref mut qsock) => qsock.send_msg_unreliable(&msg)?,
+            UpdateSource::Demo(_) => unreachable!(),
+        };
 
         // clear mouse and impulse
-        game_input.refresh()?;
+        game_input.refresh();
 
         Ok(())
     }
 
-    pub fn send(&mut self) -> Result<(), Error> {
-        if self.qsock.can_send() && !self.compose.is_empty() {
-            self.qsock.begin_send_msg(&self.compose)?;
-            self.compose.clear();
+    pub fn send(&mut self) -> Result<(), ClientError> {
+        match self.update_src {
+            UpdateSource::Server(ref mut qsock) => {
+                if qsock.can_send() && !self.compose.is_empty() {
+                    qsock.begin_send_msg(&self.compose)?;
+                    self.compose.clear();
+                }
+            }
+
+            // TODO: error here for strictness?
+            UpdateSource::Demo(_) => warn!("Attempted send in demo"),
         }
 
         Ok(())
     }
 
     // return an error if the given entity ID does not refer to a valid entity
-    fn check_entity_id(&self, id: usize) -> Result<(), Error> {
-        ensure!(id != 0, "Entity 0 is NULL");
-        ensure!(id < self.state.entities.len(), "Invalid entity id ({})", id);
-        Ok(())
+    fn check_entity_id(&self, id: usize) -> Result<(), ClientError> {
+        match id {
+            0 => Err(ClientError::NullEntity),
+            e if e >= self.state.entities.len() => Err(ClientError::NoSuchEntity(id)),
+            _ => Ok(()),
+        }
     }
 
-    fn check_player_id(&self, id: usize) -> Result<(), Error> {
+    fn check_player_id(&self, id: usize) -> Result<(), ClientError> {
         if id >= net::MAX_CLIENTS {
-            Err(ClientErrorKind::NoSuchClient { id })?
+            Err(ClientError::NoSuchClient(id))?
         } else if id > self.state.max_players {
-            Err(ClientErrorKind::NoSuchPlayer { id })?
+            Err(ClientError::NoSuchPlayer(id))?
         }
 
         Ok(())
@@ -701,15 +782,13 @@ impl Client {
         skin_id: u8,
         origin: Vector3<f32>,
         angles: Vector3<Deg<f32>>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ClientError> {
         let id = ent_id as usize;
 
         // don't clobber existing entities
-        ensure!(
-            id >= self.state.entities.len(),
-            "Entity {} already exists",
-            id
-        );
+        if id < self.state.entities.len() {
+            Err(ClientError::EntityExists(id))?;
+        }
 
         // spawn intermediate entities (uninitialized)
         for i in self.state.entities.len()..id {
@@ -739,25 +818,55 @@ impl Client {
         Ok(())
     }
 
-    pub fn get_entity(&self, id: usize) -> Result<&ClientEntity, Error> {
+    pub fn get_entity(&self, id: usize) -> Result<&ClientEntity, ClientError> {
         self.check_entity_id(id)?;
         Ok(&self.state.entities[id])
     }
 
-    pub fn get_entity_mut(&mut self, id: usize) -> Result<&mut ClientEntity, Error> {
+    pub fn get_entity_mut(&mut self, id: usize) -> Result<&mut ClientEntity, ClientError> {
         self.check_entity_id(id)?;
         Ok(&mut self.state.entities[id])
     }
 
-    pub fn parse_server_msg(&mut self) -> Result<(), Error> {
-        let msg = self.qsock.recv_msg(match self.signon.get() {
-            // if we're in the game, don't block waiting for messages
-            SignOnStage::Done => BlockingMode::NonBlocking,
+    pub fn parse_server_msg(&mut self) -> Result<(), ClientError> {
+        let (msg, demo_view_angles) = match self.update_src {
+            UpdateSource::Server(ref mut qsock) => {
+                let msg = qsock.recv_msg(match self.signon.get() {
+                    // if we're in the game, don't block waiting for messages
+                    SignOnStage::Done => BlockingMode::NonBlocking,
 
-            // otherwise, give the server some time to respond
-            // TODO: might make sense to make this a future or something
-            _ => BlockingMode::Timeout(Duration::seconds(5)),
-        })?;
+                    // otherwise, give the server some time to respond
+                    // TODO: might make sense to make this a future or something
+                    _ => BlockingMode::Timeout(Duration::seconds(5)),
+                })?;
+
+                (msg, None)
+            }
+            UpdateSource::Demo(ref mut demo_srv) => {
+                // only get the next update once we've made it all the way to
+                // the previous one
+                if self.state.time >= self.state.msg_times[0] {
+                    let msg_view = match demo_srv.next() {
+                        Some(v) => v,
+                        None => {
+                            self.disconnect();
+                            return Ok(());
+                        }
+                    };
+
+                    let mut view_angles = msg_view.view_angles();
+                    // invert entity angles to get the camera direction right.
+                    // yaw is already inverted.
+                    view_angles.x = -view_angles.x;
+                    view_angles.z = -view_angles.z;
+
+                    // TODO: we shouldn't have to copy the message here
+                    (msg_view.message().to_owned(), Some(view_angles))
+                } else {
+                    (Vec::new(), None)
+                }
+            }
+        };
 
         // no data available at this time
         if msg.is_empty() {
@@ -937,6 +1046,13 @@ impl Client {
 
                     self.state.entities[ent_id].update(self.state.msg_times, ent_update);
 
+                    // patch view angles in demos
+                    if let Some(angles) = demo_view_angles {
+                        if ent_id == self.view_ent() {
+                            self.state.entities[ent_id].msg_angles[0] = angles;
+                        }
+                    }
+
                     if self.state.entities[ent_id].model_changed() {
                         let model = &self.state.models[self.state.entities[ent_id].model_id()];
                         match model.kind() {
@@ -953,12 +1069,13 @@ impl Client {
 
                     if let Some(c) = self.state.entities[ent_id].colormap() {
                         // only players may have custom colormaps
-                        ensure!(
-                            ent_id <= self.state.max_players,
-                            "Attempted to assign custom colormap to entity with ID {}",
-                            ent_id,
-                        );
-
+                        if ent_id > self.state.max_players {
+                            warn!(
+                                "Server attempted to set colormap on entity {}, \
+                                   which is not a player",
+                                ent_id
+                            );
+                        }
                         // TODO: set player custom colormaps
                     }
                 }
@@ -1041,19 +1158,20 @@ impl Client {
                 }
 
                 ServerCmd::SetView { ent_id } => {
-                    let new_id = ent_id as usize;
-                    ensure!(new_id != 0, "Server set view entity to NULL");
+                    // view entity may not have been spawned yet, so check
+                    // against both max_players and the current number of
+                    // entities
+                    if ent_id <= 0
+                        || (ent_id as usize > self.state.max_players
+                            && ent_id as usize >= self.state.entities.len())
+                    {
+                        Err(ClientError::InvalidViewEntity(ent_id as usize))?;
+                    }
 
-                    // we have to allow the server to SetView on the player entity ID, which will
-                    // be uninitialized at first.
-                    ensure!(
-                        new_id < self.state.max_players || new_id < self.state.entities.len(),
-                        "View entity ID ({}) is out of range",
-                        new_id,
-                    );
+                    let ent_id = ent_id as usize;
 
                     debug!("Set view entity to {}", ent_id);
-                    self.state.view.set_entity_id(new_id);
+                    self.state.view.set_entity_id(ent_id);
                 }
 
                 ServerCmd::SignOnStage { stage } => self.handle_signon(stage)?,
@@ -1118,10 +1236,9 @@ impl Client {
                     origin,
                     angles,
                 } => {
-                    ensure!(
-                        self.state.static_entities.len() < MAX_STATIC_ENTITIES,
-                        "too many static entities"
-                    );
+                    if self.state.static_entities.len() >= MAX_STATIC_ENTITIES {
+                        Err(ClientError::TooManyStaticEntities)?;
+                    }
                     self.state
                         .static_entities
                         .push(ClientEntity::from_baseline(EntityState {
@@ -1271,7 +1388,7 @@ impl Client {
         Ok(())
     }
 
-    fn handle_signon(&mut self, stage: SignOnStage) -> Result<(), Error> {
+    fn handle_signon(&mut self, stage: SignOnStage) -> Result<(), ClientError> {
         match stage {
             SignOnStage::Not => (), // TODO this is an error (invalid value)
             SignOnStage::Prespawn => {
@@ -1317,16 +1434,13 @@ impl Client {
         message: String,
         model_precache: Vec<String>,
         sound_precache: Vec<String>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ClientError> {
         let mut new_client_state = ClientState::new(self.vfs.clone(), self.audio_device.clone())?;
 
         // check protocol version
-        ensure!(
-            protocol_version == net::PROTOCOL_VERSION as i32,
-            "Incompatible protocol version (got {}, should be {})",
-            protocol_version,
-            net::PROTOCOL_VERSION,
-        );
+        if protocol_version != net::PROTOCOL_VERSION as i32 {
+            Err(ClientError::UnrecognizedProtocol(protocol_version))?;
+        }
 
         // TODO: print sign-on message to in-game console
         println!("{}", message);
@@ -1360,11 +1474,7 @@ impl Client {
 
             new_client_state
                 .sounds
-                .push(AudioSource::load(&self.vfs, snd_name).context(
-                    ClientErrorKind::ResourceNotLoaded {
-                        name: snd_name.to_owned(),
-                    },
-                )?);
+                .push(AudioSource::load(&self.vfs, snd_name)?);
 
             // TODO: send keepalive message?
         }
@@ -1409,14 +1519,26 @@ impl Client {
     }
 
     pub fn view_angles(&self, time: Duration) -> Result<Angles, ClientError> {
-        Ok(self.state.view.angles(
-            time,
-            self.state.intermission.as_ref(),
-            self.state.velocity,
-            self.idle_vars()?,
-            self.kick_vars()?,
-            self.roll_vars()?,
-        ))
+        let angles = match self.update_src {
+            UpdateSource::Server(_) => self.state.view.angles(
+                time,
+                self.state.intermission.as_ref(),
+                self.state.velocity,
+                self.idle_vars()?,
+                self.kick_vars()?,
+                self.roll_vars()?,
+            ),
+            UpdateSource::Demo(_) => {
+                let v = self.state.entities[self.view_ent()].angles;
+                Angles {
+                    pitch: -v.x,
+                    yaw: v.y,
+                    roll: -v.z,
+                }
+            }
+        };
+
+        Ok(angles)
     }
 
     pub fn view_ent(&self) -> usize {
@@ -1428,9 +1550,6 @@ impl Client {
     }
 
     pub fn update_time(&mut self, frame_time: Duration) {
-        // advance client time by frame duration
-        self.state.time = self.state.time + frame_time;
-
         // TODO: don't lerp if cls.timedemo != 0 (???) or server is running on this host
         if self.cvars.borrow().get_value("cl_nolerp").unwrap() != 0.0 {
             self.state.time = self.state.msg_times[0];
@@ -1595,8 +1714,18 @@ impl Client {
 
                 ent.origin = ent.msg_origins[1] + ent_lerp_factor * origin_delta;
 
+                // assume that entities will not whip around 180+ degrees in one
+                // frame and adjust the delta accordingly. this avoids a bug
+                // where small turns between 0 <-> 359 cause the demo camera to
+                // face backwards for one frame.
                 for i in 0..3 {
-                    let angle_delta = ent.msg_angles[0][i] - ent.msg_angles[1][i];
+                    let mut angle_delta = ent.msg_angles[0][i] - ent.msg_angles[1][i];
+                    if angle_delta > Deg(180.0) {
+                        angle_delta = Deg(360.0) - angle_delta;
+                    } else if angle_delta < Deg(-180.0) {
+                        angle_delta = Deg(360.0) + angle_delta;
+                    }
+
                     ent.angles[i] =
                         (ent.msg_angles[1][i] + angle_delta * ent_lerp_factor).normalize();
                 }
@@ -1821,7 +1950,12 @@ impl Client {
         );
     }
 
-    pub fn frame(&mut self, frame_time: Duration) -> Result<(), Error> {
+    pub fn frame(&mut self, frame_time: Duration) -> Result<(), ClientError> {
+        // advance client time by frame duration.
+        // do this _before_ parsing server messages so that we know when to
+        // request the next message from the demo server.
+        self.state.time = self.state.time + frame_time;
+
         debug!("frame time: {}ms", frame_time.num_milliseconds());
         self.parse_server_msg()?;
 
@@ -1842,8 +1976,10 @@ impl Client {
             .particles
             .update(self.state.time, frame_time, self.cvar_value("sv_gravity")?);
 
-        // respond to the server
-        self.send()?;
+        if let UpdateSource::Server(_) = self.update_src {
+            // respond to the server
+            self.send()?;
+        }
 
         // these all require the player entity to have spawned
         if self.signon.get() == SignOnStage::Done {
@@ -1887,8 +2023,7 @@ impl Client {
                     percent: 50,
                 });
             }),
-        )
-        .unwrap();
+        );
 
         let vfs = self.vfs.clone();
         let console = self.console.clone();
@@ -1915,8 +2050,7 @@ impl Client {
                     _ => println!("exec (filename): execute a script file"),
                 }
             }),
-        )
-        .unwrap();
+        );
     }
 
     pub fn spawn_beam(
@@ -2108,7 +2242,7 @@ impl Client {
         self.state.face_anim_time
     }
 
-    pub fn lightstyle_values(&self) -> Result<Vec<f32>, Error> {
+    pub fn lightstyle_values(&self) -> Result<Vec<f32>, ClientError> {
         let mut values = Vec::new();
 
         for lightstyle_id in 0..64 {
@@ -2128,7 +2262,7 @@ impl Client {
                     })
                 }
 
-                None => bail!("No lightstyle with ID {}", lightstyle_id),
+                None => Err(ClientError::NoSuchLightmapAnimation(lightstyle_id as usize))?,
             }
         }
 

@@ -64,16 +64,11 @@ impl CmdRegistry {
     }
 
     /// Registers a new command with the given name, or replaces one if the name is in use.
-    pub fn insert_or_replace<S>(
-        &mut self,
-        name: S,
-        cmd: Box<dyn Fn(&[&str])>,
-    ) -> Result<(), ConsoleError>
+    pub fn insert_or_replace<S>(&mut self, name: S, cmd: Box<dyn Fn(&[&str])>)
     where
         S: AsRef<str>,
     {
         self.cmds.insert(name.as_ref().to_owned(), cmd);
-        Ok(())
     }
 
     /// Removes the command with the given name.
@@ -596,7 +591,8 @@ impl Console {
                     }
 
                     None => {
-                        let tail_args: Vec<&str> = args.iter().map(|s| s.as_ref()).skip(1).collect();
+                        let tail_args: Vec<&str> =
+                            args.iter().map(|s| s.as_ref()).skip(1).collect();
 
                         if self.cmds.borrow().contains(arg_0) {
                             self.cmds.borrow_mut().exec(arg_0, &tail_args).unwrap();

@@ -20,73 +20,94 @@
 use std::{
     collections::{hash_map::Iter, HashMap},
     fs,
-    io::{Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom},
     path::Path,
 };
 
 use byteorder::{LittleEndian, ReadBytesExt};
-use failure::Error;
+use thiserror::Error;
 
 const PAK_MAGIC: [u8; 4] = [b'P', b'A', b'C', b'K'];
 const PAK_ENTRY_SIZE: usize = 64;
 
+#[derive(Error, Debug)]
+pub enum PakError {
+    #[error("I/O error: {0}")]
+    Io(#[from] io::Error),
+    #[error("Invalid magic number: {0:?}")]
+    InvalidMagicNumber([u8; 4]),
+    #[error("Invalid file table offset: {0}")]
+    InvalidTableOffset(i32),
+    #[error("Invalid file table size: {0}")]
+    InvalidTableSize(i32),
+    #[error("Invalid file offset: {0}")]
+    InvalidFileOffset(i32),
+    #[error("Invalid file size: {0}")]
+    InvalidFileSize(i32),
+    #[error("File name too long: {0}")]
+    FileNameTooLong(String),
+    #[error("Non-UTF-8 file name: {0}")]
+    NonUtf8FileName(#[from] std::string::FromUtf8Error),
+    #[error("No such file in PAK archive: {0}")]
+    NoSuchFile(String),
+}
+
+/// An open Pak archive.
 pub struct Pak(HashMap<String, Box<[u8]>>);
 
 impl Pak {
-    pub fn new<P>(path: P) -> Result<Pak, Error>
+    // TODO: rename to from_path or similar
+    pub fn new<P>(path: P) -> Result<Pak, PakError>
     where
         P: AsRef<Path>,
     {
         debug!("Opening {}", path.as_ref().to_str().unwrap());
 
-        let mut infile = r#try!(fs::File::open(path));
-
+        let mut infile = fs::File::open(path)?;
         let mut magic = [0u8; 4];
-        r#try!(infile.read(&mut magic));
+        infile.read(&mut magic)?;
 
-        ensure!(magic == PAK_MAGIC, "Invalid magic number");
+        if magic != PAK_MAGIC {
+            Err(PakError::InvalidMagicNumber(magic))?;
+        }
 
         // Locate the file table
-
-        let wad_offset = match r#try!(infile.read_i32::<LittleEndian>()) {
-            o if o <= 0 => bail!("Negative file table offset"),
+        let table_offset = match infile.read_i32::<LittleEndian>()? {
+            o if o <= 0 => Err(PakError::InvalidTableOffset(o))?,
             o => o as u32,
         };
 
-        let wad_size = match r#try!(infile.read_i32::<LittleEndian>()) {
-            s if s <= 0 => bail!("Negative file table size"),
+        let table_size = match infile.read_i32::<LittleEndian>()? {
+            s if s <= 0 || s as usize % PAK_ENTRY_SIZE != 0 => Err(PakError::InvalidTableSize(s))?,
             s => s as u32,
         };
 
         let mut map = HashMap::new();
 
-        for i in 0..(wad_size as usize / PAK_ENTRY_SIZE) {
-            let entry_offset = wad_offset as u64 + (i * PAK_ENTRY_SIZE) as u64;
+        for i in 0..(table_size as usize / PAK_ENTRY_SIZE) {
+            let entry_offset = table_offset as u64 + (i * PAK_ENTRY_SIZE) as u64;
             infile.seek(SeekFrom::Start(entry_offset))?;
 
             let mut path_bytes = [0u8; 56];
             infile.read(&mut path_bytes)?;
 
             let file_offset = match infile.read_i32::<LittleEndian>()? {
-                o if o <= 0 => bail!("Negative file offset"),
+                o if o <= 0 => Err(PakError::InvalidFileOffset(o))?,
                 o => o as u32,
             };
 
             let file_size = match infile.read_i32::<LittleEndian>()? {
-                s if s <= 0 => bail!("Negative file size"),
+                s if s <= 0 => Err(PakError::InvalidFileSize(s))?,
                 s => s as u32,
             };
 
-            let last = {
-                let mut _last: usize = 0;
-                while path_bytes[_last] != 0 {
-                    _last += 1;
-                }
-                _last
-            };
-
+            let last = path_bytes
+                .iter()
+                .position(|b| *b == 0)
+                .ok_or(PakError::FileNameTooLong(
+                    String::from_utf8_lossy(&path_bytes).into_owned(),
+                ))?;
             let path = String::from_utf8(path_bytes[0..last].to_vec())?;
-
             infile.seek(SeekFrom::Start(file_offset as u64))?;
 
             let mut data: Vec<u8> = Vec::with_capacity(file_size as usize);
@@ -112,14 +133,15 @@ impl Pak {
     /// let progs_dat = pak.open("progs.dat").unwrap();
     /// # }
     /// ```
-    pub fn open<S>(&self, path: S) -> Result<&[u8], Error>
+    pub fn open<S>(&self, path: S) -> Result<&[u8], PakError>
     where
         S: AsRef<str>,
     {
-        match self.0.get(path.as_ref()) {
-            Some(data) => Ok(&data),
-            None => bail!("No \"{}\" in pakfile", path.as_ref()),
-        }
+        let path = path.as_ref();
+        self.0
+            .get(path)
+            .map(|s| s.as_ref())
+            .ok_or(PakError::NoSuchFile(path.to_owned()))
     }
 
     pub fn iter<'a>(&self) -> Iter<String, impl AsRef<[u8]>> {
