@@ -1,6 +1,6 @@
 use crate::common::{
-    vfs::{VfsError, VfsErrorKind},
-    wad::{WadError, WadErrorKind},
+    vfs::VfsError,
+    wad::WadError,
 };
 use failure::{Backtrace, Context, Fail};
 use std::{
@@ -29,8 +29,8 @@ impl From<RenderErrorKind> for RenderError {
 
 impl From<VfsError> for RenderError {
     fn from(vfs_error: VfsError) -> Self {
-        match vfs_error.kind() {
-            VfsErrorKind::NoSuchFile { .. } => {
+        match vfs_error {
+            VfsError::NoSuchFile(_) => {
                 vfs_error.context(RenderErrorKind::ResourceNotLoaded).into()
             }
             _ => vfs_error.context(RenderErrorKind::Other).into(),

@@ -16,64 +16,21 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use std::{
-    convert::From,
-    fmt::{self, Display},
     fs::File,
-    io::{Cursor, Read, Seek, SeekFrom},
+    io::{self, Cursor, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
-use crate::common::pak::Pak;
+use crate::common::pak::{Pak, PakError};
 
-use failure::{Backtrace, Context, Error, Fail, ResultExt};
+use thiserror::Error;
 
-#[derive(Debug)]
-pub struct VfsError {
-    inner: Context<VfsErrorKind>,
-}
-
-impl VfsError {
-    pub fn kind(&self) -> VfsErrorKind {
-        self.inner.get_context().clone()
-    }
-}
-
-impl From<VfsErrorKind> for VfsError {
-    fn from(kind: VfsErrorKind) -> Self {
-        VfsError {
-            inner: Context::new(kind),
-        }
-    }
-}
-
-impl From<Context<VfsErrorKind>> for VfsError {
-    fn from(inner: Context<VfsErrorKind>) -> Self {
-        VfsError { inner }
-    }
-}
-
-impl Fail for VfsError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.inner.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.inner.backtrace()
-    }
-}
-
-impl Display for VfsError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Display::fmt(&self.inner, f)
-    }
-}
-
-#[derive(Clone, Eq, PartialEq, Debug, Fail)]
-pub enum VfsErrorKind {
-    #[fail(display = "Couldn't load pakfile: {}", path)]
-    PakfileNotLoaded { path: String },
-    #[fail(display = "File does not exist: {}", path)]
-    NoSuchFile { path: String },
+#[derive(Error, Debug)]
+pub enum VfsError {
+    #[error("Couldn't load pakfile: {0}")]
+    Pak(#[from] PakError),
+    #[error("File does not exist: {0}")]
+    NoSuchFile(String),
 }
 
 enum VfsComponent {
@@ -97,14 +54,7 @@ impl Vfs {
         P: AsRef<Path>,
     {
         let path = path.as_ref();
-
-        self.components
-            .push(VfsComponent::Pak(Pak::new(path).context(
-                VfsErrorKind::PakfileNotLoaded {
-                    path: path.to_string_lossy().into_owned(),
-                },
-            )?));
-
+        self.components.push(VfsComponent::Pak(Pak::new(path)?));
         Ok(())
     }
 
@@ -114,7 +64,6 @@ impl Vfs {
     {
         self.components
             .push(VfsComponent::Directory(path.as_ref().to_path_buf()));
-
         Ok(())
     }
 
@@ -126,7 +75,6 @@ impl Vfs {
 
         // iterate in reverse so later PAKs overwrite earlier ones
         for c in self.components.iter().rev() {
-
             match c {
                 VfsComponent::Pak(pak) => {
                     if let Ok(f) = pak.open(vp) {
@@ -145,7 +93,7 @@ impl Vfs {
             }
         }
 
-        Err(VfsErrorKind::NoSuchFile { path: vp.to_owned() })?
+        Err(VfsError::NoSuchFile(vp.to_owned()))
     }
 }
 
@@ -155,18 +103,18 @@ pub enum VirtualFile<'a> {
 }
 
 impl<'a> Read for VirtualFile<'a> {
-    fn read(&mut self, buf: &mut [u8]) -> ::std::io::Result<usize> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
-            VirtualFile::PakBacked(data) => data.read(buf),
+            VirtualFile::PakBacked(curs) => curs.read(buf),
             VirtualFile::FileBacked(file) => file.read(buf),
         }
     }
 }
 
 impl<'a> Seek for VirtualFile<'a> {
-    fn seek(&mut self, pos: SeekFrom) -> ::std::io::Result<u64> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         match self {
-            VirtualFile::PakBacked(data) => data.seek(pos),
+            VirtualFile::PakBacked(curs) => curs.seek(pos),
             VirtualFile::FileBacked(file) => file.seek(pos),
         }
     }

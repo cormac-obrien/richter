@@ -85,43 +85,39 @@ impl InGameState {
         let focus_rc = Rc::new(Cell::new(focus));
         let toggleconsole_focus = focus_rc.clone();
 
-        cmds.borrow_mut()
-            .insert_or_replace(
-                "toggleconsole",
-                Box::new(move |_| match toggleconsole_focus.get() {
-                    InGameFocus::Game => {
-                        println!("toggleconsole: ON");
-                        toggleconsole_focus.set(InGameFocus::Console);
-                    }
+        cmds.borrow_mut().insert_or_replace(
+            "toggleconsole",
+            Box::new(move |_| match toggleconsole_focus.get() {
+                InGameFocus::Game => {
+                    println!("toggleconsole: ON");
+                    toggleconsole_focus.set(InGameFocus::Console);
+                }
 
-                    InGameFocus::Console => {
-                        println!("toggleconsole: OFF");
-                        toggleconsole_focus.set(InGameFocus::Game);
-                    }
+                InGameFocus::Console => {
+                    println!("toggleconsole: OFF");
+                    toggleconsole_focus.set(InGameFocus::Game);
+                }
 
-                    InGameFocus::Menu => (),
-                }),
-            )
-            .unwrap();
+                InGameFocus::Menu => (),
+            }),
+        );
 
         let togglemenu_focus = focus_rc.clone();
 
-        cmds.borrow_mut()
-            .insert_or_replace(
-                "togglemenu",
-                Box::new(move |_| match togglemenu_focus.get() {
-                    InGameFocus::Game => {
-                        println!("togglemenu: ON");
-                        togglemenu_focus.set(InGameFocus::Menu);
-                    }
+        cmds.borrow_mut().insert_or_replace(
+            "togglemenu",
+            Box::new(move |_| match togglemenu_focus.get() {
+                InGameFocus::Game => {
+                    println!("togglemenu: ON");
+                    togglemenu_focus.set(InGameFocus::Menu);
+                }
 
-                    InGameFocus::Menu | InGameFocus::Console => {
-                        println!("togglemenu: OFF");
-                        togglemenu_focus.set(InGameFocus::Game);
-                    }
-                }),
-            )
-            .unwrap();
+                InGameFocus::Menu | InGameFocus::Console => {
+                    println!("togglemenu: OFF");
+                    togglemenu_focus.set(InGameFocus::Game);
+                }
+            }),
+        );
 
         InGameState {
             world_renderer,

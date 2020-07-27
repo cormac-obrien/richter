@@ -5,6 +5,7 @@ authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 edition = "2018"
 
 [dependencies]
+arrayvec = "0.5"
 bitflags = "1.0.1"
 bumpalo = "3.4"
 byteorder = "1.3"

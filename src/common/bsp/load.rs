@@ -31,6 +31,7 @@ use crate::common::{
     },
     math::{Axis, Hyperplane},
     model::Model,
+    util::read_f32_3,
 };
 
 use super::{BspTextureFrame, BspTextureKind};
@@ -74,7 +75,7 @@ const ASCII_SMALL_A: usize = 'a' as usize;
 const ASCII_SMALL_J: usize = 'j' as usize;
 
 #[derive(Error, Debug)]
-enum BspFileError {
+pub enum BspFileError {
     #[error("I/O error")]
     Io(#[from] std::io::Error),
     #[error("unsupported BSP format version (expected {}, found {0})", VERSION)]
@@ -124,7 +125,7 @@ impl BspFileSection {
 
 const SECTION_COUNT: usize = 15;
 #[derive(Debug, FromPrimitive)]
-enum BspFileSectionId {
+pub enum BspFileSectionId {
     Entities = 0,
     Planes = 1,
     Textures = 2,
@@ -1114,14 +1115,5 @@ where
 {
     let mut ar = [0i16; 3];
     reader.read_i16_into::<LittleEndian>(&mut ar)?;
-    Ok(ar)
-}
-
-fn read_f32_3<R>(reader: &mut R) -> Result<[f32; 3], std::io::Error>
-where
-    R: ReadBytesExt,
-{
-    let mut ar = [0.0f32; 3];
-    reader.read_f32_into::<LittleEndian>(&mut ar)?;
     Ok(ar)
 }

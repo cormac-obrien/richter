@@ -17,9 +17,21 @@
 
 use std::mem::size_of;
 
+use byteorder::{LittleEndian, ReadBytesExt};
+
 /// A plain-old-data type.
 pub trait Pod: 'static + Copy + Sized + Send + Sync {}
 impl<T: 'static + Copy + Sized + Send + Sync> Pod for T {}
+
+/// Read a `[f32; 3]` in little-endian byte order.
+pub fn read_f32_3<R>(reader: &mut R) -> Result<[f32; 3], std::io::Error>
+where
+    R: ReadBytesExt,
+{
+    let mut ar = [0.0f32; 3];
+    reader.read_f32_into::<LittleEndian>(&mut ar)?;
+    Ok(ar)
+}
 
 /// Read a null-terminated sequence of bytes and convert it into a `String`.
 ///
