@@ -40,7 +40,7 @@ use richter::{
             SwapChainTarget, UiOverlay, UiRenderer, UiState, WorldRenderer,
         },
         trace::TraceFrame,
-        Client,
+        Client, ClientError,
     },
     common::{
         console::{CmdRegistry, Console, CvarRegistry},
@@ -199,17 +199,42 @@ impl Game {
 
     // advance the simulation
     pub fn frame(&mut self, gfx_state: &GraphicsState, frame_duration: Duration) {
-        self.client.frame(frame_duration).unwrap();
+        use ClientError::*;
+
+        match self.client.frame(frame_duration) {
+            Ok(()) => (),
+            Err(e) => match e {
+                Cvar(_)
+                | UnrecognizedProtocol(_)
+                | NoSuchClient(_)
+                | NoSuchPlayer(_)
+                | NoSuchEntity(_)
+                | NullEntity
+                | EntityExists(_)
+                | InvalidViewEntity(_)
+                | TooManyStaticEntities
+                | NoSuchLightmapAnimation(_)
+                | Model(_)
+                | Network(_)
+                | Sound(_)
+                | Vfs(_) => {
+                    log::error!("{}", e);
+                    self.client.disconnect();
+                }
+
+                _ => panic!("{}", e),
+            },
+        };
 
         // make sure we set loading state for reconnects
-        if self.client.signon_stage() != SignOnStage::Done {
+        if self.client.signon_stage().unwrap() != SignOnStage::Done {
             self.state = GameState::Loading;
         }
 
         if let GameState::Loading = self.state {
             println!("loading...");
             // check if we've finished getting server info yet
-            if self.client.signon_stage() == SignOnStage::Done {
+            if self.client.signon_stage().unwrap() == SignOnStage::Done {
                 println!("finished loading");
                 // if we have, build renderers
                 let world_renderer = WorldRenderer::new(
@@ -268,7 +293,11 @@ impl Game {
 
         // if there's an active trace, record this frame
         if let Some(ref mut trace_frames) = *self.trace.borrow_mut() {
-            trace_frames.push(self.client.trace(&[self.client.view_ent()]));
+            trace_frames.push(
+                self.client
+                    .trace(&[self.client.view_ent().unwrap()])
+                    .unwrap(),
+            );
         }
     }
 
@@ -295,8 +324,10 @@ impl Game {
 
                 let projection = cgmath::perspective(fov_y, aspect_ratio, 4.0, 4096.0);
                 let camera = Camera::new(
-                    self.client.view_origin(),
-                    self.client.view_angles(self.client.time()).unwrap(),
+                    self.client.view_origin().unwrap(),
+                    self.client
+                        .view_angles(self.client.time().unwrap())
+                        .unwrap(),
                     projection,
                 );
 
@@ -316,9 +347,9 @@ impl Game {
                         &mut init_pass,
                         &self.render_pass_bump,
                         &camera,
-                        self.client.time(),
-                        self.client.iter_visible_entities(),
-                        self.client.iter_particles(),
+                        self.client.time().unwrap(),
+                        self.client.iter_visible_entities().unwrap(),
+                        self.client.iter_particles().unwrap(),
                         self.client.lightstyle_values().unwrap().as_slice(),
                         &self.cvars.borrow(),
                     );
@@ -337,14 +368,14 @@ impl Game {
                     }; MAX_LIGHTS];
 
                     let mut light_count = 0;
-                    for (light_id, light) in self.client.iter_lights().enumerate() {
+                    for (light_id, light) in self.client.iter_lights().unwrap().enumerate() {
                         light_count += 1;
                         let light_origin = light.origin();
                         let converted_origin =
                             Vector3::new(-light_origin.y, light_origin.z, -light_origin.x);
                         lights[light_id].origin =
                             (camera.view() * converted_origin.extend(1.0)).truncate();
-                        lights[light_id].radius = light.radius(self.client.time());
+                        lights[light_id].radius = light.radius(self.client.time().unwrap());
                     }
 
                     let uniforms = DeferredUniforms {
@@ -360,19 +391,19 @@ impl Game {
                 }
 
                 let ui_state = UiState::InGame {
-                    hud: match self.client.intermission() {
+                    hud: match self.client.intermission().unwrap() {
                         Some(kind) => HudState::Intermission {
                             kind,
-                            completion_duration: self.client.completion_time().unwrap()
-                                - self.client.start_time(),
-                            stats: self.client.stats(),
+                            completion_duration: self.client.completion_time().unwrap().unwrap()
+                                - self.client.start_time().unwrap(),
+                            stats: self.client.stats().unwrap(),
                         },
 
                         None => HudState::InGame {
-                            items: self.client.items(),
-                            item_pickup_time: self.client.item_get_time(),
-                            stats: self.client.stats(),
-                            face_anim_time: self.client.face_anim_time(),
+                            items: self.client.items().unwrap(),
+                            item_pickup_time: self.client.item_get_time().unwrap(),
+                            stats: self.client.stats().unwrap(),
+                            face_anim_time: self.client.face_anim_time().unwrap(),
                         },
                     },
                     overlay: match state.focus.get() {
@@ -402,7 +433,7 @@ impl Game {
                         &gfx_state,
                         &mut final_pass,
                         Extent2d { width, height },
-                        self.client.time(),
+                        self.client.time().unwrap(),
                         &ui_state,
                         &mut quad_commands,
                         &mut glyph_commands,

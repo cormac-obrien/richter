@@ -24,7 +24,8 @@ mod menu;
 mod trace;
 
 use std::{
-    cell::{Cell, Ref, RefCell, RefMut},
+    cell::{Ref, RefCell, RefMut},
+    io::Read,
     net::{SocketAddr, ToSocketAddrs},
     path::Path,
     rc::Rc,
@@ -39,7 +40,7 @@ use richter::{
         input::{Input, InputFocus},
         menu::Menu,
         render::{self, Extent2d, GraphicsState, UiRenderer, DIFFUSE_ATTACHMENT_FORMAT},
-        Client,
+        Client, ClientError,
     },
     common::{
         self,
@@ -73,11 +74,9 @@ struct ClientProgram {
     menu: Rc<RefCell<Menu>>,
 
     window: Window,
-    window_dimensions_changed: Cell<bool>,
+    window_dimensions_changed: bool,
 
-    instance: wgpu::Instance,
     surface: wgpu::Surface,
-    adapter: wgpu::Adapter,
     swap_chain: RefCell<wgpu::SwapChain>,
     gfx_state: RefCell<GraphicsState>,
     ui_renderer: Rc<UiRenderer>,
@@ -182,6 +181,35 @@ impl ClientProgram {
         let gfx_state = GraphicsState::new(device, queue, size, sample_count, vfs.clone()).unwrap();
         let ui_renderer = Rc::new(UiRenderer::new(&gfx_state, &menu.borrow()));
 
+        // TODO: factor this out
+        // implements "exec" command
+        let exec_vfs = vfs.clone();
+        let exec_console = console.clone();
+        cmds.borrow_mut().insert_or_replace(
+            "exec",
+            Box::new(move |args| {
+                match args.len() {
+                    // exec (filename): execute a script file
+                    1 => {
+                        let mut script_file = match exec_vfs.open(args[0]) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                println!("Couldn't exec {}: {:?}", args[0], e);
+                                return;
+                            }
+                        };
+
+                        let mut script = String::new();
+                        script_file.read_to_string(&mut script).unwrap();
+
+                        exec_console.borrow().stuff_text(script);
+                    }
+
+                    _ => println!("exec (filename): execute a script file"),
+                }
+            }),
+        );
+
         // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
         console.borrow().stuff_text("exec quake.rc\n");
 
@@ -192,10 +220,8 @@ impl ClientProgram {
             console,
             menu,
             window,
-            window_dimensions_changed: Cell::new(false),
-            instance,
+            window_dimensions_changed: false,
             surface,
-            adapter,
             swap_chain,
             gfx_state: RefCell::new(gfx_state),
             ui_renderer,
@@ -209,17 +235,31 @@ impl ClientProgram {
     where
         A: ToSocketAddrs,
     {
-        let cl = Client::connect(
+        use ClientError::*;
+
+        let cl = match Client::connect(
             server_addrs,
             self.vfs.clone(),
             self.cvars.clone(),
             self.cmds.clone(),
             self.console.clone(),
             self.audio_device.clone(),
-        )
-        .unwrap();
+        ) {
+            Ok(c) => c,
+            Err(e) => match e {
+                ConnectionRejected(_)
+                | InvalidConnectPort(_)
+                | InvalidConnectResponse
+                | InvalidServerAddress
+                | NoResponse
+                | Network(_) => {
+                    log::error!("{}", e);
+                    return;
+                }
 
-        cl.register_cmds(&mut self.cmds.borrow_mut());
+                _ => panic!("{}", e),
+            },
+        };
 
         self.state.replace(ProgramState::Game(
             Game::new(
@@ -246,8 +286,6 @@ impl ClientProgram {
             self.audio_device.clone(),
         )
         .unwrap();
-
-        cl.register_cmds(&mut self.cmds.borrow_mut());
 
         self.state.replace(ProgramState::Game(
             Game::new(
@@ -309,7 +347,7 @@ impl Program for ClientProgram {
                 event: WindowEvent::Resized(_),
                 ..
             } => {
-                self.window_dimensions_changed.set(true);
+                self.window_dimensions_changed = true;
             }
 
             e => self.input.borrow_mut().handle_event(e).unwrap(),
@@ -318,8 +356,8 @@ impl Program for ClientProgram {
 
     fn frame(&mut self, frame_duration: Duration) {
         // recreate swapchain if needed
-        if self.window_dimensions_changed.get() {
-            self.window_dimensions_changed.set(false);
+        if self.window_dimensions_changed {
+            self.window_dimensions_changed = false;
             self.recreate_swap_chain(wgpu::PresentMode::Immediate);
         }
 
