@@ -8,14 +8,15 @@ use crate::{
         },
         input::game::{Action, GameInput},
         sound::{AudioSource, Listener, StaticSound},
-        view::{MouseVars, View},
+        view::{KickVars, MouseVars, View},
         ClientError, ColorShiftCode, IntermissionKind, Mixer, MoveVars, MAX_STATS,
     },
     common::{
         bsp, engine,
+        math::Angles,
         model::{Model, ModelFlags, ModelKind, SyncType},
         net::{
-            self, BeamEntityKind, ButtonFlags, ColorShift, EntityEffects, ItemFlags,
+            self, BeamEntityKind, ButtonFlags, ColorShift, EntityEffects, ItemFlags, PlayerData,
             PointEntityKind, TempEntity,
         },
         vfs::Vfs,
@@ -23,7 +24,7 @@ use crate::{
 };
 use cgmath::{Angle as _, Deg, InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
-use net::{ClientCmd, EntityState, EntityUpdate, PlayerColor};
+use net::{ClientCmd, ClientStat, EntityState, EntityUpdate, PlayerColor};
 use rand::distributions::{Distribution as _, Uniform};
 
 pub struct PlayerInfo {
@@ -531,6 +532,54 @@ impl ClientState {
         Ok(())
     }
 
+    pub fn update_player(&mut self, update: PlayerData) {
+        self.view
+            .set_view_height(update.view_height.unwrap_or(net::DEFAULT_VIEWHEIGHT));
+        self.view
+            .set_ideal_pitch(update.ideal_pitch.unwrap_or(Deg(0.0)));
+        self.view.set_punch_angles(Angles {
+            pitch: update.punch_pitch.unwrap_or(Deg(0.0)),
+            roll: update.punch_roll.unwrap_or(Deg(0.0)),
+            yaw: update.punch_yaw.unwrap_or(Deg(0.0)),
+        });
+
+        // store old velocity
+        self.msg_velocity[1] = self.msg_velocity[0];
+        self.msg_velocity[0].x = update.velocity_x.unwrap_or(0.0);
+        self.msg_velocity[0].y = update.velocity_y.unwrap_or(0.0);
+        self.msg_velocity[0].z = update.velocity_z.unwrap_or(0.0);
+
+        let item_diff = update.items - self.items;
+        if !item_diff.is_empty() {
+            // item flags have changed, something got picked up
+            let bits = item_diff.bits();
+            for i in 0..net::MAX_ITEMS {
+                if bits & 1 << i != 0 {
+                    // item with flag value `i` was picked up
+                    self.item_get_time[i] = self.time;
+                }
+            }
+        }
+        self.items = update.items;
+
+        self.on_ground = update.on_ground;
+        self.in_water = update.in_water;
+
+        self.stats[ClientStat::WeaponFrame as usize] = update.weapon_frame.unwrap_or(0) as i32;
+        self.stats[ClientStat::Armor as usize] = update.armor.unwrap_or(0) as i32;
+        self.stats[ClientStat::Weapon as usize] = update.weapon.unwrap_or(0) as i32;
+        self.stats[ClientStat::Health as usize] = update.health as i32;
+        self.stats[ClientStat::Ammo as usize] = update.ammo as i32;
+        self.stats[ClientStat::Shells as usize] = update.ammo_shells as i32;
+        self.stats[ClientStat::Nails as usize] = update.ammo_nails as i32;
+        self.stats[ClientStat::Rockets as usize] = update.ammo_rockets as i32;
+        self.stats[ClientStat::Cells as usize] = update.ammo_cells as i32;
+
+        // TODO: this behavior assumes the `standard_quake` behavior and will likely
+        // break with the mission packs
+        self.stats[ClientStat::ActiveWeapon as usize] = update.active_weapon as i32;
+    }
+
     pub fn handle_input(
         &mut self,
         game_input: &mut GameInput,
@@ -605,6 +654,47 @@ impl ClientState {
             button_flags,
             impulse: game_input.impulse(),
         }
+    }
+
+    pub fn handle_damage(
+        &mut self,
+        armor: u8,
+        health: u8,
+        source: Vector3<f32>,
+        kick_vars: KickVars,
+    ) {
+        self.face_anim_time = self.time + Duration::milliseconds(200);
+
+        let dmg_factor = (armor + health).min(20) as f32 / 2.0;
+        let mut cshift = self.color_shifts[ColorShiftCode::Damage as usize].borrow_mut();
+        cshift.percent += 3 * dmg_factor as i32;
+        cshift.percent = cshift.percent.clamp(0, 150);
+
+        if armor > health {
+            cshift.dest_color = [200, 100, 100];
+        } else if armor > 0 {
+            cshift.dest_color = [220, 50, 50];
+        } else {
+            cshift.dest_color = [255, 0, 0];
+        }
+
+        let v_ent = &self.entities[self.view.entity_id()];
+
+        let v_angles = Angles {
+            pitch: v_ent.angles.x,
+            roll: v_ent.angles.z,
+            yaw: v_ent.angles.y,
+        };
+
+        self.view.handle_damage(
+            self.time,
+            armor as f32,
+            health as f32,
+            v_ent.origin,
+            v_angles,
+            source,
+            kick_vars,
+        );
     }
 
     /// Spawn an entity with the given ID, also spawning any uninitialized
@@ -952,6 +1042,26 @@ impl ClientState {
             },
         );
 
+        Ok(())
+    }
+
+    pub fn set_view_angles(&mut self, angles: Vector3<Deg<f32>>) {
+        self.entities[self.view.entity_id()].set_angles(angles);
+        self.view.update_input_angles(Angles {
+            pitch: angles.x,
+            roll: angles.z,
+            yaw: angles.y,
+        });
+    }
+
+    pub fn set_view_entity(&mut self, entity_id: usize) -> Result<(), ClientError> {
+        // view entity may not have been spawned yet, so check
+        // against both max_players and the current number of
+        // entities
+        if entity_id > self.max_players || entity_id >= self.entities.len() {
+            Err(ClientError::InvalidViewEntity(entity_id))?;
+        }
+        self.view.set_entity_id(entity_id);
         Ok(())
     }
 

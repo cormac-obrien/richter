@@ -58,7 +58,7 @@ use crate::{
             self,
             connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION},
             BlockingMode, ClientCmd, ClientStat, ColorShift, EntityEffects, EntityState, GameType,
-            ItemFlags, NetError, PlayerColor, QSocket, ServerCmd, SignOnStage,
+            ItemFlags, NetError, PlayerColor, QSocket, ServerCmd, SignOnStage, PlayerData,
         },
         vfs::{Vfs, VfsError},
     },
@@ -394,78 +394,7 @@ impl Connection {
                     println!("{}", text);
                 }
 
-                ServerCmd::ClientData {
-                    view_height,
-                    ideal_pitch,
-                    punch_pitch,
-                    velocity_x,
-                    punch_yaw,
-                    velocity_y,
-                    punch_roll,
-                    velocity_z,
-                    items,
-                    on_ground,
-                    in_water,
-                    weapon_frame,
-                    armor,
-                    weapon,
-                    health,
-                    ammo,
-                    ammo_shells,
-                    ammo_nails,
-                    ammo_rockets,
-                    ammo_cells,
-                    active_weapon,
-                } => {
-                    self.state
-                        .view
-                        .set_view_height(view_height.unwrap_or(net::DEFAULT_VIEWHEIGHT));
-                    self.state
-                        .view
-                        .set_ideal_pitch(ideal_pitch.unwrap_or(Deg(0.0)));
-                    self.state.view.set_punch_angles(Angles {
-                        pitch: punch_pitch.unwrap_or(Deg(0.0)),
-                        roll: punch_roll.unwrap_or(Deg(0.0)),
-                        yaw: punch_yaw.unwrap_or(Deg(0.0)),
-                    });
-
-                    // store old velocity
-                    self.state.msg_velocity[1] = self.state.msg_velocity[0];
-                    self.state.msg_velocity[0].x = velocity_x.unwrap_or(0.0);
-                    self.state.msg_velocity[0].y = velocity_y.unwrap_or(0.0);
-                    self.state.msg_velocity[0].z = velocity_z.unwrap_or(0.0);
-
-                    let item_diff = items - self.state.items;
-                    if !item_diff.is_empty() {
-                        // item flags have changed, something got picked up
-                        let bits = item_diff.bits();
-                        for i in 0..net::MAX_ITEMS {
-                            if bits & 1 << i != 0 {
-                                // item with flag value `i` was picked up
-                                self.state.item_get_time[i] = self.state.time;
-                            }
-                        }
-                    }
-                    self.state.items = items;
-
-                    self.state.on_ground = on_ground;
-                    self.state.in_water = in_water;
-
-                    self.state.stats[ClientStat::WeaponFrame as usize] =
-                        weapon_frame.unwrap_or(0) as i32;
-                    self.state.stats[ClientStat::Armor as usize] = armor.unwrap_or(0) as i32;
-                    self.state.stats[ClientStat::Weapon as usize] = weapon.unwrap_or(0) as i32;
-                    self.state.stats[ClientStat::Health as usize] = health as i32;
-                    self.state.stats[ClientStat::Ammo as usize] = ammo as i32;
-                    self.state.stats[ClientStat::Shells as usize] = ammo_shells as i32;
-                    self.state.stats[ClientStat::Nails as usize] = ammo_nails as i32;
-                    self.state.stats[ClientStat::Rockets as usize] = ammo_rockets as i32;
-                    self.state.stats[ClientStat::Cells as usize] = ammo_cells as i32;
-
-                    // TODO: this behavior assumes the `standard_quake` behavior and will likely
-                    // break with the mission packs
-                    self.state.stats[ClientStat::ActiveWeapon as usize] = active_weapon as i32;
-                }
+                ServerCmd::PlayerData(player_data) => self.state.update_player(player_data),
 
                 ServerCmd::Cutscene { text } => {
                     self.state.intermission = Some(IntermissionKind::Cutscene { text });
@@ -476,41 +405,7 @@ impl Connection {
                     armor,
                     blood,
                     source,
-                } => {
-                    self.state.face_anim_time = self.state.time + Duration::milliseconds(200);
-
-                    let dmg_factor = (armor + blood).min(20) as f32 / 2.0;
-                    let mut cshift =
-                        self.state.color_shifts[ColorShiftCode::Damage as usize].borrow_mut();
-                    cshift.percent += 3 * dmg_factor as i32;
-                    cshift.percent = cshift.percent.clamp(0, 150);
-
-                    if armor > blood {
-                        cshift.dest_color = [200, 100, 100];
-                    } else if armor > 0 {
-                        cshift.dest_color = [220, 50, 50];
-                    } else {
-                        cshift.dest_color = [255, 0, 0];
-                    }
-
-                    let v_ent = &self.state.entities[self.state.view.entity_id()];
-
-                    let v_angles = Angles {
-                        pitch: v_ent.angles.x,
-                        roll: v_ent.angles.z,
-                        yaw: v_ent.angles.y,
-                    };
-
-                    self.state.view.handle_damage(
-                        self.state.time,
-                        armor as f32,
-                        blood as f32,
-                        v_ent.origin,
-                        v_angles,
-                        source,
-                        kick_vars,
-                    );
-                }
+                } => self.state.handle_damage(armor, blood, source, kick_vars),
 
                 ServerCmd::Disconnect => return Ok(Disconnect),
 
@@ -624,32 +519,14 @@ impl Connection {
                     );
                 }
 
-                ServerCmd::SetAngle { angles } => {
-                    debug!("Set view angles to {:?}", angles);
-                    let view_ent = self.state.view_entity_id();
-                    self.state.entities[view_ent].set_angles(angles);
-                    self.state.view.update_input_angles(Angles {
-                        pitch: angles.x,
-                        roll: angles.z,
-                        yaw: angles.y,
-                    });
-                }
+                ServerCmd::SetAngle { angles } => self.state.set_view_angles(angles),
 
                 ServerCmd::SetView { ent_id } => {
-                    // view entity may not have been spawned yet, so check
-                    // against both max_players and the current number of
-                    // entities
-                    if ent_id <= 0
-                        || (ent_id as usize > self.state.max_players
-                            && ent_id as usize >= self.state.entities.len())
-                    {
+                    if ent_id <= 0 {
                         Err(ClientError::InvalidViewEntity(ent_id as usize))?;
                     }
 
-                    let ent_id = ent_id as usize;
-
-                    debug!("Set view entity to {}", ent_id);
-                    self.state.view.set_entity_id(ent_id);
+                    self.state.set_view_entity(ent_id as usize)?;
                 }
 
                 ServerCmd::SignOnStage { stage } => self.handle_signon(stage)?,

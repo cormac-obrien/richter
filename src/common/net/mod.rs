@@ -545,6 +545,31 @@ pub struct EntityUpdate {
     pub no_lerp: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlayerData {
+    pub view_height: Option<f32>,
+    pub ideal_pitch: Option<Deg<f32>>,
+    pub punch_pitch: Option<Deg<f32>>,
+    pub velocity_x: Option<f32>,
+    pub punch_yaw: Option<Deg<f32>>,
+    pub velocity_y: Option<f32>,
+    pub punch_roll: Option<Deg<f32>>,
+    pub velocity_z: Option<f32>,
+    pub items: ItemFlags,
+    pub on_ground: bool,
+    pub in_water: bool,
+    pub weapon_frame: Option<u8>,
+    pub armor: Option<u8>,
+    pub weapon: Option<u8>,
+    pub health: i16,
+    pub ammo: u8,
+    pub ammo_shells: u8,
+    pub ammo_nails: u8,
+    pub ammo_rockets: u8,
+    pub ammo_cells: u8,
+    pub active_weapon: u8,
+}
+
 impl EntityUpdate {
     /// Create an `EntityState` from this update, filling in any `None` values
     /// from the specified baseline state.
@@ -603,7 +628,7 @@ pub enum ServerCmdCode {
     LightStyle = 12,
     UpdateName = 13,
     UpdateFrags = 14,
-    ClientData = 15,
+    PlayerData = 15,
     StopSound = 16,
     UpdateColors = 17,
     Particle = 18,
@@ -686,29 +711,7 @@ pub enum ServerCmd {
         player_id: u8,
         new_frags: i16,
     },
-    ClientData {
-        view_height: Option<f32>,
-        ideal_pitch: Option<Deg<f32>>,
-        punch_pitch: Option<Deg<f32>>,
-        velocity_x: Option<f32>,
-        punch_yaw: Option<Deg<f32>>,
-        velocity_y: Option<f32>,
-        punch_roll: Option<Deg<f32>>,
-        velocity_z: Option<f32>,
-        items: ItemFlags,
-        on_ground: bool,
-        in_water: bool,
-        weapon_frame: Option<u8>,
-        armor: Option<u8>,
-        weapon: Option<u8>,
-        health: i16,
-        ammo: u8,
-        ammo_shells: u8,
-        ammo_nails: u8,
-        ammo_rockets: u8,
-        ammo_cells: u8,
-        active_weapon: u8,
-    },
+    PlayerData(PlayerData),
     StopSound {
         entity_id: u16,
         channel: u8,
@@ -799,7 +802,7 @@ impl ServerCmd {
             ServerCmd::LightStyle { .. } => ServerCmdCode::LightStyle,
             ServerCmd::UpdateName { .. } => ServerCmdCode::UpdateName,
             ServerCmd::UpdateFrags { .. } => ServerCmdCode::UpdateFrags,
-            ServerCmd::ClientData { .. } => ServerCmdCode::ClientData,
+            ServerCmd::PlayerData(_) => ServerCmdCode::PlayerData,
             ServerCmd::StopSound { .. } => ServerCmdCode::StopSound,
             ServerCmd::UpdateColors { .. } => ServerCmdCode::UpdateColors,
             ServerCmd::Particle { .. } => ServerCmdCode::Particle,
@@ -1152,7 +1155,7 @@ impl ServerCmd {
                 }
             }
 
-            ServerCmdCode::ClientData => {
+            ServerCmdCode::PlayerData => {
                 let flags_bits = reader.read_u16::<LittleEndian>()?;
                 let flags = match ClientUpdateFlags::from_bits(flags_bits) {
                     Some(f) => f,
@@ -1241,7 +1244,7 @@ impl ServerCmd {
                 let ammo_cells = reader.read_u8()?;
                 let active_weapon = reader.read_u8()?;
 
-                ServerCmd::ClientData {
+                ServerCmd::PlayerData(PlayerData {
                     view_height,
                     ideal_pitch,
                     punch_pitch,
@@ -1263,7 +1266,7 @@ impl ServerCmd {
                     ammo_rockets,
                     ammo_cells,
                     active_weapon,
-                }
+                })
             }
 
             ServerCmdCode::StopSound => {
@@ -1579,7 +1582,7 @@ impl ServerCmd {
                 writer.write_i16::<LittleEndian>(new_frags)?;
             }
 
-            ServerCmd::ClientData {
+            ServerCmd::PlayerData(PlayerData {
                 view_height,
                 ideal_pitch,
                 punch_pitch,
@@ -1601,7 +1604,7 @@ impl ServerCmd {
                 ammo_rockets,
                 ammo_cells,
                 active_weapon,
-            } => {
+            }) => {
                 let mut flags = ClientUpdateFlags::empty();
                 if view_height.is_some() {
                     flags |= ClientUpdateFlags::VIEW_HEIGHT;
