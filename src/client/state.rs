@@ -3,17 +3,18 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use crate::{
     client::{
         entity::{
-            particle::{Particles, TrailKind, MAX_PARTICLES},
-            Beam, ClientEntity, LightDesc, Lights, MAX_BEAMS, MAX_LIGHTS, MAX_TEMP_ENTITIES,
+            particle::{Particle, Particles, TrailKind, MAX_PARTICLES},
+            Beam, ClientEntity, Light, LightDesc, Lights, MAX_BEAMS, MAX_LIGHTS, MAX_TEMP_ENTITIES,
         },
         input::game::{Action, GameInput},
+        render::Camera,
         sound::{AudioSource, Listener, StaticSound},
-        view::{KickVars, MouseVars, View},
+        view::{IdleVars, KickVars, MouseVars, RollVars, View},
         ClientError, ColorShiftCode, IntermissionKind, Mixer, MoveVars, MAX_STATS,
     },
     common::{
         bsp, engine,
-        math::Angles,
+        math::{self, Angles},
         model::{Model, ModelFlags, ModelKind, SyncType},
         net::{
             self, BeamEntityKind, ButtonFlags, ColorShift, EntityEffects, ItemFlags, PlayerData,
@@ -22,6 +23,7 @@ use crate::{
         vfs::Vfs,
     },
 };
+use arrayvec::ArrayVec;
 use cgmath::{Angle as _, Deg, InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
 use net::{ClientCmd, ClientStat, EntityState, EntityUpdate, PlayerColor};
@@ -697,6 +699,22 @@ impl ClientState {
         );
     }
 
+    pub fn calc_final_view(
+        &mut self,
+        idle_vars: IdleVars,
+        kick_vars: KickVars,
+        roll_vars: RollVars,
+    ) {
+        self.view.calc_final_angles(
+            self.time,
+            self.intermission.as_ref(),
+            self.velocity,
+            idle_vars,
+            kick_vars,
+            roll_vars,
+        );
+    }
+
     /// Spawn an entity with the given ID, also spawning any uninitialized
     /// entities between the former last entity and the new one.
     // TODO: skipping entities indicates that the entities have been freed by
@@ -1058,11 +1076,15 @@ impl ClientState {
         // view entity may not have been spawned yet, so check
         // against both max_players and the current number of
         // entities
-        if entity_id > self.max_players || entity_id >= self.entities.len() {
+        if entity_id > self.max_players && entity_id >= self.entities.len() {
             Err(ClientError::InvalidViewEntity(entity_id))?;
         }
         self.view.set_entity_id(entity_id);
         Ok(())
+    }
+
+    pub fn models(&self) -> &[Model] {
+        &self.models
     }
 
     pub fn iter_visible_entities(&self) -> impl Iterator<Item = &ClientEntity> + Clone {
@@ -1071,6 +1093,111 @@ impl ClientState {
             .map(move |i| &self.entities[*i])
             .chain(self.temp_entities.iter())
             .chain(self.static_entities.iter())
+    }
+
+    pub fn iter_particles(&self) -> impl Iterator<Item = &Particle> {
+        self.particles.iter()
+    }
+
+    pub fn iter_lights(&self) -> impl Iterator<Item = &Light> {
+        self.lights.iter()
+    }
+
+    pub fn time(&self) -> Duration {
+        self.time
+    }
+
+    pub fn view_entity_id(&self) -> usize {
+        self.view.entity_id()
+    }
+
+    pub fn view_origin(&self) -> Vector3<f32> {
+        self.entities[self.view_entity_id()].origin
+            + Vector3::new(0.0, 0.0, self.view.view_height())
+    }
+
+    pub fn camera(&self, aspect: f32, fov: Deg<f32>) -> Camera {
+        let fov_y = math::fov_x_to_fov_y(fov, aspect).unwrap();
+        Camera::new(
+            self.view_origin(),
+            self.view.final_angles(),
+            cgmath::perspective(fov_y, aspect, 4.0, 4096.0),
+        )
+    }
+
+    pub fn lightstyle_values(&self) -> Result<ArrayVec<[f32; 64]>, ClientError> {
+        let mut values = ArrayVec::new();
+
+        for lightstyle_id in 0..64 {
+            match self.light_styles.get(&lightstyle_id) {
+                Some(ls) => {
+                    let float_time = engine::duration_to_f32(self.time);
+                    let frame = if ls.len() == 0 {
+                        None
+                    } else {
+                        Some((float_time * 10.0) as usize % ls.len())
+                    };
+
+                    values.push(match frame {
+                        // 'z' - 'a' = 25, so divide by 12.5 to get range [0, 2]
+                        Some(f) => (ls.as_bytes()[f] - 'a' as u8) as f32 / 12.5,
+                        None => 1.0,
+                    })
+                }
+
+                None => Err(ClientError::NoSuchLightmapAnimation(lightstyle_id as usize))?,
+            }
+        }
+
+        Ok(values)
+    }
+
+    pub fn intermission(&self) -> Option<&IntermissionKind> {
+        self.intermission.as_ref()
+    }
+
+    pub fn start_time(&self) -> Duration {
+        self.start_time
+    }
+
+    pub fn completion_time(&self) -> Option<Duration> {
+        self.completion_time
+    }
+
+    pub fn stats(&self) -> &[i32] {
+        &self.stats
+    }
+
+    pub fn items(&self) -> ItemFlags {
+        self.items
+    }
+
+    pub fn item_pickup_times(&self) -> &[Duration] {
+        &self.item_get_time
+    }
+
+    pub fn face_anim_time(&self) -> Duration {
+        self.face_anim_time
+    }
+
+    pub fn color_shift(&self) -> [f32; 4] {
+        self.color_shifts.iter().fold([0.0; 4], |accum, elem| {
+            let elem_a = elem.borrow().percent as f32 / 255.0 / 2.0;
+            if elem_a == 0.0 {
+                return accum;
+            }
+            let in_a = accum[3];
+            let out_a = in_a + elem_a * (1.0 - in_a);
+            let color_factor = elem_a / out_a;
+
+            let mut out = [0.0; 4];
+            for i in 0..3 {
+                out[i] = accum[i] * (1.0 - color_factor)
+                    + elem.borrow().dest_color[i] as f32 / 255.0 * color_factor;
+            }
+            out[3] = out_a.min(1.0).max(0.0);
+            out
+        })
     }
 
     pub fn check_entity_id(&self, id: usize) -> Result<(), ClientError> {
@@ -1089,9 +1216,5 @@ impl ClientState {
         } else {
             Ok(())
         }
-    }
-
-    pub fn view_entity_id(&self) -> usize {
-        self.view.entity_id()
     }
 }

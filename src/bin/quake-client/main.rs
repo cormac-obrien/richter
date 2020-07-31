@@ -244,6 +244,8 @@ impl ClientProgram {
             self.cmds.clone(),
             self.console.clone(),
             self.audio_device.clone(),
+            &self.gfx_state.borrow(),
+            &self.menu.borrow(),
         ) {
             Ok(c) => c,
             Err(e) => match e {
@@ -265,7 +267,6 @@ impl ClientProgram {
             Game::new(
                 self.cvars.clone(),
                 self.cmds.clone(),
-                self.ui_renderer.clone(),
                 self.input.clone(),
                 cl,
             )
@@ -284,6 +285,8 @@ impl ClientProgram {
             self.cmds.clone(),
             self.console.clone(),
             self.audio_device.clone(),
+            &self.gfx_state.borrow(),
+            &self.menu.borrow(),
         )
         .unwrap();
 
@@ -291,7 +294,6 @@ impl ClientProgram {
             Game::new(
                 self.cvars.clone(),
                 self.cmds.clone(),
-                self.ui_renderer.clone(),
                 self.input.clone(),
                 cl,
             )
@@ -384,7 +386,7 @@ impl Program for ClientProgram {
             }
         }
 
-        match self.input.borrow().current_focus() {
+        match self.input.borrow().focus() {
             InputFocus::Game => {
                 self.window.set_cursor_grab(true).unwrap();
                 self.window.set_cursor_visible(false);

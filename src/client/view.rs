@@ -3,14 +3,14 @@ use std::f32::consts::PI;
 use crate::{
     client::input::game::{Action, GameInput},
     common::{
-        engine::{duration_to_f32, duration_from_f32},
+        engine::{duration_from_f32, duration_to_f32},
         math::{self, Angles},
     },
 };
 
+use super::IntermissionKind;
 use cgmath::{Angle as _, Deg, Euler, InnerSpace as _, Matrix3, Vector3};
 use chrono::Duration;
-use super::IntermissionKind;
 
 pub struct View {
     // entity "holding" the camera
@@ -36,6 +36,9 @@ pub struct View {
 
     // punch angles from server
     punch_angles: Angles,
+
+    // final angles combining all sources
+    final_angles: Angles,
 }
 
 impl View {
@@ -49,6 +52,7 @@ impl View {
             damage_angles: Angles::zero(),
             damage_time: Duration::zero(),
             punch_angles: Angles::zero(),
+            final_angles: Angles::zero(),
         }
     }
 
@@ -102,7 +106,7 @@ impl View {
         cl_anglespeedkey: f32,
         cl_pitchspeed: f32,
         cl_yawspeed: f32,
-        mouse_vars: MouseVars
+        mouse_vars: MouseVars,
     ) {
         let frame_time_f32 = duration_to_f32(frame_time);
         let speed = if game_input.action_state(Action::Speed) {
@@ -167,15 +171,15 @@ impl View {
         self.damage_angles.pitch = Deg(dmg_factor * pitch_factor * vars.v_kickpitch);
     }
 
-    pub fn angles(
-        &self,
+    pub fn calc_final_angles(
+        &mut self,
         time: Duration,
         intermission: Option<&IntermissionKind>,
         velocity: Vector3<f32>,
         mut idle_vars: IdleVars,
         kick_vars: KickVars,
         roll_vars: RollVars,
-    ) -> Angles {
+    ) {
         let move_angles = Angles {
             pitch: Deg(0.0),
             roll: roll(self.input_angles, velocity, roll_vars),
@@ -191,7 +195,12 @@ impl View {
         }
         let idle_angles = idle(time, idle_vars);
 
-        self.input_angles + move_angles + damage_angles + self.punch_angles + idle_angles
+        self.final_angles =
+            self.input_angles + move_angles + damage_angles + self.punch_angles + idle_angles;
+    }
+
+    pub fn final_angles(&self) -> Angles {
+        self.final_angles
     }
 
     pub fn origin(&self) {

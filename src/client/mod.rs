@@ -58,7 +58,7 @@ use crate::{
             self,
             connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION},
             BlockingMode, ClientCmd, ClientStat, ColorShift, EntityEffects, EntityState, GameType,
-            ItemFlags, NetError, PlayerColor, QSocket, ServerCmd, SignOnStage, PlayerData,
+            ItemFlags, NetError, PlayerColor, PlayerData, QSocket, ServerCmd, SignOnStage,
         },
         vfs::{Vfs, VfsError},
     },
@@ -66,8 +66,11 @@ use crate::{
 
 use cgmath::{Deg, Vector3};
 use chrono::Duration;
+use menu::Menu;
+use render::{ClientRenderer, GraphicsState};
 use sound::SoundError;
 use thiserror::Error;
+use input::InputFocus;
 
 // connections are tried 3 times, see
 // https://github.com/id-Software/Quake/blob/master/WinQuake/net_dgrm.c#L1248
@@ -757,7 +760,9 @@ impl Connection {
         cmds: &mut CmdRegistry,
         console: &mut Console,
         audio_device: &rodio::Device,
+        idle_vars: IdleVars,
         kick_vars: KickVars,
+        roll_vars: RollVars,
         cl_nolerp: f32,
         sv_gravity: f32,
     ) -> Result<(), ClientError> {
@@ -797,6 +802,9 @@ impl Connection {
 
         // these all require the player entity to have spawned
         if self.signon.get() == SignOnStage::Done {
+            // update view
+            self.state.calc_final_view(idle_vars, kick_vars, roll_vars);
+
             // update ear positions
             self.state.update_listener();
 
@@ -818,6 +826,7 @@ pub struct Client {
     console: Rc<RefCell<Console>>,
     audio_device: Rc<rodio::Device>,
     conn: Option<Connection>,
+    renderer: ClientRenderer,
 }
 
 impl Client {
@@ -833,6 +842,8 @@ impl Client {
         cmds: Rc<RefCell<CmdRegistry>>,
         console: Rc<RefCell<Console>>,
         audio_device: Rc<rodio::Device>,
+        gfx_state: &GraphicsState,
+        menu: &Menu,
     ) -> Result<Client, ClientError>
     where
         S: AsRef<str>,
@@ -854,6 +865,7 @@ impl Client {
             console,
             audio_device: audio_device.clone(),
             conn,
+            renderer: ClientRenderer::new(gfx_state, menu),
         })
     }
 
@@ -864,6 +876,8 @@ impl Client {
         cmds: Rc<RefCell<CmdRegistry>>,
         console: Rc<RefCell<Console>>,
         audio_device: Rc<rodio::Device>,
+        gfx_state: &GraphicsState,
+        menu: &Menu,
     ) -> Result<Client, ClientError>
     where
         A: ToSocketAddrs,
@@ -958,6 +972,7 @@ impl Client {
             console,
             audio_device: audio_device.clone(),
             conn,
+            renderer: ClientRenderer::new(gfx_state, menu),
         })
     }
 
@@ -965,7 +980,72 @@ impl Client {
         unimplemented!();
     }
 
-    fn cvar_value<S>(&self, name: S) -> Result<f32, ClientError>
+    pub fn frame(&mut self, frame_time: Duration) -> Result<(), ClientError> {
+        let cl_nolerp = self.cvar_value("cl_nolerp")?;
+        let sv_gravity = self.cvar_value("sv_gravity")?;
+        let idle_vars = self.idle_vars()?;
+        let kick_vars = self.kick_vars()?;
+        let roll_vars = self.roll_vars()?;
+        if let Some(ref mut conn) = self.conn {
+            conn.frame(
+                frame_time,
+                &self.vfs,
+                &mut self.cmds.borrow_mut(),
+                &mut self.console.borrow_mut(),
+                &self.audio_device,
+                idle_vars,
+                kick_vars,
+                roll_vars,
+                cl_nolerp,
+                sv_gravity,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn render(
+        &mut self,
+        gfx_state: &GraphicsState,
+        encoder: &mut wgpu::CommandEncoder,
+        width: u32,
+        height: u32,
+        menu: &Menu,
+        focus: InputFocus,
+    ) -> Result<(), ClientError> {
+        let (signon, state) = match self.conn {
+            Some(Connection { ref signon, ref state, .. }) => {
+                if let SignOnStage::Done = signon.get() {
+                    if !self.renderer.world_renderer_created() {
+                        self.renderer.create_world_renderer(gfx_state, state.models());
+                    }
+                }
+
+                (Some(signon.get()), Some(state))
+            }
+            None => (None, None)
+        };
+        let fov = Deg(self.cvar_value("fov")?);
+        let cvars = self.cvars.borrow();
+        let console = self.console.borrow();
+        self.renderer.render(
+            gfx_state,
+            encoder,
+            signon,
+            state,
+            width,
+            height,
+            fov,
+            &cvars,
+            &console,
+            menu,
+            focus,
+        );
+
+        Ok(())
+    }
+
+    pub fn cvar_value<S>(&self, name: S) -> Result<f32, ClientError>
     where
         S: AsRef<str>,
     {
@@ -1003,6 +1083,14 @@ impl Client {
         }
 
         Ok(())
+    }
+
+    pub fn signon(&self) -> Option<SignOnStage> {
+        self.conn.as_ref().map(|c| c.signon.get())
+    }
+
+    pub fn state(&self) -> Option<&ClientState> {
+        self.conn.as_ref().map(|c| &c.state)
     }
 
     pub fn get_entity(&self, id: usize) -> Result<&ClientEntity, ClientError> {
@@ -1079,14 +1167,7 @@ impl Client {
                 ref kind,
                 ..
             }) => match kind {
-                ConnectionKind::Server { .. } => state.view.angles(
-                    time,
-                    state.intermission.as_ref(),
-                    state.velocity,
-                    self.idle_vars()?,
-                    self.kick_vars()?,
-                    self.roll_vars()?,
-                ),
+                ConnectionKind::Server { .. } => state.view.final_angles(),
 
                 ConnectionKind::Demo(_) => {
                     let v = state.entities[state.view_entity_id()].angles;
@@ -1123,26 +1204,6 @@ impl Client {
             Some(Connection { ref state, .. }) => Ok(state.lerp_factor),
             None => Err(ClientError::NotConnected),
         }
-    }
-
-    pub fn frame(&mut self, frame_time: Duration) -> Result<(), ClientError> {
-        let cl_nolerp = self.cvar_value("cl_nolerp")?;
-        let sv_gravity = self.cvar_value("sv_gravity")?;
-        let kick_vars = self.kick_vars()?;
-        if let Some(ref mut conn) = self.conn {
-            conn.frame(
-                frame_time,
-                &self.vfs,
-                &mut self.cmds.borrow_mut(),
-                &mut self.console.borrow_mut(),
-                &self.audio_device,
-                kick_vars,
-                cl_nolerp,
-                sv_gravity,
-            )?;
-        }
-
-        Ok(())
     }
 
     pub fn iter_visible_entities(&self) -> Option<impl Iterator<Item = &ClientEntity> + Clone> {
@@ -1226,39 +1287,6 @@ impl Client {
     pub fn face_anim_time(&self) -> Result<Duration, ClientError> {
         match self.conn {
             Some(Connection { ref state, .. }) => Ok(state.face_anim_time),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn lightstyle_values(&self) -> Result<Vec<f32>, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => {
-                let mut values = Vec::new();
-
-                for lightstyle_id in 0..64 {
-                    match state.light_styles.get(&lightstyle_id) {
-                        Some(ls) => {
-                            let float_time = engine::duration_to_f32(state.time);
-                            let frame = if ls.len() == 0 {
-                                None
-                            } else {
-                                Some((float_time * 10.0) as usize % ls.len())
-                            };
-
-                            values.push(match frame {
-                                // 'z' - 'a' = 25, so divide by 12.5 to get range [0, 2]
-                                Some(f) => (ls.as_bytes()[f] - 'a' as u8) as f32 / 12.5,
-                                None => 1.0,
-                            })
-                        }
-
-                        None => Err(ClientError::NoSuchLightmapAnimation(lightstyle_id as usize))?,
-                    }
-                }
-
-                Ok(values)
-            }
-
             None => Err(ClientError::NotConnected),
         }
     }

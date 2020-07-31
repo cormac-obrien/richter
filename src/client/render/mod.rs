@@ -75,24 +75,38 @@ use std::{
 };
 
 use crate::{
-    client::render::{
-        blit::BlitPipeline,
-        target::{DeferredPassTarget, FinalPassTarget, InitialPassTarget},
-        ui::{glyph::GlyphPipeline, quad::QuadPipeline},
-        uniform::DynamicUniformBuffer,
-        world::{
-            alias::AliasPipeline,
-            brush::BrushPipeline,
-            deferred::DeferredPipeline,
-            particle::ParticlePipeline,
-            postprocess::{self, PostProcessPipeline},
-            sprite::SpritePipeline,
-            EntityUniforms,
+    client::{
+        entity::MAX_LIGHTS,
+        input::InputFocus,
+        menu::Menu,
+        render::{
+            blit::BlitPipeline,
+            target::{DeferredPassTarget, FinalPassTarget, InitialPassTarget},
+            ui::{glyph::GlyphPipeline, quad::QuadPipeline},
+            uniform::DynamicUniformBuffer,
+            world::{
+                alias::AliasPipeline,
+                brush::BrushPipeline,
+                deferred::DeferredPipeline,
+                particle::ParticlePipeline,
+                postprocess::{self, PostProcessPipeline},
+                sprite::SpritePipeline,
+                EntityUniforms,
+            },
         },
+        state::ClientState,
     },
-    common::{vfs::Vfs, wad::Wad},
+    common::{
+        console::{Console, CvarRegistry},
+        model::Model,
+        net::SignOnStage,
+        vfs::Vfs,
+        wad::Wad,
+    },
 };
 
+use bumpalo::Bump;
+use cgmath::{Deg, InnerSpace, Vector3, Zero};
 use failure::Error;
 
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -619,5 +633,193 @@ impl GraphicsState {
 
     pub fn gfx_wad(&self) -> &Wad {
         &self.gfx_wad
+    }
+}
+
+pub struct ClientRenderer {
+    world_renderer: Option<WorldRenderer>,
+    deferred_renderer: DeferredRenderer,
+    postprocess_renderer: PostProcessRenderer,
+    ui_renderer: UiRenderer,
+    bump: Bump,
+}
+
+impl ClientRenderer {
+    pub fn new(state: &GraphicsState, menu: &Menu) -> ClientRenderer {
+        ClientRenderer {
+            world_renderer: None,
+            deferred_renderer: DeferredRenderer::new(
+                state,
+                state.initial_pass_target.diffuse_view(),
+                state.initial_pass_target.normal_view(),
+                state.initial_pass_target.light_view(),
+                state.initial_pass_target.depth_view(),
+            ),
+            postprocess_renderer: PostProcessRenderer::new(
+                state,
+                state.deferred_pass_target.color_view(),
+            ),
+            ui_renderer: UiRenderer::new(state, menu),
+            bump: Bump::new(),
+        }
+    }
+
+    pub fn create_world_renderer(&mut self, state: &GraphicsState, models: &[Model]) {
+        self.world_renderer = Some(WorldRenderer::new(state, models, 1));
+    }
+
+    pub fn destroy_world_renderer(&mut self) {
+        self.world_renderer = None;
+    }
+
+    pub fn render(
+        &mut self,
+        gfx_state: &GraphicsState,
+        encoder: &mut wgpu::CommandEncoder,
+        signon: Option<SignOnStage>,
+        client_state: Option<&ClientState>,
+        width: u32,
+        height: u32,
+        fov: Deg<f32>,
+        cvars: &CvarRegistry,
+        console: &Console,
+        menu: &Menu,
+        focus: InputFocus,
+    ) {
+        self.bump.reset();
+
+        if let Some(ref cl_state) = client_state {
+            match signon.unwrap() {
+                SignOnStage::Done => {
+                    let camera = cl_state.camera(width as f32 / height as f32, fov);
+                    // initial render pass
+                    {
+                        let init_pass_builder =
+                            gfx_state.initial_pass_target().render_pass_builder();
+
+                        let mut init_pass =
+                            encoder.begin_render_pass(&init_pass_builder.descriptor());
+
+                        match self.world_renderer {
+                            Some(ref world) => world.render_pass(
+                                gfx_state,
+                                &mut init_pass,
+                                &self.bump,
+                                &camera,
+                                cl_state.time(),
+                                cl_state.iter_visible_entities(),
+                                cl_state.iter_particles(),
+                                cl_state.lightstyle_values().unwrap().as_slice(),
+                                cvars,
+                            ),
+                            None => panic!("world renderer not initialized"),
+                        }
+                    }
+
+                    // deferred lighting pass
+                    {
+                        let deferred_pass_builder =
+                            gfx_state.deferred_pass_target().render_pass_builder();
+                        let mut deferred_pass =
+                            encoder.begin_render_pass(&deferred_pass_builder.descriptor());
+
+                        let mut lights = [PointLight {
+                            origin: Vector3::zero(),
+                            radius: 0.0,
+                        }; MAX_LIGHTS];
+
+                        let mut light_count = 0;
+                        for (light_id, light) in cl_state.iter_lights().enumerate() {
+                            light_count += 1;
+                            let light_origin = light.origin();
+                            let converted_origin =
+                                Vector3::new(-light_origin.y, light_origin.z, -light_origin.x);
+                            lights[light_id].origin =
+                                (camera.view() * converted_origin.extend(1.0)).truncate();
+                            lights[light_id].radius = light.radius(cl_state.time());
+                        }
+
+                        let uniforms = DeferredUniforms {
+                            inv_projection: camera.inverse_projection().into(),
+                            light_count,
+                            _pad: [0; 3],
+                            lights,
+                        };
+
+                        self.deferred_renderer
+                            .record_draw(gfx_state, &mut deferred_pass, uniforms);
+                    }
+                }
+
+                _ => self.destroy_world_renderer(),
+            }
+        }
+
+        let ui_state = match client_state {
+            Some(ref cl_state) => UiState::InGame {
+                hud: match cl_state.intermission() {
+                    Some(kind) => HudState::Intermission {
+                        kind,
+                        completion_duration: cl_state.completion_time().unwrap()
+                            - cl_state.start_time(),
+                        stats: cl_state.stats(),
+                    },
+
+                    None => HudState::InGame {
+                        items: cl_state.items(),
+                        item_pickup_time: cl_state.item_pickup_times(),
+                        stats: cl_state.stats(),
+                        face_anim_time: cl_state.face_anim_time(),
+                    },
+                },
+
+                overlay: match focus {
+                    InputFocus::Game => None,
+                    InputFocus::Console => Some(UiOverlay::Console(console)),
+                    InputFocus::Menu => Some(UiOverlay::Menu(menu)),
+                },
+            },
+
+            None => UiState::Title {
+                overlay: match focus {
+                    InputFocus::Console => UiOverlay::Console(console),
+                    InputFocus::Menu => UiOverlay::Menu(menu),
+                    InputFocus::Game => unreachable!(),
+                },
+            },
+        };
+
+        // final render pass
+        {
+            // quad_commands must outlive final pass
+            let mut quad_commands = Vec::new();
+            let mut glyph_commands = Vec::new();
+
+            let final_pass_builder = gfx_state.final_pass_target().render_pass_builder();
+            let mut final_pass = encoder.begin_render_pass(&final_pass_builder.descriptor());
+
+            if let Some(ref cl_state) = client_state {
+                self.postprocess_renderer.record_draw(
+                    gfx_state,
+                    &mut final_pass,
+                    cl_state.color_shift(),
+                );
+
+                // TODO: use host time for menu & console animations
+                self.ui_renderer.render_pass(
+                    &gfx_state,
+                    &mut final_pass,
+                    Extent2d { width, height },
+                    cl_state.time(),
+                    &ui_state,
+                    &mut quad_commands,
+                    &mut glyph_commands,
+                );
+            }
+        }
+    }
+
+    pub fn world_renderer_created(&self) -> bool {
+        self.world_renderer.is_some()
     }
 }
