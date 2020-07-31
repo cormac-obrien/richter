@@ -19,7 +19,7 @@
 // SOFTWARE.
 
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     path::PathBuf,
     rc::Rc,
 };
@@ -31,25 +31,18 @@ use crate::{
 
 use richter::{
     client::{
-        entity::MAX_LIGHTS,
-        input::{Input, InputFocus},
+        input::Input,
         menu::Menu,
         render::{
-            Camera, ClientRenderer, DeferredRenderer, DeferredUniforms, Extent2d, GraphicsState,
-            HudState, PointLight, PostProcessRenderer, RenderTarget as _, RenderTargetResolve as _,
-            SwapChainTarget, UiOverlay, UiRenderer, UiState, WorldRenderer,
+            Extent2d, GraphicsState, RenderTarget as _, RenderTargetResolve as _,
+            SwapChainTarget,
         },
         trace::TraceFrame,
         Client, ClientError,
     },
-    common::{
-        console::{CmdRegistry, Console, CvarRegistry},
-        math,
-        net::SignOnStage,
-    },
+    common::console::{CmdRegistry, Console, CvarRegistry},
 };
 
-use cgmath::{self, Deg};
 use chrono::Duration;
 use failure::Error;
 use log::info;
@@ -76,20 +69,6 @@ impl Game {
     ) -> Result<Game, Error> {
         // set up input commands
         input.borrow().register_cmds(&mut cmds.borrow_mut());
-
-        // set up focus toggles
-        cmds.borrow_mut()
-            .insert(
-                "toggleconsole",
-                cmd_toggleconsolemenu_disconnected(input.clone()),
-            )
-            .unwrap();
-        cmds.borrow_mut()
-            .insert(
-                "togglemenu",
-                cmd_toggleconsolemenu_disconnected(input.clone()),
-            )
-            .unwrap();
 
         // set up screenshots
         let screenshot_path = Rc::new(RefCell::new(None));
@@ -120,7 +99,7 @@ impl Game {
     pub fn frame(&mut self, gfx_state: &GraphicsState, frame_duration: Duration) {
         use ClientError::*;
 
-        match self.client.frame(frame_duration) {
+        match self.client.frame(frame_duration, gfx_state) {
             Ok(()) => (),
             Err(e) => match e {
                 Cvar(_)
@@ -144,25 +123,6 @@ impl Game {
                 _ => panic!("{}", e),
             },
         };
-
-        match self.client.signon() {
-            None => (),
-            Some(signon) => match signon {
-                SignOnStage::Done => {
-                    println!("finished loading");
-                    self.cmds.borrow_mut().insert_or_replace(
-                        "toggleconsole",
-                        cmd_toggleconsole_connected(self.input.clone()),
-                    );
-                    self.cmds.borrow_mut().insert_or_replace(
-                        "togglemenu",
-                        cmd_togglemenu_connected(self.input.clone()),
-                    );
-                }
-
-                _ => println!("loading..."),
-            },
-        }
 
         if let Some(ref mut game_input) = self.input.borrow_mut().game_input_mut() {
             self.client
@@ -247,40 +207,4 @@ impl std::ops::Drop for Game {
         let _ = self.cmds.borrow_mut().remove("trace_begin");
         let _ = self.cmds.borrow_mut().remove("trace_end");
     }
-}
-
-// implements the "toggleconsole" and "togglemenu" commands when the client is disconnected
-fn cmd_toggleconsolemenu_disconnected(input: Rc<RefCell<Input>>) -> Box<dyn Fn(&[&str])> {
-    Box::new(move |_| {
-        let focus = input.borrow().focus();
-        match focus {
-            InputFocus::Console => input.borrow_mut().set_focus(InputFocus::Menu),
-            InputFocus::Game => unreachable!(),
-            InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Console),
-        }
-    })
-}
-
-// implements the "toggleconsole" command when the client is connected
-fn cmd_toggleconsole_connected(input: Rc<RefCell<Input>>) -> Box<dyn Fn(&[&str])> {
-    Box::new(move |_| {
-        let focus = input.borrow().focus();
-        match focus {
-            InputFocus::Game => input.borrow_mut().set_focus(InputFocus::Console),
-            InputFocus::Console => input.borrow_mut().set_focus(InputFocus::Game),
-            InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Console),
-        }
-    })
-}
-
-// implements the "togglemenu" command when the client is connected
-fn cmd_togglemenu_connected(input: Rc<RefCell<Input>>) -> Box<dyn Fn(&[&str])> {
-    Box::new(move |_| {
-        let focus = input.borrow().focus();
-        match focus {
-            InputFocus::Game => input.borrow_mut().set_focus(InputFocus::Menu),
-            InputFocus::Console => input.borrow_mut().set_focus(InputFocus::Menu),
-            InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Game),
-        }
-    })
 }

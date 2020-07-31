@@ -94,7 +94,7 @@ use crate::{
                 EntityUniforms,
             },
         },
-        state::ClientState,
+        Connection,
     },
     common::{
         console::{Console, CvarRegistry},
@@ -105,6 +105,7 @@ use crate::{
     },
 };
 
+use super::ConnectionState;
 use bumpalo::Bump;
 use cgmath::{Deg, InnerSpace, Vector3, Zero};
 use failure::Error;
@@ -637,7 +638,6 @@ impl GraphicsState {
 }
 
 pub struct ClientRenderer {
-    world_renderer: Option<WorldRenderer>,
     deferred_renderer: DeferredRenderer,
     postprocess_renderer: PostProcessRenderer,
     ui_renderer: UiRenderer,
@@ -647,7 +647,6 @@ pub struct ClientRenderer {
 impl ClientRenderer {
     pub fn new(state: &GraphicsState, menu: &Menu) -> ClientRenderer {
         ClientRenderer {
-            world_renderer: None,
             deferred_renderer: DeferredRenderer::new(
                 state,
                 state.initial_pass_target.diffuse_view(),
@@ -664,20 +663,11 @@ impl ClientRenderer {
         }
     }
 
-    pub fn create_world_renderer(&mut self, state: &GraphicsState, models: &[Model]) {
-        self.world_renderer = Some(WorldRenderer::new(state, models, 1));
-    }
-
-    pub fn destroy_world_renderer(&mut self) {
-        self.world_renderer = None;
-    }
-
     pub fn render(
         &mut self,
         gfx_state: &GraphicsState,
         encoder: &mut wgpu::CommandEncoder,
-        signon: Option<SignOnStage>,
-        client_state: Option<&ClientState>,
+        conn: Option<&Connection>,
         width: u32,
         height: u32,
         fov: Deg<f32>,
@@ -688,10 +678,17 @@ impl ClientRenderer {
     ) {
         self.bump.reset();
 
-        if let Some(ref cl_state) = client_state {
-            match signon.unwrap() {
-                SignOnStage::Done => {
+        if let Some(Connection {
+            state: ref cl_state,
+            ref conn_state,
+            ..
+        }) = conn
+        {
+            match *conn_state.borrow() {
+                ConnectionState::Connected(ref world) => {
+                    // if client is fully connected, draw world
                     let camera = cl_state.camera(width as f32 / height as f32, fov);
+
                     // initial render pass
                     {
                         let init_pass_builder =
@@ -700,20 +697,17 @@ impl ClientRenderer {
                         let mut init_pass =
                             encoder.begin_render_pass(&init_pass_builder.descriptor());
 
-                        match self.world_renderer {
-                            Some(ref world) => world.render_pass(
-                                gfx_state,
-                                &mut init_pass,
-                                &self.bump,
-                                &camera,
-                                cl_state.time(),
-                                cl_state.iter_visible_entities(),
-                                cl_state.iter_particles(),
-                                cl_state.lightstyle_values().unwrap().as_slice(),
-                                cvars,
-                            ),
-                            None => panic!("world renderer not initialized"),
-                        }
+                        world.render_pass(
+                            gfx_state,
+                            &mut init_pass,
+                            &self.bump,
+                            &camera,
+                            cl_state.time(),
+                            cl_state.iter_visible_entities(),
+                            cl_state.iter_particles(),
+                            cl_state.lightstyle_values().unwrap().as_slice(),
+                            cvars,
+                        );
                     }
 
                     // deferred lighting pass
@@ -751,12 +745,18 @@ impl ClientRenderer {
                     }
                 }
 
-                _ => self.destroy_world_renderer(),
+                // if client is still signing on, draw the loading screen
+                ConnectionState::SignOn(_) => {
+                    // TODO: loading screen
+                }
             }
         }
 
-        let ui_state = match client_state {
-            Some(ref cl_state) => UiState::InGame {
+        let ui_state = match conn {
+            Some(Connection {
+                state: ref cl_state,
+                ..
+            }) => UiState::InGame {
                 hud: match cl_state.intermission() {
                     Some(kind) => HudState::Intermission {
                         kind,
@@ -789,7 +789,7 @@ impl ClientRenderer {
             },
         };
 
-        // final render pass
+        // final render pass: postprocess the world and draw the UI
         {
             // quad_commands must outlive final pass
             let mut quad_commands = Vec::new();
@@ -798,12 +798,20 @@ impl ClientRenderer {
             let final_pass_builder = gfx_state.final_pass_target().render_pass_builder();
             let mut final_pass = encoder.begin_render_pass(&final_pass_builder.descriptor());
 
-            if let Some(ref cl_state) = client_state {
-                self.postprocess_renderer.record_draw(
-                    gfx_state,
-                    &mut final_pass,
-                    cl_state.color_shift(),
-                );
+            if let Some(Connection {
+                state: ref cl_state,
+                ref conn_state,
+                ..
+            }) = conn
+            {
+                // only postprocess if client is in the game
+                if let ConnectionState::Connected(_) = *conn_state.borrow() {
+                    self.postprocess_renderer.record_draw(
+                        gfx_state,
+                        &mut final_pass,
+                        cl_state.color_shift(),
+                    );
+                }
 
                 // TODO: use host time for menu & console animations
                 self.ui_renderer.render_pass(
@@ -817,9 +825,5 @@ impl ClientRenderer {
                 );
             }
         }
-    }
-
-    pub fn world_renderer_created(&self) -> bool {
-        self.world_renderer.is_some()
     }
 }

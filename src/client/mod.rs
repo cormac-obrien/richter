@@ -31,19 +31,13 @@ pub mod view;
 
 pub use self::cvars::register_cvars;
 
-use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
-    io::BufReader,
-    net::ToSocketAddrs,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, io::BufReader, net::ToSocketAddrs, rc::Rc};
 
 use crate::{
     client::{
         demo::{DemoServer, DemoServerError},
         entity::{particle::Particle, ClientEntity, Light, MAX_STATIC_ENTITIES},
-        input::game::GameInput,
+        input::{game::GameInput, Input},
         sound::{AudioSource, Channel, Listener, StaticSound},
         state::{ClientState, PlayerInfo},
         trace::{TraceEntity, TraceFrame},
@@ -53,12 +47,12 @@ use crate::{
         console::{CmdRegistry, Console, ConsoleError, CvarRegistry},
         engine,
         math::Angles,
-        model::{Model, ModelError},
+        model::ModelError,
         net::{
             self,
             connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION},
             BlockingMode, ClientCmd, ClientStat, ColorShift, EntityEffects, EntityState, GameType,
-            ItemFlags, NetError, PlayerColor, PlayerData, QSocket, ServerCmd, SignOnStage,
+            ItemFlags, NetError, PlayerColor, QSocket, ServerCmd, SignOnStage,
         },
         vfs::{Vfs, VfsError},
     },
@@ -66,11 +60,11 @@ use crate::{
 
 use cgmath::{Deg, Vector3};
 use chrono::Duration;
+use input::InputFocus;
 use menu::Menu;
-use render::{ClientRenderer, GraphicsState};
+use render::{ClientRenderer, GraphicsState, WorldRenderer};
 use sound::SoundError;
 use thiserror::Error;
-use input::InputFocus;
 
 // connections are tried 3 times, see
 // https://github.com/id-Software/Quake/blob/master/WinQuake/net_dgrm.c#L1248
@@ -100,6 +94,8 @@ pub enum ClientError {
     UnrecognizedProtocol(i32),
     #[error("Client is not connected")]
     NotConnected,
+    #[error("Client has already signed on")]
+    AlreadySignedOn,
     #[error("No client with ID {0}")]
     NoSuchClient(usize),
     #[error("No player with ID {0}")]
@@ -256,67 +252,100 @@ impl Mixer {
     }
 }
 
-enum ConnectionKind {
-    Server { qsock: QSocket, compose: Vec<u8> },
-    Demo(DemoServer),
-}
-
-struct Connection {
-    signon: Rc<Cell<SignOnStage>>,
-    state: ClientState,
-    kind: ConnectionKind,
-}
-
 enum ConnectionStatus {
     Maintain,
     Disconnect,
 }
 
+enum ConnectionState {
+    SignOn(SignOnStage),
+    Connected(WorldRenderer),
+}
+
+enum ConnectionKind {
+    Server { qsock: QSocket, compose: Vec<u8> },
+    Demo(DemoServer),
+}
+
+pub struct Connection {
+    state: ClientState,
+    conn_state: Rc<RefCell<ConnectionState>>,
+    kind: ConnectionKind,
+}
+
 impl Connection {
-    fn handle_signon(&mut self, stage: SignOnStage) -> Result<(), ClientError> {
-        if let ConnectionKind::Server {
-            ref mut compose, ..
-        } = self.kind
-        {
-            match stage {
-                SignOnStage::Not => (), // TODO this is an error (invalid value)
-                SignOnStage::Prespawn => {
-                    ClientCmd::StringCmd {
-                        cmd: String::from("prespawn"),
+    fn handle_signon(
+        &mut self,
+        new_stage: SignOnStage,
+        gfx_state: &GraphicsState,
+    ) -> Result<(), ClientError> {
+        use SignOnStage::*;
+
+        let new_conn_state = match *self.conn_state.borrow_mut() {
+            // TODO: validate stage transition
+            ConnectionState::SignOn(ref mut _stage) => {
+                if let ConnectionKind::Server {
+                    ref mut compose, ..
+                } = self.kind
+                {
+                    match new_stage {
+                        Not => (), // TODO this is an error (invalid value)
+                        Prespawn => {
+                            ClientCmd::StringCmd {
+                                cmd: String::from("prespawn"),
+                            }
+                            .serialize(compose)?;
+                        }
+                        ClientInfo => {
+                            // TODO: fill in client info here
+                            ClientCmd::StringCmd {
+                                cmd: format!("name \"{}\"\n", "UNNAMED"),
+                            }
+                            .serialize(compose)?;
+                            ClientCmd::StringCmd {
+                                cmd: format!("color {} {}", 0, 0),
+                            }
+                            .serialize(compose)?;
+                            // TODO: need default spawn parameters?
+                            ClientCmd::StringCmd {
+                                cmd: format!("spawn {}", ""),
+                            }
+                            .serialize(compose)?;
+                        }
+                        SignOnStage::Begin => {
+                            ClientCmd::StringCmd {
+                                cmd: String::from("begin"),
+                            }
+                            .serialize(compose)?;
+                        }
+                        SignOnStage::Done => {
+                            debug!("SignOn complete");
+                            // TODO: end load screen
+                            self.state.start_time = self.state.time;
+                        }
                     }
-                    .serialize(compose)?;
                 }
-                SignOnStage::ClientInfo => {
-                    // TODO: fill in client info here
-                    ClientCmd::StringCmd {
-                        cmd: format!("name \"{}\"\n", "UNNAMED"),
-                    }
-                    .serialize(compose)?;
-                    ClientCmd::StringCmd {
-                        cmd: format!("color {} {}", 0, 0),
-                    }
-                    .serialize(compose)?;
-                    // TODO: need default spawn parameters?
-                    ClientCmd::StringCmd {
-                        cmd: format!("spawn {}", ""),
-                    }
-                    .serialize(compose)?;
-                }
-                SignOnStage::Begin => {
-                    ClientCmd::StringCmd {
-                        cmd: String::from("begin"),
-                    }
-                    .serialize(compose)?;
-                }
-                SignOnStage::Done => {
-                    debug!("SignOn complete");
-                    // TODO: end load screen
-                    self.state.start_time = self.state.time;
+
+                match new_stage {
+                    // TODO proper error
+                    Not => panic!("SignOnStage::Not in handle_signon"),
+                    // still signing on, advance to the new stage
+                    Prespawn | ClientInfo | Begin => ConnectionState::SignOn(new_stage),
+
+                    // finished signing on, build world renderer
+                    Done => ConnectionState::Connected(WorldRenderer::new(
+                        gfx_state,
+                        self.state.models(),
+                        1,
+                    )),
                 }
             }
-        }
 
-        self.signon.set(stage);
+            // ignore spurious sign-on messages
+            ConnectionState::Connected { .. } => return Ok(()),
+        };
+
+        self.conn_state.replace(new_conn_state);
 
         Ok(())
     }
@@ -324,6 +353,7 @@ impl Connection {
     fn parse_server_msg(
         &mut self,
         vfs: &Vfs,
+        gfx_state: &GraphicsState,
         cmds: &mut CmdRegistry,
         console: &mut Console,
         audio_device: &rodio::Device,
@@ -333,13 +363,13 @@ impl Connection {
 
         let (msg, demo_view_angles) = match self.kind {
             ConnectionKind::Server { ref mut qsock, .. } => {
-                let msg = qsock.recv_msg(match self.signon.get() {
+                let msg = qsock.recv_msg(match *self.conn_state.borrow() {
                     // if we're in the game, don't block waiting for messages
-                    SignOnStage::Done => BlockingMode::NonBlocking,
+                    ConnectionState::Connected(_) => BlockingMode::NonBlocking,
 
                     // otherwise, give the server some time to respond
                     // TODO: might make sense to make this a future or something
-                    _ => BlockingMode::Timeout(Duration::seconds(5)),
+                    ConnectionState::SignOn(_) => BlockingMode::Timeout(Duration::seconds(5)),
                 })?;
 
                 (msg, None)
@@ -414,10 +444,7 @@ impl Connection {
 
                 ServerCmd::FastUpdate(ent_update) => {
                     // first update signals the last sign-on stage
-                    if self.signon.get() == SignOnStage::Begin {
-                        self.signon.set(SignOnStage::Done);
-                        self.handle_signon(self.signon.get())?;
-                    }
+                    self.handle_signon(SignOnStage::Done, gfx_state)?;
 
                     let ent_id = ent_update.ent_id as usize;
                     self.state.update_entity(ent_id, ent_update)?;
@@ -532,7 +559,7 @@ impl Connection {
                     self.state.set_view_entity(ent_id as usize)?;
                 }
 
-                ServerCmd::SignOnStage { stage } => self.handle_signon(stage)?,
+                ServerCmd::SignOnStage { stage } => self.handle_signon(stage, gfx_state)?,
 
                 ServerCmd::Sound {
                     volume,
@@ -757,6 +784,7 @@ impl Connection {
         &mut self,
         frame_time: Duration,
         vfs: &Vfs,
+        gfx_state: &GraphicsState,
         cmds: &mut CmdRegistry,
         console: &mut Console,
         audio_device: &rodio::Device,
@@ -771,7 +799,7 @@ impl Connection {
         // do this _before_ parsing server messages so that we know when to
         // request the next message from the demo server.
         self.state.advance_time(frame_time);
-        self.parse_server_msg(vfs, cmds, console, audio_device, kick_vars)?;
+        self.parse_server_msg(vfs, gfx_state, cmds, console, audio_device, kick_vars)?;
         self.state.update_interp_ratio(cl_nolerp);
 
         // interpolate entity data and spawn particle effects, lights
@@ -801,7 +829,7 @@ impl Connection {
         }
 
         // these all require the player entity to have spawned
-        if self.signon.get() == SignOnStage::Done {
+        if let ConnectionState::Connected(_) = *self.conn_state.borrow() {
             // update view
             self.state.calc_final_view(idle_vars, kick_vars, roll_vars);
 
@@ -824,6 +852,7 @@ pub struct Client {
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
     console: Rc<RefCell<Console>>,
+    input: Rc<RefCell<Input>>,
     audio_device: Rc<rodio::Device>,
     conn: Option<Connection>,
     renderer: ClientRenderer,
@@ -831,8 +860,10 @@ pub struct Client {
 
 impl Client {
     /// Implements the `reconnect` command.
-    fn cmd_reconnect(signon: Rc<Cell<SignOnStage>>) -> Box<dyn Fn(&[&str])> {
-        Box::new(move |_| signon.set(SignOnStage::Not))
+    fn cmd_reconnect(conn_state: Rc<RefCell<ConnectionState>>) -> Box<dyn Fn(&[&str])> {
+        Box::new(move |_| {
+            conn_state.replace(ConnectionState::SignOn(SignOnStage::Prespawn));
+        })
     }
 
     pub fn play_demo<S>(
@@ -841,6 +872,7 @@ impl Client {
         cvars: Rc<RefCell<CvarRegistry>>,
         cmds: Rc<RefCell<CmdRegistry>>,
         console: Rc<RefCell<Console>>,
+        input: Rc<RefCell<Input>>,
         audio_device: Rc<rodio::Device>,
         gfx_state: &GraphicsState,
         menu: &Menu,
@@ -848,14 +880,26 @@ impl Client {
     where
         S: AsRef<str>,
     {
+        // set up toggleconsole
+        cmds.borrow_mut()
+            .insert_or_replace("toggleconsole", cmd_toggleconsole_connected(input.clone()));
+
+        // set up togglemenu
+        cmds.borrow_mut()
+            .insert_or_replace("togglemenu", cmd_togglemenu_connected(input.clone()));
+
+        // set up reconnect
+        let conn_state = Rc::new(RefCell::new(ConnectionState::SignOn(SignOnStage::Prespawn)));
+        cmds.borrow_mut()
+            .insert_or_replace("reconnect", Client::cmd_reconnect(conn_state.clone()));
+
         let mut demo_file = vfs.open(demo_path)?;
         let demo_server = DemoServer::new(&mut demo_file)?;
-        let signon = Rc::new(Cell::new(SignOnStage::Not));
 
         let conn = Some(Connection {
-            signon,
             state: ClientState::new(audio_device.clone())?,
             kind: ConnectionKind::Demo(demo_server),
+            conn_state,
         });
 
         Ok(Client {
@@ -863,6 +907,7 @@ impl Client {
             cvars,
             cmds,
             console,
+            input,
             audio_device: audio_device.clone(),
             conn,
             renderer: ClientRenderer::new(gfx_state, menu),
@@ -875,6 +920,7 @@ impl Client {
         cvars: Rc<RefCell<CvarRegistry>>,
         cmds: Rc<RefCell<CmdRegistry>>,
         console: Rc<RefCell<Console>>,
+        input: Rc<RefCell<Input>>,
         audio_device: Rc<rodio::Device>,
         gfx_state: &GraphicsState,
         menu: &Menu,
@@ -882,10 +928,18 @@ impl Client {
     where
         A: ToSocketAddrs,
     {
-        // set up reconnect
-        let signon = Rc::new(Cell::new(SignOnStage::Not));
+        // set up toggleconsole
         cmds.borrow_mut()
-            .insert_or_replace("reconnect", Client::cmd_reconnect(signon.clone()));
+            .insert_or_replace("toggleconsole", cmd_toggleconsole_connected(input.clone()));
+
+        // set up togglemenu
+        cmds.borrow_mut()
+            .insert_or_replace("togglemenu", cmd_togglemenu_connected(input.clone()));
+
+        // set up reconnect
+        let conn_state = Rc::new(RefCell::new(ConnectionState::SignOn(SignOnStage::Prespawn)));
+        cmds.borrow_mut()
+            .insert_or_replace("reconnect", Client::cmd_reconnect(conn_state.clone()));
 
         let mut con_sock = ConnectSocket::bind("0.0.0.0:0")?;
         let server_addr = match server_addrs.to_socket_addrs() {
@@ -957,12 +1011,12 @@ impl Client {
         let qsock = con_sock.into_qsocket(new_addr);
 
         let conn = Some(Connection {
-            signon,
             state: ClientState::new(audio_device.clone())?,
             kind: ConnectionKind::Server {
                 qsock,
                 compose: Vec::new(),
             },
+            conn_state,
         });
 
         Ok(Client {
@@ -970,6 +1024,7 @@ impl Client {
             cvars,
             cmds,
             console,
+            input,
             audio_device: audio_device.clone(),
             conn,
             renderer: ClientRenderer::new(gfx_state, menu),
@@ -977,10 +1032,23 @@ impl Client {
     }
 
     pub fn disconnect(&self) {
+        // make toggle commands only toggle between menu and console
+        self.cmds.borrow_mut().insert_or_replace(
+            "toggleconsole",
+            cmd_toggleconsolemenu_disconnected(self.input.clone()),
+        );
+        self.cmds.borrow_mut().insert_or_replace(
+            "togglemenu",
+            cmd_toggleconsolemenu_disconnected(self.input.clone()),
+        );
         unimplemented!();
     }
 
-    pub fn frame(&mut self, frame_time: Duration) -> Result<(), ClientError> {
+    pub fn frame(
+        &mut self,
+        frame_time: Duration,
+        gfx_state: &GraphicsState,
+    ) -> Result<(), ClientError> {
         let cl_nolerp = self.cvar_value("cl_nolerp")?;
         let sv_gravity = self.cvar_value("sv_gravity")?;
         let idle_vars = self.idle_vars()?;
@@ -990,6 +1058,7 @@ impl Client {
             conn.frame(
                 frame_time,
                 &self.vfs,
+                gfx_state,
                 &mut self.cmds.borrow_mut(),
                 &mut self.console.borrow_mut(),
                 &self.audio_device,
@@ -1013,26 +1082,14 @@ impl Client {
         menu: &Menu,
         focus: InputFocus,
     ) -> Result<(), ClientError> {
-        let (signon, state) = match self.conn {
-            Some(Connection { ref signon, ref state, .. }) => {
-                if let SignOnStage::Done = signon.get() {
-                    if !self.renderer.world_renderer_created() {
-                        self.renderer.create_world_renderer(gfx_state, state.models());
-                    }
-                }
-
-                (Some(signon.get()), Some(state))
-            }
-            None => (None, None)
-        };
         let fov = Deg(self.cvar_value("fov")?);
         let cvars = self.cvars.borrow();
         let console = self.console.borrow();
+
         self.renderer.render(
             gfx_state,
             encoder,
-            signon,
-            state,
+            self.conn.as_ref(),
             width,
             height,
             fov,
@@ -1085,10 +1142,6 @@ impl Client {
         Ok(())
     }
 
-    pub fn signon(&self) -> Option<SignOnStage> {
-        self.conn.as_ref().map(|c| c.signon.get())
-    }
-
     pub fn state(&self) -> Option<&ClientState> {
         self.conn.as_ref().map(|c| &c.state)
     }
@@ -1112,42 +1165,6 @@ impl Client {
             }
 
             None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn signon_stage(&self) -> Result<SignOnStage, ClientError> {
-        match self.conn {
-            Some(Connection { ref signon, .. }) => Ok(signon.get()),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn entities(&self) -> Option<&[ClientEntity]> {
-        match self.conn {
-            Some(Connection {
-                ref signon,
-                ref state,
-                ..
-            }) => match signon.get() {
-                SignOnStage::Done => Some(&state.entities),
-                _ => None,
-            },
-            None => None,
-        }
-    }
-
-    pub fn models(&self) -> Option<&[Model]> {
-        match self.conn {
-            Some(Connection {
-                ref signon,
-                ref state,
-                ..
-            }) => match signon.get() {
-                SignOnStage::Done => Some(&state.models),
-                _ => None,
-            },
-
-            None => None,
         }
     }
 
@@ -1421,4 +1438,40 @@ impl std::ops::Drop for Client {
         // if this errors, it was already removed so we don't care
         let _ = self.cmds.borrow_mut().remove("reconnect");
     }
+}
+
+// implements the "toggleconsole" and "togglemenu" commands when the client is disconnected
+fn cmd_toggleconsolemenu_disconnected(input: Rc<RefCell<Input>>) -> Box<dyn Fn(&[&str])> {
+    Box::new(move |_| {
+        let focus = input.borrow().focus();
+        match focus {
+            InputFocus::Console => input.borrow_mut().set_focus(InputFocus::Menu),
+            InputFocus::Game => unreachable!(),
+            InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Console),
+        }
+    })
+}
+
+// implements the "toggleconsole" command when the client is connected
+fn cmd_toggleconsole_connected(input: Rc<RefCell<Input>>) -> Box<dyn Fn(&[&str])> {
+    Box::new(move |_| {
+        let focus = input.borrow().focus();
+        match focus {
+            InputFocus::Game => input.borrow_mut().set_focus(InputFocus::Console),
+            InputFocus::Console => input.borrow_mut().set_focus(InputFocus::Game),
+            InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Console),
+        }
+    })
+}
+
+// implements the "togglemenu" command when the client is connected
+fn cmd_togglemenu_connected(input: Rc<RefCell<Input>>) -> Box<dyn Fn(&[&str])> {
+    Box::new(move |_| {
+        let focus = input.borrow().focus();
+        match focus {
+            InputFocus::Game => input.borrow_mut().set_focus(InputFocus::Menu),
+            InputFocus::Console => input.borrow_mut().set_focus(InputFocus::Menu),
+            InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Game),
+        }
+    })
 }
