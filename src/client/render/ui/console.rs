@@ -34,10 +34,8 @@ impl ConsoleRenderer {
         time: Duration,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,
+        proportion: f32,
     ) {
-        // TODO: take screen proportion as a parameter or cvar
-        let proportion = 0.33;
-
         // TODO: take scale as cvar
         let scale = 2.0;
         let console_anchor = Anchor {

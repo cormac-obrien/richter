@@ -44,7 +44,7 @@ pub enum InputFocus {
 
 pub struct Input {
     window_focused: bool,
-    current_focus: InputFocus,
+    focus: InputFocus,
 
     game_input: GameInput,
     console_input: ConsoleInput,
@@ -59,7 +59,7 @@ impl Input {
     ) -> Input {
         Input {
             window_focused: true,
-            current_focus: init_focus,
+            focus: init_focus,
 
             game_input: GameInput::new(console.clone()),
             console_input: ConsoleInput::new(console.clone()),
@@ -77,7 +77,7 @@ impl Input {
 
             _ => {
                 if self.window_focused {
-                    match self.current_focus {
+                    match self.focus {
                         InputFocus::Game => self.game_input.handle_event(event),
                         InputFocus::Console => self.console_input.handle_event(event)?,
                         InputFocus::Menu => self.menu_input.handle_event(event)?,
@@ -89,14 +89,12 @@ impl Input {
         Ok(())
     }
 
-    pub fn current_focus(&self) -> InputFocus {
-        self.current_focus
+    pub fn focus(&self) -> InputFocus {
+        self.focus
     }
 
-    pub fn set_focus(&mut self, new_focus: InputFocus) -> Result<(), Error> {
-        self.current_focus = new_focus;
-
-        Ok(())
+    pub fn set_focus(&mut self, new_focus: InputFocus) {
+        self.focus = new_focus;
     }
 
     /// Bind a `BindInput` to a `BindTarget`.
@@ -113,7 +111,7 @@ impl Input {
     }
 
     pub fn game_input(&self) -> Option<&GameInput> {
-        if let InputFocus::Game = self.current_focus {
+        if let InputFocus::Game = self.focus {
             Some(&self.game_input)
         } else {
             None
@@ -121,7 +119,7 @@ impl Input {
     }
 
     pub fn game_input_mut(&mut self) -> Option<&mut GameInput> {
-        if let InputFocus::Game = self.current_focus {
+        if let InputFocus::Game = self.focus {
             Some(&mut self.game_input)
         } else {
             None

@@ -75,24 +75,40 @@ use std::{
 };
 
 use crate::{
-    client::render::{
-        blit::BlitPipeline,
-        target::{DeferredPassTarget, FinalPassTarget, InitialPassTarget},
-        ui::{glyph::GlyphPipeline, quad::QuadPipeline},
-        uniform::DynamicUniformBuffer,
-        world::{
-            alias::AliasPipeline,
-            brush::BrushPipeline,
-            deferred::DeferredPipeline,
-            particle::ParticlePipeline,
-            postprocess::{self, PostProcessPipeline},
-            sprite::SpritePipeline,
-            EntityUniforms,
+    client::{
+        entity::MAX_LIGHTS,
+        input::InputFocus,
+        menu::Menu,
+        render::{
+            blit::BlitPipeline,
+            target::{DeferredPassTarget, FinalPassTarget, InitialPassTarget},
+            ui::{glyph::GlyphPipeline, quad::QuadPipeline},
+            uniform::DynamicUniformBuffer,
+            world::{
+                alias::AliasPipeline,
+                brush::BrushPipeline,
+                deferred::DeferredPipeline,
+                particle::ParticlePipeline,
+                postprocess::{self, PostProcessPipeline},
+                sprite::SpritePipeline,
+                EntityUniforms,
+            },
         },
+        Connection,
     },
-    common::{vfs::Vfs, wad::Wad},
+    common::{
+        console::{Console, CvarRegistry},
+        model::Model,
+        net::SignOnStage,
+        vfs::Vfs,
+        wad::Wad,
+    },
 };
 
+use super::ConnectionState;
+use bumpalo::Bump;
+use cgmath::{Deg, InnerSpace, Vector3, Zero};
+use chrono::{DateTime, Duration, Utc};
 use failure::Error;
 
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -619,5 +635,201 @@ impl GraphicsState {
 
     pub fn gfx_wad(&self) -> &Wad {
         &self.gfx_wad
+    }
+}
+
+pub struct ClientRenderer {
+    deferred_renderer: DeferredRenderer,
+    postprocess_renderer: PostProcessRenderer,
+    ui_renderer: UiRenderer,
+    bump: Bump,
+    start_time: DateTime<Utc>,
+}
+
+impl ClientRenderer {
+    pub fn new(state: &GraphicsState, menu: &Menu) -> ClientRenderer {
+        ClientRenderer {
+            deferred_renderer: DeferredRenderer::new(
+                state,
+                state.initial_pass_target.diffuse_view(),
+                state.initial_pass_target.normal_view(),
+                state.initial_pass_target.light_view(),
+                state.initial_pass_target.depth_view(),
+            ),
+            postprocess_renderer: PostProcessRenderer::new(
+                state,
+                state.deferred_pass_target.color_view(),
+            ),
+            ui_renderer: UiRenderer::new(state, menu),
+            bump: Bump::new(),
+            start_time: Utc::now(),
+        }
+    }
+
+    pub fn render(
+        &mut self,
+        gfx_state: &GraphicsState,
+        encoder: &mut wgpu::CommandEncoder,
+        conn: Option<&Connection>,
+        width: u32,
+        height: u32,
+        fov: Deg<f32>,
+        cvars: &CvarRegistry,
+        console: &Console,
+        menu: &Menu,
+        focus: InputFocus,
+    ) {
+        self.bump.reset();
+
+        if let Some(Connection {
+            state: ref cl_state,
+            ref conn_state,
+            ..
+        }) = conn
+        {
+            match *conn_state.borrow() {
+                ConnectionState::Connected(ref world) => {
+                    // if client is fully connected, draw world
+                    let camera = cl_state.camera(width as f32 / height as f32, fov);
+
+                    // initial render pass
+                    {
+                        let init_pass_builder =
+                            gfx_state.initial_pass_target().render_pass_builder();
+
+                        let mut init_pass =
+                            encoder.begin_render_pass(&init_pass_builder.descriptor());
+
+                        world.render_pass(
+                            gfx_state,
+                            &mut init_pass,
+                            &self.bump,
+                            &camera,
+                            cl_state.time(),
+                            cl_state.iter_visible_entities(),
+                            cl_state.iter_particles(),
+                            cl_state.lightstyle_values().unwrap().as_slice(),
+                            cvars,
+                        );
+                    }
+
+                    // deferred lighting pass
+                    {
+                        let deferred_pass_builder =
+                            gfx_state.deferred_pass_target().render_pass_builder();
+                        let mut deferred_pass =
+                            encoder.begin_render_pass(&deferred_pass_builder.descriptor());
+
+                        let mut lights = [PointLight {
+                            origin: Vector3::zero(),
+                            radius: 0.0,
+                        }; MAX_LIGHTS];
+
+                        let mut light_count = 0;
+                        for (light_id, light) in cl_state.iter_lights().enumerate() {
+                            light_count += 1;
+                            let light_origin = light.origin();
+                            let converted_origin =
+                                Vector3::new(-light_origin.y, light_origin.z, -light_origin.x);
+                            lights[light_id].origin =
+                                (camera.view() * converted_origin.extend(1.0)).truncate();
+                            lights[light_id].radius = light.radius(cl_state.time());
+                        }
+
+                        let uniforms = DeferredUniforms {
+                            inv_projection: camera.inverse_projection().into(),
+                            light_count,
+                            _pad: [0; 3],
+                            lights,
+                        };
+
+                        self.deferred_renderer
+                            .record_draw(gfx_state, &mut deferred_pass, uniforms);
+                    }
+                }
+
+                // if client is still signing on, draw the loading screen
+                ConnectionState::SignOn(_) => {
+                    // TODO: loading screen
+                }
+            }
+        }
+
+        let ui_state = match conn {
+            Some(Connection {
+                state: ref cl_state,
+                ..
+            }) => UiState::InGame {
+                hud: match cl_state.intermission() {
+                    Some(kind) => HudState::Intermission {
+                        kind,
+                        completion_duration: cl_state.completion_time().unwrap()
+                            - cl_state.start_time(),
+                        stats: cl_state.stats(),
+                    },
+
+                    None => HudState::InGame {
+                        items: cl_state.items(),
+                        item_pickup_time: cl_state.item_pickup_times(),
+                        stats: cl_state.stats(),
+                        face_anim_time: cl_state.face_anim_time(),
+                    },
+                },
+
+                overlay: match focus {
+                    InputFocus::Game => None,
+                    InputFocus::Console => Some(UiOverlay::Console(console)),
+                    InputFocus::Menu => Some(UiOverlay::Menu(menu)),
+                },
+            },
+
+            None => UiState::Title {
+                overlay: match focus {
+                    InputFocus::Console => UiOverlay::Console(console),
+                    InputFocus::Menu => UiOverlay::Menu(menu),
+                    InputFocus::Game => unreachable!(),
+                },
+            },
+        };
+
+        // final render pass: postprocess the world and draw the UI
+        {
+            // quad_commands must outlive final pass
+            let mut quad_commands = Vec::new();
+            let mut glyph_commands = Vec::new();
+
+            let final_pass_builder = gfx_state.final_pass_target().render_pass_builder();
+            let mut final_pass = encoder.begin_render_pass(&final_pass_builder.descriptor());
+
+            if let Some(Connection {
+                state: ref cl_state,
+                ref conn_state,
+                ..
+            }) = conn
+            {
+                // only postprocess if client is in the game
+                if let ConnectionState::Connected(_) = *conn_state.borrow() {
+                    self.postprocess_renderer.record_draw(
+                        gfx_state,
+                        &mut final_pass,
+                        cl_state.color_shift(),
+                    );
+                }
+            }
+
+            self.ui_renderer.render_pass(
+                &gfx_state,
+                &mut final_pass,
+                Extent2d { width, height },
+                // use client time when in game, renderer time otherwise
+                match conn {
+                    Some(Connection { ref state, ..}) => state.time,
+                    None => Utc::now().signed_duration_since(self.start_time),
+                },
+                &ui_state,
+                &mut quad_commands,
+                &mut glyph_commands,
+            );
+        }
     }
 }

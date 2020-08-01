@@ -137,6 +137,9 @@ pub trait RenderTargetResolve: RenderTarget {
     fn resolve_view(&self) -> &wgpu::TextureView;
 }
 
+// TODO: use ArrayVec<wgpu::TextureView> in concrete types so it can be passed
+// as Cow::Borrowed in RenderPassDescriptor
+
 /// Render target for the initial world pass.
 pub struct InitialPassTarget {
     size: Extent2d,

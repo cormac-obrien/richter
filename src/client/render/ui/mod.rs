@@ -131,11 +131,22 @@ impl UiRenderer {
             match o {
                 UiOverlay::Menu(menu) => {
                     self.menu_renderer
-                        .generate_commands(menu, time, quad_commands, glyph_commands)
+                        .generate_commands(menu, time, quad_commands, glyph_commands);
                 }
                 UiOverlay::Console(console) => {
-                    self.console_renderer
-                        .generate_commands(console, time, quad_commands, glyph_commands)
+                    // TODO: take in-game console proportion as cvar
+                    let proportion = match hud_state {
+                        Some(_) => 0.33,
+                        None => 1.0,
+                    };
+
+                    self.console_renderer.generate_commands(
+                        console,
+                        time,
+                        quad_commands,
+                        glyph_commands,
+                        proportion,
+                    );
                 }
             }
         }

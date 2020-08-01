@@ -188,6 +188,8 @@ pub struct Camera {
     angles: Angles,
     view: Matrix4<f32>,
     view_projection: Matrix4<f32>,
+    projection: Matrix4<f32>,
+    inverse_projection: Matrix4<f32>,
     clipping_planes: [Vector4<f32>; 6],
 }
 
@@ -223,6 +225,8 @@ impl Camera {
             angles,
             view,
             view_projection,
+            projection,
+            inverse_projection: projection.invert().unwrap(),
             clipping_planes,
         }
     }
@@ -241,6 +245,14 @@ impl Camera {
 
     pub fn view_projection(&self) -> Matrix4<f32> {
         self.view_projection
+    }
+
+    pub fn projection(&self) -> Matrix4<f32> {
+        self.projection
+    }
+
+    pub fn inverse_projection(&self) -> Matrix4<f32> {
+        self.inverse_projection
     }
 
     // TODO: this seems to be too lenient
@@ -300,7 +312,6 @@ impl WorldRenderer {
         state: &GraphicsState,
         models: &[Model],
         worldmodel_id: usize,
-        cvars: &mut CvarRegistry,
     ) -> WorldRenderer {
         let mut worldmodel_renderer = None;
         let mut entity_renderers = Vec::new();

@@ -24,7 +24,8 @@ mod menu;
 mod trace;
 
 use std::{
-    cell::{Cell, Ref, RefCell, RefMut},
+    cell::{Ref, RefCell, RefMut},
+    io::Read,
     net::{SocketAddr, ToSocketAddrs},
     path::Path,
     rc::Rc,
@@ -39,7 +40,7 @@ use richter::{
         input::{Input, InputFocus},
         menu::Menu,
         render::{self, Extent2d, GraphicsState, UiRenderer, DIFFUSE_ATTACHMENT_FORMAT},
-        Client,
+        Client, ClientError,
     },
     common::{
         self,
@@ -55,16 +56,6 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-enum TitleState {
-    Menu,
-    Console,
-}
-
-enum ProgramState {
-    Title,
-    Game(Game),
-}
-
 struct ClientProgram {
     vfs: Rc<Vfs>,
     cvars: Rc<RefCell<CvarRegistry>>,
@@ -73,23 +64,25 @@ struct ClientProgram {
     menu: Rc<RefCell<Menu>>,
 
     window: Window,
-    window_dimensions_changed: Cell<bool>,
+    window_dimensions_changed: bool,
 
-    instance: wgpu::Instance,
     surface: wgpu::Surface,
-    adapter: wgpu::Adapter,
     swap_chain: RefCell<wgpu::SwapChain>,
     gfx_state: RefCell<GraphicsState>,
     ui_renderer: Rc<UiRenderer>,
 
     audio_device: Rc<rodio::Device>,
 
-    state: RefCell<ProgramState>,
+    game: Game,
     input: Rc<RefCell<Input>>,
 }
 
 impl ClientProgram {
-    pub async fn new(window: Window, audio_device: rodio::Device, trace: bool) -> ClientProgram {
+    pub async fn new(
+        window: Window,
+        audio_device: Rc<rodio::Device>,
+        trace: bool,
+    ) -> ClientProgram {
         let mut vfs = Vfs::new();
 
         // add basedir first
@@ -121,7 +114,7 @@ impl ClientProgram {
         let menu = Rc::new(RefCell::new(menu::build_main_menu().unwrap()));
 
         let input = Rc::new(RefCell::new(Input::new(
-            InputFocus::Game,
+            InputFocus::Console,
             console.clone(),
             menu.clone(),
         )));
@@ -182,8 +175,50 @@ impl ClientProgram {
         let gfx_state = GraphicsState::new(device, queue, size, sample_count, vfs.clone()).unwrap();
         let ui_renderer = Rc::new(UiRenderer::new(&gfx_state, &menu.borrow()));
 
+        // TODO: factor this out
+        // implements "exec" command
+        let exec_vfs = vfs.clone();
+        let exec_console = console.clone();
+        cmds.borrow_mut().insert_or_replace(
+            "exec",
+            Box::new(move |args| {
+                match args.len() {
+                    // exec (filename): execute a script file
+                    1 => {
+                        let mut script_file = match exec_vfs.open(args[0]) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                println!("Couldn't exec {}: {:?}", args[0], e);
+                                return;
+                            }
+                        };
+
+                        let mut script = String::new();
+                        script_file.read_to_string(&mut script).unwrap();
+
+                        exec_console.borrow().stuff_text(script);
+                    }
+
+                    _ => println!("exec (filename): execute a script file"),
+                }
+            }),
+        );
+
         // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
         console.borrow().stuff_text("exec quake.rc\n");
+
+        let client = Client::new(
+            vfs.clone(),
+            cvars.clone(),
+            cmds.clone(),
+            console.clone(),
+            input.clone(),
+            audio_device.clone(),
+            &gfx_state,
+            &menu.borrow(),
+        );
+
+        let game = Game::new(cvars.clone(), cmds.clone(), input.clone(), client).unwrap();
 
         ClientProgram {
             vfs,
@@ -192,73 +227,15 @@ impl ClientProgram {
             console,
             menu,
             window,
-            window_dimensions_changed: Cell::new(false),
-            instance,
+            window_dimensions_changed: false,
             surface,
-            adapter,
             swap_chain,
             gfx_state: RefCell::new(gfx_state),
             ui_renderer,
-            audio_device: Rc::new(audio_device),
-            state: RefCell::new(ProgramState::Title),
+            audio_device,
+            game,
             input,
         }
-    }
-
-    fn connect<A>(&mut self, server_addrs: A)
-    where
-        A: ToSocketAddrs,
-    {
-        let cl = Client::connect(
-            server_addrs,
-            self.vfs.clone(),
-            self.cvars.clone(),
-            self.cmds.clone(),
-            self.console.clone(),
-            self.audio_device.clone(),
-        )
-        .unwrap();
-
-        cl.register_cmds(&mut self.cmds.borrow_mut());
-
-        self.state.replace(ProgramState::Game(
-            Game::new(
-                self.cvars.clone(),
-                self.cmds.clone(),
-                self.ui_renderer.clone(),
-                self.input.clone(),
-                cl,
-            )
-            .unwrap(),
-        ));
-    }
-
-    fn play_demo<S>(&mut self, demo_path: S)
-    where
-        S: AsRef<str>,
-    {
-        let cl = Client::play_demo(
-            demo_path,
-            self.vfs.clone(),
-            self.cvars.clone(),
-            self.cmds.clone(),
-            self.console.clone(),
-            self.audio_device.clone(),
-        )
-        .unwrap();
-
-        cl.register_cmds(&mut self.cmds.borrow_mut());
-
-        self.state.replace(ProgramState::Game(
-            Game::new(
-                self.cvars.clone(),
-                self.cmds.clone(),
-                self.ui_renderer.clone(),
-                self.input.clone(),
-                cl,
-            )
-            .unwrap(),
-        ));
     }
 
     /// Builds a new swap chain with the specified present mode and the window's current dimensions.
@@ -279,21 +256,15 @@ impl ClientProgram {
 
     fn render(&mut self) {
         let swap_chain_output = self.swap_chain.borrow_mut().get_next_frame().unwrap();
-
-        match *self.state.borrow_mut() {
-            ProgramState::Title => unimplemented!(),
-            ProgramState::Game(ref mut game) => {
-                let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
-                game.render(
-                    &self.gfx_state.borrow(),
-                    &swap_chain_output.output.view,
-                    width,
-                    height,
-                    &self.console.borrow(),
-                    &self.menu.borrow(),
-                );
-            }
-        }
+        let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
+        self.game.render(
+            &self.gfx_state.borrow(),
+            &swap_chain_output.output.view,
+            width,
+            height,
+            &self.console.borrow(),
+            &self.menu.borrow(),
+        );
     }
 }
 
@@ -309,7 +280,7 @@ impl Program for ClientProgram {
                 event: WindowEvent::Resized(_),
                 ..
             } => {
-                self.window_dimensions_changed.set(true);
+                self.window_dimensions_changed = true;
             }
 
             e => self.input.borrow_mut().handle_event(e).unwrap(),
@@ -318,8 +289,8 @@ impl Program for ClientProgram {
 
     fn frame(&mut self, frame_duration: Duration) {
         // recreate swapchain if needed
-        if self.window_dimensions_changed.get() {
-            self.window_dimensions_changed.set(false);
+        if self.window_dimensions_changed {
+            self.window_dimensions_changed = false;
             self.recreate_swap_chain(wgpu::PresentMode::Immediate);
         }
 
@@ -337,16 +308,9 @@ impl Program for ClientProgram {
 
         // recreate attachments and rebuild pipelines if necessary
         self.gfx_state.borrow_mut().update(size, sample_count);
+        self.game.frame(&self.gfx_state.borrow(), frame_duration);
 
-        match *self.state.borrow_mut() {
-            ProgramState::Title => unimplemented!(),
-
-            ProgramState::Game(ref mut game) => {
-                game.frame(&self.gfx_state.borrow(), frame_duration);
-            }
-        }
-
-        match self.input.borrow().current_focus() {
+        match self.input.borrow().focus() {
             InputFocus::Game => {
                 self.window.set_cursor_grab(true).unwrap();
                 self.window.set_cursor_visible(false);
@@ -393,7 +357,7 @@ fn main() {
     env_logger::init();
     let opt = Opt::from_args();
 
-    let audio_device = rodio::default_output_device().unwrap();
+    let audio_device = Rc::new(rodio::default_output_device().unwrap());
 
     let event_loop = EventLoop::new();
     let window = {
@@ -422,9 +386,9 @@ fn main() {
     let mut client_program =
         futures::executor::block_on(ClientProgram::new(window, audio_device, opt.trace));
     if let Some(ref server) = opt.connect {
-        client_program.connect(server);
+        client_program.console.borrow_mut().stuff_text(format!("connect {}", server));
     } else if let Some(ref demo) = opt.demo {
-        client_program.play_demo(demo);
+        client_program.game.client.play_demo(demo).unwrap();
     }
 
     let mut host = Host::new(client_program);
