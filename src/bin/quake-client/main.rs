@@ -386,23 +386,7 @@ fn main() {
     let mut client_program =
         futures::executor::block_on(ClientProgram::new(window, audio_device, opt.trace));
     if let Some(ref server) = opt.connect {
-        use ClientError::*;
-        match client_program.game.client.connect(server) {
-            Ok(c) => c,
-            Err(e) => match e {
-                ConnectionRejected(_)
-                    | InvalidConnectPort(_)
-                    | InvalidConnectResponse
-                    | InvalidServerAddress
-                    | NoResponse
-                    | Network(_) => {
-                        log::error!("{}", e);
-                        return;
-                    }
-
-                _ => panic!("{}", e),
-            },
-        };
+        client_program.console.borrow_mut().stuff_text(format!("connect {}", server));
     } else if let Some(ref demo) = opt.demo {
         client_program.game.client.play_demo(demo).unwrap();
     }

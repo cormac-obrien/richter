@@ -854,18 +854,11 @@ pub struct Client {
     console: Rc<RefCell<Console>>,
     input: Rc<RefCell<Input>>,
     audio_device: Rc<rodio::Device>,
-    conn: Option<Connection>,
+    conn: Rc<RefCell<Option<Connection>>>,
     renderer: ClientRenderer,
 }
 
 impl Client {
-    /// Implements the `reconnect` command.
-    fn cmd_reconnect(conn_state: Rc<RefCell<ConnectionState>>) -> Box<dyn Fn(&[&str])> {
-        Box::new(move |_| {
-            conn_state.replace(ConnectionState::SignOn(SignOnStage::Prespawn));
-        })
-    }
-
     pub fn new(
         vfs: Rc<Vfs>,
         cvars: Rc<RefCell<CvarRegistry>>,
@@ -876,15 +869,25 @@ impl Client {
         gfx_state: &GraphicsState,
         menu: &Menu,
     ) -> Client {
-        // make toggle commands only toggle between menu and console
+        let conn = Rc::new(RefCell::new(None));
+
+        // set up overlay/ui toggles
         cmds.borrow_mut().insert_or_replace(
             "toggleconsole",
-            cmd_toggleconsolemenu_disconnected(input.clone()),
+            cmd_toggleconsole(conn.clone(), input.clone()),
         );
+        cmds.borrow_mut()
+            .insert_or_replace("togglemenu", cmd_togglemenu(conn.clone(), input.clone()));
+
+        // set up connection console commands
         cmds.borrow_mut().insert_or_replace(
-            "togglemenu",
-            cmd_toggleconsolemenu_disconnected(input.clone()),
+            "connect",
+            cmd_connect(conn.clone(), input.clone(), audio_device.clone()),
         );
+        cmds.borrow_mut()
+            .insert_or_replace("reconnect", cmd_reconnect(conn.clone(), input.clone()));
+        cmds.borrow_mut()
+            .insert_or_replace("disconnect", cmd_disconnect(conn.clone(), input.clone()));
 
         Client {
             vfs,
@@ -893,7 +896,7 @@ impl Client {
             console,
             input,
             audio_device,
-            conn: None,
+            conn,
             renderer: ClientRenderer::new(gfx_state, menu),
         }
     }
@@ -905,125 +908,11 @@ impl Client {
         let mut demo_file = self.vfs.open(demo_path)?;
         let demo_server = DemoServer::new(&mut demo_file)?;
 
-        let conn_state = Rc::new(RefCell::new(ConnectionState::SignOn(SignOnStage::Prespawn)));
-        self.cmds
-            .borrow_mut()
-            .insert_or_replace("reconnect", Client::cmd_reconnect(conn_state.clone()));
-
-        self.conn = Some(Connection {
+        self.conn.replace(Some(Connection {
             state: ClientState::new(self.audio_device.clone())?,
             kind: ConnectionKind::Demo(demo_server),
-            conn_state,
-        });
-
-        self.cmds.borrow_mut().insert_or_replace(
-            "toggleconsole",
-            cmd_toggleconsole_connected(self.input.clone()),
-        );
-        self.cmds
-            .borrow_mut()
-            .insert_or_replace("togglemenu", cmd_togglemenu_connected(self.input.clone()));
-
-        self.input.borrow_mut().set_focus(InputFocus::Game);
-
-        Ok(())
-    }
-
-    pub fn connect<A>(&mut self, server_addrs: A) -> Result<(), ClientError>
-    where
-        A: ToSocketAddrs,
-    {
-        let mut con_sock = ConnectSocket::bind("0.0.0.0:0")?;
-        let server_addr = match server_addrs.to_socket_addrs() {
-            Ok(ref mut a) => a.next().ok_or(ClientError::InvalidServerAddress),
-            Err(_) => Err(ClientError::InvalidServerAddress),
-        }?;
-
-        let mut response = None;
-
-        for attempt in 0..MAX_CONNECT_ATTEMPTS {
-            println!(
-                "Connecting...(attempt {} of {})",
-                attempt + 1,
-                MAX_CONNECT_ATTEMPTS
-            );
-            con_sock.send_request(
-                Request::connect(net::GAME_NAME, CONNECT_PROTOCOL_VERSION),
-                server_addr,
-            )?;
-
-            // TODO: get rid of magic constant (2.5 seconds wait time for response)
-            match con_sock.recv_response(Some(Duration::milliseconds(2500))) {
-                Err(err) => {
-                    match err {
-                        // if the message is invalid, log it but don't quit
-                        // TODO: this should probably disconnect
-                        NetError::InvalidData(msg) => error!("{}", msg),
-
-                        // other errors are fatal
-                        e => return Err(e.into()),
-                    }
-                }
-
-                Ok(opt) => {
-                    if let Some((resp, remote)) = opt {
-                        // if this response came from the right server, we're done
-                        if remote == server_addr {
-                            response = Some(resp);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        let port = match response.ok_or(ClientError::NoResponse)? {
-            Response::Accept(accept) => {
-                // validate port number
-                if accept.port < 0 || accept.port >= std::u16::MAX as i32 {
-                    Err(ClientError::InvalidConnectPort(accept.port))?;
-                }
-
-                debug!("Connection accepted on port {}", accept.port);
-                accept.port as u16
-            }
-
-            // our request was rejected.
-            Response::Reject(reject) => Err(ClientError::ConnectionRejected(reject.message))?,
-
-            // the server sent back a response that doesn't make sense here (i.e. something other
-            // than an Accept or Reject).
-            _ => Err(ClientError::InvalidConnectResponse)?,
-        };
-
-        let mut new_addr = server_addr;
-        new_addr.set_port(port);
-
-        // we're done with the connection socket, so turn it into a QSocket with the new address
-        let qsock = con_sock.into_qsocket(new_addr);
-
-        // set up reconnect
-        let conn_state = Rc::new(RefCell::new(ConnectionState::SignOn(SignOnStage::Prespawn)));
-        self.cmds
-            .borrow_mut()
-            .insert_or_replace("reconnect", Client::cmd_reconnect(conn_state.clone()));
-
-        self.conn = Some(Connection {
-            state: ClientState::new(self.audio_device.clone())?,
-            kind: ConnectionKind::Server {
-                qsock,
-                compose: Vec::new(),
-            },
-            conn_state,
-        });
-
-        self.cmds.borrow_mut().insert_or_replace(
-            "toggleconsole",
-            cmd_toggleconsole_connected(self.input.clone()),
-        );
-        self.cmds
-            .borrow_mut()
-            .insert_or_replace("togglemenu", cmd_togglemenu_connected(self.input.clone()));
+            conn_state: Rc::new(RefCell::new(ConnectionState::SignOn(SignOnStage::Prespawn))),
+        }));
 
         self.input.borrow_mut().set_focus(InputFocus::Game);
 
@@ -1031,18 +920,7 @@ impl Client {
     }
 
     pub fn disconnect(&mut self) {
-        self.conn = None;
-
-        // make toggle commands only toggle between menu and console
-        self.cmds.borrow_mut().insert_or_replace(
-            "toggleconsole",
-            cmd_toggleconsolemenu_disconnected(self.input.clone()),
-        );
-        self.cmds.borrow_mut().insert_or_replace(
-            "togglemenu",
-            cmd_toggleconsolemenu_disconnected(self.input.clone()),
-        );
-
+        self.conn.replace(None);
         self.input.borrow_mut().set_focus(InputFocus::Console);
     }
 
@@ -1057,7 +935,7 @@ impl Client {
         let kick_vars = self.kick_vars()?;
         let roll_vars = self.roll_vars()?;
 
-        if let Some(ref mut conn) = self.conn {
+        if let Some(ref mut conn) = *self.conn.borrow_mut() {
             conn.frame(
                 frame_time,
                 &self.vfs,
@@ -1098,7 +976,7 @@ impl Client {
         self.renderer.render(
             gfx_state,
             encoder,
-            self.conn.as_ref(),
+            self.conn.borrow().as_ref(),
             width,
             height,
             fov,
@@ -1129,7 +1007,7 @@ impl Client {
         let move_vars = self.move_vars()?;
         let mouse_vars = self.mouse_vars()?;
 
-        match self.conn {
+        match *self.conn.borrow_mut() {
             Some(Connection {
                 ref mut state,
                 kind: ConnectionKind::Server { ref mut qsock, .. },
@@ -1149,198 +1027,6 @@ impl Client {
         }
 
         Ok(())
-    }
-
-    pub fn state(&self) -> Option<&ClientState> {
-        self.conn.as_ref().map(|c| &c.state)
-    }
-
-    pub fn get_entity(&self, id: usize) -> Result<&ClientEntity, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => {
-                state.check_entity_id(id)?;
-                Ok(&state.entities[id])
-            }
-
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn get_entity_mut(&mut self, id: usize) -> Result<&mut ClientEntity, ClientError> {
-        match self.conn {
-            Some(Connection { ref mut state, .. }) => {
-                state.check_entity_id(id)?;
-                Ok(&mut state.entities[id])
-            }
-
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn view_origin(&self) -> Result<Vector3<f32>, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(state.entities[state.view.entity_id()].origin
-                + Vector3::new(0.0, 0.0, state.view.view_height())),
-
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn view_angles(&self, time: Duration) -> Result<Angles, ClientError> {
-        let angles = match self.conn {
-            Some(Connection {
-                ref state,
-                ref kind,
-                ..
-            }) => match kind {
-                ConnectionKind::Server { .. } => state.view.final_angles(),
-
-                ConnectionKind::Demo(_) => {
-                    let v = state.entities[state.view_entity_id()].angles;
-                    Angles {
-                        pitch: -v.x,
-                        yaw: v.y,
-                        roll: -v.z,
-                    }
-                }
-            },
-
-            None => Err(ClientError::NotConnected)?,
-        };
-
-        Ok(angles)
-    }
-
-    pub fn view_ent(&self) -> Result<usize, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(state.view.entity_id()),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn time(&self) -> Result<Duration, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(state.time),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn get_lerp_factor(&mut self) -> Result<f32, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(state.lerp_factor),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn iter_visible_entities(&self) -> Option<impl Iterator<Item = &ClientEntity> + Clone> {
-        self.conn
-            .as_ref()
-            .map(|conn| conn.state.iter_visible_entities())
-    }
-
-    pub fn iter_lights(&self) -> Result<impl Iterator<Item = &Light>, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(state.lights.iter()),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn iter_particles(&self) -> Result<impl Iterator<Item = &Particle>, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(state.particles.iter()),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn intermission(&self) -> Result<Option<&IntermissionKind>, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(state.intermission.as_ref()),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn start_time(&self) -> Result<Duration, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(state.start_time),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn completion_time(&self) -> Result<Option<Duration>, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(state.completion_time),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn items(&self) -> Result<ItemFlags, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(state.items),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn item_get_time(&self) -> Result<&[Duration; net::MAX_ITEMS], ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(&state.item_get_time),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn weapon(&self) -> Result<i32, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(state.stats[ClientStat::Weapon as usize]),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn active_weapon(&self) -> Result<i32, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => {
-                Ok(state.stats[ClientStat::ActiveWeapon as usize])
-            }
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn stats(&self) -> Result<&[i32; MAX_STATS], ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(&state.stats),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn face_anim_time(&self) -> Result<Duration, ClientError> {
-        match self.conn {
-            Some(Connection { ref state, .. }) => Ok(state.face_anim_time),
-            None => Err(ClientError::NotConnected),
-        }
-    }
-
-    pub fn color_shift(&self) -> [f32; 4] {
-        match self.conn {
-            Some(Connection { ref state, .. }) => {
-                state.color_shifts.iter().fold([0.0; 4], |accum, elem| {
-                    let elem_a = elem.borrow().percent as f32 / 255.0 / 2.0;
-                    if elem_a == 0.0 {
-                        return accum;
-                    }
-                    let in_a = accum[3];
-                    let out_a = in_a + elem_a * (1.0 - in_a);
-                    let color_factor = elem_a / out_a;
-
-                    let mut out = [0.0; 4];
-                    for i in 0..3 {
-                        out[i] = accum[i] * (1.0 - color_factor)
-                            + elem.borrow().dest_color[i] as f32 / 255.0 * color_factor;
-                    }
-                    out[3] = out_a.min(1.0).max(0.0);
-                    out
-                })
-            }
-
-            None => [0.0; 4],
-        }
     }
 
     fn move_vars(&self) -> Result<MoveVars, ClientError> {
@@ -1391,11 +1077,18 @@ impl Client {
         })
     }
 
+    pub fn view_entity_id(&self) -> Option<usize> {
+        match *self.conn.borrow() {
+            Some(Connection { ref state, .. }) => Some(state.view_entity_id()),
+            None => None,
+        }
+    }
+
     pub fn trace<'a, I>(&self, entity_ids: I) -> Result<TraceFrame, ClientError>
     where
         I: IntoIterator<Item = &'a usize>,
     {
-        match self.conn {
+        match *self.conn.borrow() {
             Some(Connection { ref state, .. }) => {
                 let mut trace = TraceFrame {
                     msg_times_ms: [
@@ -1449,38 +1142,184 @@ impl std::ops::Drop for Client {
     }
 }
 
-// implements the "toggleconsole" and "togglemenu" commands when the client is disconnected
-fn cmd_toggleconsolemenu_disconnected(input: Rc<RefCell<Input>>) -> Box<dyn Fn(&[&str])> {
+// implements the "toggleconsole" command
+fn cmd_toggleconsole(
+    conn: Rc<RefCell<Option<Connection>>>,
+    input: Rc<RefCell<Input>>,
+) -> Box<dyn Fn(&[&str])> {
     Box::new(move |_| {
         let focus = input.borrow().focus();
-        match focus {
-            InputFocus::Console => input.borrow_mut().set_focus(InputFocus::Menu),
-            InputFocus::Game => unreachable!(),
-            InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Console),
+        match *conn.borrow() {
+            Some(_) => match focus {
+                InputFocus::Game => input.borrow_mut().set_focus(InputFocus::Console),
+                InputFocus::Console => input.borrow_mut().set_focus(InputFocus::Game),
+                InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Console),
+            },
+            None => match focus {
+                InputFocus::Console => input.borrow_mut().set_focus(InputFocus::Menu),
+                InputFocus::Game => unreachable!(),
+                InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Console),
+            },
         }
     })
 }
 
-// implements the "toggleconsole" command when the client is connected
-fn cmd_toggleconsole_connected(input: Rc<RefCell<Input>>) -> Box<dyn Fn(&[&str])> {
+// implements the "togglemenu" command
+fn cmd_togglemenu(
+    conn: Rc<RefCell<Option<Connection>>>,
+    input: Rc<RefCell<Input>>,
+) -> Box<dyn Fn(&[&str])> {
     Box::new(move |_| {
         let focus = input.borrow().focus();
-        match focus {
-            InputFocus::Game => input.borrow_mut().set_focus(InputFocus::Console),
-            InputFocus::Console => input.borrow_mut().set_focus(InputFocus::Game),
-            InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Console),
+        match *conn.borrow() {
+            Some(_) => match focus {
+                InputFocus::Game => input.borrow_mut().set_focus(InputFocus::Menu),
+                InputFocus::Console => input.borrow_mut().set_focus(InputFocus::Menu),
+                InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Game),
+            },
+            None => match focus {
+                InputFocus::Console => input.borrow_mut().set_focus(InputFocus::Menu),
+                InputFocus::Game => unreachable!(),
+                InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Console),
+            },
         }
     })
 }
 
-// implements the "togglemenu" command when the client is connected
-fn cmd_togglemenu_connected(input: Rc<RefCell<Input>>) -> Box<dyn Fn(&[&str])> {
-    Box::new(move |_| {
-        let focus = input.borrow().focus();
-        match focus {
-            InputFocus::Game => input.borrow_mut().set_focus(InputFocus::Menu),
-            InputFocus::Console => input.borrow_mut().set_focus(InputFocus::Menu),
-            InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Game),
+fn connect<A>(server_addrs: A, audio_device: Rc<rodio::Device>) -> Result<Connection, ClientError>
+where
+    A: ToSocketAddrs,
+{
+    let mut con_sock = ConnectSocket::bind("0.0.0.0:0")?;
+    let server_addr = match server_addrs.to_socket_addrs() {
+        Ok(ref mut a) => a.next().ok_or(ClientError::InvalidServerAddress),
+        Err(_) => Err(ClientError::InvalidServerAddress),
+    }?;
+
+    let mut response = None;
+
+    for attempt in 0..MAX_CONNECT_ATTEMPTS {
+        println!(
+            "Connecting...(attempt {} of {})",
+            attempt + 1,
+            MAX_CONNECT_ATTEMPTS
+        );
+        con_sock.send_request(
+            Request::connect(net::GAME_NAME, CONNECT_PROTOCOL_VERSION),
+            server_addr,
+        )?;
+
+        // TODO: get rid of magic constant (2.5 seconds wait time for response)
+        match con_sock.recv_response(Some(Duration::milliseconds(2500))) {
+            Err(err) => {
+                match err {
+                    // if the message is invalid, log it but don't quit
+                    // TODO: this should probably disconnect
+                    NetError::InvalidData(msg) => error!("{}", msg),
+
+                    // other errors are fatal
+                    e => return Err(e.into()),
+                }
+            }
+
+            Ok(opt) => {
+                if let Some((resp, remote)) = opt {
+                    // if this response came from the right server, we're done
+                    if remote == server_addr {
+                        response = Some(resp);
+                        break;
+                    }
+                }
+            }
         }
+    }
+
+    let port = match response.ok_or(ClientError::NoResponse)? {
+        Response::Accept(accept) => {
+            // validate port number
+            if accept.port < 0 || accept.port >= std::u16::MAX as i32 {
+                Err(ClientError::InvalidConnectPort(accept.port))?;
+            }
+
+            debug!("Connection accepted on port {}", accept.port);
+            accept.port as u16
+        }
+
+        // our request was rejected.
+        Response::Reject(reject) => Err(ClientError::ConnectionRejected(reject.message))?,
+
+        // the server sent back a response that doesn't make sense here (i.e. something other
+        // than an Accept or Reject).
+        _ => Err(ClientError::InvalidConnectResponse)?,
+    };
+
+    let mut new_addr = server_addr;
+    new_addr.set_port(port);
+
+    // we're done with the connection socket, so turn it into a QSocket with the new address
+    let qsock = con_sock.into_qsocket(new_addr);
+
+    Ok(Connection {
+        state: ClientState::new(audio_device.clone())?,
+        kind: ConnectionKind::Server {
+            qsock,
+            compose: Vec::new(),
+        },
+        conn_state: Rc::new(RefCell::new(ConnectionState::SignOn(SignOnStage::Prespawn))),
+    })
+}
+
+// TODO: this will hang while connecting. ideally, input should be handled in a
+// separate thread so the OS doesn't think the client has gone unresponsive.
+fn cmd_connect(
+    conn: Rc<RefCell<Option<Connection>>>,
+    input: Rc<RefCell<Input>>,
+    audio_device: Rc<rodio::Device>,
+) -> Box<dyn Fn(&[&str])> {
+    Box::new(move |args| {
+        if args.len() < 1 {
+            // TODO: print to console
+            println!("usage: connect <server_ip>:<server_port>");
+        }
+
+        match connect(args[0], audio_device.clone()) {
+            Ok(new_conn) => {
+                conn.replace(Some(new_conn));
+            }
+            Err(e) => {
+                // TODO: print to console
+                error!("{}", e);
+            }
+        }
+
+        input.borrow_mut().set_focus(InputFocus::Game);
+    })
+}
+
+fn cmd_reconnect(
+    conn: Rc<RefCell<Option<Connection>>>,
+    input: Rc<RefCell<Input>>,
+) -> Box<dyn Fn(&[&str])> {
+    Box::new(move |_| {
+        match *conn.borrow_mut() {
+            Some(ref mut conn) => {
+                // TODO: clear client state
+                conn.conn_state
+                    .replace(ConnectionState::SignOn(SignOnStage::Prespawn));
+                input.borrow_mut().set_focus(InputFocus::Game);
+            }
+            // TODO: log message, e.g. "can't reconnect while disconnected"
+            None => (),
+        }
+    })
+}
+
+fn cmd_disconnect(
+    conn: Rc<RefCell<Option<Connection>>>,
+    input: Rc<RefCell<Input>>,
+) -> Box<dyn Fn(&[&str])> {
+    Box::new(move |_| {
+        conn.replace(None);
+        input.borrow_mut().set_focus(InputFocus::Console);
     })
 }

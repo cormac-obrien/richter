@@ -821,8 +821,11 @@ impl ClientRenderer {
                 &gfx_state,
                 &mut final_pass,
                 Extent2d { width, height },
-                // UI timing is independent of client connection
-                Utc::now().signed_duration_since(self.start_time),
+                // use client time when in game, renderer time otherwise
+                match conn {
+                    Some(Connection { ref state, ..}) => state.time,
+                    None => Utc::now().signed_duration_since(self.start_time),
+                },
                 &ui_state,
                 &mut quad_commands,
                 &mut glyph_commands,

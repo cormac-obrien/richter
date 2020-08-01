@@ -134,7 +134,7 @@ impl Game {
         if let Some(ref mut trace_frames) = *self.trace.borrow_mut() {
             trace_frames.push(
                 self.client
-                    .trace(&[self.client.view_ent().unwrap()])
+                    .trace(&[self.client.view_entity_id().unwrap()])
                     .unwrap(),
             );
         }
