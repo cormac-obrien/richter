@@ -51,7 +51,7 @@ pub struct Game {
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
     input: Rc<RefCell<Input>>,
-    client: Client,
+    pub client: Client,
 
     // if Some(v), trace is in progress
     trace: Rc<RefCell<Option<Vec<TraceFrame>>>>,

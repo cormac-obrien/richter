@@ -56,16 +56,6 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-enum TitleState {
-    Menu,
-    Console,
-}
-
-enum ProgramState {
-    Title,
-    Game(Game),
-}
-
 struct ClientProgram {
     vfs: Rc<Vfs>,
     cvars: Rc<RefCell<CvarRegistry>>,
@@ -83,12 +73,16 @@ struct ClientProgram {
 
     audio_device: Rc<rodio::Device>,
 
-    state: RefCell<ProgramState>,
+    game: Game,
     input: Rc<RefCell<Input>>,
 }
 
 impl ClientProgram {
-    pub async fn new(window: Window, audio_device: rodio::Device, trace: bool) -> ClientProgram {
+    pub async fn new(
+        window: Window,
+        audio_device: Rc<rodio::Device>,
+        trace: bool,
+    ) -> ClientProgram {
         let mut vfs = Vfs::new();
 
         // add basedir first
@@ -120,7 +114,7 @@ impl ClientProgram {
         let menu = Rc::new(RefCell::new(menu::build_main_menu().unwrap()));
 
         let input = Rc::new(RefCell::new(Input::new(
-            InputFocus::Game,
+            InputFocus::Console,
             console.clone(),
             menu.clone(),
         )));
@@ -213,6 +207,19 @@ impl ClientProgram {
         // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
         console.borrow().stuff_text("exec quake.rc\n");
 
+        let client = Client::new(
+            vfs.clone(),
+            cvars.clone(),
+            cmds.clone(),
+            console.clone(),
+            input.clone(),
+            audio_device.clone(),
+            &gfx_state,
+            &menu.borrow(),
+        );
+
+        let game = Game::new(cvars.clone(), cmds.clone(), input.clone(), client).unwrap();
+
         ClientProgram {
             vfs,
             cvars,
@@ -225,82 +232,10 @@ impl ClientProgram {
             swap_chain,
             gfx_state: RefCell::new(gfx_state),
             ui_renderer,
-            audio_device: Rc::new(audio_device),
-            state: RefCell::new(ProgramState::Title),
+            audio_device,
+            game,
             input,
         }
-    }
-
-    fn connect<A>(&mut self, server_addrs: A)
-    where
-        A: ToSocketAddrs,
-    {
-        use ClientError::*;
-
-        let cl = match Client::connect(
-            server_addrs,
-            self.vfs.clone(),
-            self.cvars.clone(),
-            self.cmds.clone(),
-            self.console.clone(),
-            self.input.clone(),
-            self.audio_device.clone(),
-            &self.gfx_state.borrow(),
-            &self.menu.borrow(),
-        ) {
-            Ok(c) => c,
-            Err(e) => match e {
-                ConnectionRejected(_)
-                | InvalidConnectPort(_)
-                | InvalidConnectResponse
-                | InvalidServerAddress
-                | NoResponse
-                | Network(_) => {
-                    log::error!("{}", e);
-                    return;
-                }
-
-                _ => panic!("{}", e),
-            },
-        };
-
-        self.state.replace(ProgramState::Game(
-            Game::new(
-                self.cvars.clone(),
-                self.cmds.clone(),
-                self.input.clone(),
-                cl,
-            )
-            .unwrap(),
-        ));
-    }
-
-    fn play_demo<S>(&mut self, demo_path: S)
-    where
-        S: AsRef<str>,
-    {
-        let cl = Client::play_demo(
-            demo_path,
-            self.vfs.clone(),
-            self.cvars.clone(),
-            self.cmds.clone(),
-            self.console.clone(),
-            self.input.clone(),
-            self.audio_device.clone(),
-            &self.gfx_state.borrow(),
-            &self.menu.borrow(),
-        )
-        .unwrap();
-
-        self.state.replace(ProgramState::Game(
-            Game::new(
-                self.cvars.clone(),
-                self.cmds.clone(),
-                self.input.clone(),
-                cl,
-            )
-            .unwrap(),
-        ));
     }
 
     /// Builds a new swap chain with the specified present mode and the window's current dimensions.
@@ -321,21 +256,15 @@ impl ClientProgram {
 
     fn render(&mut self) {
         let swap_chain_output = self.swap_chain.borrow_mut().get_next_frame().unwrap();
-
-        match *self.state.borrow_mut() {
-            ProgramState::Title => unimplemented!(),
-            ProgramState::Game(ref mut game) => {
-                let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
-                game.render(
-                    &self.gfx_state.borrow(),
-                    &swap_chain_output.output.view,
-                    width,
-                    height,
-                    &self.console.borrow(),
-                    &self.menu.borrow(),
-                );
-            }
-        }
+        let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
+        self.game.render(
+            &self.gfx_state.borrow(),
+            &swap_chain_output.output.view,
+            width,
+            height,
+            &self.console.borrow(),
+            &self.menu.borrow(),
+        );
     }
 }
 
@@ -379,14 +308,7 @@ impl Program for ClientProgram {
 
         // recreate attachments and rebuild pipelines if necessary
         self.gfx_state.borrow_mut().update(size, sample_count);
-
-        match *self.state.borrow_mut() {
-            ProgramState::Title => unimplemented!(),
-
-            ProgramState::Game(ref mut game) => {
-                game.frame(&self.gfx_state.borrow(), frame_duration);
-            }
-        }
+        self.game.frame(&self.gfx_state.borrow(), frame_duration);
 
         match self.input.borrow().focus() {
             InputFocus::Game => {
@@ -435,7 +357,7 @@ fn main() {
     env_logger::init();
     let opt = Opt::from_args();
 
-    let audio_device = rodio::default_output_device().unwrap();
+    let audio_device = Rc::new(rodio::default_output_device().unwrap());
 
     let event_loop = EventLoop::new();
     let window = {
@@ -464,9 +386,25 @@ fn main() {
     let mut client_program =
         futures::executor::block_on(ClientProgram::new(window, audio_device, opt.trace));
     if let Some(ref server) = opt.connect {
-        client_program.connect(server);
+        use ClientError::*;
+        match client_program.game.client.connect(server) {
+            Ok(c) => c,
+            Err(e) => match e {
+                ConnectionRejected(_)
+                    | InvalidConnectPort(_)
+                    | InvalidConnectResponse
+                    | InvalidServerAddress
+                    | NoResponse
+                    | Network(_) => {
+                        log::error!("{}", e);
+                        return;
+                    }
+
+                _ => panic!("{}", e),
+            },
+        };
     } else if let Some(ref demo) = opt.demo {
-        client_program.play_demo(demo);
+        client_program.game.client.play_demo(demo).unwrap();
     }
 
     let mut host = Host::new(client_program);

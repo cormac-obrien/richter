@@ -108,6 +108,7 @@ use crate::{
 use super::ConnectionState;
 use bumpalo::Bump;
 use cgmath::{Deg, InnerSpace, Vector3, Zero};
+use chrono::{DateTime, Duration, Utc};
 use failure::Error;
 
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -642,6 +643,7 @@ pub struct ClientRenderer {
     postprocess_renderer: PostProcessRenderer,
     ui_renderer: UiRenderer,
     bump: Bump,
+    start_time: DateTime<Utc>,
 }
 
 impl ClientRenderer {
@@ -660,6 +662,7 @@ impl ClientRenderer {
             ),
             ui_renderer: UiRenderer::new(state, menu),
             bump: Bump::new(),
+            start_time: Utc::now(),
         }
     }
 
@@ -812,18 +815,18 @@ impl ClientRenderer {
                         cl_state.color_shift(),
                     );
                 }
-
-                // TODO: use host time for menu & console animations
-                self.ui_renderer.render_pass(
-                    &gfx_state,
-                    &mut final_pass,
-                    Extent2d { width, height },
-                    cl_state.time(),
-                    &ui_state,
-                    &mut quad_commands,
-                    &mut glyph_commands,
-                );
             }
+
+            self.ui_renderer.render_pass(
+                &gfx_state,
+                &mut final_pass,
+                Extent2d { width, height },
+                // UI timing is independent of client connection
+                Utc::now().signed_duration_since(self.start_time),
+                &ui_state,
+                &mut quad_commands,
+                &mut glyph_commands,
+            );
         }
     }
 }

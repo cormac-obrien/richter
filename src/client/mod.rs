@@ -866,8 +866,7 @@ impl Client {
         })
     }
 
-    pub fn play_demo<S>(
-        demo_path: S,
+    pub fn new(
         vfs: Rc<Vfs>,
         cvars: Rc<RefCell<CvarRegistry>>,
         cmds: Rc<RefCell<CmdRegistry>>,
@@ -876,71 +875,64 @@ impl Client {
         audio_device: Rc<rodio::Device>,
         gfx_state: &GraphicsState,
         menu: &Menu,
-    ) -> Result<Client, ClientError>
-    where
-        S: AsRef<str>,
-    {
-        // set up toggleconsole
-        cmds.borrow_mut()
-            .insert_or_replace("toggleconsole", cmd_toggleconsole_connected(input.clone()));
+    ) -> Client {
+        // make toggle commands only toggle between menu and console
+        cmds.borrow_mut().insert_or_replace(
+            "toggleconsole",
+            cmd_toggleconsolemenu_disconnected(input.clone()),
+        );
+        cmds.borrow_mut().insert_or_replace(
+            "togglemenu",
+            cmd_toggleconsolemenu_disconnected(input.clone()),
+        );
 
-        // set up togglemenu
-        cmds.borrow_mut()
-            .insert_or_replace("togglemenu", cmd_togglemenu_connected(input.clone()));
-
-        // set up reconnect
-        let conn_state = Rc::new(RefCell::new(ConnectionState::SignOn(SignOnStage::Prespawn)));
-        cmds.borrow_mut()
-            .insert_or_replace("reconnect", Client::cmd_reconnect(conn_state.clone()));
-
-        let mut demo_file = vfs.open(demo_path)?;
-        let demo_server = DemoServer::new(&mut demo_file)?;
-
-        let conn = Some(Connection {
-            state: ClientState::new(audio_device.clone())?,
-            kind: ConnectionKind::Demo(demo_server),
-            conn_state,
-        });
-
-        Ok(Client {
-            vfs: vfs.clone(),
+        Client {
+            vfs,
             cvars,
             cmds,
             console,
             input,
-            audio_device: audio_device.clone(),
-            conn,
+            audio_device,
+            conn: None,
             renderer: ClientRenderer::new(gfx_state, menu),
-        })
+        }
     }
 
-    pub fn connect<A>(
-        server_addrs: A,
-        vfs: Rc<Vfs>,
-        cvars: Rc<RefCell<CvarRegistry>>,
-        cmds: Rc<RefCell<CmdRegistry>>,
-        console: Rc<RefCell<Console>>,
-        input: Rc<RefCell<Input>>,
-        audio_device: Rc<rodio::Device>,
-        gfx_state: &GraphicsState,
-        menu: &Menu,
-    ) -> Result<Client, ClientError>
+    pub fn play_demo<S>(&mut self, demo_path: S) -> Result<(), ClientError>
+    where
+        S: AsRef<str>,
+    {
+        let mut demo_file = self.vfs.open(demo_path)?;
+        let demo_server = DemoServer::new(&mut demo_file)?;
+
+        let conn_state = Rc::new(RefCell::new(ConnectionState::SignOn(SignOnStage::Prespawn)));
+        self.cmds
+            .borrow_mut()
+            .insert_or_replace("reconnect", Client::cmd_reconnect(conn_state.clone()));
+
+        self.conn = Some(Connection {
+            state: ClientState::new(self.audio_device.clone())?,
+            kind: ConnectionKind::Demo(demo_server),
+            conn_state,
+        });
+
+        self.cmds.borrow_mut().insert_or_replace(
+            "toggleconsole",
+            cmd_toggleconsole_connected(self.input.clone()),
+        );
+        self.cmds
+            .borrow_mut()
+            .insert_or_replace("togglemenu", cmd_togglemenu_connected(self.input.clone()));
+
+        self.input.borrow_mut().set_focus(InputFocus::Game);
+
+        Ok(())
+    }
+
+    pub fn connect<A>(&mut self, server_addrs: A) -> Result<(), ClientError>
     where
         A: ToSocketAddrs,
     {
-        // set up toggleconsole
-        cmds.borrow_mut()
-            .insert_or_replace("toggleconsole", cmd_toggleconsole_connected(input.clone()));
-
-        // set up togglemenu
-        cmds.borrow_mut()
-            .insert_or_replace("togglemenu", cmd_togglemenu_connected(input.clone()));
-
-        // set up reconnect
-        let conn_state = Rc::new(RefCell::new(ConnectionState::SignOn(SignOnStage::Prespawn)));
-        cmds.borrow_mut()
-            .insert_or_replace("reconnect", Client::cmd_reconnect(conn_state.clone()));
-
         let mut con_sock = ConnectSocket::bind("0.0.0.0:0")?;
         let server_addr = match server_addrs.to_socket_addrs() {
             Ok(ref mut a) => a.next().ok_or(ClientError::InvalidServerAddress),
@@ -1010,8 +1002,14 @@ impl Client {
         // we're done with the connection socket, so turn it into a QSocket with the new address
         let qsock = con_sock.into_qsocket(new_addr);
 
-        let conn = Some(Connection {
-            state: ClientState::new(audio_device.clone())?,
+        // set up reconnect
+        let conn_state = Rc::new(RefCell::new(ConnectionState::SignOn(SignOnStage::Prespawn)));
+        self.cmds
+            .borrow_mut()
+            .insert_or_replace("reconnect", Client::cmd_reconnect(conn_state.clone()));
+
+        self.conn = Some(Connection {
+            state: ClientState::new(self.audio_device.clone())?,
             kind: ConnectionKind::Server {
                 qsock,
                 compose: Vec::new(),
@@ -1019,19 +1017,22 @@ impl Client {
             conn_state,
         });
 
-        Ok(Client {
-            vfs: vfs.clone(),
-            cvars,
-            cmds,
-            console,
-            input,
-            audio_device: audio_device.clone(),
-            conn,
-            renderer: ClientRenderer::new(gfx_state, menu),
-        })
+        self.cmds.borrow_mut().insert_or_replace(
+            "toggleconsole",
+            cmd_toggleconsole_connected(self.input.clone()),
+        );
+        self.cmds
+            .borrow_mut()
+            .insert_or_replace("togglemenu", cmd_togglemenu_connected(self.input.clone()));
+
+        self.input.borrow_mut().set_focus(InputFocus::Game);
+
+        Ok(())
     }
 
-    pub fn disconnect(&self) {
+    pub fn disconnect(&mut self) {
+        self.conn = None;
+
         // make toggle commands only toggle between menu and console
         self.cmds.borrow_mut().insert_or_replace(
             "toggleconsole",
@@ -1041,7 +1042,8 @@ impl Client {
             "togglemenu",
             cmd_toggleconsolemenu_disconnected(self.input.clone()),
         );
-        unimplemented!();
+
+        self.input.borrow_mut().set_focus(InputFocus::Console);
     }
 
     pub fn frame(
@@ -1054,6 +1056,7 @@ impl Client {
         let idle_vars = self.idle_vars()?;
         let kick_vars = self.kick_vars()?;
         let roll_vars = self.roll_vars()?;
+
         if let Some(ref mut conn) = self.conn {
             conn.frame(
                 frame_time,
@@ -1068,6 +1071,12 @@ impl Client {
                 cl_nolerp,
                 sv_gravity,
             )?;
+        } else {
+            // don't allow game focus when disconnected
+            let focus = self.input.borrow().focus();
+            if let InputFocus::Game = focus {
+                self.input.borrow_mut().set_focus(InputFocus::Console);
+            }
         }
 
         Ok(())
