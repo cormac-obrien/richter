@@ -188,8 +188,7 @@ impl ClientProgram {
                         let mut script_file = match exec_vfs.open(args[0]) {
                             Ok(s) => s,
                             Err(e) => {
-                                println!("Couldn't exec {}: {:?}", args[0], e);
-                                return;
+                                return format!("Couldn't exec {}: {:?}", args[0], e);
                             }
                         };
 
@@ -197,9 +196,10 @@ impl ClientProgram {
                         script_file.read_to_string(&mut script).unwrap();
 
                         exec_console.borrow().stuff_text(script);
+                        String::new()
                     }
 
-                    _ => println!("exec (filename): execute a script file"),
+                    _ => format!("exec (filename): execute a script file"),
                 }
             }),
         );

@@ -622,6 +622,7 @@ impl GameInput {
                     &cmd_name,
                     Box::new(move |_| {
                         action_states.borrow_mut()[action as usize] = state_bool;
+                        String::new()
                     }),
                 );
             }
@@ -632,17 +633,16 @@ impl GameInput {
         cmds.insert_or_replace(
             "bind",
             Box::new(move |args| {
-                println!("args: {}", args.len());
                 match args.len() {
                     // bind (key)
                     // queries what (key) is bound to, if anything
                     1 => match BindInput::from_str(args[0]) {
                         Ok(i) => match bindings.borrow().get(&i) {
-                            Some(t) => println!("\"{}\" = \"{}\"", i.to_string(), t.to_string()),
-                            None => println!("\"{}\" is not bound", i.to_string()),
+                            Some(t) => format!("\"{}\" = \"{}\"", i.to_string(), t.to_string()),
+                            None => format!("\"{}\" is not bound", i.to_string()),
                         },
 
-                        Err(_) => println!("\"{}\" isn't a valid key", args[0]),
+                        Err(_) => format!("\"{}\" isn't a valid key", args[0]),
                     },
 
                     // bind (key) [command]
@@ -652,17 +652,18 @@ impl GameInput {
                                 Ok(target) => {
                                     bindings.borrow_mut().insert(input, target);
                                     debug!("Bound {:?} to {:?}", input, args[1]);
+                                    String::new()
                                 }
                                 Err(_) => {
-                                    println!("\"{}\" isn't a valid bind target", args[1]);
+                                    format!("\"{}\" isn't a valid bind target", args[1])
                                 }
-                            };
+                            }
                         }
 
-                        Err(_) => println!("\"{}\" isn't a valid key", args[0]),
+                        Err(_) => format!("\"{}\" isn't a valid key", args[0]),
                     },
 
-                    _ => println!("bind [key] (command): attach a command to a key"),
+                    _ => "bind [key] (command): attach a command to a key".to_owned(),
                 }
             }),
         );
@@ -674,8 +675,9 @@ impl GameInput {
             Box::new(move |args| match args.len() {
                 0 => {
                     let _ = bindings.replace(HashMap::new());
+                    String::new()
                 }
-                _ => println!("unbindall: delete all keybindings"),
+                _ => "unbindall: delete all keybindings".to_owned(),
             }),
         );
 
@@ -687,11 +689,11 @@ impl GameInput {
                 println!("args: {}", args.len());
                 match args.len() {
                     1 => match u8::from_str(args[0]) {
-                        Ok(i) => impulse.set(i),
-                        Err(_) => println!("Impulse must be a number between 0 and 255"),
+                        Ok(i) => {impulse.set(i); String::new()},
+                        Err(_) => "Impulse must be a number between 0 and 255".to_owned(),
                     },
 
-                    _ => println!("impulse [number]"),
+                    _ => "usage: impulse [number]".to_owned(),
                 }
             }),
         );

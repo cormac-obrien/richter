@@ -31,6 +31,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ConsoleError {
+    #[error("{0}")]
+    CmdError(String),
     #[error("Could not parse cvar as a number: {name} = \"{value}\"")]
     CvarParseFailed { name: String, value: String },
     #[error(
@@ -45,9 +47,11 @@ pub enum ConsoleError {
     NoSuchCvar(String),
 }
 
+type Cmd = Box<dyn Fn(&[&str]) -> String>;
+
 /// Stores console commands.
 pub struct CmdRegistry {
-    cmds: HashMap<String, Box<dyn Fn(&[&str])>>,
+    cmds: HashMap<String, Cmd>,
 }
 
 impl CmdRegistry {
@@ -60,7 +64,7 @@ impl CmdRegistry {
     /// Registers a new command with the given name.
     ///
     /// Returns an error if a command with the specified name already exists.
-    pub fn insert<S>(&mut self, name: S, cmd: Box<dyn Fn(&[&str])>) -> Result<(), ConsoleError>
+    pub fn insert<S>(&mut self, name: S, cmd: Cmd) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
@@ -76,7 +80,7 @@ impl CmdRegistry {
     }
 
     /// Registers a new command with the given name, or replaces one if the name is in use.
-    pub fn insert_or_replace<S>(&mut self, name: S, cmd: Box<dyn Fn(&[&str])>)
+    pub fn insert_or_replace<S>(&mut self, name: S, cmd: Cmd)
     where
         S: AsRef<str>,
     {
@@ -99,7 +103,7 @@ impl CmdRegistry {
     /// Executes a command.
     ///
     /// Returns an error if no command with the specified name exists.
-    pub fn exec<S>(&mut self, name: S, args: &[&str]) -> Result<(), ConsoleError>
+    pub fn exec<S>(&mut self, name: S, args: &[&str]) -> Result<String, ConsoleError>
     where
         S: AsRef<str>,
     {
@@ -107,8 +111,8 @@ impl CmdRegistry {
             .cmds
             .get(name.as_ref())
             .ok_or(ConsoleError::NoSuchCommand(name.as_ref().to_string()))?;
-        cmd(args);
-        Ok(())
+
+        Ok(cmd(args))
     }
 
     pub fn contains<S>(&self, name: S) -> bool
@@ -472,7 +476,7 @@ impl Console {
                         _ => args[0],
                     };
 
-                    echo_output.borrow_mut().push(msg.chars().collect());
+                    msg.to_owned()
                 }),
             )
             .unwrap();
@@ -482,21 +486,24 @@ impl Console {
         cmds.borrow_mut()
             .insert(
                 "alias",
-                Box::new(move |args| match args.len() {
-                    0 => {
-                        for (name, script) in cmd_aliases.borrow().iter() {
-                            println!("    {}: {}", name, script);
+                Box::new(move |args| {
+                    match args.len() {
+                        0 => {
+                            for (name, script) in cmd_aliases.borrow().iter() {
+                                println!("    {}: {}", name, script);
+                            }
+                            println!("{} alias command(s)", cmd_aliases.borrow().len());
                         }
-                        println!("{} alias command(s)", cmd_aliases.borrow().len());
-                    }
 
-                    2 => {
-                        let name = args[0].to_string();
-                        let script = args[1].to_string();
-                        let _ = cmd_aliases.borrow_mut().insert(name, script);
-                    }
+                        2 => {
+                            let name = args[0].to_string();
+                            let script = args[1].to_string();
+                            let _ = cmd_aliases.borrow_mut().insert(name, script);
+                        }
 
-                    _ => (),
+                        _ => (),
+                    }
+                    String::new()
                 }),
             )
             .unwrap();
@@ -593,7 +600,14 @@ impl Console {
                             args.iter().map(|s| s.as_ref()).skip(1).collect();
 
                         if self.cmds.borrow().contains(arg_0) {
-                            self.cmds.borrow_mut().exec(arg_0, &tail_args).unwrap();
+                            match self.cmds.borrow_mut().exec(arg_0, &tail_args) {
+                                Ok(o) => {
+                                    if !o.is_empty() {
+                                        self.output.borrow_mut().println(o)
+                                    }
+                                }
+                                Err(e) => self.output.borrow_mut().println(format!("{}", e)),
+                            }
                         } else if self.cvars.borrow().contains(arg_0) {
                             // TODO error handling on cvar set
                             match args.get(1) {

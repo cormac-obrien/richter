@@ -535,7 +535,6 @@ impl Connection {
                         sound_precache,
                     )?;
 
-                    // TODO: replace console commands holding `Rc`s to the old ClientState
                     let bonus_cshift =
                         self.state.color_shifts[ColorShiftCode::Bonus as usize].clone();
                     cmds.insert_or_replace(
@@ -545,6 +544,7 @@ impl Connection {
                                 dest_color: [215, 186, 69],
                                 percent: 50,
                             });
+                            String::new()
                         }),
                     );
                 }
@@ -1146,7 +1146,7 @@ impl std::ops::Drop for Client {
 fn cmd_toggleconsole(
     conn: Rc<RefCell<Option<Connection>>>,
     input: Rc<RefCell<Input>>,
-) -> Box<dyn Fn(&[&str])> {
+) -> Box<dyn Fn(&[&str]) -> String> {
     Box::new(move |_| {
         let focus = input.borrow().focus();
         match *conn.borrow() {
@@ -1161,6 +1161,7 @@ fn cmd_toggleconsole(
                 InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Console),
             },
         }
+        String::new()
     })
 }
 
@@ -1168,7 +1169,7 @@ fn cmd_toggleconsole(
 fn cmd_togglemenu(
     conn: Rc<RefCell<Option<Connection>>>,
     input: Rc<RefCell<Input>>,
-) -> Box<dyn Fn(&[&str])> {
+) -> Box<dyn Fn(&[&str]) -> String> {
     Box::new(move |_| {
         let focus = input.borrow().focus();
         match *conn.borrow() {
@@ -1183,6 +1184,7 @@ fn cmd_togglemenu(
                 InputFocus::Menu => input.borrow_mut().set_focus(InputFocus::Console),
             },
         }
+        String::new()
     })
 }
 
@@ -1275,21 +1277,21 @@ fn cmd_connect(
     conn: Rc<RefCell<Option<Connection>>>,
     input: Rc<RefCell<Input>>,
     audio_device: Rc<rodio::Device>,
-) -> Box<dyn Fn(&[&str])> {
+) -> Box<dyn Fn(&[&str]) -> String> {
     Box::new(move |args| {
         if args.len() < 1 {
             // TODO: print to console
-            println!("usage: connect <server_ip>:<server_port>");
+            return "usage: connect <server_ip>:<server_port>".to_owned();
         }
 
         match connect(args[0], audio_device.clone()) {
             Ok(new_conn) => {
                 conn.replace(Some(new_conn));
                 input.borrow_mut().set_focus(InputFocus::Game);
+                String::new()
             }
             Err(e) => {
-                // TODO: print to console
-                error!("{}", e);
+                format!("{}", e)
             }
         }
     })
@@ -1298,7 +1300,7 @@ fn cmd_connect(
 fn cmd_reconnect(
     conn: Rc<RefCell<Option<Connection>>>,
     input: Rc<RefCell<Input>>,
-) -> Box<dyn Fn(&[&str])> {
+) -> Box<dyn Fn(&[&str]) -> String> {
     Box::new(move |_| {
         match *conn.borrow_mut() {
             Some(ref mut conn) => {
@@ -1306,9 +1308,10 @@ fn cmd_reconnect(
                 conn.conn_state
                     .replace(ConnectionState::SignOn(SignOnStage::Prespawn));
                 input.borrow_mut().set_focus(InputFocus::Game);
+                String::new()
             }
             // TODO: log message, e.g. "can't reconnect while disconnected"
-            None => (),
+            None => "not connected".to_string(),
         }
     })
 }
@@ -1316,9 +1319,15 @@ fn cmd_reconnect(
 fn cmd_disconnect(
     conn: Rc<RefCell<Option<Connection>>>,
     input: Rc<RefCell<Input>>,
-) -> Box<dyn Fn(&[&str])> {
+) -> Box<dyn Fn(&[&str]) -> String> {
     Box::new(move |_| {
-        conn.replace(None);
-        input.borrow_mut().set_focus(InputFocus::Console);
+        let connected = conn.borrow().is_some();
+        if connected {
+            conn.replace(None);
+            input.borrow_mut().set_focus(InputFocus::Console);
+            String::new()
+        } else {
+            "not connected".to_string()
+        }
     })
 }
