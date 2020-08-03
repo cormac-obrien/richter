@@ -383,12 +383,12 @@ fn main() {
         }
     };
 
-    let mut client_program =
+    let client_program =
         futures::executor::block_on(ClientProgram::new(window, audio_device, opt.trace));
     if let Some(ref server) = opt.connect {
         client_program.console.borrow_mut().stuff_text(format!("connect {}", server));
     } else if let Some(ref demo) = opt.demo {
-        client_program.game.client.play_demo(demo).unwrap();
+        client_program.console.borrow_mut().stuff_text(format!("playdemo {}", demo));
     }
 
     let mut host = Host::new(client_program);

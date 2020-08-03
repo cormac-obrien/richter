@@ -143,6 +143,24 @@ impl ClientEntity {
         }
     }
 
+    /// Sets the entity's most recent message angles to the specified value.
+    ///
+    /// This is primarily useful for allowing interpolated view angles in demos.
+    pub fn update_angles(&mut self, angles: Vector3<Deg<f32>>) {
+        self.msg_angles[0] = angles;
+    }
+
+    /// Sets the entity's angles to the specified value, overwriting the message
+    /// history.
+    ///
+    /// This causes the entity to "snap" to the correct angle rather than
+    /// interpolating to it.
+    pub fn set_angles(&mut self, angles: Vector3<Deg<f32>>) {
+        self.msg_angles[0] = angles;
+        self.msg_angles[1] = angles;
+        self.angles = angles;
+    }
+
     /// Returns the timestamp of the last message that updated this entity.
     pub fn msg_time(&self) -> Duration {
         self.msg_time
@@ -163,16 +181,6 @@ impl ClientEntity {
 
     pub fn get_angles(&self) -> Vector3<Deg<f32>> {
         self.angles
-    }
-
-    /// Set this entity's angles to the specified value.
-    ///
-    /// This overwrites both the current and previous angle values, disabling
-    /// interpolation.
-    pub fn set_angles(&mut self, angles: Vector3<Deg<f32>>) {
-        self.msg_angles[0] = angles;
-        self.msg_angles[1] = angles;
-        self.angles = angles;
     }
 
     pub fn model_id(&self) -> usize {

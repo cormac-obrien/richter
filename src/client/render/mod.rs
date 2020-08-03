@@ -95,6 +95,7 @@ use crate::{
             },
         },
         Connection,
+        ConnectionKind,
     },
     common::{
         console::{Console, CvarRegistry},
@@ -684,13 +685,20 @@ impl ClientRenderer {
         if let Some(Connection {
             state: ref cl_state,
             ref conn_state,
-            ..
+            ref kind,
         }) = conn
         {
             match *conn_state.borrow() {
                 ConnectionState::Connected(ref world) => {
                     // if client is fully connected, draw world
-                    let camera = cl_state.camera(width as f32 / height as f32, fov);
+                    let camera = match kind {
+                        ConnectionKind::Demo(_) => {
+                            cl_state.demo_camera(width as f32 / height as f32, fov)
+                        }
+                        ConnectionKind::Server { .. } => {
+                            cl_state.camera(width as f32 / height as f32, fov)
+                        }
+                    };
 
                     // initial render pass
                     {
@@ -823,7 +831,7 @@ impl ClientRenderer {
                 Extent2d { width, height },
                 // use client time when in game, renderer time otherwise
                 match conn {
-                    Some(Connection { ref state, ..}) => state.time,
+                    Some(Connection { ref state, .. }) => state.time,
                     None => Utc::now().signed_duration_since(self.start_time),
                 },
                 &ui_state,

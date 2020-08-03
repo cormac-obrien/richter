@@ -252,6 +252,7 @@ impl Mixer {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ConnectionStatus {
     Maintain,
     Disconnect,
@@ -389,7 +390,6 @@ impl Connection {
                     let mut view_angles = msg_view.view_angles();
                     // invert entity angles to get the camera direction right.
                     // yaw is already inverted.
-                    view_angles.x = -view_angles.x;
                     view_angles.z = -view_angles.z;
 
                     // TODO: we shouldn't have to copy the message here
@@ -452,7 +452,7 @@ impl Connection {
                     // patch view angles in demos
                     if let Some(angles) = demo_view_angles {
                         if ent_id == self.state.view_entity_id() {
-                            self.state.entities[ent_id].msg_angles[0] = angles;
+                            self.state.update_view_angles(angles);
                         }
                     }
                 }
@@ -793,13 +793,17 @@ impl Connection {
         roll_vars: RollVars,
         cl_nolerp: f32,
         sv_gravity: f32,
-    ) -> Result<(), ClientError> {
+    ) -> Result<ConnectionStatus, ClientError> {
         debug!("frame time: {}ms", frame_time.num_milliseconds());
 
         // do this _before_ parsing server messages so that we know when to
         // request the next message from the demo server.
         self.state.advance_time(frame_time);
-        self.parse_server_msg(vfs, gfx_state, cmds, console, audio_device, kick_vars)?;
+        match self.parse_server_msg(vfs, gfx_state, cmds, console, audio_device, kick_vars)? {
+            ConnectionStatus::Maintain => (),
+            ConnectionStatus::Disconnect => return Ok(ConnectionStatus::Disconnect),
+        };
+
         self.state.update_interp_ratio(cl_nolerp);
 
         // interpolate entity data and spawn particle effects, lights
@@ -843,7 +847,7 @@ impl Connection {
             self.state.update_color_shifts(frame_time)?;
         }
 
-        Ok(())
+        Ok(ConnectionStatus::Maintain)
     }
 }
 
@@ -889,6 +893,17 @@ impl Client {
         cmds.borrow_mut()
             .insert_or_replace("disconnect", cmd_disconnect(conn.clone(), input.clone()));
 
+        // set up demo playback
+        cmds.borrow_mut().insert_or_replace(
+            "playdemo",
+            cmd_playdemo(
+                conn.clone(),
+                vfs.clone(),
+                input.clone(),
+                audio_device.clone(),
+            ),
+        );
+
         Client {
             vfs,
             cvars,
@@ -899,24 +914,6 @@ impl Client {
             conn,
             renderer: ClientRenderer::new(gfx_state, menu),
         }
-    }
-
-    pub fn play_demo<S>(&mut self, demo_path: S) -> Result<(), ClientError>
-    where
-        S: AsRef<str>,
-    {
-        let mut demo_file = self.vfs.open(demo_path)?;
-        let demo_server = DemoServer::new(&mut demo_file)?;
-
-        self.conn.replace(Some(Connection {
-            state: ClientState::new(self.audio_device.clone())?,
-            kind: ConnectionKind::Demo(demo_server),
-            conn_state: Rc::new(RefCell::new(ConnectionState::SignOn(SignOnStage::Prespawn))),
-        }));
-
-        self.input.borrow_mut().set_focus(InputFocus::Game);
-
-        Ok(())
     }
 
     pub fn disconnect(&mut self) {
@@ -935,8 +932,8 @@ impl Client {
         let kick_vars = self.kick_vars()?;
         let roll_vars = self.roll_vars()?;
 
-        if let Some(ref mut conn) = *self.conn.borrow_mut() {
-            conn.frame(
+        let status = match *self.conn.borrow_mut() {
+            Some(ref mut conn) => conn.frame(
                 frame_time,
                 &self.vfs,
                 gfx_state,
@@ -948,8 +945,17 @@ impl Client {
                 roll_vars,
                 cl_nolerp,
                 sv_gravity,
-            )?;
-        } else {
+            )?,
+            None => {
+                ConnectionStatus::Disconnect
+            }
+        };
+
+        if let ConnectionStatus::Disconnect = status {
+            // if client is already disconnected, this is a no-op
+            self.conn.replace(None);
+            self.input.borrow_mut().set_focus(InputFocus::Console);
+
             // don't allow game focus when disconnected
             let focus = self.input.borrow().focus();
             if let InputFocus::Game = focus {
@@ -1290,9 +1296,7 @@ fn cmd_connect(
                 input.borrow_mut().set_focus(InputFocus::Game);
                 String::new()
             }
-            Err(e) => {
-                format!("{}", e)
-            }
+            Err(e) => format!("{}", e),
         }
     })
 }
@@ -1329,5 +1333,40 @@ fn cmd_disconnect(
         } else {
             "not connected".to_string()
         }
+    })
+}
+
+fn cmd_playdemo(
+    conn: Rc<RefCell<Option<Connection>>>,
+    vfs: Rc<Vfs>,
+    input: Rc<RefCell<Input>>,
+    audio_device: Rc<rodio::Device>,
+) -> Box<dyn Fn(&[&str]) -> String> {
+    Box::new(move |args| {
+        if args.len() != 1 {
+            return "usage: playdemo [DEMOFILE]".to_owned();
+        }
+
+        let mut demo_file = match vfs.open(format!("{}.dem", args[0])) {
+            Ok(f) => f,
+            Err(e) => return format!("{}", e),
+        };
+
+        let demo_server = match DemoServer::new(&mut demo_file) {
+            Ok(d) => d,
+            Err(e) => return format!("{}", e),
+        };
+
+        conn.replace(Some(Connection {
+            state: match ClientState::new(audio_device.clone()) {
+                Ok(c) => c,
+                Err(e) => return format!("{}", e),
+            },
+            kind: ConnectionKind::Demo(demo_server),
+            conn_state: Rc::new(RefCell::new(ConnectionState::SignOn(SignOnStage::Prespawn))),
+        }));
+
+        input.borrow_mut().set_focus(InputFocus::Game);
+        String::new()
     })
 }
