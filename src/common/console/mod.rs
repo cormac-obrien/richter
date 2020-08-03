@@ -439,7 +439,9 @@ impl ConsoleOutput {
     where
         S: AsRef<str>,
     {
-        self.push(s.as_ref().chars().collect());
+        for line in s.as_ref().split('\n') {
+            self.push(line.chars().collect());
+        }
     }
 
     pub fn push(&mut self, chars: Vec<char>) {

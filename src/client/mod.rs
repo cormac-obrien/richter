@@ -81,6 +81,14 @@ const DEFAULT_SOUND_PACKET_ATTENUATION: f32 = 1.0;
 
 const MAX_CHANNELS: usize = 128;
 
+const CONSOLE_DIVIDER: &'static str = "\
+\n\n\
+\x1D\x1E\x1E\x1E\x1E\x1E\x1E\x1E\
+\x1E\x1E\x1E\x1E\x1E\x1E\x1E\x1E\
+\x1E\x1E\x1E\x1E\x1E\x1E\x1E\x1E\
+\x1E\x1E\x1E\x1E\x1E\x1E\x1E\x1F\
+\n\n";
+
 #[derive(Error, Debug)]
 pub enum ClientError {
     #[error("Connection rejected: {0}")]
@@ -471,10 +479,12 @@ impl Connection {
                     source,
                 } => self.state.handle_damage(armor, blood, source, kick_vars),
 
-                ServerCmd::Disconnect => return Ok(match self.kind {
-                    ConnectionKind::Demo(_) => NextDemo,
-                    ConnectionKind::Server { .. } => Disconnect,
-                }),
+                ServerCmd::Disconnect => {
+                    return Ok(match self.kind {
+                        ConnectionKind::Demo(_) => NextDemo,
+                        ConnectionKind::Server { .. } => Disconnect,
+                    })
+                }
 
                 ServerCmd::FastUpdate(ent_update) => {
                     // first update signals the last sign-on stage
@@ -552,8 +562,9 @@ impl Connection {
                         Err(ClientError::UnrecognizedProtocol(protocol_version))?;
                     }
 
-                    // TODO: print sign-on message to in-game console
-                    println!("{}", message);
+                    console.println(CONSOLE_DIVIDER);
+                    console.println(message);
+                    console.println(CONSOLE_DIVIDER);
 
                     let _server_info = ServerInfo {
                         _max_clients: max_clients,
