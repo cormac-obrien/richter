@@ -98,8 +98,8 @@ pub struct ClientState {
 
 impl ClientState {
     // TODO: add parameter for number of player slots and reserve them in entity list
-    pub fn new(audio_device: Rc<rodio::Device>) -> Result<ClientState, ClientError> {
-        Ok(ClientState {
+    pub fn new(audio_device: Rc<rodio::Device>) -> ClientState {
+        ClientState {
             models: vec![Model::none()],
             model_names: HashMap::new(),
             sounds: Vec::new(),
@@ -149,7 +149,7 @@ impl ClientState {
             completion_time: None,
             mixer: Mixer::new(audio_device.clone()),
             listener: Listener::new(),
-        })
+        }
     }
 
     pub fn from_server_info(
@@ -197,7 +197,7 @@ impl ClientState {
             model_names,
             sounds,
             max_players: max_clients as usize,
-            ..ClientState::new(audio_device)?
+            ..ClientState::new(audio_device)
         })
     }
 

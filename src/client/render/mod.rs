@@ -688,7 +688,7 @@ impl ClientRenderer {
             ref kind,
         }) = conn
         {
-            match *conn_state.borrow() {
+            match conn_state {
                 ConnectionState::Connected(ref world) => {
                     // if client is fully connected, draw world
                     let camera = match kind {
@@ -816,7 +816,7 @@ impl ClientRenderer {
             }) = conn
             {
                 // only postprocess if client is in the game
-                if let ConnectionState::Connected(_) = *conn_state.borrow() {
+                if let ConnectionState::Connected(_) = conn_state {
                     self.postprocess_renderer.record_draw(
                         gfx_state,
                         &mut final_pass,

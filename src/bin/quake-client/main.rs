@@ -25,18 +25,20 @@ mod trace;
 
 use std::{
     cell::{Ref, RefCell, RefMut},
-    io::Read,
-    net::{SocketAddr, ToSocketAddrs},
+    io::{Cursor, Read, Write},
+    net::SocketAddr,
     path::Path,
-    rc::Rc,
+    rc::Rc, fs::File,
 };
 
 use game::Game;
 
 use chrono::Duration;
+use common::net::ServerCmd;
 use richter::{
     client::{
         self,
+        demo::DemoServer,
         input::{Input, InputFocus},
         menu::Menu,
         render::{self, Extent2d, GraphicsState, UiRenderer, DIFFUSE_ATTACHMENT_FORMAT},
@@ -53,7 +55,7 @@ use structopt::StructOpt;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget},
-    window::{Window, WindowBuilder},
+    window::Window,
 };
 
 struct ClientProgram {
@@ -350,6 +352,9 @@ struct Opt {
     connect: Option<SocketAddr>,
 
     #[structopt(long)]
+    dump_demo: Option<String>,
+
+    #[structopt(long)]
     demo: Option<String>,
 }
 
@@ -385,10 +390,57 @@ fn main() {
 
     let client_program =
         futures::executor::block_on(ClientProgram::new(window, audio_device, opt.trace));
+
+    // TODO: make dump_demo part of top-level binary and allow choosing file name
+    if let Some(ref demo) = opt.dump_demo {
+        let mut demfile = match client_program.vfs.open(demo) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("error opening demofile: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let mut demserv = match DemoServer::new(&mut demfile) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("error starting demo server: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let mut outfile = File::create("demodump.txt").unwrap();
+        loop {
+            match demserv.next() {
+                Some(msg) => {
+                    let mut curs = Cursor::new(msg.message());
+                    loop {
+                        match ServerCmd::deserialize(&mut curs) {
+                            Ok(Some(cmd)) => write!(&mut outfile, "{:#?}\n", cmd).unwrap(),
+                            Ok(None) => break,
+                            Err(e) => {
+                                eprintln!("error processing demo: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+                None => break,
+            }
+        }
+
+        std::process::exit(0);
+    }
     if let Some(ref server) = opt.connect {
-        client_program.console.borrow_mut().stuff_text(format!("connect {}", server));
+        client_program
+            .console
+            .borrow_mut()
+            .stuff_text(format!("connect {}", server));
     } else if let Some(ref demo) = opt.demo {
-        client_program.console.borrow_mut().stuff_text(format!("playdemo {}", demo));
+        client_program
+            .console
+            .borrow_mut()
+            .stuff_text(format!("playdemo {}", demo));
     }
 
     let mut host = Host::new(client_program);

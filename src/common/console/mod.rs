@@ -519,6 +519,10 @@ impl Console {
         }
     }
 
+    pub fn println<S>(&mut self, s: S) where S: AsRef<str> {
+        self.output.borrow_mut().println(s);
+    }
+
     pub fn send_char(&mut self, c: char) {
         match c {
             // ignore grave and escape keys
