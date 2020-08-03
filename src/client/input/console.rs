@@ -34,7 +34,7 @@ impl ConsoleInput {
     pub fn handle_event<T>(&self, event: Event<T>) -> Result<(), Error> {
         match event {
             Event::WindowEvent { event, .. } => match event {
-                WindowEvent::ReceivedCharacter(c) => self.console.borrow_mut().send_char(c)?,
+                WindowEvent::ReceivedCharacter(c) => self.console.borrow_mut().send_char(c),
 
                 WindowEvent::KeyboardInput {
                     input:

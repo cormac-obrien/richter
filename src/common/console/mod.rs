@@ -18,9 +18,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod error;
-pub use self::error::{ConsoleError, ConsoleErrorKind};
-
 use std::{
     cell::{Ref, RefCell},
     collections::{HashMap, VecDeque},
@@ -30,7 +27,23 @@ use std::{
 
 use crate::common::parse;
 
-use failure::{Error, ResultExt};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum ConsoleError {
+    #[error("Could not parse cvar as a number: {name} = \"{value}\"")]
+    CvarParseFailed { name: String, value: String },
+    #[error(
+        "Command already registered: {0} (to replace existing definition, use `insert_or_replace`)"
+    )]
+    DuplicateCommand(String),
+    #[error("Cvar already registered: {0}")]
+    DuplicateCvar(String),
+    #[error("No such command: {0}")]
+    NoSuchCommand(String),
+    #[error("No such cvar: {0}")]
+    NoSuchCvar(String),
+}
 
 /// Stores console commands.
 pub struct CmdRegistry {
@@ -51,12 +64,11 @@ impl CmdRegistry {
     where
         S: AsRef<str>,
     {
-        match self.cmds.get(name.as_ref()) {
-            Some(_) => Err(ConsoleErrorKind::DuplicateCommand {
-                name: name.as_ref().to_string(),
-            })?,
+        let name = name.as_ref();
+        match self.cmds.get(name) {
+            Some(_) => Err(ConsoleError::DuplicateCommand(name.to_owned()))?,
             None => {
-                self.cmds.insert(name.as_ref().to_owned(), cmd);
+                self.cmds.insert(name.to_owned(), cmd);
             }
         }
 
@@ -80,9 +92,7 @@ impl CmdRegistry {
     {
         match self.cmds.remove(name.as_ref()) {
             Some(_) => Ok(()),
-            None => Err(ConsoleErrorKind::NoSuchCommand {
-                name: name.as_ref().to_owned(),
-            })?,
+            None => Err(ConsoleError::NoSuchCommand(name.as_ref().to_string()))?,
         }
     }
 
@@ -96,9 +106,7 @@ impl CmdRegistry {
         let cmd = self
             .cmds
             .get(name.as_ref())
-            .ok_or(ConsoleErrorKind::NoSuchCommand {
-                name: name.as_ref().to_owned(),
-            })?;
+            .ok_or(ConsoleError::NoSuchCommand(name.as_ref().to_string()))?;
         cmd(args);
         Ok(())
     }
@@ -157,9 +165,7 @@ impl CvarRegistry {
 
         let mut cvars = self.cvars.borrow_mut();
         match cvars.get(name) {
-            Some(_) => Err(ConsoleErrorKind::DuplicateCvar {
-                name: name.to_owned(),
-            })?,
+            Some(_) => Err(ConsoleError::DuplicateCvar(name.to_owned()))?,
             None => {
                 cvars.insert(
                     name.to_owned(),
@@ -230,9 +236,7 @@ impl CvarRegistry {
             .cvars
             .borrow()
             .get(name.as_ref())
-            .ok_or(ConsoleErrorKind::NoSuchCvar {
-                name: name.as_ref().to_owned(),
-            })?
+            .ok_or(ConsoleError::NoSuchCvar(name.as_ref().to_owned()))?
             .val
             .clone())
     }
@@ -243,24 +247,24 @@ impl CvarRegistry {
     {
         let name = name.as_ref();
         let mut cvars = self.cvars.borrow_mut();
-        let cvar = cvars.get_mut(name).ok_or(ConsoleErrorKind::NoSuchCvar {
-            name: name.to_owned(),
-        })?;
+        let cvar = cvars
+            .get_mut(name)
+            .ok_or(ConsoleError::NoSuchCvar(name.to_owned()))?;
 
         // try parsing as f32
         let val_string = cvar.val.clone();
         let val = match val_string.parse::<f32>() {
             Ok(v) => Ok(v),
-            // if parse fails, reset to default valud and try again
+            // if parse fails, reset to default value and try again
             Err(_) => {
                 cvar.val = cvar.default.clone();
                 cvar.val.parse::<f32>()
             }
         }
-        .context(ConsoleErrorKind::CvarParseFailed {
+        .or(Err(ConsoleError::CvarParseFailed {
             name: name.to_owned(),
-            value: cvar.val.clone(),
-        })?;
+            value: val_string.clone(),
+        }))?;
 
         Ok(val)
     }
@@ -273,9 +277,7 @@ impl CvarRegistry {
         let mut cvars = self.cvars.borrow_mut();
         let mut cvar = cvars
             .get_mut(name.as_ref())
-            .ok_or(ConsoleErrorKind::NoSuchCvar {
-                name: name.as_ref().to_owned(),
-            })?;
+            .ok_or(ConsoleError::NoSuchCvar(name.as_ref().to_owned()))?;
         cvar.val = value.as_ref().to_owned();
         if cvar.notify {
             // TODO: update userinfo/serverinfo
@@ -375,14 +377,6 @@ impl ConsoleInput {
         self.text.clear();
         self.curs = 0;
     }
-
-    pub fn debug_string(&self) -> String {
-        format!(
-            "{}_{}",
-            String::from_iter(self.text[..self.curs].to_owned().into_iter()),
-            String::from_iter(self.text[self.curs..].to_owned().into_iter())
-        )
-    }
 }
 
 pub struct History {
@@ -421,7 +415,7 @@ impl History {
         if self.curs > 0 {
             Some(self.lines[self.curs - 1].clone())
         } else {
-            Some(Vec::new().clone())
+            Some(Vec::new())
         }
     }
 }
@@ -435,6 +429,13 @@ impl ConsoleOutput {
         ConsoleOutput {
             lines: VecDeque::new(),
         }
+    }
+
+    pub fn println<S>(&mut self, s: S)
+    where
+        S: AsRef<str>,
+    {
+        self.push(s.as_ref().chars().collect());
     }
 
     pub fn push(&mut self, chars: Vec<char>) {
@@ -511,7 +512,7 @@ impl Console {
         }
     }
 
-    pub fn send_char(&mut self, c: char) -> Result<(), Error> {
+    pub fn send_char(&mut self, c: char) {
         match c {
             // ignore grave and escape keys
             '`' | '\x1b' => (),
@@ -542,8 +543,6 @@ impl Console {
             // TODO: we should probably restrict what characters are allowed
             c => self.input.insert(c),
         }
-
-        Ok(())
     }
 
     pub fn cursor(&self) -> usize {
@@ -572,8 +571,7 @@ impl Console {
 
     /// Interprets the contents of the execution buffer.
     pub fn execute(&self) {
-        let text = self.buffer.borrow().to_owned();
-        self.buffer.borrow_mut().clear();
+        let text = self.buffer.replace(String::new());
 
         let (_remaining, commands) = parse::commands(text.as_str()).unwrap();
 
@@ -613,12 +611,9 @@ impl Console {
                             }
                         } else {
                             // TODO: try sending to server first
-                            self.output.borrow_mut().push(
-                                format!("Unrecognized command \"{}\"", arg_0)
-                                    .as_str()
-                                    .chars()
-                                    .collect(),
-                            );
+                            self.output
+                                .borrow_mut()
+                                .println(format!("Unrecognized command \"{}\"", arg_0));
                         }
                     }
                 }
@@ -628,14 +623,6 @@ impl Console {
 
     pub fn get_string(&self) -> String {
         String::from_iter(self.input.text.clone().into_iter())
-    }
-
-    pub fn debug_string(&self) -> String {
-        format!(
-            "{}_{}",
-            String::from_iter(self.input.text[..self.input.curs].to_owned().into_iter()),
-            String::from_iter(self.input.text[self.input.curs..].to_owned().into_iter())
-        )
     }
 
     pub fn stuff_text<S>(&self, text: S)

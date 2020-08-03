@@ -1285,14 +1285,13 @@ fn cmd_connect(
         match connect(args[0], audio_device.clone()) {
             Ok(new_conn) => {
                 conn.replace(Some(new_conn));
+                input.borrow_mut().set_focus(InputFocus::Game);
             }
             Err(e) => {
                 // TODO: print to console
                 error!("{}", e);
             }
         }
-
-        input.borrow_mut().set_focus(InputFocus::Game);
     })
 }
 
