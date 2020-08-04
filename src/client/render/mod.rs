@@ -94,8 +94,7 @@ use crate::{
                 EntityUniforms,
             },
         },
-        Connection,
-        ConnectionKind,
+        Connection, ConnectionKind,
     },
     common::{
         console::{Console, CvarRegistry},
@@ -774,6 +773,7 @@ impl ClientRenderer {
                         completion_duration: cl_state.completion_time().unwrap()
                             - cl_state.start_time(),
                         stats: cl_state.stats(),
+                        console,
                     },
 
                     None => HudState::InGame {
@@ -781,6 +781,7 @@ impl ClientRenderer {
                         item_pickup_time: cl_state.item_pickup_times(),
                         stats: cl_state.stats(),
                         face_anim_time: cl_state.face_anim_time(),
+                        console,
                     },
                 },
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, iter::FromIterator};
 
 use crate::{
     client::{
@@ -13,11 +13,13 @@ use crate::{
         IntermissionKind,
     },
     common::{
+        console::Console,
         net::{ClientStat, ItemFlags},
         wad::QPic,
     },
 };
 
+use arrayvec::ArrayVec;
 use chrono::Duration;
 use num::FromPrimitive as _;
 use strum::IntoEnumIterator as _;
@@ -38,11 +40,13 @@ pub enum HudState<'a> {
         item_pickup_time: &'a [Duration],
         stats: &'a [i32],
         face_anim_time: Duration,
+        console: &'a Console,
     },
     Intermission {
         kind: &'a IntermissionKind,
         completion_duration: Duration,
         stats: &'a [i32],
+        console: &'a Console,
     },
 }
 
@@ -608,7 +612,7 @@ impl HudRenderer {
         self.cmd_intermission_quad(Complete, 64, OVERLAY_HEIGHT - 24, scale, quad_cmds);
         self.cmd_intermission_quad(Intermission, 0, OVERLAY_HEIGHT - 56, scale, quad_cmds);
 
-        // TODO: completed time
+        // TODO: zero-pad number of seconds
         let time_y_ofs = OVERLAY_HEIGHT - 64;
         let minutes = completion_duration.num_minutes() as i32;
         let seconds = completion_duration.num_seconds() as i32 - 60 * minutes;
@@ -643,6 +647,7 @@ impl HudRenderer {
     ) {
         // TODO: get from cvar
         let scale = 2.0;
+        let console_timeout = Duration::seconds(3);
 
         match hud_state {
             HudState::InGame {
@@ -650,21 +655,60 @@ impl HudRenderer {
                 item_pickup_time,
                 stats,
                 face_anim_time,
-            } => self.cmd_sbar(
-                time,
-                *items,
-                item_pickup_time,
-                stats,
-                *face_anim_time,
-                scale,
-                quad_cmds,
-                glyph_cmds,
-            ),
+                console,
+            } => {
+                self.cmd_sbar(
+                    time,
+                    *items,
+                    item_pickup_time,
+                    stats,
+                    *face_anim_time,
+                    scale,
+                    quad_cmds,
+                    glyph_cmds,
+                );
+
+                let output = console.output();
+                for (id, line) in output.recent_lines(console_timeout, 100, 10).enumerate() {
+                    for (chr_id, chr) in line.into_iter().enumerate() {
+                        glyph_cmds.push(GlyphRendererCommand::Glyph {
+                            glyph_id: *chr as u8,
+                            position: ScreenPosition::Relative {
+                                anchor: Anchor::TOP_LEFT,
+                                x_ofs: 8 * chr_id as i32,
+                                y_ofs: -8 * id as i32,
+                            },
+                            anchor: Anchor::TOP_LEFT,
+                            scale,
+                        });
+                    }
+                }
+            }
             HudState::Intermission {
                 kind,
                 completion_duration,
                 stats,
-            } => self.cmd_intermission_overlay(kind, *completion_duration, stats, scale, quad_cmds),
+                console,
+            } => {
+                self.cmd_intermission_overlay(kind, *completion_duration, stats, scale, quad_cmds);
+
+                // TODO: dedup this code
+                let output = console.output();
+                for (id, line) in output.recent_lines(console_timeout, 100, 10).enumerate() {
+                    for (chr_id, chr) in line.into_iter().enumerate() {
+                        glyph_cmds.push(GlyphRendererCommand::Glyph {
+                            glyph_id: *chr as u8,
+                            position: ScreenPosition::Relative {
+                                anchor: Anchor::TOP_LEFT,
+                                x_ofs: 8 * chr_id as i32,
+                                y_ofs: -8 * id as i32,
+                            },
+                            anchor: Anchor::TOP_LEFT,
+                            scale,
+                        });
+                    }
+                }
+            }
         }
     }
 }

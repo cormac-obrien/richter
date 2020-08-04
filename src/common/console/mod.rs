@@ -27,6 +27,7 @@ use std::{
 
 use crate::common::parse;
 
+use chrono::{Utc, Duration};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -425,7 +426,13 @@ impl History {
 }
 
 pub struct ConsoleOutput {
-    lines: VecDeque<Vec<char>>,
+    // A ring buffer of lines of text. Each line has an optional timestamp used
+    // to determine whether it should be displayed on screen. If the timestamp
+    // is `None`, the message will not be displayed.
+    //
+    // The timestamp is specified in seconds since the Unix epoch (so it is
+    // decoupled from client/server time).
+    lines: VecDeque<(Vec<char>, Option<i64>)>,
 }
 
 impl ConsoleOutput {
@@ -435,22 +442,74 @@ impl ConsoleOutput {
         }
     }
 
-    pub fn println<S>(&mut self, s: S)
+    fn println_impl<S>(&mut self, s: S, timestamp: Option<i64>)
     where
         S: AsRef<str>,
     {
         for line in s.as_ref().split('\n') {
-            self.push(line.chars().collect());
+            debug!("push \"{}\"", line);
+            self.push_impl(line.chars().collect(), timestamp);
         }
     }
 
-    pub fn push(&mut self, chars: Vec<char>) {
-        self.lines.push_front(chars);
+    pub fn println<S>(&mut self, s: S)
+    where
+        S: AsRef<str>,
+    {
+        self.println_impl(s, None);
+    }
+
+    pub fn println_timestamp<S>(&mut self, s: S)
+    where
+        S: AsRef<str>,
+    {
+        self.println_impl(s, Some(Utc::now().timestamp()));
+    }
+
+    fn push_impl(&mut self, chars: Vec<char>, timestamp: Option<i64>) {
+        self.lines.push_front((chars, timestamp))
         // TODO: set maximum capacity and pop_back when we reach it
     }
 
+    pub fn push(&mut self, chars: Vec<char>) {
+        self.push_impl(chars, None);
+    }
+
+    pub fn push_timestamp(&mut self, chars: Vec<char>) {
+        self.push_impl(chars, Some(Utc::now().timestamp()));
+    }
+
     pub fn lines(&self) -> impl Iterator<Item = &[char]> {
-        self.lines.iter().map(|v| v.as_slice())
+        self.lines.iter().map(|(v, _)| v.as_slice())
+    }
+
+    /// Return an iterator over lines that have been printed in the last
+    /// `interval` of time.
+    ///
+    /// The iterator yields the oldest results first.
+    ///
+    /// `max_candidates` specifies the maximum number of lines to consider,
+    /// while `max_results` specifies the maximum number of lines that should
+    /// be returned.
+    pub fn recent_lines(
+        &self,
+        interval: Duration,
+        max_candidates: usize,
+        max_results: usize,
+    ) -> impl Iterator<Item = &[char]> {
+        let timestamp = (Utc::now() - interval).timestamp();
+        self
+            .lines
+            .iter()
+            // search only the most recent `max_candidates` lines
+            .take(max_candidates)
+            // yield oldest to newest
+            .rev()
+            // eliminate non-timestamped lines and lines older than `timestamp`
+            .filter_map(move |(l, t)| t.map(|tt| (l, tt)).filter(|(_, ttt)| *ttt > timestamp))
+            // return at most `max_results` lines
+            .take(max_results)
+            .map(|(l, _)| l.as_slice())
     }
 }
 
@@ -462,13 +521,12 @@ pub struct Console {
     input: ConsoleInput,
     hist: History,
     buffer: RefCell<String>,
-    output: Rc<RefCell<ConsoleOutput>>,
+    output: RefCell<ConsoleOutput>,
 }
 
 impl Console {
     pub fn new(cmds: Rc<RefCell<CmdRegistry>>, cvars: Rc<RefCell<CvarRegistry>>) -> Console {
-        let output = Rc::new(RefCell::new(ConsoleOutput::new()));
-        let echo_output = output.clone();
+        let output = RefCell::new(ConsoleOutput::new());
         cmds.borrow_mut()
             .insert(
                 "echo",
@@ -517,12 +575,22 @@ impl Console {
             input: ConsoleInput::new(),
             hist: History::new(),
             buffer: RefCell::new(String::new()),
-            output: output.clone(),
+            output,
         }
     }
 
-    pub fn println<S>(&mut self, s: S) where S: AsRef<str> {
+    pub fn println<S>(&mut self, s: S)
+    where
+        S: AsRef<str>,
+    {
         self.output.borrow_mut().println(s);
+    }
+
+    pub fn println_timestamp<S>(&mut self, s: S)
+    where
+        S: AsRef<str>,
+    {
+        self.output.borrow_mut().println_timestamp(s);
     }
 
     pub fn send_char(&mut self, c: char) {

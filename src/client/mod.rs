@@ -545,7 +545,7 @@ impl Connection {
                 }
 
                 ServerCmd::Print { text } => {
-                    // TODO: print to in-game console
+                    console.println_timestamp(&text);
                     println!("{}", text);
                 }
 
