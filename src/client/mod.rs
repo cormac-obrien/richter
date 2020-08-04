@@ -68,6 +68,7 @@ use chrono::Duration;
 use input::InputFocus;
 use menu::Menu;
 use render::{ClientRenderer, GraphicsState, WorldRenderer};
+use rodio::{OutputStream, OutputStreamHandle};
 use sound::SoundError;
 use thiserror::Error;
 
@@ -125,6 +126,9 @@ pub enum ClientError {
     TooManyStaticEntities,
     #[error("No such lightmap animation: {0}")]
     NoSuchLightmapAnimation(usize),
+    // TODO: wrap PlayError
+    #[error("Failed to open audio output stream")]
+    OutputStream,
     #[error("Demo server error: {0}")]
     DemoServer(#[from] DemoServerError),
     #[error("Model error: {0}")]
@@ -176,13 +180,13 @@ struct ClientChannel {
 }
 
 pub struct Mixer {
-    audio_device: Rc<rodio::Device>,
+    stream: OutputStreamHandle,
     // TODO: replace with an array once const type parameters are implemented
     channels: Box<[Option<ClientChannel>]>,
 }
 
 impl Mixer {
-    pub fn new(audio_device: Rc<rodio::Device>) -> Mixer {
+    pub fn new(stream: OutputStreamHandle) -> Mixer {
         let mut channel_vec = Vec::new();
 
         for _ in 0..MAX_CHANNELS {
@@ -190,7 +194,7 @@ impl Mixer {
         }
 
         Mixer {
-            audio_device,
+            stream,
             channels: channel_vec.into_boxed_slice(),
         }
     }
@@ -247,7 +251,7 @@ impl Mixer {
         listener: &Listener,
     ) {
         let chan_id = self.find_free_channel(ent_id, ent_channel);
-        let new_channel = Channel::new(self.audio_device.clone());
+        let new_channel = Channel::new(self.stream.clone());
 
         new_channel.play(
             src.clone(),
@@ -394,7 +398,7 @@ impl Connection {
         gfx_state: &GraphicsState,
         cmds: &mut CmdRegistry,
         console: &mut Console,
-        audio_device: &rodio::Device,
+        stream: OutputStreamHandle,
         kick_vars: KickVars,
     ) -> Result<ConnectionStatus, ClientError> {
         use ConnectionStatus::*;
@@ -571,10 +575,9 @@ impl Connection {
                         _game_type: game_type,
                     };
 
-                    let audio_device = self.state.mixer.audio_device.clone();
                     self.state = ClientState::from_server_info(
                         vfs,
-                        audio_device,
+                        self.state.mixer.stream.clone(),
                         max_clients,
                         model_precache,
                         sound_precache,
@@ -698,7 +701,7 @@ impl Connection {
                     attenuation,
                 } => {
                     self.state.static_sounds.push(StaticSound::new(
-                        audio_device,
+                        &self.state.mixer.stream,
                         origin,
                         self.state.sounds[sound_id as usize].clone(),
                         volume as f32 / 255.0,
@@ -832,7 +835,7 @@ impl Connection {
         gfx_state: &GraphicsState,
         cmds: &mut CmdRegistry,
         console: &mut Console,
-        audio_device: &rodio::Device,
+        stream: &OutputStreamHandle,
         idle_vars: IdleVars,
         kick_vars: KickVars,
         roll_vars: RollVars,
@@ -844,7 +847,7 @@ impl Connection {
         // do this _before_ parsing server messages so that we know when to
         // request the next message from the demo server.
         self.state.advance_time(frame_time);
-        match self.parse_server_msg(vfs, gfx_state, cmds, console, audio_device, kick_vars)? {
+        match self.parse_server_msg(vfs, gfx_state, cmds, console, stream.clone(), kick_vars)? {
             ConnectionStatus::Maintain => (),
             // if Disconnect or NextDemo, delegate up the chain
             s => return Ok(s),
@@ -903,7 +906,8 @@ pub struct Client {
     cmds: Rc<RefCell<CmdRegistry>>,
     console: Rc<RefCell<Console>>,
     input: Rc<RefCell<Input>>,
-    audio_device: Rc<rodio::Device>,
+    _output_stream: OutputStream,
+    output_stream_handle: OutputStreamHandle,
     conn: Rc<RefCell<Option<Connection>>>,
     renderer: ClientRenderer,
     demo_queue: Rc<RefCell<VecDeque<String>>>,
@@ -916,11 +920,16 @@ impl Client {
         cmds: Rc<RefCell<CmdRegistry>>,
         console: Rc<RefCell<Console>>,
         input: Rc<RefCell<Input>>,
-        audio_device: Rc<rodio::Device>,
         gfx_state: &GraphicsState,
         menu: &Menu,
     ) -> Client {
         let conn = Rc::new(RefCell::new(None));
+
+        let (stream, handle) = match OutputStream::try_default() {
+            Ok(o) => o,
+            // TODO: proceed without sound and allow configuration in menu
+            Err(_) => Err(ClientError::OutputStream).unwrap(),
+        };
 
         // set up overlay/ui toggles
         cmds.borrow_mut().insert_or_replace(
@@ -933,7 +942,7 @@ impl Client {
         // set up connection console commands
         cmds.borrow_mut().insert_or_replace(
             "connect",
-            cmd_connect(conn.clone(), input.clone(), audio_device.clone()),
+            cmd_connect(conn.clone(), input.clone(), handle.clone()),
         );
         cmds.borrow_mut()
             .insert_or_replace("reconnect", cmd_reconnect(conn.clone(), input.clone()));
@@ -947,7 +956,7 @@ impl Client {
                 conn.clone(),
                 vfs.clone(),
                 input.clone(),
-                audio_device.clone(),
+                handle.clone(),
             ),
         );
 
@@ -958,7 +967,7 @@ impl Client {
                 conn.clone(),
                 vfs.clone(),
                 input.clone(),
-                audio_device.clone(),
+                handle.clone(),
                 demo_queue.clone(),
             ),
         );
@@ -969,7 +978,8 @@ impl Client {
             cmds,
             console,
             input,
-            audio_device,
+            _output_stream: stream,
+            output_stream_handle: handle,
             conn,
             renderer: ClientRenderer::new(gfx_state, menu),
             demo_queue,
@@ -999,7 +1009,7 @@ impl Client {
                 gfx_state,
                 &mut self.cmds.borrow_mut(),
                 &mut self.console.borrow_mut(),
-                &self.audio_device,
+                &self.output_stream_handle,
                 idle_vars,
                 kick_vars,
                 roll_vars,
@@ -1033,7 +1043,7 @@ impl Client {
                             demo_file.as_mut().and_then(|df| match DemoServer::new(df) {
                                 Ok(d) => Some(Connection {
                                     kind: ConnectionKind::Demo(d),
-                                    state: ClientState::new(self.audio_device.clone()),
+                                    state: ClientState::new(self.output_stream_handle.clone()),
                                     conn_state: ConnectionState::SignOn(SignOnStage::Prespawn),
                                 }),
                                 Err(e) => {
@@ -1294,7 +1304,7 @@ fn cmd_togglemenu(
     })
 }
 
-fn connect<A>(server_addrs: A, audio_device: Rc<rodio::Device>) -> Result<Connection, ClientError>
+fn connect<A>(server_addrs: A, stream: OutputStreamHandle) -> Result<Connection, ClientError>
 where
     A: ToSocketAddrs,
 {
@@ -1368,7 +1378,7 @@ where
     let qsock = con_sock.into_qsocket(new_addr);
 
     Ok(Connection {
-        state: ClientState::new(audio_device.clone()),
+        state: ClientState::new(stream),
         kind: ConnectionKind::Server {
             qsock,
             compose: Vec::new(),
@@ -1377,12 +1387,16 @@ where
     })
 }
 
+// TODO: when an audio device goes down, every command with an
+// OutputStreamHandle needs to be reconstructed so it doesn't pass out
+// references to a dead output stream
+
 // TODO: this will hang while connecting. ideally, input should be handled in a
 // separate thread so the OS doesn't think the client has gone unresponsive.
 fn cmd_connect(
     conn: Rc<RefCell<Option<Connection>>>,
     input: Rc<RefCell<Input>>,
-    audio_device: Rc<rodio::Device>,
+    stream: OutputStreamHandle,
 ) -> Box<dyn Fn(&[&str]) -> String> {
     Box::new(move |args| {
         if args.len() < 1 {
@@ -1390,7 +1404,7 @@ fn cmd_connect(
             return "usage: connect <server_ip>:<server_port>".to_owned();
         }
 
-        match connect(args[0], audio_device.clone()) {
+        match connect(args[0], stream.clone()) {
             Ok(new_conn) => {
                 conn.replace(Some(new_conn));
                 input.borrow_mut().set_focus(InputFocus::Game);
@@ -1439,7 +1453,7 @@ fn cmd_playdemo(
     conn: Rc<RefCell<Option<Connection>>>,
     vfs: Rc<Vfs>,
     input: Rc<RefCell<Input>>,
-    audio_device: Rc<rodio::Device>,
+    stream: OutputStreamHandle,
 ) -> Box<dyn Fn(&[&str]) -> String> {
     Box::new(move |args| {
         if args.len() != 1 {
@@ -1457,7 +1471,7 @@ fn cmd_playdemo(
         };
 
         conn.replace(Some(Connection {
-            state: ClientState::new(audio_device.clone()),
+            state: ClientState::new(stream.clone()),
             kind: ConnectionKind::Demo(demo_server),
             conn_state: ConnectionState::SignOn(SignOnStage::Prespawn),
         }));
@@ -1471,7 +1485,7 @@ fn cmd_startdemos(
     conn: Rc<RefCell<Option<Connection>>>,
     vfs: Rc<Vfs>,
     input: Rc<RefCell<Input>>,
-    audio_device: Rc<rodio::Device>,
+    stream: OutputStreamHandle,
     demo_queue: Rc<RefCell<VecDeque<String>>>,
 ) -> Box<dyn Fn(&[&str]) -> String> {
     Box::new(move |args| {
@@ -1497,7 +1511,7 @@ fn cmd_startdemos(
         };
 
         conn.replace(Some(Connection {
-            state: ClientState::new(audio_device.clone()),
+            state: ClientState::new(stream.clone()),
             kind: ConnectionKind::Demo(demo_server),
             conn_state: ConnectionState::SignOn(SignOnStage::Prespawn),
         }));

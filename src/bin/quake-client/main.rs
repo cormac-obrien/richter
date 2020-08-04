@@ -73,8 +73,6 @@ struct ClientProgram {
     gfx_state: RefCell<GraphicsState>,
     ui_renderer: Rc<UiRenderer>,
 
-    audio_device: Rc<rodio::Device>,
-
     game: Game,
     input: Rc<RefCell<Input>>,
 }
@@ -82,7 +80,6 @@ struct ClientProgram {
 impl ClientProgram {
     pub async fn new(
         window: Window,
-        audio_device: Rc<rodio::Device>,
         trace: bool,
     ) -> ClientProgram {
         let mut vfs = Vfs::new();
@@ -215,7 +212,6 @@ impl ClientProgram {
             cmds.clone(),
             console.clone(),
             input.clone(),
-            audio_device.clone(),
             &gfx_state,
             &menu.borrow(),
         );
@@ -234,7 +230,6 @@ impl ClientProgram {
             swap_chain,
             gfx_state: RefCell::new(gfx_state),
             ui_renderer,
-            audio_device,
             game,
             input,
         }
@@ -362,8 +357,6 @@ fn main() {
     env_logger::init();
     let opt = Opt::from_args();
 
-    let audio_device = Rc::new(rodio::default_output_device().unwrap());
-
     let event_loop = EventLoop::new();
     let window = {
         #[cfg(target_os = "windows")]
@@ -389,7 +382,7 @@ fn main() {
     };
 
     let client_program =
-        futures::executor::block_on(ClientProgram::new(window, audio_device, opt.trace));
+        futures::executor::block_on(ClientProgram::new(window, opt.trace));
 
     // TODO: make dump_demo part of top-level binary and allow choosing file name
     if let Some(ref demo) = opt.dump_demo {

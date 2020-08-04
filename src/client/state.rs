@@ -28,6 +28,7 @@ use cgmath::{Angle as _, Deg, InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
 use net::{ClientCmd, ClientStat, EntityState, EntityUpdate, PlayerColor};
 use rand::distributions::{Distribution as _, Uniform};
+use rodio::OutputStreamHandle;
 
 pub struct PlayerInfo {
     pub name: String,
@@ -98,7 +99,7 @@ pub struct ClientState {
 
 impl ClientState {
     // TODO: add parameter for number of player slots and reserve them in entity list
-    pub fn new(audio_device: Rc<rodio::Device>) -> ClientState {
+    pub fn new(stream: OutputStreamHandle) -> ClientState {
         ClientState {
             models: vec![Model::none()],
             model_names: HashMap::new(),
@@ -147,14 +148,14 @@ impl ClientState {
             intermission: None,
             start_time: Duration::zero(),
             completion_time: None,
-            mixer: Mixer::new(audio_device.clone()),
+            mixer: Mixer::new(stream),
             listener: Listener::new(),
         }
     }
 
     pub fn from_server_info(
         vfs: &Vfs,
-        audio_device: Rc<rodio::Device>,
+        stream: OutputStreamHandle,
         max_clients: u8,
         model_precache: Vec<String>,
         sound_precache: Vec<String>,
@@ -197,7 +198,7 @@ impl ClientState {
             model_names,
             sounds,
             max_players: max_clients as usize,
-            ..ClientState::new(audio_device)
+            ..ClientState::new(stream)
         })
     }
 
