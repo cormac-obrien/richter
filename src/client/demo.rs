@@ -1,11 +1,10 @@
 use std::{
-    fs::File,
-    io::{self, BufRead, Read as _},
+    io,
     ops::Range,
 };
 
 use crate::common::{
-    net::{self, NetError, ServerCmd},
+    net::{self, NetError},
     util::read_f32_3,
     vfs::VirtualFile,
 };

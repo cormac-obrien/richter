@@ -98,8 +98,8 @@ pub struct ClientState {
 
 impl ClientState {
     // TODO: add parameter for number of player slots and reserve them in entity list
-    pub fn new(audio_device: Rc<rodio::Device>) -> Result<ClientState, ClientError> {
-        Ok(ClientState {
+    pub fn new(audio_device: Rc<rodio::Device>) -> ClientState {
+        ClientState {
             models: vec![Model::none()],
             model_names: HashMap::new(),
             sounds: Vec::new(),
@@ -149,7 +149,7 @@ impl ClientState {
             completion_time: None,
             mixer: Mixer::new(audio_device.clone()),
             listener: Listener::new(),
-        })
+        }
     }
 
     pub fn from_server_info(
@@ -197,7 +197,7 @@ impl ClientState {
             model_names,
             sounds,
             max_players: max_clients as usize,
-            ..ClientState::new(audio_device)?
+            ..ClientState::new(audio_device)
         })
     }
 
@@ -1063,13 +1063,34 @@ impl ClientState {
         Ok(())
     }
 
+    /// Update the view angles to the specified value, disabling interpolation.
     pub fn set_view_angles(&mut self, angles: Vector3<Deg<f32>>) {
-        self.entities[self.view.entity_id()].set_angles(angles);
         self.view.update_input_angles(Angles {
             pitch: angles.x,
             roll: angles.z,
             yaw: angles.y,
         });
+        let final_angles = self.view.final_angles();
+        self.entities[self.view.entity_id()].set_angles(Vector3::new(
+            final_angles.pitch,
+            final_angles.yaw,
+            final_angles.roll,
+        ));
+    }
+
+    /// Update the view angles to the specified value, enabling interpolation.
+    pub fn update_view_angles(&mut self, angles: Vector3<Deg<f32>>) {
+        self.view.update_input_angles(Angles {
+            pitch: angles.x,
+            roll: angles.z,
+            yaw: angles.y,
+        });
+        let final_angles = self.view.final_angles();
+        self.entities[self.view.entity_id()].update_angles(Vector3::new(
+            final_angles.pitch,
+            final_angles.yaw,
+            final_angles.roll,
+        ));
     }
 
     pub fn set_view_entity(&mut self, entity_id: usize) -> Result<(), ClientError> {
@@ -1121,6 +1142,20 @@ impl ClientState {
         Camera::new(
             self.view_origin(),
             self.view.final_angles(),
+            cgmath::perspective(fov_y, aspect, 4.0, 4096.0),
+        )
+    }
+
+    pub fn demo_camera(&self, aspect: f32, fov: Deg<f32>) -> Camera {
+        let fov_y = math::fov_x_to_fov_y(fov, aspect).unwrap();
+        let angles = self.entities[self.view.entity_id()].angles;
+        Camera::new(
+            self.view_origin(),
+            Angles {
+                pitch: angles.x,
+                roll: angles.z,
+                yaw: angles.y,
+            },
             cgmath::perspective(fov_y, aspect, 4.0, 4096.0),
         )
     }

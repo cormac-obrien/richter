@@ -18,9 +18,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod error;
-pub use self::error::{ConsoleError, ConsoleErrorKind};
-
 use std::{
     cell::{Ref, RefCell},
     collections::{HashMap, VecDeque},
@@ -30,11 +27,32 @@ use std::{
 
 use crate::common::parse;
 
-use failure::{Error, ResultExt};
+use chrono::{Utc, Duration};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum ConsoleError {
+    #[error("{0}")]
+    CmdError(String),
+    #[error("Could not parse cvar as a number: {name} = \"{value}\"")]
+    CvarParseFailed { name: String, value: String },
+    #[error(
+        "Command already registered: {0} (to replace existing definition, use `insert_or_replace`)"
+    )]
+    DuplicateCommand(String),
+    #[error("Cvar already registered: {0}")]
+    DuplicateCvar(String),
+    #[error("No such command: {0}")]
+    NoSuchCommand(String),
+    #[error("No such cvar: {0}")]
+    NoSuchCvar(String),
+}
+
+type Cmd = Box<dyn Fn(&[&str]) -> String>;
 
 /// Stores console commands.
 pub struct CmdRegistry {
-    cmds: HashMap<String, Box<dyn Fn(&[&str])>>,
+    cmds: HashMap<String, Cmd>,
 }
 
 impl CmdRegistry {
@@ -47,16 +65,15 @@ impl CmdRegistry {
     /// Registers a new command with the given name.
     ///
     /// Returns an error if a command with the specified name already exists.
-    pub fn insert<S>(&mut self, name: S, cmd: Box<dyn Fn(&[&str])>) -> Result<(), ConsoleError>
+    pub fn insert<S>(&mut self, name: S, cmd: Cmd) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
-        match self.cmds.get(name.as_ref()) {
-            Some(_) => Err(ConsoleErrorKind::DuplicateCommand {
-                name: name.as_ref().to_string(),
-            })?,
+        let name = name.as_ref();
+        match self.cmds.get(name) {
+            Some(_) => Err(ConsoleError::DuplicateCommand(name.to_owned()))?,
             None => {
-                self.cmds.insert(name.as_ref().to_owned(), cmd);
+                self.cmds.insert(name.to_owned(), cmd);
             }
         }
 
@@ -64,7 +81,7 @@ impl CmdRegistry {
     }
 
     /// Registers a new command with the given name, or replaces one if the name is in use.
-    pub fn insert_or_replace<S>(&mut self, name: S, cmd: Box<dyn Fn(&[&str])>)
+    pub fn insert_or_replace<S>(&mut self, name: S, cmd: Cmd)
     where
         S: AsRef<str>,
     {
@@ -80,27 +97,23 @@ impl CmdRegistry {
     {
         match self.cmds.remove(name.as_ref()) {
             Some(_) => Ok(()),
-            None => Err(ConsoleErrorKind::NoSuchCommand {
-                name: name.as_ref().to_owned(),
-            })?,
+            None => Err(ConsoleError::NoSuchCommand(name.as_ref().to_string()))?,
         }
     }
 
     /// Executes a command.
     ///
     /// Returns an error if no command with the specified name exists.
-    pub fn exec<S>(&mut self, name: S, args: &[&str]) -> Result<(), ConsoleError>
+    pub fn exec<S>(&mut self, name: S, args: &[&str]) -> Result<String, ConsoleError>
     where
         S: AsRef<str>,
     {
         let cmd = self
             .cmds
             .get(name.as_ref())
-            .ok_or(ConsoleErrorKind::NoSuchCommand {
-                name: name.as_ref().to_owned(),
-            })?;
-        cmd(args);
-        Ok(())
+            .ok_or(ConsoleError::NoSuchCommand(name.as_ref().to_string()))?;
+
+        Ok(cmd(args))
     }
 
     pub fn contains<S>(&self, name: S) -> bool
@@ -157,9 +170,7 @@ impl CvarRegistry {
 
         let mut cvars = self.cvars.borrow_mut();
         match cvars.get(name) {
-            Some(_) => Err(ConsoleErrorKind::DuplicateCvar {
-                name: name.to_owned(),
-            })?,
+            Some(_) => Err(ConsoleError::DuplicateCvar(name.to_owned()))?,
             None => {
                 cvars.insert(
                     name.to_owned(),
@@ -230,9 +241,7 @@ impl CvarRegistry {
             .cvars
             .borrow()
             .get(name.as_ref())
-            .ok_or(ConsoleErrorKind::NoSuchCvar {
-                name: name.as_ref().to_owned(),
-            })?
+            .ok_or(ConsoleError::NoSuchCvar(name.as_ref().to_owned()))?
             .val
             .clone())
     }
@@ -243,24 +252,24 @@ impl CvarRegistry {
     {
         let name = name.as_ref();
         let mut cvars = self.cvars.borrow_mut();
-        let cvar = cvars.get_mut(name).ok_or(ConsoleErrorKind::NoSuchCvar {
-            name: name.to_owned(),
-        })?;
+        let cvar = cvars
+            .get_mut(name)
+            .ok_or(ConsoleError::NoSuchCvar(name.to_owned()))?;
 
         // try parsing as f32
         let val_string = cvar.val.clone();
         let val = match val_string.parse::<f32>() {
             Ok(v) => Ok(v),
-            // if parse fails, reset to default valud and try again
+            // if parse fails, reset to default value and try again
             Err(_) => {
                 cvar.val = cvar.default.clone();
                 cvar.val.parse::<f32>()
             }
         }
-        .context(ConsoleErrorKind::CvarParseFailed {
+        .or(Err(ConsoleError::CvarParseFailed {
             name: name.to_owned(),
-            value: cvar.val.clone(),
-        })?;
+            value: val_string.clone(),
+        }))?;
 
         Ok(val)
     }
@@ -273,9 +282,7 @@ impl CvarRegistry {
         let mut cvars = self.cvars.borrow_mut();
         let mut cvar = cvars
             .get_mut(name.as_ref())
-            .ok_or(ConsoleErrorKind::NoSuchCvar {
-                name: name.as_ref().to_owned(),
-            })?;
+            .ok_or(ConsoleError::NoSuchCvar(name.as_ref().to_owned()))?;
         cvar.val = value.as_ref().to_owned();
         if cvar.notify {
             // TODO: update userinfo/serverinfo
@@ -375,14 +382,6 @@ impl ConsoleInput {
         self.text.clear();
         self.curs = 0;
     }
-
-    pub fn debug_string(&self) -> String {
-        format!(
-            "{}_{}",
-            String::from_iter(self.text[..self.curs].to_owned().into_iter()),
-            String::from_iter(self.text[self.curs..].to_owned().into_iter())
-        )
-    }
 }
 
 pub struct History {
@@ -421,13 +420,19 @@ impl History {
         if self.curs > 0 {
             Some(self.lines[self.curs - 1].clone())
         } else {
-            Some(Vec::new().clone())
+            Some(Vec::new())
         }
     }
 }
 
 pub struct ConsoleOutput {
-    lines: VecDeque<Vec<char>>,
+    // A ring buffer of lines of text. Each line has an optional timestamp used
+    // to determine whether it should be displayed on screen. If the timestamp
+    // is `None`, the message will not be displayed.
+    //
+    // The timestamp is specified in seconds since the Unix epoch (so it is
+    // decoupled from client/server time).
+    lines: VecDeque<(Vec<char>, Option<i64>)>,
 }
 
 impl ConsoleOutput {
@@ -437,13 +442,74 @@ impl ConsoleOutput {
         }
     }
 
-    pub fn push(&mut self, chars: Vec<char>) {
-        self.lines.push_front(chars);
+    fn println_impl<S>(&mut self, s: S, timestamp: Option<i64>)
+    where
+        S: AsRef<str>,
+    {
+        for line in s.as_ref().split('\n') {
+            debug!("push \"{}\"", line);
+            self.push_impl(line.chars().collect(), timestamp);
+        }
+    }
+
+    pub fn println<S>(&mut self, s: S)
+    where
+        S: AsRef<str>,
+    {
+        self.println_impl(s, None);
+    }
+
+    pub fn println_timestamp<S>(&mut self, s: S)
+    where
+        S: AsRef<str>,
+    {
+        self.println_impl(s, Some(Utc::now().timestamp()));
+    }
+
+    fn push_impl(&mut self, chars: Vec<char>, timestamp: Option<i64>) {
+        self.lines.push_front((chars, timestamp))
         // TODO: set maximum capacity and pop_back when we reach it
     }
 
+    pub fn push(&mut self, chars: Vec<char>) {
+        self.push_impl(chars, None);
+    }
+
+    pub fn push_timestamp(&mut self, chars: Vec<char>) {
+        self.push_impl(chars, Some(Utc::now().timestamp()));
+    }
+
     pub fn lines(&self) -> impl Iterator<Item = &[char]> {
-        self.lines.iter().map(|v| v.as_slice())
+        self.lines.iter().map(|(v, _)| v.as_slice())
+    }
+
+    /// Return an iterator over lines that have been printed in the last
+    /// `interval` of time.
+    ///
+    /// The iterator yields the oldest results first.
+    ///
+    /// `max_candidates` specifies the maximum number of lines to consider,
+    /// while `max_results` specifies the maximum number of lines that should
+    /// be returned.
+    pub fn recent_lines(
+        &self,
+        interval: Duration,
+        max_candidates: usize,
+        max_results: usize,
+    ) -> impl Iterator<Item = &[char]> {
+        let timestamp = (Utc::now() - interval).timestamp();
+        self
+            .lines
+            .iter()
+            // search only the most recent `max_candidates` lines
+            .take(max_candidates)
+            // yield oldest to newest
+            .rev()
+            // eliminate non-timestamped lines and lines older than `timestamp`
+            .filter_map(move |(l, t)| t.map(|tt| (l, tt)).filter(|(_, ttt)| *ttt > timestamp))
+            // return at most `max_results` lines
+            .take(max_results)
+            .map(|(l, _)| l.as_slice())
     }
 }
 
@@ -455,13 +521,12 @@ pub struct Console {
     input: ConsoleInput,
     hist: History,
     buffer: RefCell<String>,
-    output: Rc<RefCell<ConsoleOutput>>,
+    output: RefCell<ConsoleOutput>,
 }
 
 impl Console {
     pub fn new(cmds: Rc<RefCell<CmdRegistry>>, cvars: Rc<RefCell<CvarRegistry>>) -> Console {
-        let output = Rc::new(RefCell::new(ConsoleOutput::new()));
-        let echo_output = output.clone();
+        let output = RefCell::new(ConsoleOutput::new());
         cmds.borrow_mut()
             .insert(
                 "echo",
@@ -471,7 +536,7 @@ impl Console {
                         _ => args[0],
                     };
 
-                    echo_output.borrow_mut().push(msg.chars().collect());
+                    msg.to_owned()
                 }),
             )
             .unwrap();
@@ -481,21 +546,24 @@ impl Console {
         cmds.borrow_mut()
             .insert(
                 "alias",
-                Box::new(move |args| match args.len() {
-                    0 => {
-                        for (name, script) in cmd_aliases.borrow().iter() {
-                            println!("    {}: {}", name, script);
+                Box::new(move |args| {
+                    match args.len() {
+                        0 => {
+                            for (name, script) in cmd_aliases.borrow().iter() {
+                                println!("    {}: {}", name, script);
+                            }
+                            println!("{} alias command(s)", cmd_aliases.borrow().len());
                         }
-                        println!("{} alias command(s)", cmd_aliases.borrow().len());
-                    }
 
-                    2 => {
-                        let name = args[0].to_string();
-                        let script = args[1].to_string();
-                        let _ = cmd_aliases.borrow_mut().insert(name, script);
-                    }
+                        2 => {
+                            let name = args[0].to_string();
+                            let script = args[1].to_string();
+                            let _ = cmd_aliases.borrow_mut().insert(name, script);
+                        }
 
-                    _ => (),
+                        _ => (),
+                    }
+                    String::new()
                 }),
             )
             .unwrap();
@@ -507,11 +575,25 @@ impl Console {
             input: ConsoleInput::new(),
             hist: History::new(),
             buffer: RefCell::new(String::new()),
-            output: output.clone(),
+            output,
         }
     }
 
-    pub fn send_char(&mut self, c: char) -> Result<(), Error> {
+    pub fn println<S>(&mut self, s: S)
+    where
+        S: AsRef<str>,
+    {
+        self.output.borrow_mut().println(s);
+    }
+
+    pub fn println_timestamp<S>(&mut self, s: S)
+    where
+        S: AsRef<str>,
+    {
+        self.output.borrow_mut().println_timestamp(s);
+    }
+
+    pub fn send_char(&mut self, c: char) {
         match c {
             // ignore grave and escape keys
             '`' | '\x1b' => (),
@@ -542,8 +624,6 @@ impl Console {
             // TODO: we should probably restrict what characters are allowed
             c => self.input.insert(c),
         }
-
-        Ok(())
     }
 
     pub fn cursor(&self) -> usize {
@@ -572,8 +652,7 @@ impl Console {
 
     /// Interprets the contents of the execution buffer.
     pub fn execute(&self) {
-        let text = self.buffer.borrow().to_owned();
-        self.buffer.borrow_mut().clear();
+        let text = self.buffer.replace(String::new());
 
         let (_remaining, commands) = parse::commands(text.as_str()).unwrap();
 
@@ -595,7 +674,14 @@ impl Console {
                             args.iter().map(|s| s.as_ref()).skip(1).collect();
 
                         if self.cmds.borrow().contains(arg_0) {
-                            self.cmds.borrow_mut().exec(arg_0, &tail_args).unwrap();
+                            match self.cmds.borrow_mut().exec(arg_0, &tail_args) {
+                                Ok(o) => {
+                                    if !o.is_empty() {
+                                        self.output.borrow_mut().println(o)
+                                    }
+                                }
+                                Err(e) => self.output.borrow_mut().println(format!("{}", e)),
+                            }
                         } else if self.cvars.borrow().contains(arg_0) {
                             // TODO error handling on cvar set
                             match args.get(1) {
@@ -613,12 +699,9 @@ impl Console {
                             }
                         } else {
                             // TODO: try sending to server first
-                            self.output.borrow_mut().push(
-                                format!("Unrecognized command \"{}\"", arg_0)
-                                    .as_str()
-                                    .chars()
-                                    .collect(),
-                            );
+                            self.output
+                                .borrow_mut()
+                                .println(format!("Unrecognized command \"{}\"", arg_0));
                         }
                     }
                 }
@@ -628,14 +711,6 @@ impl Console {
 
     pub fn get_string(&self) -> String {
         String::from_iter(self.input.text.clone().into_iter())
-    }
-
-    pub fn debug_string(&self) -> String {
-        format!(
-            "{}_{}",
-            String::from_iter(self.input.text[..self.input.curs].to_owned().into_iter()),
-            String::from_iter(self.input.text[self.input.curs..].to_owned().into_iter())
-        )
     }
 
     pub fn stuff_text<S>(&self, text: S)

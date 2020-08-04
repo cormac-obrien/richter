@@ -94,7 +94,7 @@ use crate::{
                 EntityUniforms,
             },
         },
-        Connection,
+        Connection, ConnectionKind,
     },
     common::{
         console::{Console, CvarRegistry},
@@ -684,13 +684,20 @@ impl ClientRenderer {
         if let Some(Connection {
             state: ref cl_state,
             ref conn_state,
-            ..
+            ref kind,
         }) = conn
         {
-            match *conn_state.borrow() {
+            match conn_state {
                 ConnectionState::Connected(ref world) => {
                     // if client is fully connected, draw world
-                    let camera = cl_state.camera(width as f32 / height as f32, fov);
+                    let camera = match kind {
+                        ConnectionKind::Demo(_) => {
+                            cl_state.demo_camera(width as f32 / height as f32, fov)
+                        }
+                        ConnectionKind::Server { .. } => {
+                            cl_state.camera(width as f32 / height as f32, fov)
+                        }
+                    };
 
                     // initial render pass
                     {
@@ -766,6 +773,7 @@ impl ClientRenderer {
                         completion_duration: cl_state.completion_time().unwrap()
                             - cl_state.start_time(),
                         stats: cl_state.stats(),
+                        console,
                     },
 
                     None => HudState::InGame {
@@ -773,6 +781,7 @@ impl ClientRenderer {
                         item_pickup_time: cl_state.item_pickup_times(),
                         stats: cl_state.stats(),
                         face_anim_time: cl_state.face_anim_time(),
+                        console,
                     },
                 },
 
@@ -808,7 +817,7 @@ impl ClientRenderer {
             }) = conn
             {
                 // only postprocess if client is in the game
-                if let ConnectionState::Connected(_) = *conn_state.borrow() {
+                if let ConnectionState::Connected(_) = conn_state {
                     self.postprocess_renderer.record_draw(
                         gfx_state,
                         &mut final_pass,
@@ -823,7 +832,7 @@ impl ClientRenderer {
                 Extent2d { width, height },
                 // use client time when in game, renderer time otherwise
                 match conn {
-                    Some(Connection { ref state, ..}) => state.time,
+                    Some(Connection { ref state, .. }) => state.time,
                     None => Utc::now().signed_duration_since(self.start_time),
                 },
                 &ui_state,

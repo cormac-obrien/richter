@@ -194,3 +194,24 @@ impl Size {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_anchor_to_xy() {
+        let width = 1366;
+        let height = 768;
+
+        assert_eq!(Anchor::BOTTOM_LEFT.to_xy(width, height), (0, 0));
+        assert_eq!(Anchor::CENTER_LEFT.to_xy(width, height), (0, 384));
+        assert_eq!(Anchor::TOP_LEFT.to_xy(width, height), (0, 768));
+        assert_eq!(Anchor::BOTTOM_CENTER.to_xy(width, height), (683, 0));
+        assert_eq!(Anchor::CENTER.to_xy(width, height), (683, 384));
+        assert_eq!(Anchor::TOP_CENTER.to_xy(width, height), (683, 768));
+        assert_eq!(Anchor::BOTTOM_RIGHT.to_xy(width, height), (1366, 0));
+        assert_eq!(Anchor::CENTER_RIGHT.to_xy(width, height), (1366, 384));
+        assert_eq!(Anchor::TOP_RIGHT.to_xy(width, height), (1366, 768));
+    }
+}
