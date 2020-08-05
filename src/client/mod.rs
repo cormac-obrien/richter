@@ -80,7 +80,6 @@ const MAX_STATS: usize = 32;
 const DEFAULT_SOUND_PACKET_VOLUME: u8 = 255;
 const DEFAULT_SOUND_PACKET_ATTENUATION: f32 = 1.0;
 
-const MAX_CHANNELS: usize = 128;
 
 const CONSOLE_DIVIDER: &'static str = "\
 \n\n\
@@ -170,103 +169,6 @@ pub enum IntermissionKind {
     Intermission,
     Finale { text: String },
     Cutscene { text: String },
-}
-
-struct ClientChannel {
-    start_time: Duration,
-    ent_id: usize,
-    ent_channel: i8,
-    channel: Channel,
-}
-
-pub struct Mixer {
-    stream: OutputStreamHandle,
-    // TODO: replace with an array once const type parameters are implemented
-    channels: Box<[Option<ClientChannel>]>,
-}
-
-impl Mixer {
-    pub fn new(stream: OutputStreamHandle) -> Mixer {
-        let mut channel_vec = Vec::new();
-
-        for _ in 0..MAX_CHANNELS {
-            channel_vec.push(None);
-        }
-
-        Mixer {
-            stream,
-            channels: channel_vec.into_boxed_slice(),
-        }
-    }
-
-    fn find_free_channel(&self, ent_id: usize, ent_channel: i8) -> usize {
-        let mut oldest = 0;
-
-        for (i, channel) in self.channels.iter().enumerate() {
-            match *channel {
-                Some(ref chan) => {
-                    // if this channel is free, return it right away
-                    if !chan.channel.in_use() {
-                        return i;
-                    }
-
-                    // replace sounds on the same entity channel
-                    if ent_channel != 0
-                        && chan.ent_id == ent_id
-                        && (chan.ent_channel == ent_channel || ent_channel == -1)
-                    {
-                        return i;
-                    }
-
-                    // TODO: don't clobber player sounds with monster sounds
-
-                    // keep track of which sound started the earliest
-                    match self.channels[oldest] {
-                        Some(ref o) => {
-                            if chan.start_time < o.start_time {
-                                oldest = i;
-                            }
-                        }
-                        None => oldest = i,
-                    }
-                }
-
-                None => return i,
-            }
-        }
-
-        // if there are no good channels, just replace the one that's been running the longest
-        oldest
-    }
-
-    pub fn start_sound(
-        &mut self,
-        src: AudioSource,
-        time: Duration,
-        ent_id: usize,
-        ent_channel: i8,
-        volume: f32,
-        attenuation: f32,
-        ents: &[ClientEntity],
-        listener: &Listener,
-    ) {
-        let chan_id = self.find_free_channel(ent_id, ent_channel);
-        let new_channel = Channel::new(self.stream.clone());
-
-        new_channel.play(
-            src.clone(),
-            ents[ent_id].origin,
-            listener,
-            volume,
-            attenuation,
-        );
-        self.channels[chan_id] = Some(ClientChannel {
-            start_time: time,
-            ent_id,
-            ent_channel,
-            channel: new_channel,
-        })
-    }
 }
 
 /// Indicates to the client what should be done with the current connection.
@@ -577,7 +479,7 @@ impl Connection {
 
                     self.state = ClientState::from_server_info(
                         vfs,
-                        self.state.mixer.stream.clone(),
+                        self.state.mixer.stream(),
                         max_clients,
                         model_precache,
                         sound_precache,
@@ -701,7 +603,7 @@ impl Connection {
                     attenuation,
                 } => {
                     self.state.static_sounds.push(StaticSound::new(
-                        &self.state.mixer.stream,
+                        &self.state.mixer.stream(),
                         origin,
                         self.state.sounds[sound_id as usize].clone(),
                         volume as f32 / 255.0,

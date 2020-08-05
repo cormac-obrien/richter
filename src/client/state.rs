@@ -8,9 +8,9 @@ use crate::{
         },
         input::game::{Action, GameInput},
         render::Camera,
-        sound::{AudioSource, Listener, StaticSound},
+        sound::{AudioSource, EntityMixer, Listener, StaticSound},
         view::{IdleVars, KickVars, MouseVars, RollVars, View},
-        ClientError, ColorShiftCode, IntermissionKind, Mixer, MoveVars, MAX_STATS,
+        ClientError, ColorShiftCode, IntermissionKind, MoveVars, MAX_STATS,
     },
     common::{
         bsp, engine,
@@ -93,7 +93,7 @@ pub struct ClientState {
     pub start_time: Duration,
     pub completion_time: Option<Duration>,
 
-    pub mixer: Mixer,
+    pub mixer: EntityMixer,
     pub listener: Listener,
 }
 
@@ -148,7 +148,7 @@ impl ClientState {
             intermission: None,
             start_time: Duration::zero(),
             completion_time: None,
-            mixer: Mixer::new(stream),
+            mixer: EntityMixer::new(stream),
             listener: Listener::new(),
         }
     }
@@ -968,12 +968,11 @@ impl ClientState {
         self.update_listener();
 
         // update entity sounds
-        for opt_chan in self.mixer.channels.iter() {
-            if let Some(ref chan) = opt_chan {
-                if chan.channel.in_use() {
-                    chan.channel
-                        .update(self.entities[chan.ent_id].origin, &self.listener);
-                }
+        for e_channel in self.mixer.iter_entity_channels() {
+            if e_channel.channel().in_use() {
+                e_channel
+                    .channel()
+                    .update(self.entities[e_channel.entity_id()].origin, &self.listener);
             }
         }
 

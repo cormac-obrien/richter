@@ -31,8 +31,11 @@ use rodio::{
     Decoder, OutputStreamHandle, Sink, Source,
 };
 use thiserror::Error;
+use chrono::Duration;
+use super::entity::ClientEntity;
 
 pub const DISTANCE_ATTENUATION_FACTOR: f32 = 0.001;
+const MAX_ENTITY_CHANNELS: usize = 128;
 
 #[derive(Error, Debug)]
 pub enum SoundError {
@@ -237,5 +240,120 @@ impl Channel {
         } else {
             true
         }
+    }
+}
+
+pub struct EntityChannel {
+    start_time: Duration,
+    ent_id: usize,
+    ent_channel: i8,
+    channel: Channel,
+}
+
+impl EntityChannel {
+    pub fn channel(&self) -> &Channel {
+        &self.channel
+    }
+
+    pub fn entity_id(&self) -> usize {
+        self.ent_id
+    }
+}
+
+pub struct EntityMixer {
+    stream: OutputStreamHandle,
+    // TODO: replace with an array once const type parameters are implemented
+    channels: Box<[Option<EntityChannel>]>,
+}
+
+impl EntityMixer {
+    pub fn new(stream: OutputStreamHandle) -> EntityMixer {
+        let mut channel_vec = Vec::new();
+
+        for _ in 0..MAX_ENTITY_CHANNELS {
+            channel_vec.push(None);
+        }
+
+        EntityMixer {
+            stream,
+            channels: channel_vec.into_boxed_slice(),
+        }
+    }
+
+    fn find_free_channel(&self, ent_id: usize, ent_channel: i8) -> usize {
+        let mut oldest = 0;
+
+        for (i, channel) in self.channels.iter().enumerate() {
+            match *channel {
+                Some(ref chan) => {
+                    // if this channel is free, return it
+                    if !chan.channel.in_use() {
+                        return i;
+                    }
+
+                    // replace sounds on the same entity channel
+                    if ent_channel != 0
+                        && chan.ent_id == ent_id
+                        && (chan.ent_channel == ent_channel || ent_channel == -1)
+                    {
+                        return i;
+                    }
+
+                    // TODO: don't clobber player sounds with monster sounds
+
+                    // keep track of which sound started the earliest
+                    match self.channels[oldest] {
+                        Some(ref o) => {
+                            if chan.start_time < o.start_time {
+                                oldest = i;
+                            }
+                        }
+                        None => oldest = i,
+                    }
+                }
+
+                None => return i,
+            }
+        }
+
+        // if there are no good channels, just replace the one that's been running the longest
+        oldest
+    }
+
+    pub fn start_sound(
+        &mut self,
+        src: AudioSource,
+        time: Duration,
+        ent_id: usize,
+        ent_channel: i8,
+        volume: f32,
+        attenuation: f32,
+        ents: &[ClientEntity],
+        listener: &Listener,
+    ) {
+        let chan_id = self.find_free_channel(ent_id, ent_channel);
+        let new_channel = Channel::new(self.stream.clone());
+
+        new_channel.play(
+            src.clone(),
+            ents[ent_id].origin,
+            listener,
+            volume,
+            attenuation,
+        );
+        self.channels[chan_id] = Some(EntityChannel {
+            start_time: time,
+            ent_id,
+            ent_channel,
+            channel: new_channel,
+        })
+    }
+
+    pub fn iter_entity_channels(&self) -> impl Iterator<Item = &EntityChannel> {
+        self.channels.iter().filter_map(|e| e.as_ref())
+    }
+
+    pub fn stream(&self) -> OutputStreamHandle {
+        self.stream.clone()
     }
 }
