@@ -245,7 +245,8 @@ impl Channel {
 
 pub struct EntityChannel {
     start_time: Duration,
-    ent_id: usize,
+    // if None, sound is associated with a temp entity
+    ent_id: Option<usize>,
     ent_channel: i8,
     channel: Channel,
 }
@@ -255,7 +256,7 @@ impl EntityChannel {
         &self.channel
     }
 
-    pub fn entity_id(&self) -> usize {
+    pub fn entity_id(&self) -> Option<usize> {
         self.ent_id
     }
 }
@@ -280,7 +281,7 @@ impl EntityMixer {
         }
     }
 
-    fn find_free_channel(&self, ent_id: usize, ent_channel: i8) -> usize {
+    fn find_free_channel(&self, ent_id: Option<usize>, ent_channel: i8) -> usize {
         let mut oldest = 0;
 
         for (i, channel) in self.channels.iter().enumerate() {
@@ -324,11 +325,11 @@ impl EntityMixer {
         &mut self,
         src: AudioSource,
         time: Duration,
-        ent_id: usize,
+        ent_id: Option<usize>,
         ent_channel: i8,
         volume: f32,
         attenuation: f32,
-        ents: &[ClientEntity],
+        origin: Vector3<f32>,
         listener: &Listener,
     ) {
         let chan_id = self.find_free_channel(ent_id, ent_channel);
@@ -336,7 +337,7 @@ impl EntityMixer {
 
         new_channel.play(
             src.clone(),
-            ents[ent_id].origin,
+            origin,
             listener,
             volume,
             attenuation,

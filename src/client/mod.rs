@@ -44,7 +44,7 @@ use crate::{
         demo::{DemoServer, DemoServerError},
         entity::{ClientEntity, MAX_STATIC_ENTITIES},
         input::{game::GameInput, Input},
-        sound::{AudioSource, Channel, Listener, StaticSound},
+        sound::StaticSound,
         state::{ClientState, PlayerInfo},
         trace::{TraceEntity, TraceFrame},
         view::{IdleVars, KickVars, MouseVars, RollVars},
@@ -517,7 +517,7 @@ impl Connection {
                     entity_id,
                     channel,
                     sound_id,
-                    position: _,
+                    position,
                 } => {
                     trace!(
                         "starting sound with id {} on entity {} channel {}",
@@ -540,11 +540,11 @@ impl Connection {
                     self.state.mixer.start_sound(
                         self.state.sounds[sound_id as usize].clone(),
                         self.state.msg_times[0],
-                        entity_id as usize,
+                        Some(entity_id as usize),
                         channel,
                         volume as f32 / 255.0,
                         attenuation,
-                        &self.state.entities,
+                        position,
                         &self.state.listener,
                     );
                 }
