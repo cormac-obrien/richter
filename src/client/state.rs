@@ -8,9 +8,9 @@ use crate::{
         },
         input::game::{Action, GameInput},
         render::Camera,
-        sound::{AudioSource, Listener, StaticSound},
+        sound::{AudioSource, EntityMixer, Listener, StaticSound},
         view::{IdleVars, KickVars, MouseVars, RollVars, View},
-        ClientError, ColorShiftCode, IntermissionKind, Mixer, MoveVars, MAX_STATS,
+        ClientError, ColorShiftCode, IntermissionKind, MoveVars, MAX_STATS,
     },
     common::{
         bsp, engine,
@@ -27,7 +27,22 @@ use arrayvec::ArrayVec;
 use cgmath::{Angle as _, Deg, InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
 use net::{ClientCmd, ClientStat, EntityState, EntityUpdate, PlayerColor};
-use rand::distributions::{Distribution as _, Uniform};
+use rand::{
+    distributions::{Distribution as _, Uniform},
+    rngs::SmallRng,
+    SeedableRng,
+};
+use rodio::OutputStreamHandle;
+
+const CACHED_SOUND_NAMES: &[&'static str] = &[
+    "hknight/hit.wav",
+    "weapons/r_exp3.wav",
+    "weapons/ric1.wav",
+    "weapons/ric2.wav",
+    "weapons/ric3.wav",
+    "weapons/tink1.wav",
+    "wizard/hit.wav",
+];
 
 pub struct PlayerInfo {
     pub name: String,
@@ -38,6 +53,9 @@ pub struct PlayerInfo {
 
 // client information regarding the current level
 pub struct ClientState {
+    // local rng
+    rng: SmallRng,
+
     // model precache
     pub models: Vec<Model>,
     // name-to-id map
@@ -45,6 +63,9 @@ pub struct ClientState {
 
     // audio source precache
     pub sounds: Vec<AudioSource>,
+
+    // sounds that are always needed even if not in precache
+    cached_sounds: HashMap<String, AudioSource>,
 
     // ambient sounds (infinite looping, static position)
     pub static_sounds: Vec<StaticSound>,
@@ -92,17 +113,19 @@ pub struct ClientState {
     pub start_time: Duration,
     pub completion_time: Option<Duration>,
 
-    pub mixer: Mixer,
+    pub mixer: EntityMixer,
     pub listener: Listener,
 }
 
 impl ClientState {
     // TODO: add parameter for number of player slots and reserve them in entity list
-    pub fn new(audio_device: Rc<rodio::Device>) -> ClientState {
+    pub fn new(stream: OutputStreamHandle) -> ClientState {
         ClientState {
+            rng: SmallRng::from_entropy(),
             models: vec![Model::none()],
             model_names: HashMap::new(),
             sounds: Vec::new(),
+            cached_sounds: HashMap::new(),
             static_sounds: Vec::new(),
             entities: Vec::new(),
             static_entities: Vec::new(),
@@ -147,14 +170,14 @@ impl ClientState {
             intermission: None,
             start_time: Duration::zero(),
             completion_time: None,
-            mixer: Mixer::new(audio_device.clone()),
+            mixer: EntityMixer::new(stream),
             listener: Listener::new(),
         }
     }
 
     pub fn from_server_info(
         vfs: &Vfs,
-        audio_device: Rc<rodio::Device>,
+        stream: OutputStreamHandle,
         max_clients: u8,
         model_precache: Vec<String>,
         sound_precache: Vec<String>,
@@ -192,12 +215,18 @@ impl ClientState {
             // TODO: send keepalive message?
         }
 
+        let mut cached_sounds = HashMap::new();
+        for name in CACHED_SOUND_NAMES {
+            cached_sounds.insert(name.to_string(), AudioSource::load(vfs, name)?);
+        }
+
         Ok(ClientState {
             models,
             model_names,
             sounds,
+            cached_sounds,
             max_players: max_clients as usize,
-            ..ClientState::new(audio_device)
+            ..ClientState::new(stream)
         })
     }
 
@@ -358,9 +387,6 @@ impl ClientState {
                 self.particles.create_entity_field(self.time, ent);
             }
 
-            // TODO: cache a SmallRng in Client
-            let mut rng = rand::thread_rng();
-
             // TODO: factor out EntityEffects->LightDesc mapping
             if ent.effects.contains(EntityEffects::MUZZLE_FLASH) {
                 // TODO: angle and move origin to muzzle
@@ -368,7 +394,7 @@ impl ClientState {
                     self.time,
                     LightDesc {
                         origin: ent.origin + Vector3::new(0.0, 0.0, 16.0),
-                        init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut rng),
+                        init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: Some(32.0),
                         ttl: Duration::milliseconds(100),
@@ -382,7 +408,7 @@ impl ClientState {
                     self.time,
                     LightDesc {
                         origin: ent.origin,
-                        init_radius: BRIGHTLIGHT_DISTRIBUTION.sample(&mut rng),
+                        init_radius: BRIGHTLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: None,
                         ttl: Duration::milliseconds(1),
@@ -396,7 +422,7 @@ impl ClientState {
                     self.time,
                     LightDesc {
                         origin: ent.origin,
-                        init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut rng),
+                        init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: None,
                         ttl: Duration::milliseconds(1),
@@ -450,15 +476,13 @@ impl ClientState {
 
         // apply effects to static entities as well
         for ent in self.static_entities.iter_mut() {
-            let mut rng = rand::thread_rng();
-
             if ent.effects.contains(EntityEffects::BRIGHT_LIGHT) {
                 debug!("spawn bright light on static entity");
                 ent.light_id = Some(self.lights.insert(
                     self.time,
                     LightDesc {
                         origin: ent.origin,
-                        init_radius: BRIGHTLIGHT_DISTRIBUTION.sample(&mut rng),
+                        init_radius: BRIGHTLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: None,
                         ttl: Duration::milliseconds(1),
@@ -473,7 +497,7 @@ impl ClientState {
                     self.time,
                     LightDesc {
                         origin: ent.origin,
-                        init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut rng),
+                        init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: None,
                         ttl: Duration::milliseconds(1),
@@ -519,7 +543,7 @@ impl ClientState {
                     ent.angles = Vector3::new(
                         pitch,
                         yaw,
-                        Deg(ANGLE_DISTRIBUTION.sample(&mut rand::thread_rng())),
+                        Deg(ANGLE_DISTRIBUTION.sample(&mut self.rng)),
                     );
 
                     if self.temp_entities.len() < MAX_TEMP_ENTITIES {
@@ -793,29 +817,43 @@ impl ClientState {
     }
 
     pub fn spawn_temp_entity(&mut self, temp_entity: &TempEntity) {
+        lazy_static! {
+            static ref ZERO_ONE_DISTRIBUTION: Uniform<f32> = Uniform::new(0.0, 1.0);
+        }
+
+        let mut spike_sound = || match ZERO_ONE_DISTRIBUTION.sample(&mut self.rng) {
+            x if x < 0.2 => "weapons/tink1.wav",
+            x if x < 0.4667 => "weapons/ric1.wav",
+            x if x < 0.7333 => "weapons/ric2.wav",
+            _ => "weapons/ric3.wav",
+        };
+
         match temp_entity {
             TempEntity::Point { kind, origin } => {
                 use PointEntityKind::*;
                 match kind {
                     // projectile impacts
                     WizSpike | KnightSpike | Spike | SuperSpike | Gunshot => {
-                        let (color, count) = match kind {
+                        let (color, count, sound) = match kind {
                             // TODO: start wizard/hit.wav
-                            WizSpike => (20, 30),
+                            WizSpike => {
+                                (20, 30, Some("wizard/hit.wav"))
+                            }
 
-                            // TODO: start hknight/hit.wav
-                            KnightSpike => (226, 20),
+                            KnightSpike => {
+                                (226, 20, Some("hknight/hit.wav"))
+                            }
 
                             // TODO: for Spike and SuperSpike, start one of:
                             // - 26.67%: weapons/tink1.wav
                             // - 20.0%: weapons/ric1.wav
                             // - 20.0%: weapons/ric2.wav
                             // - 20.0%: weapons/ric3.wav
-                            Spike => (0, 10),
-                            SuperSpike => (0, 20),
+                            Spike => (0, 10, Some(spike_sound())),
+                            SuperSpike => (0, 20, Some(spike_sound())),
 
-                            // no sound
-                            Gunshot => (0, 20),
+                            // no impact sound
+                            Gunshot => (0, 20, None),
                             _ => unreachable!(),
                         };
 
@@ -826,6 +864,22 @@ impl ClientState {
                             color,
                             count,
                         );
+
+                        if let Some(snd) = sound {
+                            self.mixer.start_sound(
+                                self.cached_sounds
+                                    .get(snd)
+                                    .unwrap()
+                                    .clone(),
+                                self.time,
+                                None,
+                                0,
+                                1.0,
+                                1.0,
+                                *origin,
+                                &self.listener,
+                            );
+                        }
                     }
 
                     Explosion => {
@@ -841,7 +895,20 @@ impl ClientState {
                             },
                             None,
                         );
-                        // TODO: start weapons/r_exp3
+
+                        self.mixer.start_sound(
+                            self.cached_sounds
+                                .get("weapons/r_exp3.wav")
+                                .unwrap()
+                                .clone(),
+                            self.time,
+                            None,
+                            0,
+                            1.0,
+                            1.0,
+                            *origin,
+                            &self.listener,
+                        );
                     }
 
                     ColorExplosion {
@@ -864,12 +931,38 @@ impl ClientState {
                             },
                             None,
                         );
-                        // TODO: start weapons/r_exp3
+
+                        self.mixer.start_sound(
+                            self.cached_sounds
+                                .get("weapons/r_exp3.wav")
+                                .unwrap()
+                                .clone(),
+                            self.time,
+                            None,
+                            0,
+                            1.0,
+                            1.0,
+                            *origin,
+                            &self.listener,
+                        );
                     }
 
                     TarExplosion => {
                         self.particles.create_spawn_explosion(self.time, *origin);
-                        // TODO: start weapons/r_exp3 (same sound as rocket explosion)
+
+                        self.mixer.start_sound(
+                            self.cached_sounds
+                                .get("weapons/r_exp3.wav")
+                                .unwrap()
+                                .clone(),
+                            self.time,
+                            None,
+                            0,
+                            1.0,
+                            1.0,
+                            *origin,
+                            &self.listener,
+                        );
                     }
 
                     LavaSplash => self.particles.create_lava_splash(self.time, *origin),
@@ -967,11 +1060,12 @@ impl ClientState {
         self.update_listener();
 
         // update entity sounds
-        for opt_chan in self.mixer.channels.iter() {
-            if let Some(ref chan) = opt_chan {
-                if chan.channel.in_use() {
-                    chan.channel
-                        .update(self.entities[chan.ent_id].origin, &self.listener);
+        for e_channel in self.mixer.iter_entity_channels() {
+            if let Some(ent_id) = e_channel.entity_id() {
+                if e_channel.channel().in_use() {
+                    e_channel
+                        .channel()
+                        .update(self.entities[ent_id].origin, &self.listener);
                 }
             }
         }

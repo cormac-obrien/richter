@@ -20,21 +20,22 @@
 
 use std::{
     cell::{Cell, RefCell},
-    io::{self, BufReader, BufWriter, Cursor, Read},
-    rc::Rc,
+    io::{self, BufReader, Cursor, Read},
 };
 
 use crate::common::vfs::{Vfs, VfsError};
 
 use cgmath::{InnerSpace, Vector3};
-use hound::{WavReader, WavWriter};
 use rodio::{
     source::{Buffered, SamplesConverter},
-    Decoder, Device, Sink, Source,
+    Decoder, OutputStreamHandle, Sink, Source,
 };
 use thiserror::Error;
+use chrono::Duration;
+use super::entity::ClientEntity;
 
 pub const DISTANCE_ATTENUATION_FACTOR: f32 = 0.001;
+const MAX_ENTITY_CHANNELS: usize = 128;
 
 #[derive(Error, Debug)]
 pub enum SoundError {
@@ -42,8 +43,6 @@ pub enum SoundError {
     Io(#[from] io::Error),
     #[error("Virtual filesystem error: {0}")]
     Vfs(#[from] VfsError),
-    #[error("WAV handling error: {0}")]
-    Wav(#[from] hound::Error),
     #[error("WAV decoder error: {0}")]
     Decoder(#[from] rodio::decoder::DecoderError),
 }
@@ -119,33 +118,6 @@ impl AudioSource {
         let mut data = Vec::new();
         file.read_to_end(&mut data)?;
 
-        let spec = {
-            let wav_reader = WavReader::new(Cursor::new(&mut data))?;
-            wav_reader.spec()
-        };
-
-        // have to convert from 8- to 16-bit here because rodio chokes on 8-bit PCM
-        // TODO: update to new rodio version (or master)
-        if spec.bits_per_sample == 8 {
-            let mut wav_reader = WavReader::new(Cursor::new(&mut data))?;
-            let len = wav_reader.len();
-            let mut data_16bit: Vec<i16> = Vec::with_capacity(len as usize);
-            for sample in wav_reader.samples::<i8>() {
-                data_16bit.push(sample? as i16 * 256);
-            }
-
-            data.clear();
-            let w = BufWriter::new(Cursor::new(&mut data));
-            let mut spec16 = spec;
-            spec16.bits_per_sample = 16;
-            let mut wav_writer = WavWriter::new(w, spec16)?;
-            let mut i16_writer = wav_writer.get_i16_writer(len);
-            for s in data_16bit {
-                i16_writer.write_sample(s);
-            }
-            i16_writer.flush()?;
-        }
-
         let src = Decoder::new(BufReader::new(Cursor::new(data)))?
             .convert_samples()
             .buffered();
@@ -163,14 +135,15 @@ pub struct StaticSound {
 
 impl StaticSound {
     pub fn new(
-        device: &Device,
+        stream: &OutputStreamHandle,
         origin: Vector3<f32>,
         src: AudioSource,
         volume: f32,
         attenuation: f32,
         listener: &Listener,
     ) -> StaticSound {
-        let sink = Sink::new(device);
+        // TODO: handle PlayError once PR accepted
+        let sink = Sink::try_new(&stream).unwrap();
         let infinite = src.0.clone().repeat_infinite();
         sink.append(infinite);
         sink.set_volume(listener.attenuate(origin, volume, attenuation));
@@ -192,7 +165,7 @@ impl StaticSound {
 
 /// Represents a single audio channel, capable of playing one sound at a time.
 pub struct Channel {
-    device: Rc<Device>,
+    stream: OutputStreamHandle,
     sink: RefCell<Option<Sink>>,
     master_vol: Cell<f32>,
     attenuation: Cell<f32>,
@@ -200,9 +173,9 @@ pub struct Channel {
 
 impl Channel {
     /// Create a new `Channel` backed by the given `Device`.
-    pub fn new(device: Rc<Device>) -> Channel {
+    pub fn new(stream: OutputStreamHandle) -> Channel {
         Channel {
-            device,
+            stream,
             sink: RefCell::new(None),
             master_vol: Cell::new(0.0),
             attenuation: Cell::new(0.0),
@@ -225,7 +198,7 @@ impl Channel {
         self.sink.replace(None);
 
         // start the new sound
-        let new_sink = Sink::new(&self.device);
+        let new_sink = Sink::try_new(&self.stream).unwrap();
         new_sink.append(src.0);
         new_sink.set_volume(listener.attenuate(
             ent_pos,
@@ -267,5 +240,121 @@ impl Channel {
         } else {
             true
         }
+    }
+}
+
+pub struct EntityChannel {
+    start_time: Duration,
+    // if None, sound is associated with a temp entity
+    ent_id: Option<usize>,
+    ent_channel: i8,
+    channel: Channel,
+}
+
+impl EntityChannel {
+    pub fn channel(&self) -> &Channel {
+        &self.channel
+    }
+
+    pub fn entity_id(&self) -> Option<usize> {
+        self.ent_id
+    }
+}
+
+pub struct EntityMixer {
+    stream: OutputStreamHandle,
+    // TODO: replace with an array once const type parameters are implemented
+    channels: Box<[Option<EntityChannel>]>,
+}
+
+impl EntityMixer {
+    pub fn new(stream: OutputStreamHandle) -> EntityMixer {
+        let mut channel_vec = Vec::new();
+
+        for _ in 0..MAX_ENTITY_CHANNELS {
+            channel_vec.push(None);
+        }
+
+        EntityMixer {
+            stream,
+            channels: channel_vec.into_boxed_slice(),
+        }
+    }
+
+    fn find_free_channel(&self, ent_id: Option<usize>, ent_channel: i8) -> usize {
+        let mut oldest = 0;
+
+        for (i, channel) in self.channels.iter().enumerate() {
+            match *channel {
+                Some(ref chan) => {
+                    // if this channel is free, return it
+                    if !chan.channel.in_use() {
+                        return i;
+                    }
+
+                    // replace sounds on the same entity channel
+                    if ent_channel != 0
+                        && chan.ent_id == ent_id
+                        && (chan.ent_channel == ent_channel || ent_channel == -1)
+                    {
+                        return i;
+                    }
+
+                    // TODO: don't clobber player sounds with monster sounds
+
+                    // keep track of which sound started the earliest
+                    match self.channels[oldest] {
+                        Some(ref o) => {
+                            if chan.start_time < o.start_time {
+                                oldest = i;
+                            }
+                        }
+                        None => oldest = i,
+                    }
+                }
+
+                None => return i,
+            }
+        }
+
+        // if there are no good channels, just replace the one that's been running the longest
+        oldest
+    }
+
+    pub fn start_sound(
+        &mut self,
+        src: AudioSource,
+        time: Duration,
+        ent_id: Option<usize>,
+        ent_channel: i8,
+        volume: f32,
+        attenuation: f32,
+        origin: Vector3<f32>,
+        listener: &Listener,
+    ) {
+        let chan_id = self.find_free_channel(ent_id, ent_channel);
+        let new_channel = Channel::new(self.stream.clone());
+
+        new_channel.play(
+            src.clone(),
+            origin,
+            listener,
+            volume,
+            attenuation,
+        );
+        self.channels[chan_id] = Some(EntityChannel {
+            start_time: time,
+            ent_id,
+            ent_channel,
+            channel: new_channel,
+        })
+    }
+
+    pub fn iter_entity_channels(&self) -> impl Iterator<Item = &EntityChannel> {
+        self.channels.iter().filter_map(|e| e.as_ref())
+    }
+
+    pub fn stream(&self) -> OutputStreamHandle {
+        self.stream.clone()
     }
 }

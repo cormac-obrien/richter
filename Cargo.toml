@@ -14,7 +14,6 @@ chrono = "0.4.0"
 env_logger = "0.5.3"
 failure = "0.1.8"
 futures = "0.3.5"
-hound = "3.4.0"
 lazy_static = "1.0.0"
 log = "0.4.1"
 nom = "5.1"
@@ -23,7 +22,8 @@ num-derive = "0.1.42"
 png = "0.16"
 rand = { version = "0.7", features = ["small_rng"] }
 regex = "0.2.6"
-rodio = "0.11.0"
+# rodio = "0.12"
+rodio = { git = "https://github.com/RustAudio/rodio", rev = "82b4952" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 shaderc = "0.6.2"
