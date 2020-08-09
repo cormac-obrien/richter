@@ -15,6 +15,7 @@ use cgmath::{Deg, Vector3};
 use io::BufReader;
 use thiserror::Error;
 
+/// An error returned by a demo server.
 #[derive(Error, Debug)]
 pub enum DemoServerError {
     #[error("Invalid CD track number")]
@@ -34,21 +35,25 @@ struct DemoMessage {
     msg_range: Range<usize>,
 }
 
+/// A view of a server message from a demo.
 pub struct DemoMessageView<'a> {
     view_angles: Vector3<Deg<f32>>,
     message: &'a [u8],
 }
 
 impl<'a> DemoMessageView<'a> {
+    /// Returns the view angles recorded for this demo message.
     pub fn view_angles(&self) -> Vector3<Deg<f32>> {
         self.view_angles
     }
 
+    /// Returns the server message for this demo message as a slice of bytes.
     pub fn message(&self) -> &[u8] {
         self.message
     }
 }
 
+/// A server that yields commands from a demo file.
 pub struct DemoServer {
     track_override: Option<u32>,
 
@@ -62,6 +67,7 @@ pub struct DemoServer {
 }
 
 impl DemoServer {
+    /// Construct a new `DemoServer` from the specified demo file.
     pub fn new(file: &mut VirtualFile) -> Result<DemoServer, DemoServerError> {
         let mut dem_reader = BufReader::new(file);
 
@@ -100,7 +106,6 @@ impl DemoServer {
                 },
             }
         };
-        // TODO: verify that track exists
 
         let mut message_data = Vec::new();
         let mut messages = Vec::new();
@@ -136,6 +141,9 @@ impl DemoServer {
         })
     }
 
+    /// Retrieve the next server message from the currently playing demo.
+    ///
+    /// If this returns `None`, the demo is complete.
     pub fn next(&mut self) -> Option<DemoMessageView> {
         if self.message_id >= self.messages.len() {
             return None;
@@ -148,5 +156,14 @@ impl DemoServer {
             view_angles: msg.view_angles,
             message: &self.message_data[msg.msg_range.clone()],
         })
+    }
+
+    /// Returns the currently playing demo's music track override, if any.
+    ///
+    /// If this is `Some`, any `CdTrack` commands from the demo server should
+    /// cause the client to play this track instead of the one specified by the
+    /// command.
+    pub fn track_override(&self) -> Option<u32> {
+        self.track_override
     }
 }

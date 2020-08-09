@@ -11,6 +11,7 @@ use rodio::{Decoder, OutputStreamHandle, Sink, Source};
 pub struct MusicPlayer {
     vfs: Rc<Vfs>,
     stream: OutputStreamHandle,
+    playing: Option<String>,
     sink: Option<Sink>,
 }
 
@@ -19,6 +20,7 @@ impl MusicPlayer {
         MusicPlayer {
             vfs,
             stream,
+            playing: None,
             sink: None,
         }
     }
@@ -29,12 +31,22 @@ impl MusicPlayer {
     /// filesystem, so they can be placed either in an actual directory
     /// `"id1/music/"` or packaged in a PAK archive with a path beginning with
     /// `"music/"`.
+    ///
+    /// If the specified track is already playing, this has no effect.
     pub fn play_named<S>(&mut self, name: S) -> Result<(), SoundError>
     where
         S: AsRef<str>,
     {
         let name = name.as_ref();
 
+        // don't replay the same track
+        if let Some(ref playing) = self.playing {
+            if playing == name {
+                return Ok(());
+            }
+        }
+
+        // TODO: there's probably a better way to do this extension check
         let mut file = if !name.contains('.') {
             // try all supported formats
             self.vfs
@@ -51,7 +63,8 @@ impl MusicPlayer {
         file.read_to_end(&mut data)?;
         let source = Decoder::new(Cursor::new(data))?
             .convert_samples::<f32>()
-            .buffered();
+            .buffered()
+            .repeat_infinite();
 
         // stop the old track before starting the new one so there's no overlap
         self.sink = None;
@@ -79,6 +92,7 @@ impl MusicPlayer {
     /// If no music track is currently playing, this has no effect.
     pub fn stop(&mut self) {
         self.sink = None;
+        self.playing = None;
     }
 
     /// Pause the current music track.

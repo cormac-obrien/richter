@@ -299,12 +299,12 @@ impl Connection {
         gfx_state: &GraphicsState,
         cmds: &mut CmdRegistry,
         console: &mut Console,
-        stream: OutputStreamHandle,
+        music_player: &mut MusicPlayer,
         kick_vars: KickVars,
     ) -> Result<ConnectionStatus, ClientError> {
         use ConnectionStatus::*;
 
-        let (msg, demo_view_angles) = match self.kind {
+        let (msg, demo_view_angles, track_override) = match self.kind {
             ConnectionKind::Server { ref mut qsock, .. } => {
                 let msg = qsock.recv_msg(match self.conn_state {
                     // if we're in the game, don't block waiting for messages
@@ -315,7 +315,7 @@ impl Connection {
                     ConnectionState::SignOn(_) => BlockingMode::Timeout(Duration::seconds(5)),
                 })?;
 
-                (msg, None)
+                (msg, None, None)
             }
 
             ConnectionKind::Demo(ref mut demo_srv) => {
@@ -337,9 +337,13 @@ impl Connection {
                     view_angles.z = -view_angles.z;
 
                     // TODO: we shouldn't have to copy the message here
-                    (msg_view.message().to_owned(), Some(view_angles))
+                    (
+                        msg_view.message().to_owned(),
+                        Some(view_angles),
+                        demo_srv.track_override(),
+                    )
                 } else {
-                    (Vec::new(), None)
+                    (Vec::new(), None, demo_srv.track_override())
                 }
             }
         };
@@ -360,9 +364,11 @@ impl Connection {
 
                 ServerCmd::NoOp => (),
 
-                ServerCmd::CdTrack { .. } => {
-                    // TODO: play CD track
-                    warn!("CD tracks not yet implemented");
+                ServerCmd::CdTrack { track, .. } => {
+                    music_player.play_track(match track_override {
+                        Some(t) => t as usize,
+                        None => track as usize,
+                    })?;
                 }
 
                 ServerCmd::CenterPrint { text } => {
@@ -736,7 +742,7 @@ impl Connection {
         gfx_state: &GraphicsState,
         cmds: &mut CmdRegistry,
         console: &mut Console,
-        stream: &OutputStreamHandle,
+        music_player: &mut MusicPlayer,
         idle_vars: IdleVars,
         kick_vars: KickVars,
         roll_vars: RollVars,
@@ -748,7 +754,7 @@ impl Connection {
         // do this _before_ parsing server messages so that we know when to
         // request the next message from the demo server.
         self.state.advance_time(frame_time);
-        match self.parse_server_msg(vfs, gfx_state, cmds, console, stream.clone(), kick_vars)? {
+        match self.parse_server_msg(vfs, gfx_state, cmds, console, music_player, kick_vars)? {
             ConnectionStatus::Maintain => (),
             // if Disconnect or NextDemo, delegate up the chain
             s => return Ok(s),
@@ -917,7 +923,7 @@ impl Client {
                 gfx_state,
                 &mut self.cmds.borrow_mut(),
                 &mut self.console.borrow_mut(),
-                &self.output_stream_handle,
+                &mut self.music_player.borrow_mut(),
                 idle_vars,
                 kick_vars,
                 roll_vars,
