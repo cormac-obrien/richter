@@ -44,7 +44,7 @@ use crate::{
         demo::{DemoServer, DemoServerError},
         entity::{ClientEntity, MAX_STATIC_ENTITIES},
         input::{game::GameInput, Input},
-        sound::StaticSound,
+        sound::{MusicPlayer, StaticSound},
         state::{ClientState, PlayerInfo},
         trace::{TraceEntity, TraceFrame},
         view::{IdleVars, KickVars, MouseVars, RollVars},
@@ -79,7 +79,6 @@ const MAX_STATS: usize = 32;
 
 const DEFAULT_SOUND_PACKET_VOLUME: u8 = 255;
 const DEFAULT_SOUND_PACKET_ATTENUATION: f32 = 1.0;
-
 
 const CONSOLE_DIVIDER: &'static str = "\
 \n\n\
@@ -300,12 +299,12 @@ impl Connection {
         gfx_state: &GraphicsState,
         cmds: &mut CmdRegistry,
         console: &mut Console,
-        stream: OutputStreamHandle,
+        music_player: &mut MusicPlayer,
         kick_vars: KickVars,
     ) -> Result<ConnectionStatus, ClientError> {
         use ConnectionStatus::*;
 
-        let (msg, demo_view_angles) = match self.kind {
+        let (msg, demo_view_angles, track_override) = match self.kind {
             ConnectionKind::Server { ref mut qsock, .. } => {
                 let msg = qsock.recv_msg(match self.conn_state {
                     // if we're in the game, don't block waiting for messages
@@ -316,7 +315,7 @@ impl Connection {
                     ConnectionState::SignOn(_) => BlockingMode::Timeout(Duration::seconds(5)),
                 })?;
 
-                (msg, None)
+                (msg, None, None)
             }
 
             ConnectionKind::Demo(ref mut demo_srv) => {
@@ -338,9 +337,13 @@ impl Connection {
                     view_angles.z = -view_angles.z;
 
                     // TODO: we shouldn't have to copy the message here
-                    (msg_view.message().to_owned(), Some(view_angles))
+                    (
+                        msg_view.message().to_owned(),
+                        Some(view_angles),
+                        demo_srv.track_override(),
+                    )
                 } else {
-                    (Vec::new(), None)
+                    (Vec::new(), None, demo_srv.track_override())
                 }
             }
         };
@@ -361,9 +364,11 @@ impl Connection {
 
                 ServerCmd::NoOp => (),
 
-                ServerCmd::CdTrack { .. } => {
-                    // TODO: play CD track
-                    warn!("CD tracks not yet implemented");
+                ServerCmd::CdTrack { track, .. } => {
+                    music_player.play_track(match track_override {
+                        Some(t) => t as usize,
+                        None => track as usize,
+                    })?;
                 }
 
                 ServerCmd::CenterPrint { text } => {
@@ -737,7 +742,7 @@ impl Connection {
         gfx_state: &GraphicsState,
         cmds: &mut CmdRegistry,
         console: &mut Console,
-        stream: &OutputStreamHandle,
+        music_player: &mut MusicPlayer,
         idle_vars: IdleVars,
         kick_vars: KickVars,
         roll_vars: RollVars,
@@ -749,7 +754,7 @@ impl Connection {
         // do this _before_ parsing server messages so that we know when to
         // request the next message from the demo server.
         self.state.advance_time(frame_time);
-        match self.parse_server_msg(vfs, gfx_state, cmds, console, stream.clone(), kick_vars)? {
+        match self.parse_server_msg(vfs, gfx_state, cmds, console, music_player, kick_vars)? {
             ConnectionStatus::Maintain => (),
             // if Disconnect or NextDemo, delegate up the chain
             s => return Ok(s),
@@ -810,6 +815,7 @@ pub struct Client {
     input: Rc<RefCell<Input>>,
     _output_stream: OutputStream,
     output_stream_handle: OutputStreamHandle,
+    music_player: Rc<RefCell<MusicPlayer>>,
     conn: Rc<RefCell<Option<Connection>>>,
     renderer: ClientRenderer,
     demo_queue: Rc<RefCell<VecDeque<String>>>,
@@ -854,12 +860,7 @@ impl Client {
         // set up demo playback
         cmds.borrow_mut().insert_or_replace(
             "playdemo",
-            cmd_playdemo(
-                conn.clone(),
-                vfs.clone(),
-                input.clone(),
-                handle.clone(),
-            ),
+            cmd_playdemo(conn.clone(), vfs.clone(), input.clone(), handle.clone()),
         );
 
         let demo_queue = Rc::new(RefCell::new(VecDeque::new()));
@@ -874,6 +875,16 @@ impl Client {
             ),
         );
 
+        let music_player = Rc::new(RefCell::new(MusicPlayer::new(vfs.clone(), handle.clone())));
+        cmds.borrow_mut()
+            .insert_or_replace("music", cmd_music(music_player.clone()));
+        cmds.borrow_mut()
+            .insert_or_replace("music_stop", cmd_music_stop(music_player.clone()));
+        cmds.borrow_mut()
+            .insert_or_replace("music_pause", cmd_music_pause(music_player.clone()));
+        cmds.borrow_mut()
+            .insert_or_replace("music_resume", cmd_music_resume(music_player.clone()));
+
         Client {
             vfs,
             cvars,
@@ -882,6 +893,7 @@ impl Client {
             input,
             _output_stream: stream,
             output_stream_handle: handle,
+            music_player,
             conn,
             renderer: ClientRenderer::new(gfx_state, menu),
             demo_queue,
@@ -911,7 +923,7 @@ impl Client {
                 gfx_state,
                 &mut self.cmds.borrow_mut(),
                 &mut self.console.borrow_mut(),
-                &self.output_stream_handle,
+                &mut self.music_player.borrow_mut(),
                 idle_vars,
                 kick_vars,
                 roll_vars,
@@ -1420,6 +1432,44 @@ fn cmd_startdemos(
 
         input.borrow_mut().set_focus(InputFocus::Game);
 
+        String::new()
+    })
+}
+
+fn cmd_music(music_player: Rc<RefCell<MusicPlayer>>) -> Box<dyn Fn(&[&str]) -> String> {
+    Box::new(move |args| {
+        if args.len() != 1 {
+            return "usage: music [TRACKNAME]".to_owned();
+        }
+
+        let res = music_player.borrow_mut().play_named(args[0]);
+        match res {
+            Ok(()) => String::new(),
+            Err(e) => {
+                music_player.borrow_mut().stop();
+                format!("{}", e)
+            }
+        }
+    })
+}
+
+fn cmd_music_stop(music_player: Rc<RefCell<MusicPlayer>>) -> Box<dyn Fn(&[&str]) -> String> {
+    Box::new(move |_| {
+        music_player.borrow_mut().stop();
+        String::new()
+    })
+}
+
+fn cmd_music_pause(music_player: Rc<RefCell<MusicPlayer>>) -> Box<dyn Fn(&[&str]) -> String> {
+    Box::new(move |_| {
+        music_player.borrow_mut().pause();
+        String::new()
+    })
+}
+
+fn cmd_music_resume(music_player: Rc<RefCell<MusicPlayer>>) -> Box<dyn Fn(&[&str]) -> String> {
+    Box::new(move |_| {
+        music_player.borrow_mut().resume();
         String::new()
     })
 }

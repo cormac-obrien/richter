@@ -18,6 +18,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+mod music;
+pub use music::MusicPlayer;
+
 use std::{
     cell::{Cell, RefCell},
     io::{self, BufReader, Cursor, Read},
@@ -32,13 +35,14 @@ use rodio::{
 };
 use thiserror::Error;
 use chrono::Duration;
-use super::entity::ClientEntity;
 
 pub const DISTANCE_ATTENUATION_FACTOR: f32 = 0.001;
 const MAX_ENTITY_CHANNELS: usize = 128;
 
 #[derive(Error, Debug)]
 pub enum SoundError {
+    #[error("No such music track: {0}")]
+    NoSuchTrack(String),
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
     #[error("Virtual filesystem error: {0}")]
@@ -105,7 +109,7 @@ impl Listener {
 }
 
 #[derive(Clone)]
-pub struct AudioSource(Buffered<SamplesConverter<Decoder<BufReader<Cursor<Vec<u8>>>>, f32>>);
+pub struct AudioSource(Buffered<SamplesConverter<Decoder<Cursor<Vec<u8>>>, f32>>);
 
 impl AudioSource {
     pub fn load<S>(vfs: &Vfs, name: S) -> Result<AudioSource, SoundError>
@@ -118,7 +122,7 @@ impl AudioSource {
         let mut data = Vec::new();
         file.read_to_end(&mut data)?;
 
-        let src = Decoder::new(BufReader::new(Cursor::new(data)))?
+        let src = Decoder::new(Cursor::new(data))?
             .convert_samples()
             .buffered();
 
