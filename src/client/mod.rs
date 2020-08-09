@@ -44,7 +44,7 @@ use crate::{
         demo::{DemoServer, DemoServerError},
         entity::{ClientEntity, MAX_STATIC_ENTITIES},
         input::{game::GameInput, Input},
-        sound::StaticSound,
+        sound::{MusicPlayer, StaticSound},
         state::{ClientState, PlayerInfo},
         trace::{TraceEntity, TraceFrame},
         view::{IdleVars, KickVars, MouseVars, RollVars},
@@ -79,7 +79,6 @@ const MAX_STATS: usize = 32;
 
 const DEFAULT_SOUND_PACKET_VOLUME: u8 = 255;
 const DEFAULT_SOUND_PACKET_ATTENUATION: f32 = 1.0;
-
 
 const CONSOLE_DIVIDER: &'static str = "\
 \n\n\
@@ -810,6 +809,7 @@ pub struct Client {
     input: Rc<RefCell<Input>>,
     _output_stream: OutputStream,
     output_stream_handle: OutputStreamHandle,
+    music_player: Rc<RefCell<MusicPlayer>>,
     conn: Rc<RefCell<Option<Connection>>>,
     renderer: ClientRenderer,
     demo_queue: Rc<RefCell<VecDeque<String>>>,
@@ -854,12 +854,7 @@ impl Client {
         // set up demo playback
         cmds.borrow_mut().insert_or_replace(
             "playdemo",
-            cmd_playdemo(
-                conn.clone(),
-                vfs.clone(),
-                input.clone(),
-                handle.clone(),
-            ),
+            cmd_playdemo(conn.clone(), vfs.clone(), input.clone(), handle.clone()),
         );
 
         let demo_queue = Rc::new(RefCell::new(VecDeque::new()));
@@ -874,6 +869,16 @@ impl Client {
             ),
         );
 
+        let music_player = Rc::new(RefCell::new(MusicPlayer::new(vfs.clone(), handle.clone())));
+        cmds.borrow_mut()
+            .insert_or_replace("music", cmd_music(music_player.clone()));
+        cmds.borrow_mut()
+            .insert_or_replace("music_stop", cmd_music_stop(music_player.clone()));
+        cmds.borrow_mut()
+            .insert_or_replace("music_pause", cmd_music_pause(music_player.clone()));
+        cmds.borrow_mut()
+            .insert_or_replace("music_resume", cmd_music_resume(music_player.clone()));
+
         Client {
             vfs,
             cvars,
@@ -882,6 +887,7 @@ impl Client {
             input,
             _output_stream: stream,
             output_stream_handle: handle,
+            music_player,
             conn,
             renderer: ClientRenderer::new(gfx_state, menu),
             demo_queue,
@@ -1420,6 +1426,44 @@ fn cmd_startdemos(
 
         input.borrow_mut().set_focus(InputFocus::Game);
 
+        String::new()
+    })
+}
+
+fn cmd_music(music_player: Rc<RefCell<MusicPlayer>>) -> Box<dyn Fn(&[&str]) -> String> {
+    Box::new(move |args| {
+        if args.len() != 1 {
+            return "usage: music [TRACKNAME]".to_owned();
+        }
+
+        let res = music_player.borrow_mut().play_named(args[0]);
+        match res {
+            Ok(()) => String::new(),
+            Err(e) => {
+                music_player.borrow_mut().stop();
+                format!("{}", e)
+            }
+        }
+    })
+}
+
+fn cmd_music_stop(music_player: Rc<RefCell<MusicPlayer>>) -> Box<dyn Fn(&[&str]) -> String> {
+    Box::new(move |_| {
+        music_player.borrow_mut().stop();
+        String::new()
+    })
+}
+
+fn cmd_music_pause(music_player: Rc<RefCell<MusicPlayer>>) -> Box<dyn Fn(&[&str]) -> String> {
+    Box::new(move |_| {
+        music_player.borrow_mut().pause();
+        String::new()
+    })
+}
+
+fn cmd_music_resume(music_player: Rc<RefCell<MusicPlayer>>) -> Box<dyn Fn(&[&str]) -> String> {
+    Box::new(move |_| {
+        music_player.borrow_mut().resume();
         String::new()
     })
 }
