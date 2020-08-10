@@ -71,6 +71,7 @@ use render::{ClientRenderer, GraphicsState, WorldRenderer};
 use rodio::{OutputStream, OutputStreamHandle};
 use sound::SoundError;
 use thiserror::Error;
+use view::BobVars;
 
 // connections are tried 3 times, see
 // https://github.com/id-Software/Quake/blob/master/WinQuake/net_dgrm.c#L1248
@@ -746,6 +747,7 @@ impl Connection {
         idle_vars: IdleVars,
         kick_vars: KickVars,
         roll_vars: RollVars,
+        bob_vars:BobVars,
         cl_nolerp: f32,
         sv_gravity: f32,
     ) -> Result<ConnectionStatus, ClientError> {
@@ -791,7 +793,7 @@ impl Connection {
         // these all require the player entity to have spawned
         if let ConnectionState::Connected(_) = self.conn_state {
             // update view
-            self.state.calc_final_view(idle_vars, kick_vars, roll_vars);
+            self.state.calc_final_view(idle_vars, kick_vars, roll_vars, bob_vars);
 
             // update ear positions
             self.state.update_listener();
@@ -915,6 +917,7 @@ impl Client {
         let idle_vars = self.idle_vars()?;
         let kick_vars = self.kick_vars()?;
         let roll_vars = self.roll_vars()?;
+        let bob_vars = self.bob_vars()?;
 
         let status = match *self.conn.borrow_mut() {
             Some(ref mut conn) => conn.frame(
@@ -927,6 +930,7 @@ impl Client {
                 idle_vars,
                 kick_vars,
                 roll_vars,
+                bob_vars,
                 cl_nolerp,
                 sv_gravity,
             )?,
@@ -1104,6 +1108,14 @@ impl Client {
         Ok(RollVars {
             cl_rollangle: self.cvar_value("cl_rollangle")?,
             cl_rollspeed: self.cvar_value("cl_rollspeed")?,
+        })
+    }
+
+    fn bob_vars(&self) -> Result<BobVars, ClientError> {
+        Ok(BobVars {
+            cl_bob: self.cvar_value("cl_bob")?,
+            cl_bobcycle: self.cvar_value("cl_bobcycle")?,
+            cl_bobup: self.cvar_value("cl_bobup")?,
         })
     }
 

@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::IntermissionKind;
-use cgmath::{Angle as _, Deg, Euler, InnerSpace as _, Matrix3, Vector3};
+use cgmath::{Angle as _, Deg, InnerSpace as _, Vector3, Zero as _};
 use chrono::Duration;
 
 pub struct View {
@@ -39,6 +39,9 @@ pub struct View {
 
     // final angles combining all sources
     final_angles: Angles,
+
+    // final origin accounting for view bob
+    final_origin: Vector3<f32>,
 }
 
 impl View {
@@ -53,6 +56,7 @@ impl View {
             damage_time: Duration::zero(),
             punch_angles: Angles::zero(),
             final_angles: Angles::zero(),
+            final_origin: Vector3::zero(),
         }
     }
 
@@ -203,9 +207,22 @@ impl View {
         self.final_angles
     }
 
-    pub fn origin(&self) {
-        // offset the view plane a tiny bit to keep it from intersecting liquid planes
-        let view_plane_offset = Vector3::new(1.0 / 32.0, 1.0 / 32.0, 1.0 / 32.0);
+    pub fn calc_final_origin(
+        &mut self,
+        time: Duration,
+        origin: Vector3<f32>,
+        velocity: Vector3<f32>,
+        bob_vars: BobVars,
+    ) {
+        // offset the view by 1/32 unit to keep it from intersecting liquid planes
+        let plane_offset = Vector3::new(1.0 / 32.0, 1.0 / 32.0, 1.0 / 32.0);
+        let height_offset = Vector3::new(0.0, 0.0, self.view_height);
+        let bob_offset = Vector3::new(0.0, 0.0, bob(time, velocity, bob_vars));
+        self.final_origin = origin + plane_offset + height_offset + bob_offset;
+    }
+
+    pub fn final_origin(&self) -> Vector3<f32> {
+        self.final_origin
     }
 }
 
