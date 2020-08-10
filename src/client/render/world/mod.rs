@@ -308,11 +308,7 @@ pub struct WorldRenderer {
 }
 
 impl WorldRenderer {
-    pub fn new(
-        state: &GraphicsState,
-        models: &[Model],
-        worldmodel_id: usize,
-    ) -> WorldRenderer {
+    pub fn new(state: &GraphicsState, models: &[Model], worldmodel_id: usize) -> WorldRenderer {
         let mut worldmodel_renderer = None;
         let mut entity_renderers = Vec::new();
 
@@ -436,6 +432,7 @@ impl WorldRenderer {
         entities: E,
         particles: P,
         lightstyle_values: &[f32],
+        viewmodel_id: usize,
         cvars: &CvarRegistry,
     ) where
         E: Iterator<Item = &'a ClientEntity> + Clone,
@@ -475,7 +472,8 @@ impl WorldRenderer {
             &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
             &[self.world_uniform_block.offset()],
         );
-        self.worldmodel_renderer.record_draw(state, pass, &bump, time, camera, 0);
+        self.worldmodel_renderer
+            .record_draw(state, pass, &bump, time, camera, 0);
 
         // draw entities
         info!("Drawing entities");
@@ -502,18 +500,36 @@ impl WorldRenderer {
                 }
                 EntityRenderer::Alias(ref alias) => {
                     pass.set_pipeline(state.alias_pipeline().pipeline());
-                    AliasPipeline::set_push_constants(pass, Clear, Clear, Clear);
-                    alias.record_draw(state, pass, time, ent.get_frame_id(), ent.get_skin_id())
+                    AliasPipeline::set_push_constants(
+                        pass,
+                        Update(bump.alloc(alias::VertexPushConstants {
+                            transform: self.calculate_mvp_transform(camera, ent),
+                            model_view: self.calculate_mv_transform(camera, ent),
+                        })),
+                        Clear,
+                        Clear,
+                    );
+                    alias.record_draw(state, pass, time, ent.get_frame_id(), ent.get_skin_id());
                 }
                 EntityRenderer::Sprite(ref sprite) => {
                     pass.set_pipeline(state.sprite_pipeline().pipeline());
                     SpritePipeline::set_push_constants(pass, Clear, Clear, Clear);
-                    sprite.record_draw(state, pass, ent.get_frame_id(), time)
+                    sprite.record_draw(state, pass, ent.get_frame_id(), time);
                 }
                 _ => warn!("non-brush renderers not implemented!"),
                 // _ => unimplemented!(),
             }
         }
+
+        // match self.entity_renderers[viewmodel_id] {
+        //     EntityRenderer::Alias(ref alias) => {
+        //         pass.set_pipeline(state.alias_pipeline().pipeline());
+        //         AliasPipeline::set_push_constants(pass, Clear, Clear, Clear);
+        //         alias.record_draw(state, pass, time, 0, 0);
+        //     }
+
+        //     _ => unreachable!("non-alias viewmodel"),
+        // }
 
         state
             .particle_pipeline()

@@ -11,7 +11,7 @@ use crate::{
     },
 };
 
-use cgmath::{InnerSpace as _, Vector3, Zero as _};
+use cgmath::{InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
 use failure::Error;
 
@@ -76,8 +76,15 @@ impl AliasPipeline {
     }
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct VertexPushConstants {
+    pub transform: Matrix4<f32>,
+    pub model_view: Matrix4<f32>,
+}
+
 impl Pipeline for AliasPipeline {
-    type VertexPushConstants = ();
+    type VertexPushConstants = VertexPushConstants;
     type SharedPushConstants = ();
     type FragmentPushConstants = ();
 

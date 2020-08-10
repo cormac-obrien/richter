@@ -716,6 +716,7 @@ impl ClientRenderer {
                             cl_state.iter_visible_entities(),
                             cl_state.iter_particles(),
                             cl_state.lightstyle_values().unwrap().as_slice(),
+                            cl_state.viewmodel_id(),
                             cvars,
                         );
                     }

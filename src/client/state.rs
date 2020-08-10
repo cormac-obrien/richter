@@ -1212,6 +1212,10 @@ impl ClientState {
         &self.models
     }
 
+    pub fn viewmodel_id(&self) -> usize {
+        self.stats[ClientStat::Weapon as usize] as usize
+    }
+
     pub fn iter_visible_entities(&self) -> impl Iterator<Item = &ClientEntity> + Clone {
         self.visible_entity_ids
             .iter()

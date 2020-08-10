@@ -224,6 +224,11 @@ impl View {
     pub fn final_origin(&self) -> Vector3<f32> {
         self.final_origin
     }
+
+    pub fn viewmodel_angle(&self) -> Angles {
+        // TODO
+        self.final_angles()
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
