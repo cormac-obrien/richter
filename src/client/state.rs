@@ -334,7 +334,6 @@ impl ClientState {
         for (ent_id, ent) in self.entities.iter_mut().enumerate().skip(1) {
             if ent.model_id == 0 {
                 // nothing in this entity slot
-                // TODO: R_RemoveEfrags
                 continue;
             }
 
@@ -468,8 +467,11 @@ impl ClientState {
                     .create_trail(self.time, prev_origin, ent.origin, kind, false);
             }
 
-            // mark entity for rendering
-            self.visible_entity_ids.push(ent_id);
+            // don't render the player model
+            if self.view.entity_id() != ent_id {
+                // mark entity for rendering
+                self.visible_entity_ids.push(ent_id);
+            }
 
             // enable lerp for next frame
             ent.force_link = false;
