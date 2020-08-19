@@ -165,10 +165,10 @@ impl InitialPassTarget {
         let depth_attachment =
             create_depth_attachment(device, size, sample_count, wgpu::TextureUsage::SAMPLED);
 
-        let diffuse_view = diffuse_attachment.create_default_view();
-        let normal_view = normal_attachment.create_default_view();
-        let light_view = light_attachment.create_default_view();
-        let depth_view = depth_attachment.create_default_view();
+        let diffuse_view = diffuse_attachment.create_view(&Default::default());
+        let normal_view = normal_attachment.create_view(&Default::default());
+        let light_view = light_attachment.create_view(&Default::default());
+        let depth_view = depth_attachment.create_view(&Default::default());
 
         InitialPassTarget {
             size,
@@ -277,7 +277,7 @@ impl DeferredPassTarget {
     pub fn new(device: &wgpu::Device, size: Extent2d, sample_count: u32) -> DeferredPassTarget {
         let color_attachment =
             create_color_attachment(device, size, sample_count, wgpu::TextureUsage::SAMPLED);
-        let color_view = color_attachment.create_default_view();
+        let color_view = color_attachment.create_view(&Default::default());
 
         DeferredPassTarget {
             size,
@@ -333,7 +333,7 @@ impl FinalPassTarget {
     pub fn new(device: &wgpu::Device, size: Extent2d, sample_count: u32) -> FinalPassTarget {
         let color_attachment =
             create_color_attachment(device, size, sample_count, wgpu::TextureUsage::empty());
-        let color_view = color_attachment.create_default_view();
+        let color_view = color_attachment.create_view(&Default::default());
         // add COPY_SRC so we can copy to a buffer for capture and SAMPLED so we
         // can blit to the swap chain
         let resolve_attachment = create_color_attachment(
@@ -342,7 +342,7 @@ impl FinalPassTarget {
             1,
             wgpu::TextureUsage::COPY_SRC | wgpu::TextureUsage::SAMPLED,
         );
-        let resolve_view = resolve_attachment.create_default_view();
+        let resolve_view = resolve_attachment.create_view(&Default::default());
 
         FinalPassTarget {
             size,

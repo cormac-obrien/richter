@@ -15,23 +15,6 @@ use cgmath::{InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
 use failure::Error;
 
-lazy_static! {
-    static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 1] = [
-        vec![
-            // diffuse texture, updated once per face
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::SampledTexture {
-                    dimension: wgpu::TextureViewDimension::D2,
-                    component_type: wgpu::TextureComponentType::Float,
-                    multisampled: false,
-                },
-            ),
-        ]
-    ];
-}
-
 pub struct AliasPipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
@@ -83,6 +66,20 @@ pub struct VertexPushConstants {
     pub model_view: Matrix4<f32>,
 }
 
+lazy_static! {
+    static ref VERTEX_ATTRIBUTE_DESCRIPTORS: [wgpu::VertexAttributeDescriptor; 3] =
+        wgpu::vertex_attr_array![
+            // frame 0 position
+            0 => Float3,
+            // frame 1 position
+            // 1 => Float3,
+            // normal
+            2 => Float3,
+            // texcoord
+            3 => Float2,
+        ];
+}
+
 impl Pipeline for AliasPipeline {
     type VertexPushConstants = VertexPushConstants;
     type SharedPushConstants = ();
@@ -105,7 +102,19 @@ impl Pipeline for AliasPipeline {
             // group 2: updated per-texture
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("brush per-texture chain bind group"),
-                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+                entries: &[
+                    // diffuse texture, updated once per face
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::SampledTexture {
+                            dimension: wgpu::TextureViewDimension::D2,
+                            component_type: wgpu::TextureComponentType::Float,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
             },
         ]
     }
@@ -131,16 +140,7 @@ impl Pipeline for AliasPipeline {
         vec![wgpu::VertexBufferDescriptor {
             stride: size_of::<AliasVertex>() as u64,
             step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![
-                // frame 0 position
-                0 => Float3,
-                // frame 1 position
-                // 1 => Float3,
-                // normal
-                2 => Float3,
-                // texcoord
-                3 => Float2,
-            ],
+            attributes: &VERTEX_ATTRIBUTE_DESCRIPTORS[..],
         }]
     }
 }
@@ -332,10 +332,14 @@ impl AliasRenderer {
             }
         }
 
-        let vertex_buffer = state.device().create_buffer_with_data(
-            unsafe { any_slice_as_bytes(vertices.as_slice()) },
-            wgpu::BufferUsage::VERTEX,
-        );
+        use wgpu::util::DeviceExt as _;
+        let vertex_buffer = state
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: unsafe { any_slice_as_bytes(vertices.as_slice()) },
+                usage: wgpu::BufferUsage::VERTEX,
+            });
 
         let mut textures = Vec::new();
         for texture in alias_model.textures() {
@@ -344,7 +348,7 @@ impl AliasRenderer {
                     let (diffuse_data, _fullbright_data) = state.palette.translate(tex.indices());
                     let diffuse_texture =
                         state.create_texture(None, w, h, &TextureData::Diffuse(diffuse_data));
-                    let diffuse_view = diffuse_texture.create_default_view();
+                    let diffuse_view = diffuse_texture.create_view(&Default::default());
                     let bind_group = state
                         .device()
                         .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -378,7 +382,7 @@ impl AliasRenderer {
                             state.palette.translate(frame.indices());
                         let diffuse_texture =
                             state.create_texture(None, w, h, &TextureData::Diffuse(diffuse_data));
-                        let diffuse_view = diffuse_texture.create_default_view();
+                        let diffuse_view = diffuse_texture.create_view(&Default::default());
                         let bind_group =
                             state
                                 .device()

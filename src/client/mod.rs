@@ -705,7 +705,7 @@ impl Connection {
                 }
 
                 ServerCmd::UpdateStat { stat, value } => {
-                    trace!(
+                    debug!(
                         "{:?}: {} -> {}",
                         stat,
                         self.state.stats[stat as usize],

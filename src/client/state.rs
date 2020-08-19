@@ -1213,7 +1213,10 @@ impl ClientState {
     }
 
     pub fn viewmodel_id(&self) -> usize {
-        self.stats[ClientStat::Weapon as usize] as usize
+        match self.stats[ClientStat::Weapon as usize] as usize {
+            0 => 0,
+            x => x - 1,
+        }
     }
 
     pub fn iter_visible_entities(&self) -> impl Iterator<Item = &ClientEntity> + Clone {

@@ -1,28 +1,5 @@
 use crate::client::render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState};
 
-lazy_static! {
-    pub static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 1] = [
-        vec![
-            // sampler
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::Sampler { comparison: false },
-            ),
-            // blit texture
-            wgpu::BindGroupLayoutEntry::new(
-                1,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::SampledTexture {
-                    dimension: wgpu::TextureViewDimension::D2,
-                    component_type: wgpu::TextureComponentType::Float,
-                    multisampled: false,
-                },
-            ),
-        ]
-    ];
-}
-
 pub struct BlitPipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
@@ -114,7 +91,26 @@ impl Pipeline for BlitPipeline {
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
         vec![wgpu::BindGroupLayoutDescriptor {
             label: Some("blit bind group"),
-            entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+            entries: &[
+                // sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler { comparison: false },
+                    count: None,
+                },
+                // blit texture
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::SampledTexture {
+                        dimension: wgpu::TextureViewDimension::D2,
+                        component_type: wgpu::TextureComponentType::Float,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
         }]
     }
 

@@ -38,7 +38,7 @@ where
     let spirv = compiler
         .compile_into_spirv(source.as_ref(), kind, name.as_ref(), "main", None)
         .unwrap();
-    device.create_shader_module(wgpu::ShaderModuleSource::SpirV(spirv.as_binary()))
+    device.create_shader_module(wgpu::ShaderModuleSource::SpirV(spirv.as_binary().into()))
 }
 
 pub enum PushConstantUpdate<T> {
@@ -194,7 +194,9 @@ pub trait Pipeline {
                 .collect();
             info!("{} layouts total", layouts.len());
             let ranges = Self::push_constant_ranges();
+            let label = format!("{} pipeline layout", Self::name());
             let desc = wgpu::PipelineLayoutDescriptor {
+                label: Some(&label),
                 bind_group_layouts: &layouts,
                 push_constant_ranges: &ranges,
             };
@@ -218,7 +220,8 @@ pub trait Pipeline {
 
         info!("create_render_pipeline");
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout: &pipeline_layout,
+            label: Some(&format!("{} pipeline", Self::name())),
+            layout: Some(&pipeline_layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &vertex_shader,
                 entry_point: "main",
@@ -255,6 +258,7 @@ pub trait Pipeline {
         Self::validate_push_constant_types(device.limits());
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(&format!("{} pipeline layout", Self::name())),
             bind_group_layouts,
             push_constant_ranges: &[
                 Self::vertex_push_constant_range(),
@@ -276,7 +280,8 @@ pub trait Pipeline {
             Self::fragment_shader(),
         );
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout: &pipeline_layout,
+            label: Some(&format!("{} pipeline", Self::name())),
+            layout: Some(&pipeline_layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &vertex_shader,
                 entry_point: "main",

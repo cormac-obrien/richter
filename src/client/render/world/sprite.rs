@@ -13,38 +13,6 @@ use crate::{
 
 use chrono::Duration;
 
-lazy_static! {
-    static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 1] = [
-        vec![
-            // diffuse texture, updated once per face
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::SampledTexture {
-                    dimension: wgpu::TextureViewDimension::D2,
-                    component_type: wgpu::TextureComponentType::Float,
-                    multisampled: false,
-                },
-            ),
-        ]
-    ];
-
-    static ref VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES: [wgpu::VertexAttributeDescriptor; 2] = [
-        // position
-        wgpu::VertexAttributeDescriptor {
-            offset: 0,
-            format: wgpu::VertexFormat::Float3,
-            shader_location: 0,
-        },
-        // diffuse texcoord
-        wgpu::VertexAttributeDescriptor {
-            offset: size_of::<Position>() as u64,
-            format: wgpu::VertexFormat::Float2,
-            shader_location: 1,
-        },
-    ];
-}
-
 pub struct SpritePipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
@@ -61,10 +29,12 @@ impl SpritePipeline {
         let (pipeline, bind_group_layouts) =
             SpritePipeline::create(device, compiler, world_bind_group_layouts, sample_count);
 
-        let vertex_buffer = device.create_buffer_with_data(
-            unsafe { any_slice_as_bytes(&VERTICES) },
-            wgpu::BufferUsage::VERTEX,
-        );
+        use wgpu::util::DeviceExt as _;
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: unsafe { any_slice_as_bytes(&VERTICES) },
+            usage: wgpu::BufferUsage::VERTEX,
+        });
 
         SpritePipeline {
             pipeline,
@@ -100,6 +70,18 @@ impl SpritePipeline {
     }
 }
 
+lazy_static! {
+    static ref VERTEX_BUFFER_ATTRIBUTES: [wgpu::VertexAttributeDescriptor; 3] =
+        wgpu::vertex_attr_array![
+            // position
+            0 => Float3,
+            // normal
+            1 => Float3,
+            // texcoord
+            2 => Float2,
+        ];
+}
+
 impl Pipeline for SpritePipeline {
     type VertexPushConstants = ();
     type SharedPushConstants = ();
@@ -124,7 +106,19 @@ impl Pipeline for SpritePipeline {
             // group 2: updated per-texture
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("sprite per-texture chain bind group"),
-                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+                entries: &[
+                    // diffuse texture, updated once per face
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::SampledTexture {
+                            dimension: wgpu::TextureViewDimension::D2,
+                            component_type: wgpu::TextureComponentType::Float,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
             },
         ]
     }
@@ -150,14 +144,7 @@ impl Pipeline for SpritePipeline {
         vec![wgpu::VertexBufferDescriptor {
             stride: size_of::<SpriteVertex>() as u64,
             step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![
-                // position
-                0 => Float3,
-                // normal
-                1 => Float3,
-                // texcoord
-                2 => Float2,
-            ],
+            attributes: &VERTEX_BUFFER_ATTRIBUTES[..],
         }]
     }
 }
@@ -236,7 +223,7 @@ impl Frame {
                 subframe.height(),
                 &TextureData::Diffuse(diffuse_data),
             );
-            let diffuse_view = diffuse.create_default_view();
+            let diffuse_view = diffuse.create_view(&Default::default());
             let bind_group = state
                 .device()
                 .create_bind_group(&wgpu::BindGroupDescriptor {

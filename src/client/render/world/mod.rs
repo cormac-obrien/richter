@@ -40,43 +40,44 @@ use chrono::Duration;
 lazy_static! {
     static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 2] = [
         vec![
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::all(),
-                wgpu::BindingType::UniformBuffer {
+            wgpu::BindGroupLayoutEntry {
+                binding:0,
+                visibility:wgpu::ShaderStage::all(),
+                ty:wgpu::BindingType::UniformBuffer {
                     dynamic: false,
-                    min_binding_size: Some(
-                        std::num::NonZeroU64::new(size_of::<FrameUniforms>() as u64).unwrap(),
-                    ),
+                    min_binding_size:
+                        std::num::NonZeroU64::new(size_of::<FrameUniforms>() as u64)
                 },
-            ),
+                count:None,
+            },
         ],
         vec![
             // transform matrix
             // TODO: move this to push constants once they're exposed in wgpu
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::VERTEX,
-                wgpu::BindingType::UniformBuffer {
+            wgpu::BindGroupLayoutEntry {
+                binding:0,
+                visibility:wgpu::ShaderStage::VERTEX,
+                ty:wgpu::BindingType::UniformBuffer {
                     dynamic: true,
-                    min_binding_size: Some(
+                    min_binding_size: 
                         std::num::NonZeroU64::new(size_of::<EntityUniforms>() as u64)
-                            .unwrap(),
-                    ),
                 },
-            ),
+                count:None,
+            },
             // diffuse and fullbright sampler
-            wgpu::BindGroupLayoutEntry::new(
-                1,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::Sampler { comparison: false },
-            ),
+            wgpu::BindGroupLayoutEntry {
+                binding:1,
+                visibility:wgpu::ShaderStage::FRAGMENT,
+                ty:wgpu::BindingType::Sampler { comparison: false },
+                count:None,
+            },
             // lightmap sampler
-            wgpu::BindGroupLayoutEntry::new(
-                2,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::Sampler { comparison: false },
-            ),
+            wgpu::BindGroupLayoutEntry {
+                binding:2,
+                visibility:wgpu::ShaderStage::FRAGMENT,
+                ty:wgpu::BindingType::Sampler { comparison: false },
+                count:None,
+            },
         ],
     ];
 
@@ -125,6 +126,7 @@ impl Pipeline for WorldPipelineBase {
             depth_bias: 0,
             depth_bias_slope_scale: 0.0,
             depth_bias_clamp: 0.0,
+            clamp_depth:false,
         })
     }
 
@@ -163,10 +165,12 @@ impl Pipeline for WorldPipelineBase {
             format: DEPTH_ATTACHMENT_FORMAT,
             depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::LessEqual,
-            stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-            stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-            stencil_read_mask: 0,
-            stencil_write_mask: 0,
+            stencil: wgpu::StencilStateDescriptor {
+                front: wgpu::StencilStateFaceDescriptor::IGNORE,
+                back: wgpu::StencilStateFaceDescriptor::IGNORE,
+                read_mask: 0,
+                write_mask: 0,
+            }
         })
     }
 
@@ -493,8 +497,8 @@ impl WorldRenderer {
                             transform: self.calculate_mvp_transform(camera, ent),
                             model_view: self.calculate_mv_transform(camera, ent),
                         })),
-                        Retain,
-                        Retain,
+                        Clear,
+                        Clear,
                     );
                     bmodel.record_draw(state, pass, &bump, time, camera, ent.frame_id);
                 }
@@ -521,15 +525,33 @@ impl WorldRenderer {
             }
         }
 
-        // match self.entity_renderers[viewmodel_id] {
-        //     EntityRenderer::Alias(ref alias) => {
-        //         pass.set_pipeline(state.alias_pipeline().pipeline());
-        //         AliasPipeline::set_push_constants(pass, Clear, Clear, Clear);
-        //         alias.record_draw(state, pass, time, 0, 0);
-        //     }
+        let viewmodel_orig = camera.origin();
+        let mut viewmodel_angles = camera.angles();
+        viewmodel_angles.pitch = -viewmodel_angles.roll;
+        viewmodel_angles.yaw = -viewmodel_angles.yaw;
+        viewmodel_angles.roll = -viewmodel_angles.pitch;
+        let viewmodel_mat = Matrix4::from_translation(Vector3::new(
+            -viewmodel_orig.y,
+            viewmodel_orig.z,
+            -viewmodel_orig.x,
+        )) * viewmodel_angles.mat4_wgpu();
+        match self.entity_renderers[viewmodel_id] {
+            EntityRenderer::Alias(ref alias) => {
+                pass.set_pipeline(state.alias_pipeline().pipeline());
+                AliasPipeline::set_push_constants(
+                    pass,
+                    Update(bump.alloc(alias::VertexPushConstants {
+                        transform: camera.view_projection() * viewmodel_mat,
+                        model_view: camera.view() * viewmodel_mat,
+                    })),
+                    Clear,
+                    Clear,
+                );
+                alias.record_draw(state, pass, time, 0, 0);
+            }
 
-        //     _ => unreachable!("non-alias viewmodel"),
-        // }
+            _ => unreachable!("non-alias viewmodel"),
+        }
 
         state
             .particle_pipeline()

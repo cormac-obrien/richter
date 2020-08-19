@@ -252,7 +252,7 @@ impl ClientProgram {
     }
 
     fn render(&mut self) {
-        let swap_chain_output = self.swap_chain.borrow_mut().get_next_frame().unwrap();
+        let swap_chain_output = self.swap_chain.borrow_mut().get_current_frame().unwrap();
         let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
         self.game.render(
             &self.gfx_state.borrow(),

@@ -1,6 +1,7 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
     mem::size_of,
+    num::NonZeroU64,
 };
 
 use crate::{
@@ -56,43 +57,6 @@ pub struct QuadVertex {
 }
 
 lazy_static! {
-    pub static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 3] = [
-        vec![
-            // sampler
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::Sampler { comparison: false },
-            ),
-        ],
-        vec![
-            // texture
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::SampledTexture {
-                    dimension: wgpu::TextureViewDimension::D2,
-                    component_type: wgpu::TextureComponentType::Float,
-                    multisampled: false,
-                },
-            ),
-        ],
-        vec![
-            // transform matrix
-            // TODO: move to push constants once they're exposed in wgpu
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::all(),
-                wgpu::BindingType::UniformBuffer {
-                    dynamic: true,
-                    min_binding_size: Some(
-                        std::num::NonZeroU64::new(size_of::<QuadUniforms>() as u64).unwrap(),
-                    ),
-                },
-            ),
-        ],
-    ];
-
     static ref VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES: Vec<wgpu::VertexAttributeDescriptor> = vec![
         // position
         wgpu::VertexAttributeDescriptor {
@@ -126,10 +90,12 @@ impl QuadPipeline {
         let (pipeline, bind_group_layouts) =
             QuadPipeline::create(device, compiler, &[], sample_count);
 
-        let vertex_buffer = device.create_buffer_with_data(
-            unsafe { any_slice_as_bytes(&VERTICES) },
-            wgpu::BufferUsage::VERTEX,
-        );
+        use wgpu::util::DeviceExt as _;
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: unsafe { any_slice_as_bytes(&VERTICES) },
+            usage: wgpu::BufferUsage::VERTEX,
+        });
 
         let uniform_buffer = RefCell::new(DynamicUniformBuffer::new(device));
         let uniform_buffer_blocks = RefCell::new(Vec::new());
@@ -184,6 +150,44 @@ impl QuadPipeline {
     }
 }
 
+const BIND_GROUP_LAYOUT_ENTRIES: &[&[wgpu::BindGroupLayoutEntry]] = &[
+    &[
+        // sampler
+        wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStage::FRAGMENT,
+            ty: wgpu::BindingType::Sampler { comparison: false },
+            count: None,
+        },
+    ],
+    &[
+        // texture
+        wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStage::FRAGMENT,
+            ty: wgpu::BindingType::SampledTexture {
+                dimension: wgpu::TextureViewDimension::D2,
+                component_type: wgpu::TextureComponentType::Float,
+                multisampled: false,
+            },
+            count: None,
+        },
+    ],
+    &[
+        // transform matrix
+        // TODO: move to push constants once they're exposed in wgpu
+        wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStage::all(),
+            ty: wgpu::BindingType::UniformBuffer {
+                dynamic: true,
+                min_binding_size: NonZeroU64::new(size_of::<QuadUniforms>() as u64),
+            },
+            count: None,
+        },
+    ],
+];
+
 impl Pipeline for QuadPipeline {
     type VertexPushConstants = ();
     type SharedPushConstants = ();
@@ -198,17 +202,17 @@ impl Pipeline for QuadPipeline {
             // group 0: per-frame
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("per-frame quad bind group"),
-                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+                entries: BIND_GROUP_LAYOUT_ENTRIES[0],
             },
             // group 1: per-texture
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("per-texture quad bind group"),
-                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[1],
+                entries: BIND_GROUP_LAYOUT_ENTRIES[1],
             },
             // group 2: per-quad
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("per-texture quad bind group"),
-                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[2],
+                entries: BIND_GROUP_LAYOUT_ENTRIES[2],
             },
         ]
     }
@@ -228,6 +232,7 @@ impl Pipeline for QuadPipeline {
             depth_bias: 0,
             depth_bias_slope_scale: 0.0,
             depth_bias_clamp: 0.0,
+            clamp_depth: false,
         })
     }
 
@@ -283,7 +288,7 @@ impl QuadTexture {
             qpic.height(),
             &TextureData::Diffuse(diffuse_data),
         );
-        let texture_view = texture.create_default_view();
+        let texture_view = texture.create_view(&Default::default());
         let bind_group = state
             .device()
             .create_bind_group(&wgpu::BindGroupDescriptor {

@@ -1,4 +1,4 @@
-use std::mem::size_of;
+use std::{mem::size_of, num::NonZeroU32};
 
 use crate::{
     client::render::{
@@ -25,31 +25,6 @@ const GLYPH_TEXTURE_WIDTH: usize = GLYPH_WIDTH * GLYPH_COLS;
 pub const MAX_INSTANCES: usize = 65536;
 
 lazy_static! {
-    static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 1] = [
-        // group 0: constant for all glyph draws
-        vec![
-            // sampler
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::Sampler { comparison: false }
-            ),
-            // glyph texture array
-            wgpu::BindGroupLayoutEntry {
-                count: Some(GLYPH_COUNT as u32),
-                ..wgpu::BindGroupLayoutEntry::new(
-                    1,
-                    wgpu::ShaderStage::FRAGMENT,
-                    wgpu::BindingType::SampledTexture {
-                        dimension: wgpu::TextureViewDimension::D2,
-                        component_type: wgpu::TextureComponentType::Float,
-                        multisampled: false,
-                    },
-                )
-            },
-        ],
-    ];
-
     static ref VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES: [Vec<wgpu::VertexAttributeDescriptor>; 2] = [
         wgpu::vertex_attr_array![
             0 => Float2, // a_position
@@ -115,6 +90,27 @@ impl GlyphPipeline {
     }
 }
 
+const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
+    // sampler
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStage::FRAGMENT,
+        ty: wgpu::BindingType::Sampler { comparison: false },
+        count: None,
+    },
+    // glyph texture array
+    wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: wgpu::ShaderStage::FRAGMENT,
+        ty: wgpu::BindingType::SampledTexture {
+            dimension: wgpu::TextureViewDimension::D2,
+            component_type: wgpu::TextureComponentType::Float,
+            multisampled: false,
+        },
+        count: NonZeroU32::new(GLYPH_COUNT as u32),
+    },
+];
+
 impl Pipeline for GlyphPipeline {
     type VertexPushConstants = ();
     type SharedPushConstants = ();
@@ -135,7 +131,7 @@ impl Pipeline for GlyphPipeline {
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
         vec![wgpu::BindGroupLayoutDescriptor {
             label: Some("glyph constant bind group"),
-            entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+            entries: BIND_GROUP_LAYOUT_ENTRIES,
         }]
     }
 
@@ -242,7 +238,7 @@ impl GlyphRenderer {
 
         let texture_views = textures
             .iter()
-            .map(|tex| tex.create_default_view())
+            .map(|tex| tex.create_view(&Default::default()))
             .collect::<Vec<_>>();
 
         let const_bind_group = state

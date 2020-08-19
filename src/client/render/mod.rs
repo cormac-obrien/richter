@@ -71,7 +71,7 @@ use std::{
     borrow::Cow,
     cell::{Cell, Ref, RefCell, RefMut},
     mem::size_of,
-    rc::Rc,
+    rc::Rc, num::NonZeroU8,
 };
 
 use crate::{
@@ -324,7 +324,7 @@ impl GraphicsState {
             lod_min_clamp: -1000.0,
             lod_max_clamp: 1000.0,
             compare: None,
-            anisotropy_clamp: Some(16),
+            anisotropy_clamp: NonZeroU8::new(16),
             ..Default::default()
         });
 
@@ -340,7 +340,7 @@ impl GraphicsState {
             lod_min_clamp: -1000.0,
             lod_max_clamp: 1000.0,
             compare: None,
-            anisotropy_clamp: Some(16),
+            anisotropy_clamp: NonZeroU8::new(16),
             ..Default::default()
         });
 
@@ -421,7 +421,7 @@ impl GraphicsState {
                 lightmap: (&[0xFF][..]).into(),
             }),
         );
-        let default_lightmap_view = default_lightmap.create_default_view();
+        let default_lightmap_view = default_lightmap.create_view(&Default::default());
 
         Ok(GraphicsState {
             device,

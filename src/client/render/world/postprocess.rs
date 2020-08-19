@@ -1,45 +1,9 @@
-use std::mem::size_of;
+use std::{mem::size_of, num::NonZeroU64};
 
 use crate::{
     client::render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState},
     common::util::any_as_bytes,
 };
-
-lazy_static! {
-    pub static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 1] = [
-        vec![
-            // sampler
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::Sampler { comparison: false },
-            ),
-
-            // color buffer
-            wgpu::BindGroupLayoutEntry::new(
-                1,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::SampledTexture {
-                    dimension: wgpu::TextureViewDimension::D2,
-                    component_type: wgpu::TextureComponentType::Float,
-                    multisampled: true,
-                },
-            ),
-
-            // PostProcessUniforms
-            wgpu::BindGroupLayoutEntry::new(
-                2,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::UniformBuffer {
-                    dynamic: false,
-                    min_binding_size: Some(std::num::NonZeroU64::new(
-                        size_of::<PostProcessUniforms>() as u64
-                    ).unwrap()),
-                },
-            ),
-        ]
-    ];
-}
 
 #[repr(C, align(256))]
 #[derive(Clone, Copy, Debug)]
@@ -61,14 +25,16 @@ impl PostProcessPipeline {
     ) -> PostProcessPipeline {
         let (pipeline, bind_group_layouts) =
             PostProcessPipeline::create(device, compiler, &[], sample_count);
-        let uniform_buffer = device.create_buffer_with_data(
-            unsafe {
+        use wgpu::util::DeviceExt as _;
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: unsafe {
                 any_as_bytes(&PostProcessUniforms {
                     color_shift: [0.0; 4],
                 })
             },
-            wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-        );
+            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+        });
 
         PostProcessPipeline {
             pipeline,
@@ -101,6 +67,37 @@ impl PostProcessPipeline {
     }
 }
 
+const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
+    // sampler
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStage::FRAGMENT,
+        ty: wgpu::BindingType::Sampler { comparison: false },
+        count: None,
+    },
+    // color buffer
+    wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: wgpu::ShaderStage::FRAGMENT,
+        ty: wgpu::BindingType::SampledTexture {
+            dimension: wgpu::TextureViewDimension::D2,
+            component_type: wgpu::TextureComponentType::Float,
+            multisampled: true,
+        },
+        count: None,
+    },
+    // PostProcessUniforms
+    wgpu::BindGroupLayoutEntry {
+        binding: 2,
+        visibility: wgpu::ShaderStage::FRAGMENT,
+        ty: wgpu::BindingType::UniformBuffer {
+            dynamic: false,
+            min_binding_size: NonZeroU64::new(size_of::<PostProcessUniforms>() as u64),
+        },
+        count: None,
+    },
+];
+
 impl Pipeline for PostProcessPipeline {
     type VertexPushConstants = ();
     type SharedPushConstants = ();
@@ -113,7 +110,7 @@ impl Pipeline for PostProcessPipeline {
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
         vec![wgpu::BindGroupLayoutDescriptor {
             label: Some("postprocess bind group"),
-            entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+            entries: BIND_GROUP_LAYOUT_ENTRIES,
         }]
     }
 
