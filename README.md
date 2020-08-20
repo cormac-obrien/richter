@@ -70,6 +70,7 @@ This works for demos in the PAK archives (e.g. `demo1.dem`) or any demos you hap
   - [ ] Ambient sound
   - [x] Spatial attenuation
   - [ ] Stereo spatialization
+  - [x] Music
 - Console
   - [x] Line editing
   - [x] History browsing

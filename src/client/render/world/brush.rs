@@ -23,6 +23,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     mem::size_of,
+    num::NonZeroU32,
     ops::Range,
     rc::Rc,
 };
@@ -48,48 +49,6 @@ use bumpalo::Bump;
 use cgmath::{InnerSpace as _, Matrix4, Vector3};
 use chrono::Duration;
 use failure::Error;
-
-lazy_static! {
-    static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 2] = [
-        vec![
-            // diffuse texture, updated once per face
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::SampledTexture {
-                    dimension: wgpu::TextureViewDimension::D2,
-                    component_type: wgpu::TextureComponentType::Float,
-                    multisampled: false,
-                },
-            ),
-            // fullbright texture
-            wgpu::BindGroupLayoutEntry::new(
-                1,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::SampledTexture {
-                    dimension: wgpu::TextureViewDimension::D2,
-                    component_type: wgpu::TextureComponentType::Float,
-                    multisampled: false,
-                },
-            ),
-        ],
-        vec![
-            // lightmap texture array
-            wgpu::BindGroupLayoutEntry {
-                count: Some(4),
-                ..wgpu::BindGroupLayoutEntry::new(
-                    0,
-                    wgpu::ShaderStage::FRAGMENT,
-                    wgpu::BindingType::SampledTexture {
-                        dimension: wgpu::TextureViewDimension::D2,
-                        component_type: wgpu::TextureComponentType::Float,
-                        multisampled: false,
-                    },
-                )
-            },
-        ],
-    ];
-}
 
 pub struct BrushPipeline {
     pipeline: wgpu::RenderPipeline,
@@ -155,6 +114,62 @@ pub struct SharedPushConstants {
     pub texture_kind: u32,
 }
 
+const BIND_GROUP_LAYOUT_ENTRIES: &[&[wgpu::BindGroupLayoutEntry]] = &[
+    &[
+        // diffuse texture, updated once per face
+        wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStage::FRAGMENT,
+            ty: wgpu::BindingType::SampledTexture {
+                dimension: wgpu::TextureViewDimension::D2,
+                component_type: wgpu::TextureComponentType::Float,
+                multisampled: false,
+            },
+            count: None,
+        },
+        // fullbright texture
+        wgpu::BindGroupLayoutEntry {
+            binding: 1,
+            visibility: wgpu::ShaderStage::FRAGMENT,
+            ty: wgpu::BindingType::SampledTexture {
+                dimension: wgpu::TextureViewDimension::D2,
+                component_type: wgpu::TextureComponentType::Float,
+                multisampled: false,
+            },
+            count: None,
+        },
+    ],
+    &[
+        // lightmap texture array
+        wgpu::BindGroupLayoutEntry {
+            count: NonZeroU32::new(4),
+            binding: 0,
+            visibility: wgpu::ShaderStage::FRAGMENT,
+            ty: wgpu::BindingType::SampledTexture {
+                dimension: wgpu::TextureViewDimension::D2,
+                component_type: wgpu::TextureComponentType::Float,
+                multisampled: false,
+            },
+        },
+    ],
+];
+
+lazy_static! {
+    static ref VERTEX_ATTRIBUTE_DESCRIPTORS: [wgpu::VertexAttributeDescriptor; 5] =
+        wgpu::vertex_attr_array![
+            // position
+            0 => Float3,
+            // normal
+            1 => Float3,
+            // diffuse texcoord
+            2 => Float2,
+            // lightmap texcoord
+            3 => Float2,
+            // lightmap animation ids
+            4 => Uchar4,
+        ];
+}
+
 impl Pipeline for BrushPipeline {
     type VertexPushConstants = VertexPushConstants;
     type SharedPushConstants = SharedPushConstants;
@@ -179,12 +194,12 @@ impl Pipeline for BrushPipeline {
             // group 2: updated per-texture
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("brush per-texture bind group"),
-                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+                entries: BIND_GROUP_LAYOUT_ENTRIES[0],
             },
             // group 3: updated per-face
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("brush per-face bind group"),
-                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[1],
+                entries: BIND_GROUP_LAYOUT_ENTRIES[1],
             },
         ]
     }
@@ -210,18 +225,7 @@ impl Pipeline for BrushPipeline {
         vec![wgpu::VertexBufferDescriptor {
             stride: size_of::<BrushVertex>() as u64,
             step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![
-                // position
-                0 => Float3,
-                // normal
-                1 => Float3,
-                // diffuse texcoord
-                2 => Float2,
-                // lightmap texcoord
-                3 => Float2,
-                // lightmap animation ids
-                4 => Uchar4,
-            ],
+            attributes: &VERTEX_ATTRIBUTE_DESCRIPTORS[..],
         }]
     }
 }
@@ -473,7 +477,7 @@ impl BrushRendererBuilder {
             let id = self.lightmaps.len();
             self.lightmaps.push(texture);
             //self.lightmap_views
-            //.push(self.lightmaps[id].create_default_view());
+            //.push(self.lightmaps[id].create_view(&Default::default()));
             lightmap_ids.push(id);
         }
 
@@ -517,9 +521,11 @@ impl BrushRendererBuilder {
         let mut lightmap_views: Vec<_> = self.faces[face_id]
             .lightmap_ids
             .iter()
-            .map(|id| self.lightmaps[*id].create_default_view())
+            .map(|id| self.lightmaps[*id].create_view(&Default::default()))
             .collect();
-        lightmap_views.resize_with(4, || state.default_lightmap().create_default_view());
+        lightmap_views.resize_with(4, || {
+            state.default_lightmap().create_view(&Default::default())
+        });
         let layout = &state
             .brush_pipeline()
             .bind_group_layout(BindGroupLayoutId::PerFace);
@@ -557,8 +563,8 @@ impl BrushRendererBuilder {
             &TextureData::Fullbright(fullbright_data),
         );
 
-        let diffuse_view = diffuse.create_default_view();
-        let fullbright_view = fullbright.create_default_view();
+        let diffuse_view = diffuse.create_view(&Default::default());
+        let fullbright_view = fullbright.create_view(&Default::default());
 
         let kind = if name.starts_with("sky") {
             TextureKind::Sky
@@ -666,10 +672,14 @@ impl BrushRendererBuilder {
             self.per_face_bind_groups.push(per_face_bind_group);
         }
 
-        let vertex_buffer = state.device().create_buffer_with_data(
-            unsafe { any_slice_as_bytes(self.vertices.as_slice()) },
-            wgpu::BufferUsage::VERTEX,
-        );
+        use wgpu::util::DeviceExt as _;
+        let vertex_buffer = state
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: unsafe { any_slice_as_bytes(self.vertices.as_slice()) },
+                usage: wgpu::BufferUsage::VERTEX,
+            });
 
         Ok(BrushRenderer {
             bsp_data: self.bsp_data,

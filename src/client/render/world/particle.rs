@@ -1,4 +1,4 @@
-use std::mem::size_of;
+use std::{mem::size_of, num::{NonZeroU8, NonZeroU32}};
 
 use crate::{
     client::{
@@ -17,29 +17,6 @@ use bumpalo::Bump;
 use cgmath::Matrix4;
 
 lazy_static! {
-    static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 1] = [
-        vec![
-            wgpu::BindGroupLayoutEntry::new(
-                0,
-                wgpu::ShaderStage::FRAGMENT,
-                wgpu::BindingType::Sampler { comparison: false },
-            ),
-            // per-index texture array
-            wgpu::BindGroupLayoutEntry {
-                count: Some(256),
-                ..wgpu::BindGroupLayoutEntry::new(
-                    1,
-                    wgpu::ShaderStage::FRAGMENT,
-                    wgpu::BindingType::SampledTexture {
-                        dimension: wgpu::TextureViewDimension::D2,
-                        component_type: wgpu::TextureComponentType::Float,
-                        multisampled: false,
-                    },
-                )
-            },
-        ]
-    ];
-
     static ref VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES: [Vec<wgpu::VertexAttributeDescriptor>; 2] = [
         wgpu::vertex_attr_array![
             // position
@@ -87,10 +64,12 @@ impl ParticlePipeline {
         let (pipeline, bind_group_layouts) =
             ParticlePipeline::create(device, compiler, &[], sample_count);
 
-        let vertex_buffer = device.create_buffer_with_data(
-            unsafe { any_slice_as_bytes(&VERTICES) },
-            wgpu::BufferUsage::VERTEX,
-        );
+        use wgpu::util::DeviceExt as _;
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: unsafe { any_slice_as_bytes(&VERTICES) },
+            usage: wgpu::BufferUsage::VERTEX,
+        });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("particle sampler"),
@@ -103,7 +82,7 @@ impl ParticlePipeline {
             lod_min_clamp: -1000.0,
             lod_max_clamp: 1000.0,
             compare: None,
-            anisotropy_clamp: Some(16),
+            anisotropy_clamp: NonZeroU8::new(16),
         });
 
         let textures: Vec<wgpu::Texture> = (0..256)
@@ -132,7 +111,7 @@ impl ParticlePipeline {
             })
             .collect();
         let texture_views: Vec<wgpu::TextureView> =
-            textures.iter().map(|t| t.create_default_view()).collect();
+            textures.iter().map(|t| t.create_view(&Default::default())).collect();
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("particle bind group"),
@@ -236,6 +215,43 @@ pub struct FragmentPushConstants {
     pub color: u32,
 }
 
+const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStage::FRAGMENT,
+        ty: wgpu::BindingType::Sampler { comparison: false },
+        count: None,
+    },
+    // per-index texture array
+    wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: wgpu::ShaderStage::FRAGMENT,
+        ty: wgpu::BindingType::SampledTexture {
+            dimension: wgpu::TextureViewDimension::D2,
+            component_type: wgpu::TextureComponentType::Float,
+            multisampled: false,
+        },
+        count: NonZeroU32::new(256),
+    },
+];
+
+lazy_static! {
+    static ref VERTEX_ATTRIBUTE_DESCRIPTORS: [[wgpu::VertexAttributeDescriptor; 2]; 2] = [
+        wgpu::vertex_attr_array![
+            // position
+            0 => Float3,
+            // texcoord
+            1 => Float2,
+        ],
+        wgpu::vertex_attr_array![
+            // instance position
+            2 => Float3,
+            // color index
+            3 => Uint,
+        ]
+    ];
+}
+
 impl Pipeline for ParticlePipeline {
     type VertexPushConstants = VertexPushConstants;
     type SharedPushConstants = ();
@@ -266,7 +282,7 @@ impl Pipeline for ParticlePipeline {
             // group 0
             wgpu::BindGroupLayoutDescriptor {
                 label: Some("particle bind group layout"),
-                entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+                entries: BIND_GROUP_LAYOUT_ENTRIES,
             },
         ]
     }
@@ -295,22 +311,12 @@ impl Pipeline for ParticlePipeline {
             wgpu::VertexBufferDescriptor {
                 stride: size_of::<ParticleVertex>() as u64,
                 step_mode: wgpu::InputStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![
-                    // position
-                    0 => Float3,
-                    // texcoord
-                    1 => Float2,
-                ],
+                attributes: &VERTEX_ATTRIBUTE_DESCRIPTORS[0],
             },
             wgpu::VertexBufferDescriptor {
                 stride: size_of::<ParticleInstance>() as u64,
                 step_mode: wgpu::InputStepMode::Instance,
-                attributes: &wgpu::vertex_attr_array![
-                    // instance position
-                    2 => Float3,
-                    // color index
-                    3 => Uint,
-                ],
+                attributes: &VERTEX_ATTRIBUTE_DESCRIPTORS[1],
             },
         ]
     }

@@ -33,6 +33,7 @@ use rand::{
     SeedableRng,
 };
 use rodio::OutputStreamHandle;
+use super::view::BobVars;
 
 const CACHED_SOUND_NAMES: &[&'static str] = &[
     "hknight/hit.wav",
@@ -333,7 +334,6 @@ impl ClientState {
         for (ent_id, ent) in self.entities.iter_mut().enumerate().skip(1) {
             if ent.model_id == 0 {
                 // nothing in this entity slot
-                // TODO: R_RemoveEfrags
                 continue;
             }
 
@@ -467,8 +467,11 @@ impl ClientState {
                     .create_trail(self.time, prev_origin, ent.origin, kind, false);
             }
 
-            // mark entity for rendering
-            self.visible_entity_ids.push(ent_id);
+            // don't render the player model
+            if self.view.entity_id() != ent_id {
+                // mark entity for rendering
+                self.visible_entity_ids.push(ent_id);
+            }
 
             // enable lerp for next frame
             ent.force_link = false;
@@ -728,6 +731,7 @@ impl ClientState {
         idle_vars: IdleVars,
         kick_vars: KickVars,
         roll_vars: RollVars,
+        bob_vars: BobVars,
     ) {
         self.view.calc_final_angles(
             self.time,
@@ -736,6 +740,12 @@ impl ClientState {
             idle_vars,
             kick_vars,
             roll_vars,
+        );
+        self.view.calc_final_origin(
+            self.time,
+            self.entities[self.view.entity_id()].origin,
+            self.velocity,
+            bob_vars,
         );
     }
 
@@ -1202,6 +1212,13 @@ impl ClientState {
         &self.models
     }
 
+    pub fn viewmodel_id(&self) -> usize {
+        match self.stats[ClientStat::Weapon as usize] as usize {
+            0 => 0,
+            x => x - 1,
+        }
+    }
+
     pub fn iter_visible_entities(&self) -> impl Iterator<Item = &ClientEntity> + Clone {
         self.visible_entity_ids
             .iter()
@@ -1226,15 +1243,10 @@ impl ClientState {
         self.view.entity_id()
     }
 
-    pub fn view_origin(&self) -> Vector3<f32> {
-        self.entities[self.view_entity_id()].origin
-            + Vector3::new(0.0, 0.0, self.view.view_height())
-    }
-
     pub fn camera(&self, aspect: f32, fov: Deg<f32>) -> Camera {
         let fov_y = math::fov_x_to_fov_y(fov, aspect).unwrap();
         Camera::new(
-            self.view_origin(),
+            self.view.final_origin(),
             self.view.final_angles(),
             cgmath::perspective(fov_y, aspect, 4.0, 4096.0),
         )
@@ -1244,7 +1256,7 @@ impl ClientState {
         let fov_y = math::fov_x_to_fov_y(fov, aspect).unwrap();
         let angles = self.entities[self.view.entity_id()].angles;
         Camera::new(
-            self.view_origin(),
+            self.view.final_origin(),
             Angles {
                 pitch: angles.x,
                 roll: angles.z,
