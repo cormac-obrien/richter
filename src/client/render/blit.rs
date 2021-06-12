@@ -8,6 +8,28 @@ pub struct BlitPipeline {
 }
 
 impl BlitPipeline {
+    pub fn create_bind_group(
+        device: &wgpu::Device,
+        layouts: &[wgpu::BindGroupLayout],
+        sampler: &wgpu::Sampler,
+        input: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("blit bind group"),
+            layout: &layouts[0],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(input),
+                },
+            ],
+        })
+    }
+
     pub fn new(
         device: &wgpu::Device,
         compiler: &mut shaderc::Compiler,
@@ -30,20 +52,7 @@ impl BlitPipeline {
             ..Default::default()
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("blit bind group"),
-            layout: &bind_group_layouts[0],
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(input),
-                },
-            ],
-        });
+        let bind_group = Self::create_bind_group(device, &bind_group_layouts, &sampler, input);
 
         BlitPipeline {
             pipeline,
@@ -53,10 +62,17 @@ impl BlitPipeline {
         }
     }
 
-    pub fn rebuild(&mut self, device: &wgpu::Device, compiler: &mut shaderc::Compiler) {
+    pub fn rebuild(
+        &mut self,
+        device: &wgpu::Device,
+        compiler: &mut shaderc::Compiler,
+        input: &wgpu::TextureView,
+    ) {
         let layout_refs: Vec<_> = self.bind_group_layouts.iter().collect();
         let pipeline = BlitPipeline::recreate(device, compiler, &layout_refs, 1);
         self.pipeline = pipeline;
+        self.bind_group =
+            Self::create_bind_group(device, self.bind_group_layouts(), &self.sampler, input);
     }
 
     pub fn pipeline(&self) -> &wgpu::RenderPipeline {
@@ -67,11 +83,7 @@ impl BlitPipeline {
         &self.bind_group_layouts
     }
 
-    pub fn blit<'a>(
-        &'a self,
-        state: &'a GraphicsState,
-        pass: &mut wgpu::RenderPass<'a>,
-    ) {
+    pub fn blit<'a>(&'a self, state: &'a GraphicsState, pass: &mut wgpu::RenderPass<'a>) {
         pass.set_pipeline(&self.pipeline());
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_vertex_buffer(0, state.quad_pipeline().vertex_buffer().slice(..));

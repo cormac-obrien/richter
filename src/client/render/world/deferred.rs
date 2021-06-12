@@ -209,14 +209,14 @@ pub struct DeferredRenderer {
 }
 
 impl DeferredRenderer {
-    pub fn new(
+    fn create_bind_group(
         state: &GraphicsState,
         diffuse_buffer: &wgpu::TextureView,
         normal_buffer: &wgpu::TextureView,
         light_buffer: &wgpu::TextureView,
         depth_buffer: &wgpu::TextureView,
-    ) -> DeferredRenderer {
-        let bind_group = state
+    ) -> wgpu::BindGroup {
+        state
             .device()
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("deferred bind group"),
@@ -255,9 +255,42 @@ impl DeferredRenderer {
                         ),
                     },
                 ],
-            });
+            })
+    }
+
+    pub fn new(
+        state: &GraphicsState,
+        diffuse_buffer: &wgpu::TextureView,
+        normal_buffer: &wgpu::TextureView,
+        light_buffer: &wgpu::TextureView,
+        depth_buffer: &wgpu::TextureView,
+    ) -> DeferredRenderer {
+        let bind_group = Self::create_bind_group(
+            state,
+            diffuse_buffer,
+            normal_buffer,
+            light_buffer,
+            depth_buffer,
+        );
 
         DeferredRenderer { bind_group }
+    }
+
+    pub fn rebuild(
+        &mut self,
+        state: &GraphicsState,
+        diffuse_buffer: &wgpu::TextureView,
+        normal_buffer: &wgpu::TextureView,
+        light_buffer: &wgpu::TextureView,
+        depth_buffer: &wgpu::TextureView,
+    ) {
+        self.bind_group = Self::create_bind_group(
+            state,
+            diffuse_buffer,
+            normal_buffer,
+            light_buffer,
+            depth_buffer,
+        );
     }
 
     pub fn update_uniform_buffers(&self, state: &GraphicsState, uniforms: DeferredUniforms) {

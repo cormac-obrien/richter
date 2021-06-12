@@ -154,8 +154,11 @@ pub struct PostProcessRenderer {
 }
 
 impl PostProcessRenderer {
-    pub fn new(state: &GraphicsState, color_buffer: &wgpu::TextureView) -> PostProcessRenderer {
-        let bind_group = state
+    pub fn create_bind_group(
+        state: &GraphicsState,
+        color_buffer: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        state
             .device()
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("postprocess bind group"),
@@ -180,9 +183,17 @@ impl PostProcessRenderer {
                         ),
                     },
                 ],
-            });
+            })
+    }
+
+    pub fn new(state: &GraphicsState, color_buffer: &wgpu::TextureView) -> PostProcessRenderer {
+        let bind_group = Self::create_bind_group(state, color_buffer);
 
         PostProcessRenderer { bind_group }
+    }
+
+    pub fn rebuild(&mut self, state: &GraphicsState, color_buffer: &wgpu::TextureView) {
+        self.bind_group = Self::create_bind_group(state, color_buffer);
     }
 
     pub fn update_uniform_buffers(&self, state: &GraphicsState, color_shift: [f32; 4]) {

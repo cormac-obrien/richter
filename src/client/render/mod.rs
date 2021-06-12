@@ -487,10 +487,21 @@ impl GraphicsState {
             self.initial_pass_target = InitialPassTarget::new(self.device(), size, sample_count);
         }
 
+        if self.deferred_pass_target.size() != size
+            || self.deferred_pass_target.sample_count() != sample_count
+        {
+            self.deferred_pass_target = DeferredPassTarget::new(self.device(), size, sample_count);
+        }
+
         if self.final_pass_target.size() != size
             || self.final_pass_target.sample_count() != sample_count
         {
             self.final_pass_target = FinalPassTarget::new(self.device(), size, sample_count);
+            self.blit_pipeline.rebuild(
+                &self.device,
+                &mut *self.compiler.borrow_mut(),
+                self.final_pass_target.resolve_view(),
+            )
         }
     }
 
@@ -528,8 +539,11 @@ impl GraphicsState {
             .rebuild(&self.device, &mut self.compiler.borrow_mut(), sample_count);
         self.quad_pipeline
             .rebuild(&self.device, &mut self.compiler.borrow_mut(), sample_count);
-        self.blit_pipeline
-            .rebuild(&self.device, &mut self.compiler.borrow_mut());
+        self.blit_pipeline.rebuild(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            self.final_pass_target.resolve_view(),
+        );
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -752,6 +766,14 @@ impl ClientRenderer {
                             lights,
                         };
 
+                        self.deferred_renderer.rebuild(
+                            gfx_state,
+                            gfx_state.initial_pass_target().diffuse_view(),
+                            gfx_state.initial_pass_target().normal_view(),
+                            gfx_state.initial_pass_target().light_view(),
+                            gfx_state.initial_pass_target().depth_view(),
+                        );
+
                         self.deferred_renderer
                             .record_draw(gfx_state, &mut deferred_pass, uniforms);
                     }
@@ -820,6 +842,8 @@ impl ClientRenderer {
             {
                 // only postprocess if client is in the game
                 if let ConnectionState::Connected(_) = conn_state {
+                    self.postprocess_renderer
+                        .rebuild(gfx_state, gfx_state.deferred_pass_target.color_view());
                     self.postprocess_renderer.record_draw(
                         gfx_state,
                         &mut final_pass,
