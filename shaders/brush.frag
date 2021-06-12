@@ -50,15 +50,14 @@ vec4 calc_light() {
         float map = texture(
             sampler2D(u_lightmap_texture[i], u_lightmap_sampler),
             f_lightmap
-        ).r * 2.0;
+        ).r;
 
         // range [0, 4]
         float style = frame_uniforms.light_anim_frames[f_lightmap_anim[i]];
         light[i] = map * style;
     }
 
-    // scale by quarter so values don't get clamped
-    return light / 4.0;
+    return light;
 }
 
 void main() {
@@ -75,7 +74,7 @@ void main() {
             ).r;
 
             if (fullbright != 0.0) {
-                light_attachment = vec4(1.0, 1.0, 1.0, 1.0);
+                light_attachment = vec4(0.25);
             } else {
                 light_attachment = calc_light();
             }
@@ -94,7 +93,7 @@ void main() {
                 sampler2D(u_diffuse_texture, u_diffuse_sampler),
                 warp_texcoord
             );
-            light_attachment = vec4(1.0, 1.0, 1.0, 1.0);
+            light_attachment = vec4(0.25);
             break;
 
         case TEXTURE_KIND_SKY:
@@ -119,7 +118,7 @@ void main() {
                 cloud_factor = 1.0;
             }
             diffuse_attachment = mix(sky_color, cloud_color, cloud_factor);
-            light_attachment = vec4(1.0, 1.0, 1.0, 1.0);
+            light_attachment = vec4(0.25);
             break;
 
         // not possible
