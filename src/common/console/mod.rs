@@ -27,7 +27,7 @@ use std::{
 
 use crate::common::parse;
 
-use chrono::{Utc, Duration};
+use chrono::{Duration, Utc};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -442,41 +442,13 @@ impl ConsoleOutput {
         }
     }
 
-    fn println_impl<S>(&mut self, s: S, timestamp: Option<i64>)
+    fn push<C>(&mut self, chars: C, timestamp: Option<i64>)
     where
-        S: AsRef<str>,
+        C: IntoIterator<Item = char>,
     {
-        for line in s.as_ref().split('\n') {
-            debug!("push \"{}\"", line);
-            self.push_impl(line.chars().collect(), timestamp);
-        }
-    }
-
-    pub fn println<S>(&mut self, s: S)
-    where
-        S: AsRef<str>,
-    {
-        self.println_impl(s, None);
-    }
-
-    pub fn println_timestamp<S>(&mut self, s: S)
-    where
-        S: AsRef<str>,
-    {
-        self.println_impl(s, Some(Utc::now().timestamp()));
-    }
-
-    fn push_impl(&mut self, chars: Vec<char>, timestamp: Option<i64>) {
-        self.lines.push_front((chars, timestamp))
+        self.lines
+            .push_front((chars.into_iter().collect(), timestamp))
         // TODO: set maximum capacity and pop_back when we reach it
-    }
-
-    pub fn push(&mut self, chars: Vec<char>) {
-        self.push_impl(chars, None);
-    }
-
-    pub fn push_timestamp(&mut self, chars: Vec<char>) {
-        self.push_impl(chars, Some(Utc::now().timestamp()));
     }
 
     pub fn lines(&self) -> impl Iterator<Item = &[char]> {
@@ -498,18 +470,17 @@ impl ConsoleOutput {
         max_results: usize,
     ) -> impl Iterator<Item = &[char]> {
         let timestamp = (Utc::now() - interval).timestamp();
-        self
-            .lines
+        self.lines
             .iter()
             // search only the most recent `max_candidates` lines
             .take(max_candidates)
             // yield oldest to newest
             .rev()
             // eliminate non-timestamped lines and lines older than `timestamp`
-            .filter_map(move |(l, t)| t.map(|tt| (l, tt)).filter(|(_, ttt)| *ttt > timestamp))
+            .filter_map(move |(l, t)| if (*t)? > timestamp { Some(l) } else { None })
             // return at most `max_results` lines
             .take(max_results)
-            .map(|(l, _)| l.as_slice())
+            .map(Vec::as_slice)
     }
 }
 
@@ -521,6 +492,8 @@ pub struct Console {
     input: ConsoleInput,
     hist: History,
     buffer: RefCell<String>,
+
+    out_buffer: RefCell<Vec<char>>,
     output: RefCell<ConsoleOutput>,
 }
 
@@ -575,22 +548,60 @@ impl Console {
             input: ConsoleInput::new(),
             hist: History::new(),
             buffer: RefCell::new(String::new()),
+            out_buffer: RefCell::new(Vec::new()),
             output,
         }
     }
 
-    pub fn println<S>(&mut self, s: S)
+    // The timestamp is applied to any line flushed during this call.
+    fn print_impl<S>(&self, s: S, timestamp: Option<i64>)
     where
         S: AsRef<str>,
     {
-        self.output.borrow_mut().println(s);
+        let mut buf = self.out_buffer.borrow_mut();
+        let mut it = s.as_ref().chars();
+
+        while let Some(c) = it.next() {
+            if c == '\n' {
+                // Flush and clear the line buffer.
+                self.output
+                    .borrow_mut()
+                    .push(buf.iter().copied(), timestamp);
+                buf.clear();
+            } else {
+                buf.push(c);
+            }
+        }
     }
 
-    pub fn println_timestamp<S>(&mut self, s: S)
+    pub fn print<S>(&self, s: S)
     where
         S: AsRef<str>,
     {
-        self.output.borrow_mut().println_timestamp(s);
+        self.print_impl(s, None);
+    }
+
+    pub fn print_alert<S>(&self, s: S)
+    where
+        S: AsRef<str>,
+    {
+        self.print_impl(s, Some(Utc::now().timestamp()));
+    }
+
+    pub fn println<S>(&self, s: S)
+    where
+        S: AsRef<str>,
+    {
+        self.print_impl(s, None);
+    }
+
+    pub fn println_alert<S>(&self, s: S)
+    where
+        S: AsRef<str>,
+    {
+        let ts = Some(Utc::now().timestamp());
+        self.print_impl(s, ts);
+        self.print_impl("\n", ts);
     }
 
     pub fn send_char(&mut self, c: char) {
@@ -610,7 +621,7 @@ impl Console {
                 // echo the input to console output
                 let mut input_echo: Vec<char> = vec![']'];
                 input_echo.append(&mut self.input.get_text());
-                self.output.borrow_mut().push(input_echo);
+                self.output.borrow_mut().push(input_echo, None);
 
                 // clear the input line
                 self.input.clear();
@@ -677,10 +688,10 @@ impl Console {
                             match self.cmds.borrow_mut().exec(arg_0, &tail_args) {
                                 Ok(o) => {
                                     if !o.is_empty() {
-                                        self.output.borrow_mut().println(o)
+                                        self.println(o)
                                     }
                                 }
-                                Err(e) => self.output.borrow_mut().println(format!("{}", e)),
+                                Err(e) => self.println(format!("{}", e)),
                             }
                         } else if self.cvars.borrow().contains(arg_0) {
                             // TODO error handling on cvar set
@@ -692,16 +703,12 @@ impl Console {
                                         arg_0,
                                         self.cvars.borrow().get(arg_0).unwrap()
                                     );
-                                    self.output
-                                        .borrow_mut()
-                                        .push(msg.as_str().chars().collect());
+                                    self.print(msg);
                                 }
                             }
                         } else {
                             // TODO: try sending to server first
-                            self.output
-                                .borrow_mut()
-                                .println(format!("Unrecognized command \"{}\"", arg_0));
+                            self.println(format!("Unrecognized command \"{}\"", arg_0));
                         }
                     }
                 }

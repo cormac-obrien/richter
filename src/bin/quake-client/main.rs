@@ -42,7 +42,7 @@ use richter::{
         input::{Input, InputFocus},
         menu::Menu,
         render::{self, Extent2d, GraphicsState, UiRenderer, DIFFUSE_ATTACHMENT_FORMAT},
-        Client, ClientError,
+        Client,
     },
     common::{
         self,
