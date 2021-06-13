@@ -94,16 +94,19 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     wgpu::BindGroupLayoutEntry {
         binding: 0,
         visibility: wgpu::ShaderStage::FRAGMENT,
-        ty: wgpu::BindingType::Sampler { comparison: false },
+        ty: wgpu::BindingType::Sampler {
+            filtering: true,
+            comparison: false,
+        },
         count: None,
     },
     // color buffer
     wgpu::BindGroupLayoutEntry {
         binding: 1,
         visibility: wgpu::ShaderStage::FRAGMENT,
-        ty: wgpu::BindingType::SampledTexture {
-            dimension: wgpu::TextureViewDimension::D2,
-            component_type: wgpu::TextureComponentType::Float,
+        ty: wgpu::BindingType::Texture {
+            view_dimension: wgpu::TextureViewDimension::D2,
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
             multisampled: true,
         },
         count: None,
@@ -112,9 +115,9 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     wgpu::BindGroupLayoutEntry {
         binding: 2,
         visibility: wgpu::ShaderStage::FRAGMENT,
-        ty: wgpu::BindingType::SampledTexture {
-            dimension: wgpu::TextureViewDimension::D2,
-            component_type: wgpu::TextureComponentType::Float,
+        ty: wgpu::BindingType::Texture {
+            view_dimension: wgpu::TextureViewDimension::D2,
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
             multisampled: true,
         },
         count: None,
@@ -123,9 +126,9 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     wgpu::BindGroupLayoutEntry {
         binding: 3,
         visibility: wgpu::ShaderStage::FRAGMENT,
-        ty: wgpu::BindingType::SampledTexture {
-            dimension: wgpu::TextureViewDimension::D2,
-            component_type: wgpu::TextureComponentType::Float,
+        ty: wgpu::BindingType::Texture {
+            view_dimension: wgpu::TextureViewDimension::D2,
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
             multisampled: true,
         },
         count: None,
@@ -134,9 +137,9 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     wgpu::BindGroupLayoutEntry {
         binding: 4,
         visibility: wgpu::ShaderStage::FRAGMENT,
-        ty: wgpu::BindingType::SampledTexture {
-            dimension: wgpu::TextureViewDimension::D2,
-            component_type: wgpu::TextureComponentType::Float,
+        ty: wgpu::BindingType::Texture {
+            view_dimension: wgpu::TextureViewDimension::D2,
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
             multisampled: true,
         },
         count: None,
@@ -145,8 +148,9 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     wgpu::BindGroupLayoutEntry {
         binding: 5,
         visibility: wgpu::ShaderStage::FRAGMENT,
-        ty: wgpu::BindingType::UniformBuffer {
-            dynamic: false,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
             min_binding_size: NonZeroU64::new(size_of::<DeferredUniforms>() as u64),
         },
         count: None,
@@ -183,24 +187,20 @@ impl Pipeline for DeferredPipeline {
         ))
     }
 
-    fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {
-        QuadPipeline::rasterization_state_descriptor()
+    fn primitive_state() -> wgpu::PrimitiveState {
+        QuadPipeline::primitive_state()
     }
 
-    fn primitive_topology() -> wgpu::PrimitiveTopology {
-        QuadPipeline::primitive_topology()
+    fn color_target_states() -> Vec<wgpu::ColorTargetState> {
+        QuadPipeline::color_target_states()
     }
 
-    fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
-        QuadPipeline::color_state_descriptors()
-    }
-
-    fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
+    fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {
         None
     }
 
-    fn vertex_buffer_descriptors() -> Vec<wgpu::VertexBufferDescriptor<'static>> {
-        QuadPipeline::vertex_buffer_descriptors()
+    fn vertex_buffer_layouts() -> Vec<wgpu::VertexBufferLayout<'static>> {
+        QuadPipeline::vertex_buffer_layouts()
     }
 }
 
@@ -250,9 +250,11 @@ impl DeferredRenderer {
                     // uniform buffer
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: wgpu::BindingResource::Buffer(
-                            state.deferred_pipeline().uniform_buffer().slice(..),
-                        ),
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: state.deferred_pipeline().uniform_buffer(),
+                            offset: 0,
+                            size: None,
+                        }),
                     },
                 ],
             })

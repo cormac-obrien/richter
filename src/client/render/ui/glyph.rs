@@ -25,15 +25,15 @@ const GLYPH_TEXTURE_WIDTH: usize = GLYPH_WIDTH * GLYPH_COLS;
 pub const MAX_INSTANCES: usize = 65536;
 
 lazy_static! {
-    static ref VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES: [Vec<wgpu::VertexAttributeDescriptor>; 2] = [
+    static ref VERTEX_BUFFER_ATTRIBUTES: [Vec<wgpu::VertexAttribute>; 2] = [
         wgpu::vertex_attr_array![
-            0 => Float2, // a_position
-            1 => Float2 // a_texcoord
+            0 => Float32x2, // a_position
+            1 => Float32x2 // a_texcoord
         ].to_vec(),
         wgpu::vertex_attr_array![
-            2 => Float2, // a_instance_position
-            3 => Float2, // a_instance_scale
-            4 => Uint // a_instance_layer
+            2 => Float32x2, // a_instance_position
+            3 => Float32x2, // a_instance_scale
+            4 => Uint32 // a_instance_layer
         ].to_vec(),
     ];
 }
@@ -95,16 +95,19 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     wgpu::BindGroupLayoutEntry {
         binding: 0,
         visibility: wgpu::ShaderStage::FRAGMENT,
-        ty: wgpu::BindingType::Sampler { comparison: false },
+        ty: wgpu::BindingType::Sampler {
+            filtering: true,
+            comparison: false,
+        },
         count: None,
     },
     // glyph texture array
     wgpu::BindGroupLayoutEntry {
         binding: 1,
         visibility: wgpu::ShaderStage::FRAGMENT,
-        ty: wgpu::BindingType::SampledTexture {
-            dimension: wgpu::TextureViewDimension::D2,
-            component_type: wgpu::TextureComponentType::Float,
+        ty: wgpu::BindingType::Texture {
+            view_dimension: wgpu::TextureViewDimension::D2,
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
             multisampled: false,
         },
         count: NonZeroU32::new(GLYPH_COUNT as u32),
@@ -128,6 +131,10 @@ impl Pipeline for GlyphPipeline {
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/glyph.frag"))
     }
 
+    fn primitive_state() -> wgpu::PrimitiveState {
+        QuadPipeline::primitive_state()
+    }
+
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
         vec![wgpu::BindGroupLayoutDescriptor {
             label: Some("glyph constant bind group"),
@@ -135,33 +142,25 @@ impl Pipeline for GlyphPipeline {
         }]
     }
 
-    fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {
-        QuadPipeline::rasterization_state_descriptor()
+    fn color_target_states() -> Vec<wgpu::ColorTargetState> {
+        QuadPipeline::color_target_states()
     }
 
-    fn primitive_topology() -> wgpu::PrimitiveTopology {
-        QuadPipeline::primitive_topology()
+    fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {
+        QuadPipeline::depth_stencil_state()
     }
 
-    fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
-        QuadPipeline::color_state_descriptors()
-    }
-
-    fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
-        QuadPipeline::depth_stencil_state_descriptor()
-    }
-
-    fn vertex_buffer_descriptors() -> Vec<wgpu::VertexBufferDescriptor<'static>> {
+    fn vertex_buffer_layouts() -> Vec<wgpu::VertexBufferLayout<'static>> {
         vec![
-            wgpu::VertexBufferDescriptor {
-                stride: size_of::<QuadVertex>() as u64,
+            wgpu::VertexBufferLayout {
+                array_stride: size_of::<QuadVertex>() as u64,
                 step_mode: wgpu::InputStepMode::Vertex,
-                attributes: &VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES[0],
+                attributes: &VERTEX_BUFFER_ATTRIBUTES[0],
             },
-            wgpu::VertexBufferDescriptor {
-                stride: size_of::<GlyphInstance>() as u64,
+            wgpu::VertexBufferLayout {
+                array_stride: size_of::<GlyphInstance>() as u64,
                 step_mode: wgpu::InputStepMode::Instance,
-                attributes: &VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES[1],
+                attributes: &VERTEX_BUFFER_ATTRIBUTES[1],
             },
         ]
     }
@@ -240,6 +239,7 @@ impl GlyphRenderer {
             .iter()
             .map(|tex| tex.create_view(&Default::default()))
             .collect::<Vec<_>>();
+        let texture_view_refs = texture_views.iter().collect::<Vec<_>>();
 
         let const_bind_group = state
             .device()
@@ -253,7 +253,7 @@ impl GlyphRenderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureViewArray(&texture_views[..]),
+                        resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs[..]),
                     },
                 ],
             });

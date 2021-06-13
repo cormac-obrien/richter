@@ -71,7 +71,7 @@ use std::{
     borrow::Cow,
     cell::{Cell, Ref, RefCell, RefMut},
     mem::size_of,
-    num::NonZeroU8,
+    num::{NonZeroU32, NonZeroU64, NonZeroU8},
     rc::Rc,
 };
 
@@ -133,7 +133,7 @@ pub fn texture_descriptor<'a>(
         size: wgpu::Extent3d {
             width,
             height,
-            depth: 1,
+            depth_or_array_layers: 1,
         },
         mip_level_count: 1,
         sample_count: 1,
@@ -159,21 +159,21 @@ pub fn create_texture<'a>(
     );
     let texture = device.create_texture(&texture_descriptor(label, width, height, data.format()));
     queue.write_texture(
-        wgpu::TextureCopyView {
+        wgpu::ImageCopyTexture {
             texture: &texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
         },
         data.data(),
-        wgpu::TextureDataLayout {
+        wgpu::ImageDataLayout {
             offset: 0,
-            bytes_per_row: width * data.stride(),
-            rows_per_image: 0,
+            bytes_per_row: NonZeroU32::new(width * data.stride()),
+            rows_per_image: None,
         },
         wgpu::Extent3d {
             width,
             height,
-            depth: 1,
+            depth_or_array_layers: 1,
         },
     );
 
@@ -239,7 +239,7 @@ impl std::convert::Into<wgpu::Extent3d> for Extent2d {
         wgpu::Extent3d {
             width: self.width,
             height: self.height,
-            depth: 1,
+            depth_or_array_layers: 1,
         }
     }
 }
@@ -356,7 +356,11 @@ impl GraphicsState {
                 layout: &world_bind_group_layouts[world::BindGroupLayoutId::PerFrame as usize],
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer(frame_uniform_buffer.slice(..)),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &frame_uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 }],
             }),
             device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -365,12 +369,13 @@ impl GraphicsState {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::Buffer(
-                            entity_uniform_buffer
-                                .borrow()
-                                .buffer()
-                                .slice(..size_of::<EntityUniforms>() as wgpu::BufferAddress),
-                        ),
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &entity_uniform_buffer.borrow().buffer(),
+                            offset: 0,
+                            size: Some(
+                                NonZeroU64::new(size_of::<EntityUniforms>() as u64).unwrap(),
+                            ),
+                        }),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,

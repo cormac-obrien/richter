@@ -1,4 +1,7 @@
-use std::{mem::size_of, num::{NonZeroU8, NonZeroU32}};
+use std::{
+    mem::size_of,
+    num::{NonZeroU32, NonZeroU8},
+};
 
 use crate::{
     client::{
@@ -17,16 +20,12 @@ use bumpalo::Bump;
 use cgmath::Matrix4;
 
 lazy_static! {
-    static ref VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES: [Vec<wgpu::VertexAttributeDescriptor>; 2] = [
+    static ref VERTEX_BUFFER_ATTRIBUTES: [Vec<wgpu::VertexAttribute>; 1] = [
         wgpu::vertex_attr_array![
             // position
-            0 => Float3,
+            0 => Float32x3,
             // texcoord
-            1 => Float2,
-        ].to_vec(),
-        wgpu::vertex_attr_array![
-            // instance color (index)
-            2 => Uint,
+            1 => Float32x2,
         ].to_vec(),
     ];
 }
@@ -83,6 +82,7 @@ impl ParticlePipeline {
             lod_max_clamp: 1000.0,
             compare: None,
             anisotropy_clamp: NonZeroU8::new(16),
+            border_color: None,
         });
 
         let textures: Vec<wgpu::Texture> = (0..256)
@@ -110,8 +110,11 @@ impl ParticlePipeline {
                 )
             })
             .collect();
-        let texture_views: Vec<wgpu::TextureView> =
-            textures.iter().map(|t| t.create_view(&Default::default())).collect();
+        let texture_views: Vec<wgpu::TextureView> = textures
+            .iter()
+            .map(|t| t.create_view(&Default::default()))
+            .collect();
+        let texture_view_refs = texture_views.iter().collect::<Vec<_>>();
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("particle bind group"),
@@ -123,7 +126,7 @@ impl ParticlePipeline {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureViewArray(&texture_views[..]),
+                    resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs[..]),
                 },
             ],
         });
@@ -219,16 +222,19 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     wgpu::BindGroupLayoutEntry {
         binding: 0,
         visibility: wgpu::ShaderStage::FRAGMENT,
-        ty: wgpu::BindingType::Sampler { comparison: false },
+        ty: wgpu::BindingType::Sampler {
+            filtering: true,
+            comparison: false,
+        },
         count: None,
     },
     // per-index texture array
     wgpu::BindGroupLayoutEntry {
         binding: 1,
         visibility: wgpu::ShaderStage::FRAGMENT,
-        ty: wgpu::BindingType::SampledTexture {
-            dimension: wgpu::TextureViewDimension::D2,
-            component_type: wgpu::TextureComponentType::Float,
+        ty: wgpu::BindingType::Texture {
+            view_dimension: wgpu::TextureViewDimension::D2,
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
             multisampled: false,
         },
         count: NonZeroU32::new(256),
@@ -236,18 +242,18 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
 ];
 
 lazy_static! {
-    static ref VERTEX_ATTRIBUTE_DESCRIPTORS: [[wgpu::VertexAttributeDescriptor; 2]; 2] = [
+    static ref VERTEX_ATTRIBUTES: [[wgpu::VertexAttribute; 2]; 2] = [
         wgpu::vertex_attr_array![
             // position
-            0 => Float3,
+            0 => Float32x3,
             // texcoord
-            1 => Float2,
+            1 => Float32x2,
         ],
         wgpu::vertex_attr_array![
             // instance position
-            2 => Float3,
+            2 => Float32x3,
             // color index
-            3 => Uint,
+            3 => Uint32,
         ]
     ];
 }
@@ -287,38 +293,27 @@ impl Pipeline for ParticlePipeline {
         ]
     }
 
-    fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {
-        WorldPipelineBase::rasterization_state_descriptor()
+    fn primitive_state() -> wgpu::PrimitiveState {
+        WorldPipelineBase::primitive_state()
     }
 
-    fn primitive_topology() -> wgpu::PrimitiveTopology {
-        wgpu::PrimitiveTopology::TriangleList
+    fn color_target_states() -> Vec<wgpu::ColorTargetState> {
+        WorldPipelineBase::color_target_states()
     }
 
-    fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
-        WorldPipelineBase::color_state_descriptors()
-    }
-
-    fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
-        let mut desc = WorldPipelineBase::depth_stencil_state_descriptor().unwrap();
+    fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {
+        let mut desc = WorldPipelineBase::depth_stencil_state().unwrap();
         desc.depth_write_enabled = false;
         Some(desc)
     }
 
     // NOTE: if the vertex format is changed, this descriptor must also be changed accordingly.
-    fn vertex_buffer_descriptors() -> Vec<wgpu::VertexBufferDescriptor<'static>> {
-        vec![
-            wgpu::VertexBufferDescriptor {
-                stride: size_of::<ParticleVertex>() as u64,
-                step_mode: wgpu::InputStepMode::Vertex,
-                attributes: &VERTEX_ATTRIBUTE_DESCRIPTORS[0],
-            },
-            wgpu::VertexBufferDescriptor {
-                stride: size_of::<ParticleInstance>() as u64,
-                step_mode: wgpu::InputStepMode::Instance,
-                attributes: &VERTEX_ATTRIBUTE_DESCRIPTORS[1],
-            },
-        ]
+    fn vertex_buffer_layouts() -> Vec<wgpu::VertexBufferLayout<'static>> {
+        vec![wgpu::VertexBufferLayout {
+            array_stride: size_of::<ParticleVertex>() as u64,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &VERTEX_ATTRIBUTES[0],
+        }]
     }
 }
 

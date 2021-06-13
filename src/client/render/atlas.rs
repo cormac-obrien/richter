@@ -261,7 +261,7 @@ impl TextureAtlasBuilder {
             size: wgpu::Extent3d {
                 width: atlas.width,
                 height: atlas.height,
-                depth: 1,
+                depth_or_array_layers: 1,
             },
             array_layer_count: 1,
             mip_level_count: 1,
@@ -279,7 +279,7 @@ impl TextureAtlasBuilder {
                 bytes_per_row: atlas.width * atlas.height * size_of::<[u8; 4]> as u32,
                 rows_per_image: 1,
             },
-            wgpu::TextureCopyView {
+            wgpu::ImageCopyTexture {
                 texture: &diffuse_texture,
                 mip_level: 1,
                 array_layer: 0,
@@ -288,7 +288,7 @@ impl TextureAtlasBuilder {
             wgpu::Extent3d {
                 width: atlas.width,
                 height: atlas.height,
-                depth: 1,
+                depth_or_array_layers: 1,
             },
         );
         let cmd_buffer = encoder.finish();

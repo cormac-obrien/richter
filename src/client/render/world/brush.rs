@@ -120,9 +120,9 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[&[wgpu::BindGroupLayoutEntry]] = &[
         wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStage::FRAGMENT,
-            ty: wgpu::BindingType::SampledTexture {
-                dimension: wgpu::TextureViewDimension::D2,
-                component_type: wgpu::TextureComponentType::Float,
+            ty: wgpu::BindingType::Texture {
+                view_dimension: wgpu::TextureViewDimension::D2,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
                 multisampled: false,
             },
             count: None,
@@ -131,9 +131,9 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[&[wgpu::BindGroupLayoutEntry]] = &[
         wgpu::BindGroupLayoutEntry {
             binding: 1,
             visibility: wgpu::ShaderStage::FRAGMENT,
-            ty: wgpu::BindingType::SampledTexture {
-                dimension: wgpu::TextureViewDimension::D2,
-                component_type: wgpu::TextureComponentType::Float,
+            ty: wgpu::BindingType::Texture {
+                view_dimension: wgpu::TextureViewDimension::D2,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
                 multisampled: false,
             },
             count: None,
@@ -145,9 +145,9 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[&[wgpu::BindGroupLayoutEntry]] = &[
             count: NonZeroU32::new(4),
             binding: 0,
             visibility: wgpu::ShaderStage::FRAGMENT,
-            ty: wgpu::BindingType::SampledTexture {
-                dimension: wgpu::TextureViewDimension::D2,
-                component_type: wgpu::TextureComponentType::Float,
+            ty: wgpu::BindingType::Texture {
+                view_dimension: wgpu::TextureViewDimension::D2,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
                 multisampled: false,
             },
         },
@@ -155,18 +155,18 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[&[wgpu::BindGroupLayoutEntry]] = &[
 ];
 
 lazy_static! {
-    static ref VERTEX_ATTRIBUTE_DESCRIPTORS: [wgpu::VertexAttributeDescriptor; 5] =
+    static ref VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 5] =
         wgpu::vertex_attr_array![
             // position
-            0 => Float3,
+            0 => Float32x3,
             // normal
-            1 => Float3,
+            1 => Float32x3,
             // diffuse texcoord
-            2 => Float2,
+            2 => Float32x2,
             // lightmap texcoord
-            3 => Float2,
+            3 => Float32x2,
             // lightmap animation ids
-            4 => Uchar4,
+            4 => Uint8x4,
         ];
 }
 
@@ -204,28 +204,24 @@ impl Pipeline for BrushPipeline {
         ]
     }
 
-    fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {
-        WorldPipelineBase::rasterization_state_descriptor()
+    fn primitive_state() -> wgpu::PrimitiveState {
+        WorldPipelineBase::primitive_state()
     }
 
-    fn primitive_topology() -> wgpu::PrimitiveTopology {
-        wgpu::PrimitiveTopology::TriangleList
+    fn color_target_states() -> Vec<wgpu::ColorTargetState> {
+        WorldPipelineBase::color_target_states()
     }
 
-    fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
-        WorldPipelineBase::color_state_descriptors()
-    }
-
-    fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
-        WorldPipelineBase::depth_stencil_state_descriptor()
+    fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {
+        WorldPipelineBase::depth_stencil_state()
     }
 
     // NOTE: if the vertex format is changed, this descriptor must also be changed accordingly.
-    fn vertex_buffer_descriptors() -> Vec<wgpu::VertexBufferDescriptor<'static>> {
-        vec![wgpu::VertexBufferDescriptor {
-            stride: size_of::<BrushVertex>() as u64,
+    fn vertex_buffer_layouts() -> Vec<wgpu::VertexBufferLayout<'static>> {
+        vec![wgpu::VertexBufferLayout {
+            array_stride: size_of::<BrushVertex>() as u64,
             step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &VERTEX_ATTRIBUTE_DESCRIPTORS[..],
+            attributes: &VERTEX_ATTRIBUTES[..],
         }]
     }
 }
@@ -526,6 +522,9 @@ impl BrushRendererBuilder {
         lightmap_views.resize_with(4, || {
             state.default_lightmap().create_view(&Default::default())
         });
+
+        let lightmap_view_refs = lightmap_views.iter().collect::<Vec<_>>();
+
         let layout = &state
             .brush_pipeline()
             .bind_group_layout(BindGroupLayoutId::PerFace);
@@ -534,7 +533,7 @@ impl BrushRendererBuilder {
             layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureViewArray(&lightmap_views[..]),
+                resource: wgpu::BindingResource::TextureViewArray(&lightmap_view_refs[..]),
             }],
         };
         state.device().create_bind_group(&desc)

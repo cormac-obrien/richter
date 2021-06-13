@@ -131,6 +131,7 @@ impl ClientProgram {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
+                    label: None,
                     features: wgpu::Features::PUSH_CONSTANTS
                         | wgpu::Features::SAMPLED_TEXTURE_BINDING_ARRAY
                         | wgpu::Features::SAMPLED_TEXTURE_ARRAY_DYNAMIC_INDEXING
@@ -141,7 +142,6 @@ impl ClientProgram {
                         max_push_constant_size: 256,
                         ..Default::default()
                     },
-                    shader_validation: true,
                 },
                 if trace {
                     Some(Path::new("./trace/"))
@@ -155,7 +155,7 @@ impl ClientProgram {
         let swap_chain = RefCell::new(device.create_swap_chain(
             &surface,
             &wgpu::SwapChainDescriptor {
-                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+                usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
                 format: DIFFUSE_ATTACHMENT_FORMAT,
                 width: size.width,
                 height: size.height,
@@ -241,7 +241,7 @@ impl ClientProgram {
         let swap_chain = self.gfx_state.borrow().device().create_swap_chain(
             &self.surface,
             &wgpu::SwapChainDescriptor {
-                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+                usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
                 format: DIFFUSE_ATTACHMENT_FORMAT,
                 width,
                 height,
