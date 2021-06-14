@@ -20,7 +20,7 @@
 
 use std::mem::size_of;
 
-use crate::common::util::{any_as_u32_slice, Pod};
+use crate::common::util::{any_as_bytes, Pod};
 
 /// The `Pipeline` trait, which allows render pipelines to be defined more-or-less declaratively.
 
@@ -38,7 +38,11 @@ where
     let spirv = compiler
         .compile_into_spirv(source.as_ref(), kind, name.as_ref(), "main", None)
         .unwrap();
-    device.create_shader_module(wgpu::ShaderModuleSource::SpirV(spirv.as_binary().into()))
+    device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+        label: Some(name.as_ref()),
+        source: wgpu::ShaderSource::SpirV(spirv.as_binary().into()),
+        flags: wgpu::ShaderFlags::empty(),
+    })
 }
 
 pub enum PushConstantUpdate<T> {
@@ -76,20 +80,17 @@ pub trait Pipeline {
     /// The GLSL source of the pipeline's fragment shader.
     fn fragment_shader() -> &'static str;
 
-    /// The rasterization state descriptor used for the pipeline, if any.
-    fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor>;
-
-    /// The primitive topology of the pipeline's vertex data.
-    fn primitive_topology() -> wgpu::PrimitiveTopology;
+    /// The primitive state used for rasterization in this pipeline.
+    fn primitive_state() -> wgpu::PrimitiveState;
 
     /// The color state used for the pipeline.
-    fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor>;
+    fn color_target_states() -> Vec<wgpu::ColorTargetState>;
 
     /// The depth-stencil state used for the pipeline, if any.
-    fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor>;
+    fn depth_stencil_state() -> Option<wgpu::DepthStencilState>;
 
     /// Descriptors for the vertex buffers used by the pipeline.
-    fn vertex_buffer_descriptors() -> Vec<wgpu::VertexBufferDescriptor<'static>>;
+    fn vertex_buffer_layouts() -> Vec<wgpu::VertexBufferLayout<'static>>;
 
     fn vertex_push_constant_range() -> wgpu::PushConstantRange {
         let range = wgpu::PushConstantRange {
@@ -222,25 +223,23 @@ pub trait Pipeline {
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(&format!("{} pipeline", Self::name())),
             layout: Some(&pipeline_layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
+            vertex: wgpu::VertexState {
                 module: &vertex_shader,
                 entry_point: "main",
+                buffers: &Self::vertex_buffer_layouts(),
             },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            primitive: Self::primitive_state(),
+            fragment: Some(wgpu::FragmentState {
                 module: &fragment_shader,
                 entry_point: "main",
+                targets: &Self::color_target_states(),
             }),
-            rasterization_state: Self::rasterization_state_descriptor(),
-            primitive_topology: Self::primitive_topology(),
-            color_states: &Self::color_state_descriptors(),
-            depth_stencil_state: Self::depth_stencil_state_descriptor(),
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint32,
-                vertex_buffers: &Self::vertex_buffer_descriptors(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
             },
-            sample_count,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
+            depth_stencil: Self::depth_stencil_state(),
         });
 
         (pipeline, bind_group_layouts)
@@ -282,25 +281,23 @@ pub trait Pipeline {
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(&format!("{} pipeline", Self::name())),
             layout: Some(&pipeline_layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
+            vertex: wgpu::VertexState {
                 module: &vertex_shader,
                 entry_point: "main",
+                buffers: &Self::vertex_buffer_layouts(),
             },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            primitive: Self::primitive_state(),
+            fragment: Some(wgpu::FragmentState {
                 module: &fragment_shader,
                 entry_point: "main",
+                targets: &Self::color_target_states(),
             }),
-            rasterization_state: Self::rasterization_state_descriptor(),
-            primitive_topology: Self::primitive_topology(),
-            color_states: &Self::color_state_descriptors(),
-            depth_stencil_state: Self::depth_stencil_state_descriptor(),
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint32,
-                vertex_buffers: &Self::vertex_buffer_descriptors(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
             },
-            sample_count,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
+            depth_stencil: Self::depth_stencil_state(),
         });
 
         pipeline
@@ -328,7 +325,7 @@ pub trait Pipeline {
 
         if size_of::<Self::VertexPushConstants>() > 0 {
             let data = match vpc {
-                Update(v) => Some(unsafe { any_as_u32_slice(v) }),
+                Update(v) => Some(unsafe { any_as_bytes(v) }),
                 Retain => None,
                 Clear => Some(&[][..]),
             };
@@ -346,7 +343,7 @@ pub trait Pipeline {
 
         if size_of::<Self::SharedPushConstants>() > 0 {
             let data = match spc {
-                Update(s) => Some(unsafe { any_as_u32_slice(s) }),
+                Update(s) => Some(unsafe { any_as_bytes(s) }),
                 Retain => None,
                 Clear => Some(&[][..]),
             };
@@ -368,7 +365,7 @@ pub trait Pipeline {
 
         if size_of::<Self::FragmentPushConstants>() > 0 {
             let data = match fpc {
-                Update(f) => Some(unsafe { any_as_u32_slice(f) }),
+                Update(f) => Some(unsafe { any_as_bytes(f) }),
                 Retain => None,
                 Clear => Some(&[][..]),
             };

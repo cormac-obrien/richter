@@ -16,7 +16,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #![deny(unused_must_use)]
-#![feature(clamp, drain_filter)]
+#![feature(drain_filter)]
 
 #[macro_use]
 extern crate bitflags;

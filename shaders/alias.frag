@@ -20,7 +20,7 @@ void main() {
   );
 
   // TODO: get ambient light from uniform
-  light_attachment = vec4(1.0, 1.0, 1.0, 1.0);
+  light_attachment = vec4(0.25);
 
   // rescale normal to [0, 1]
   normal_attachment = vec4(f_normal / 2.0 + 0.5, 1.0);

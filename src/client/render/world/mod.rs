@@ -43,8 +43,9 @@ lazy_static! {
             wgpu::BindGroupLayoutEntry {
                 binding:0,
                 visibility:wgpu::ShaderStage::all(),
-                ty:wgpu::BindingType::UniformBuffer {
-                    dynamic: false,
+                ty:wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
                     min_binding_size:
                         std::num::NonZeroU64::new(size_of::<FrameUniforms>() as u64)
                 },
@@ -57,9 +58,10 @@ lazy_static! {
             wgpu::BindGroupLayoutEntry {
                 binding:0,
                 visibility:wgpu::ShaderStage::VERTEX,
-                ty:wgpu::BindingType::UniformBuffer {
-                    dynamic: true,
-                    min_binding_size: 
+                ty:wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size:
                         std::num::NonZeroU64::new(size_of::<EntityUniforms>() as u64)
                 },
                 count:None,
@@ -68,14 +70,14 @@ lazy_static! {
             wgpu::BindGroupLayoutEntry {
                 binding:1,
                 visibility:wgpu::ShaderStage::FRAGMENT,
-                ty:wgpu::BindingType::Sampler { comparison: false },
+                ty:wgpu::BindingType::Sampler { filtering: true, comparison: false },
                 count:None,
             },
             // lightmap sampler
             wgpu::BindGroupLayoutEntry {
                 binding:2,
                 visibility:wgpu::ShaderStage::FRAGMENT,
-                ty:wgpu::BindingType::Sampler { comparison: false },
+                ty:wgpu::BindingType::Sampler { filtering: true, comparison: false },
                 count:None,
             },
         ],
@@ -119,62 +121,61 @@ impl Pipeline for WorldPipelineBase {
         vec![]
     }
 
-    fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {
-        Some(wgpu::RasterizationStateDescriptor {
+    fn primitive_state() -> wgpu::PrimitiveState {
+        wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
             front_face: wgpu::FrontFace::Cw,
-            cull_mode: wgpu::CullMode::None,
-            depth_bias: 0,
-            depth_bias_slope_scale: 0.0,
-            depth_bias_clamp: 0.0,
-            clamp_depth:false,
-        })
+            cull_mode: None,
+            clamp_depth: false,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        }
     }
 
-    fn primitive_topology() -> wgpu::PrimitiveTopology {
-        wgpu::PrimitiveTopology::TriangleList
-    }
-
-    fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
+    fn color_target_states() -> Vec<wgpu::ColorTargetState> {
         vec![
             // diffuse attachment
-            wgpu::ColorStateDescriptor {
+            wgpu::ColorTargetState {
                 format: DIFFUSE_ATTACHMENT_FORMAT,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
+                blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrite::ALL,
             },
             // normal attachment
-            wgpu::ColorStateDescriptor {
+            wgpu::ColorTargetState {
                 format: NORMAL_ATTACHMENT_FORMAT,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
+                blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrite::ALL,
             },
             // light attachment
-            wgpu::ColorStateDescriptor {
+            wgpu::ColorTargetState {
                 format: LIGHT_ATTACHMENT_FORMAT,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
+                blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrite::ALL,
             },
         ]
     }
 
-    fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
-        Some(wgpu::DepthStencilStateDescriptor {
+    fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {
+        Some(wgpu::DepthStencilState {
             format: DEPTH_ATTACHMENT_FORMAT,
             depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::LessEqual,
-            stencil: wgpu::StencilStateDescriptor {
-                front: wgpu::StencilStateFaceDescriptor::IGNORE,
-                back: wgpu::StencilStateFaceDescriptor::IGNORE,
+            stencil: wgpu::StencilState {
+                front: wgpu::StencilFaceState::IGNORE,
+                back: wgpu::StencilFaceState::IGNORE,
                 read_mask: 0,
                 write_mask: 0,
-            }
+            },
+            bias: wgpu::DepthBiasState {
+                constant: 0,
+                slope_scale: 0.0,
+                clamp: 0.0,
+            },
         })
     }
 
-    fn vertex_buffer_descriptors() -> Vec<wgpu::VertexBufferDescriptor<'static>> {
+    fn vertex_buffer_layouts() -> Vec<wgpu::VertexBufferLayout<'static>> {
         Vec::new()
     }
 }
@@ -553,6 +554,7 @@ impl WorldRenderer {
             _ => unreachable!("non-alias viewmodel"),
         }
 
+        log::debug!("Drawing particles");
         state
             .particle_pipeline()
             .record_draw(pass, &bump, camera, particles);

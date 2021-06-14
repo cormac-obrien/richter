@@ -18,11 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::{
-    cell::RefCell,
-    path::PathBuf,
-    rc::Rc,
-};
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use crate::{
     capture::{cmd_screenshot, Capture},
@@ -34,8 +30,7 @@ use richter::{
         input::Input,
         menu::Menu,
         render::{
-            Extent2d, GraphicsState, RenderTarget as _, RenderTargetResolve as _,
-            SwapChainTarget,
+            Extent2d, GraphicsState, RenderTarget as _, RenderTargetResolve as _, SwapChainTarget,
         },
         trace::TraceFrame,
         Client, ClientError,
@@ -155,21 +150,23 @@ impl Game {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         // render world, hud, console, menus
-        self.client.render(
-            gfx_state,
-            &mut encoder,
-            width,
-            height,
-            menu,
-            self.input.borrow().focus(),
-        ).unwrap();
+        self.client
+            .render(
+                gfx_state,
+                &mut encoder,
+                width,
+                height,
+                menu,
+                self.input.borrow().focus(),
+            )
+            .unwrap();
 
         // screenshot setup
         let capture = self.screenshot_path.borrow().as_ref().map(|_| {
             let cap = Capture::new(gfx_state.device(), Extent2d { width, height });
             cap.copy_from_texture(
                 &mut encoder,
-                wgpu::TextureCopyView {
+                wgpu::ImageCopyTexture {
                     texture: gfx_state.final_pass_target().resolve_attachment(),
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,

@@ -26,7 +26,7 @@ use crate::client::render::{
 // TODO: collapse these into a single definition
 /// Create a texture suitable for use as a color attachment.
 ///
-/// The resulting texture will have the OUTPUT_ATTACHMENT flag as well as
+/// The resulting texture will have the RENDER_ATTACHMENT flag as well as
 /// any flags specified by `usage`.
 pub fn create_color_attachment(
     device: &wgpu::Device,
@@ -41,13 +41,13 @@ pub fn create_color_attachment(
         sample_count,
         dimension: wgpu::TextureDimension::D2,
         format: DIFFUSE_ATTACHMENT_FORMAT,
-        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | usage,
+        usage: wgpu::TextureUsage::RENDER_ATTACHMENT | usage,
     })
 }
 
 /// Create a texture suitable for use as a normal attachment.
 ///
-/// The resulting texture will have the OUTPUT_ATTACHMENT flag as well as
+/// The resulting texture will have the RENDER_ATTACHMENT flag as well as
 /// any flags specified by `usage`.
 pub fn create_normal_attachment(
     device: &wgpu::Device,
@@ -62,13 +62,13 @@ pub fn create_normal_attachment(
         sample_count,
         dimension: wgpu::TextureDimension::D2,
         format: NORMAL_ATTACHMENT_FORMAT,
-        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | usage,
+        usage: wgpu::TextureUsage::RENDER_ATTACHMENT | usage,
     })
 }
 
 /// Create a texture suitable for use as a light attachment.
 ///
-/// The resulting texture will have the OUTPUT_ATTACHMENT flag as well as
+/// The resulting texture will have the RENDER_ATTACHMENT flag as well as
 /// any flags specified by `usage`.
 pub fn create_light_attachment(
     device: &wgpu::Device,
@@ -83,13 +83,13 @@ pub fn create_light_attachment(
         sample_count,
         dimension: wgpu::TextureDimension::D2,
         format: LIGHT_ATTACHMENT_FORMAT,
-        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | usage,
+        usage: wgpu::TextureUsage::RENDER_ATTACHMENT | usage,
     })
 }
 
 /// Create a texture suitable for use as a depth attachment.
 ///
-/// The underlying texture will have the OUTPUT_ATTACHMENT flag as well as
+/// The underlying texture will have the RENDER_ATTACHMENT flag as well as
 /// any flags specified by `usage`.
 pub fn create_depth_attachment(
     device: &wgpu::Device,
@@ -104,19 +104,20 @@ pub fn create_depth_attachment(
         sample_count,
         dimension: wgpu::TextureDimension::D2,
         format: DEPTH_ATTACHMENT_FORMAT,
-        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | usage,
+        usage: wgpu::TextureUsage::RENDER_ATTACHMENT | usage,
     })
 }
 
 /// Intermediate object that can generate `RenderPassDescriptor`s.
 pub struct RenderPassBuilder<'a> {
-    color_attachments: Vec<wgpu::RenderPassColorAttachmentDescriptor<'a>>,
-    depth_attachment: Option<wgpu::RenderPassDepthStencilAttachmentDescriptor<'a>>,
+    color_attachments: Vec<wgpu::RenderPassColorAttachment<'a>>,
+    depth_attachment: Option<wgpu::RenderPassDepthStencilAttachment<'a>>,
 }
 
 impl<'a> RenderPassBuilder<'a> {
     pub fn descriptor(&self) -> wgpu::RenderPassDescriptor {
         wgpu::RenderPassDescriptor {
+            label: None,
             color_attachments: &self.color_attachments,
             depth_stencil_attachment: self.depth_attachment.clone(),
         }
@@ -229,24 +230,24 @@ impl RenderTarget for InitialPassTarget {
     fn render_pass_builder<'a>(&'a self) -> RenderPassBuilder {
         RenderPassBuilder {
             color_attachments: vec![
-                wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: self.diffuse_view(),
+                wgpu::RenderPassColorAttachment {
+                    view: self.diffuse_view(),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: true,
                     },
                 },
-                wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: self.normal_view(),
+                wgpu::RenderPassColorAttachment {
+                    view: self.normal_view(),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: true,
                     },
                 },
-                wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: self.light_view(),
+                wgpu::RenderPassColorAttachment {
+                    view: self.light_view(),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -254,8 +255,8 @@ impl RenderTarget for InitialPassTarget {
                     },
                 },
             ],
-            depth_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
-                attachment: self.depth_view(),
+            depth_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: self.depth_view(),
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: true,
@@ -307,8 +308,8 @@ impl DeferredPassTarget {
 impl RenderTarget for DeferredPassTarget {
     fn render_pass_builder<'a>(&'a self) -> RenderPassBuilder {
         RenderPassBuilder {
-            color_attachments: vec![wgpu::RenderPassColorAttachmentDescriptor {
-                attachment: self.color_view(),
+            color_attachments: vec![wgpu::RenderPassColorAttachment {
+                view: self.color_view(),
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -366,8 +367,8 @@ impl FinalPassTarget {
 impl RenderTarget for FinalPassTarget {
     fn render_pass_builder<'a>(&'a self) -> RenderPassBuilder {
         RenderPassBuilder {
-            color_attachments: vec![wgpu::RenderPassColorAttachmentDescriptor {
-                attachment: &self.color_view,
+            color_attachments: vec![wgpu::RenderPassColorAttachment {
+                view: &self.color_view,
                 resolve_target: Some(self.resolve_view()),
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -402,8 +403,8 @@ impl<'a> SwapChainTarget<'a> {
 impl<'a> RenderTarget for SwapChainTarget<'a> {
     fn render_pass_builder(&self) -> RenderPassBuilder {
         RenderPassBuilder {
-            color_attachments: vec![wgpu::RenderPassColorAttachmentDescriptor {
-                attachment: self.swap_chain_view,
+            color_attachments: vec![wgpu::RenderPassColorAttachment {
+                view: self.swap_chain_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),

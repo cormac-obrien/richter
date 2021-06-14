@@ -1,5 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+use super::view::BobVars;
 use crate::{
     client::{
         entity::{
@@ -33,7 +34,6 @@ use rand::{
     SeedableRng,
 };
 use rodio::OutputStreamHandle;
-use super::view::BobVars;
 
 const CACHED_SOUND_NAMES: &[&'static str] = &[
     "hknight/hit.wav",
@@ -277,7 +277,6 @@ impl ClientState {
 
         self.lerp_factor = match frame_delta / server_delta {
             f if f < 0.0 => {
-                warn!("Negative lerp factor ({})", f);
                 if f < -0.01 {
                     self.time = self.msg_times[1];
                 }
@@ -286,7 +285,6 @@ impl ClientState {
             }
 
             f if f > 1.0 => {
-                warn!("Lerp factor > 1 ({})", f);
                 if f > 1.01 {
                     self.time = self.msg_times[0];
                 }
@@ -543,11 +541,8 @@ impl ClientState {
                 for interval in 0..(len / 30.0) as i32 {
                     let mut ent = ClientEntity::uninitialized();
                     ent.origin = beam.start + 30.0 * interval as f32 * direction;
-                    ent.angles = Vector3::new(
-                        pitch,
-                        yaw,
-                        Deg(ANGLE_DISTRIBUTION.sample(&mut self.rng)),
-                    );
+                    ent.angles =
+                        Vector3::new(pitch, yaw, Deg(ANGLE_DISTRIBUTION.sample(&mut self.rng)));
 
                     if self.temp_entities.len() < MAX_TEMP_ENTITIES {
                         self.temp_entities.push(ent);
@@ -846,13 +841,9 @@ impl ClientState {
                     WizSpike | KnightSpike | Spike | SuperSpike | Gunshot => {
                         let (color, count, sound) = match kind {
                             // TODO: start wizard/hit.wav
-                            WizSpike => {
-                                (20, 30, Some("wizard/hit.wav"))
-                            }
+                            WizSpike => (20, 30, Some("wizard/hit.wav")),
 
-                            KnightSpike => {
-                                (226, 20, Some("hknight/hit.wav"))
-                            }
+                            KnightSpike => (226, 20, Some("hknight/hit.wav")),
 
                             // TODO: for Spike and SuperSpike, start one of:
                             // - 26.67%: weapons/tink1.wav
@@ -877,10 +868,7 @@ impl ClientState {
 
                         if let Some(snd) = sound {
                             self.mixer.start_sound(
-                                self.cached_sounds
-                                    .get(snd)
-                                    .unwrap()
-                                    .clone(),
+                                self.cached_sounds.get(snd).unwrap().clone(),
                                 self.time,
                                 None,
                                 0,

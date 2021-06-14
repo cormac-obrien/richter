@@ -456,10 +456,7 @@ impl Connection {
                     }
                 }
 
-                ServerCmd::Print { text } => {
-                    console.println_timestamp(&text);
-                    println!("{}", text);
-                }
+                ServerCmd::Print { text } => console.print_alert(&text),
 
                 ServerCmd::ServerInfo {
                     protocol_version,
@@ -707,9 +704,7 @@ impl Connection {
                 ServerCmd::UpdateStat { stat, value } => {
                     debug!(
                         "{:?}: {} -> {}",
-                        stat,
-                        self.state.stats[stat as usize],
-                        value
+                        stat, self.state.stats[stat as usize], value
                     );
                     self.state.stats[stat as usize] = value;
                 }
@@ -747,7 +742,7 @@ impl Connection {
         idle_vars: IdleVars,
         kick_vars: KickVars,
         roll_vars: RollVars,
-        bob_vars:BobVars,
+        bob_vars: BobVars,
         cl_nolerp: f32,
         sv_gravity: f32,
     ) -> Result<ConnectionStatus, ClientError> {
@@ -793,7 +788,8 @@ impl Connection {
         // these all require the player entity to have spawned
         if let ConnectionState::Connected(_) = self.conn_state {
             // update view
-            self.state.calc_final_view(idle_vars, kick_vars, roll_vars, bob_vars);
+            self.state
+                .calc_final_view(idle_vars, kick_vars, roll_vars, bob_vars);
 
             // update ear positions
             self.state.update_listener();

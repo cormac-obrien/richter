@@ -71,7 +71,8 @@ use std::{
     borrow::Cow,
     cell::{Cell, Ref, RefCell, RefMut},
     mem::size_of,
-    rc::Rc, num::NonZeroU8,
+    num::{NonZeroU32, NonZeroU64, NonZeroU8},
+    rc::Rc,
 };
 
 use crate::{
@@ -112,11 +113,11 @@ use chrono::{DateTime, Duration, Utc};
 use failure::Error;
 
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-pub const DIFFUSE_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
+pub const DIFFUSE_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 const NORMAL_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const LIGHT_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-const DIFFUSE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+const DIFFUSE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const FULLBRIGHT_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const LIGHTMAP_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
@@ -132,7 +133,7 @@ pub fn texture_descriptor<'a>(
         size: wgpu::Extent3d {
             width,
             height,
-            depth: 1,
+            depth_or_array_layers: 1,
         },
         mip_level_count: 1,
         sample_count: 1,
@@ -158,21 +159,21 @@ pub fn create_texture<'a>(
     );
     let texture = device.create_texture(&texture_descriptor(label, width, height, data.format()));
     queue.write_texture(
-        wgpu::TextureCopyView {
+        wgpu::ImageCopyTexture {
             texture: &texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
         },
         data.data(),
-        wgpu::TextureDataLayout {
+        wgpu::ImageDataLayout {
             offset: 0,
-            bytes_per_row: width * data.stride(),
-            rows_per_image: 0,
+            bytes_per_row: NonZeroU32::new(width * data.stride()),
+            rows_per_image: None,
         },
         wgpu::Extent3d {
             width,
             height,
-            depth: 1,
+            depth_or_array_layers: 1,
         },
     );
 
@@ -238,7 +239,7 @@ impl std::convert::Into<wgpu::Extent3d> for Extent2d {
         wgpu::Extent3d {
             width: self.width,
             height: self.height,
-            depth: 1,
+            depth_or_array_layers: 1,
         }
     }
 }
@@ -355,7 +356,11 @@ impl GraphicsState {
                 layout: &world_bind_group_layouts[world::BindGroupLayoutId::PerFrame as usize],
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer(frame_uniform_buffer.slice(..)),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &frame_uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 }],
             }),
             device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -364,12 +369,13 @@ impl GraphicsState {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::Buffer(
-                            entity_uniform_buffer
-                                .borrow()
-                                .buffer()
-                                .slice(..size_of::<EntityUniforms>() as wgpu::BufferAddress),
-                        ),
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &entity_uniform_buffer.borrow().buffer(),
+                            offset: 0,
+                            size: Some(
+                                NonZeroU64::new(size_of::<EntityUniforms>() as u64).unwrap(),
+                            ),
+                        }),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
@@ -486,10 +492,21 @@ impl GraphicsState {
             self.initial_pass_target = InitialPassTarget::new(self.device(), size, sample_count);
         }
 
+        if self.deferred_pass_target.size() != size
+            || self.deferred_pass_target.sample_count() != sample_count
+        {
+            self.deferred_pass_target = DeferredPassTarget::new(self.device(), size, sample_count);
+        }
+
         if self.final_pass_target.size() != size
             || self.final_pass_target.sample_count() != sample_count
         {
             self.final_pass_target = FinalPassTarget::new(self.device(), size, sample_count);
+            self.blit_pipeline.rebuild(
+                &self.device,
+                &mut *self.compiler.borrow_mut(),
+                self.final_pass_target.resolve_view(),
+            )
         }
     }
 
@@ -527,8 +544,11 @@ impl GraphicsState {
             .rebuild(&self.device, &mut self.compiler.borrow_mut(), sample_count);
         self.quad_pipeline
             .rebuild(&self.device, &mut self.compiler.borrow_mut(), sample_count);
-        self.blit_pipeline
-            .rebuild(&self.device, &mut self.compiler.borrow_mut());
+        self.blit_pipeline.rebuild(
+            &self.device,
+            &mut self.compiler.borrow_mut(),
+            self.final_pass_target.resolve_view(),
+        );
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -751,6 +771,14 @@ impl ClientRenderer {
                             lights,
                         };
 
+                        self.deferred_renderer.rebuild(
+                            gfx_state,
+                            gfx_state.initial_pass_target().diffuse_view(),
+                            gfx_state.initial_pass_target().normal_view(),
+                            gfx_state.initial_pass_target().light_view(),
+                            gfx_state.initial_pass_target().depth_view(),
+                        );
+
                         self.deferred_renderer
                             .record_draw(gfx_state, &mut deferred_pass, uniforms);
                     }
@@ -819,6 +847,8 @@ impl ClientRenderer {
             {
                 // only postprocess if client is in the game
                 if let ConnectionState::Connected(_) = conn_state {
+                    self.postprocess_renderer
+                        .rebuild(gfx_state, gfx_state.deferred_pass_target.color_view());
                     self.postprocess_renderer.record_draw(
                         gfx_state,
                         &mut final_pass,

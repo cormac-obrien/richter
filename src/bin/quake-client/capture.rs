@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     fs::File,
     io::BufWriter,
+    num::NonZeroU32,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -69,16 +70,16 @@ impl Capture {
     pub fn copy_from_texture(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        texture: wgpu::TextureCopyView,
+        texture: wgpu::ImageCopyTexture,
     ) {
         encoder.copy_texture_to_buffer(
             texture,
-            wgpu::BufferCopyView {
+            wgpu::ImageCopyBuffer {
                 buffer: &self.buffer,
-                layout: wgpu::TextureDataLayout {
+                layout: wgpu::ImageDataLayout {
                     offset: 0,
-                    bytes_per_row: self.row_width * BYTES_PER_PIXEL,
-                    rows_per_image: 0,
+                    bytes_per_row: Some(NonZeroU32::new(self.row_width * BYTES_PER_PIXEL).unwrap()),
+                    rows_per_image: None,
                 },
             },
             self.capture_size.into(),

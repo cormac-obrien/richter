@@ -24,5 +24,5 @@ void main() {
   }
 
   diffuse_attachment = tex_color;
-  light_attachment = vec4(1.0, 1.0, 1.0, 1.0);
+  light_attachment = vec4(0.25);
 }

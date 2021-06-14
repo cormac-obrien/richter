@@ -67,16 +67,16 @@ pub struct VertexPushConstants {
 }
 
 lazy_static! {
-    static ref VERTEX_ATTRIBUTE_DESCRIPTORS: [wgpu::VertexAttributeDescriptor; 3] =
+    static ref VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
         wgpu::vertex_attr_array![
             // frame 0 position
-            0 => Float3,
+            0 => Float32x3,
             // frame 1 position
-            // 1 => Float3,
+            // 1 => Float32x3,
             // normal
-            2 => Float3,
+            2 => Float32x3,
             // texcoord
-            3 => Float2,
+            3 => Float32x2,
         ];
 }
 
@@ -107,9 +107,9 @@ impl Pipeline for AliasPipeline {
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStage::FRAGMENT,
-                        ty: wgpu::BindingType::SampledTexture {
-                            dimension: wgpu::TextureViewDimension::D2,
-                            component_type: wgpu::TextureComponentType::Float,
+                        ty: wgpu::BindingType::Texture {
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
                             multisampled: false,
                         },
                         count: None,
@@ -119,28 +119,24 @@ impl Pipeline for AliasPipeline {
         ]
     }
 
-    fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {
-        WorldPipelineBase::rasterization_state_descriptor()
+    fn primitive_state() -> wgpu::PrimitiveState {
+        WorldPipelineBase::primitive_state()
     }
 
-    fn primitive_topology() -> wgpu::PrimitiveTopology {
-        wgpu::PrimitiveTopology::TriangleList
+    fn color_target_states() -> Vec<wgpu::ColorTargetState> {
+        WorldPipelineBase::color_target_states()
     }
 
-    fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
-        WorldPipelineBase::color_state_descriptors()
-    }
-
-    fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
-        WorldPipelineBase::depth_stencil_state_descriptor()
+    fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {
+        WorldPipelineBase::depth_stencil_state()
     }
 
     // NOTE: if the vertex format is changed, this descriptor must also be changed accordingly.
-    fn vertex_buffer_descriptors() -> Vec<wgpu::VertexBufferDescriptor<'static>> {
-        vec![wgpu::VertexBufferDescriptor {
-            stride: size_of::<AliasVertex>() as u64,
+    fn vertex_buffer_layouts() -> Vec<wgpu::VertexBufferLayout<'static>> {
+        vec![wgpu::VertexBufferLayout {
+            array_stride: size_of::<AliasVertex>() as u64,
             step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &VERTEX_ATTRIBUTE_DESCRIPTORS[..],
+            attributes: &VERTEX_ATTRIBUTES[..],
         }]
     }
 }

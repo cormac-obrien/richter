@@ -57,17 +57,17 @@ pub struct QuadVertex {
 }
 
 lazy_static! {
-    static ref VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES: Vec<wgpu::VertexAttributeDescriptor> = vec![
+    static ref VERTEX_BUFFER_ATTRIBUTES: Vec<wgpu::VertexAttribute> = vec![
         // position
-        wgpu::VertexAttributeDescriptor {
+        wgpu::VertexAttribute {
             offset: 0,
-            format: wgpu::VertexFormat::Float2,
+            format: wgpu::VertexFormat::Float32x2,
             shader_location: 0,
         },
         // diffuse texcoord
-        wgpu::VertexAttributeDescriptor {
+        wgpu::VertexAttribute {
             offset: size_of::<Position>() as u64,
-            format: wgpu::VertexFormat::Float2,
+            format: wgpu::VertexFormat::Float32x2,
             shader_location: 1,
         },
     ];
@@ -156,7 +156,10 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[&[wgpu::BindGroupLayoutEntry]] = &[
         wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStage::FRAGMENT,
-            ty: wgpu::BindingType::Sampler { comparison: false },
+            ty: wgpu::BindingType::Sampler {
+                filtering: true,
+                comparison: false,
+            },
             count: None,
         },
     ],
@@ -165,9 +168,9 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[&[wgpu::BindGroupLayoutEntry]] = &[
         wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStage::FRAGMENT,
-            ty: wgpu::BindingType::SampledTexture {
-                dimension: wgpu::TextureViewDimension::D2,
-                component_type: wgpu::TextureComponentType::Float,
+            ty: wgpu::BindingType::Texture {
+                view_dimension: wgpu::TextureViewDimension::D2,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
                 multisampled: false,
             },
             count: None,
@@ -179,8 +182,9 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[&[wgpu::BindGroupLayoutEntry]] = &[
         wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStage::all(),
-            ty: wgpu::BindingType::UniformBuffer {
-                dynamic: true,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: true,
                 min_binding_size: NonZeroU64::new(size_of::<QuadUniforms>() as u64),
             },
             count: None,
@@ -225,40 +229,36 @@ impl Pipeline for QuadPipeline {
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/quad.frag"))
     }
 
-    fn rasterization_state_descriptor() -> Option<wgpu::RasterizationStateDescriptor> {
-        Some(wgpu::RasterizationStateDescriptor {
+    fn primitive_state() -> wgpu::PrimitiveState {
+        wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
             front_face: wgpu::FrontFace::Cw,
-            cull_mode: wgpu::CullMode::Back,
-            depth_bias: 0,
-            depth_bias_slope_scale: 0.0,
-            depth_bias_clamp: 0.0,
+            cull_mode: Some(wgpu::Face::Back),
             clamp_depth: false,
-        })
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        }
     }
 
-    fn primitive_topology() -> wgpu::PrimitiveTopology {
-        wgpu::PrimitiveTopology::TriangleList
-    }
-
-    fn color_state_descriptors() -> Vec<wgpu::ColorStateDescriptor> {
-        vec![wgpu::ColorStateDescriptor {
+    fn color_target_states() -> Vec<wgpu::ColorTargetState> {
+        vec![wgpu::ColorTargetState {
             format: DIFFUSE_ATTACHMENT_FORMAT,
-            alpha_blend: wgpu::BlendDescriptor::REPLACE,
-            color_blend: wgpu::BlendDescriptor::REPLACE,
+            blend: Some(wgpu::BlendState::REPLACE),
             write_mask: wgpu::ColorWrite::ALL,
         }]
     }
 
-    fn depth_stencil_state_descriptor() -> Option<wgpu::DepthStencilStateDescriptor> {
+    fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {
         None
     }
 
     // NOTE: if the vertex format is changed, this descriptor must also be changed accordingly.
-    fn vertex_buffer_descriptors() -> Vec<wgpu::VertexBufferDescriptor<'static>> {
-        vec![wgpu::VertexBufferDescriptor {
-            stride: size_of::<QuadVertex>() as u64,
+    fn vertex_buffer_layouts() -> Vec<wgpu::VertexBufferLayout<'static>> {
+        vec![wgpu::VertexBufferLayout {
+            array_stride: size_of::<QuadVertex>() as u64,
             step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &VERTEX_BUFFER_DESCRIPTOR_ATTRIBUTES[..],
+            attributes: &VERTEX_BUFFER_ATTRIBUTES[..],
         }]
     }
 }
@@ -359,13 +359,11 @@ impl QuadRenderer {
                 layout: &state.quad_pipeline().bind_group_layouts()[2],
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer(
-                        state
-                            .quad_pipeline()
-                            .uniform_buffer()
-                            .buffer()
-                            .slice(..size_of::<QuadUniforms>() as wgpu::BufferAddress),
-                    ),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: state.quad_pipeline().uniform_buffer().buffer(),
+                        offset: 0,
+                        size: Some(NonZeroU64::new(size_of::<QuadUniforms>() as u64).unwrap()),
+                    }),
                 }],
             });
 
