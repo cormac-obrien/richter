@@ -593,6 +593,7 @@ impl Console {
         S: AsRef<str>,
     {
         self.print_impl(s, None);
+        self.print_impl("\n", None);
     }
 
     pub fn println_alert<S>(&self, s: S)
@@ -703,7 +704,7 @@ impl Console {
                                         arg_0,
                                         self.cvars.borrow().get(arg_0).unwrap()
                                     );
-                                    self.print(msg);
+                                    self.println(msg);
                                 }
                             }
                         } else {
