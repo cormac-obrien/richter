@@ -309,12 +309,19 @@ impl Program for ClientProgram {
 
         match self.input.borrow().focus() {
             InputFocus::Game => {
-                self.window.set_cursor_grab(true).unwrap();
+                if let Err(e) = self.window.set_cursor_grab(true) {
+                    // This can happen if the window is running in another
+                    // workspace. It shouldn't be considered an error.
+                    log::debug!("Couldn't grab cursor: {}", e);
+                }
+
                 self.window.set_cursor_visible(false);
             }
 
             _ => {
-                self.window.set_cursor_grab(false).unwrap();
+                if let Err(e) = self.window.set_cursor_grab(false) {
+                    log::debug!("Couldn't release cursor: {}", e);
+                };
                 self.window.set_cursor_visible(true);
             }
         }
