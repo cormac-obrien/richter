@@ -125,11 +125,13 @@ impl ClientProgram {
             log::warn!("No PAK files found.");
         }
 
-        let cvars = Rc::new(RefCell::new(CvarRegistry::new()));
+        let con_names = Rc::new(RefCell::new(Vec::new()));
+
+        let cvars = Rc::new(RefCell::new(CvarRegistry::new(con_names.clone())));
         client::register_cvars(&cvars.borrow()).unwrap();
         render::register_cvars(&cvars.borrow());
 
-        let cmds = Rc::new(RefCell::new(CmdRegistry::new()));
+        let cmds = Rc::new(RefCell::new(CmdRegistry::new(con_names)));
         // TODO: register commands as other subsystems come online
 
         let console = Rc::new(RefCell::new(Console::new(cmds.clone(), cvars.clone())));
@@ -224,7 +226,7 @@ impl ClientProgram {
                     _ => format!("exec (filename): execute a script file"),
                 }
             }),
-        );
+        ).unwrap();
 
         // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
         console.borrow().stuff_text("exec quake.rc\n");
