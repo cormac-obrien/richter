@@ -34,7 +34,16 @@ pub mod util;
 pub mod vfs;
 pub mod wad;
 
-pub static DEFAULT_BASEDIR: &'static str = "id1";
+pub fn default_base_dir() -> std::path::PathBuf {
+    match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            log::error!("cannot access current directory: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
 pub const MAX_LIGHTSTYLES: usize = 64;
 
 /// The maximum number of `.pak` files that should be loaded at runtime.
