@@ -108,7 +108,7 @@ where
         let prev_frame_duration = self.prev_frame_duration;
         if !self.check_frame_duration(prev_frame_duration) {
             // avoid busy waiting if we're running at a really high framerate
-            std::thread::yield_now();
+            std::thread::sleep(std::time::Duration::from_millis(1));
             return;
         }
 
