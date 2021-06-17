@@ -499,7 +499,8 @@ impl Connection {
                             });
                             String::new()
                         }),
-                    );
+                    )
+                    .unwrap();
                 }
 
                 ServerCmd::SetAngle { angles } => self.state.set_view_angles(angles),
@@ -838,50 +839,65 @@ impl Client {
         };
 
         // set up overlay/ui toggles
-        cmds.borrow_mut().insert_or_replace(
-            "toggleconsole",
-            cmd_toggleconsole(conn.clone(), input.clone()),
-        );
         cmds.borrow_mut()
-            .insert_or_replace("togglemenu", cmd_togglemenu(conn.clone(), input.clone()));
+            .insert_or_replace(
+                "toggleconsole",
+                cmd_toggleconsole(conn.clone(), input.clone()),
+            )
+            .unwrap();
+        cmds.borrow_mut()
+            .insert_or_replace("togglemenu", cmd_togglemenu(conn.clone(), input.clone()))
+            .unwrap();
 
         // set up connection console commands
-        cmds.borrow_mut().insert_or_replace(
-            "connect",
-            cmd_connect(conn.clone(), input.clone(), handle.clone()),
-        );
         cmds.borrow_mut()
-            .insert_or_replace("reconnect", cmd_reconnect(conn.clone(), input.clone()));
+            .insert_or_replace(
+                "connect",
+                cmd_connect(conn.clone(), input.clone(), handle.clone()),
+            )
+            .unwrap();
         cmds.borrow_mut()
-            .insert_or_replace("disconnect", cmd_disconnect(conn.clone(), input.clone()));
+            .insert_or_replace("reconnect", cmd_reconnect(conn.clone(), input.clone()))
+            .unwrap();
+        cmds.borrow_mut()
+            .insert_or_replace("disconnect", cmd_disconnect(conn.clone(), input.clone()))
+            .unwrap();
 
         // set up demo playback
-        cmds.borrow_mut().insert_or_replace(
-            "playdemo",
-            cmd_playdemo(conn.clone(), vfs.clone(), input.clone(), handle.clone()),
-        );
+        cmds.borrow_mut()
+            .insert_or_replace(
+                "playdemo",
+                cmd_playdemo(conn.clone(), vfs.clone(), input.clone(), handle.clone()),
+            )
+            .unwrap();
 
         let demo_queue = Rc::new(RefCell::new(VecDeque::new()));
-        cmds.borrow_mut().insert_or_replace(
-            "startdemos",
-            cmd_startdemos(
-                conn.clone(),
-                vfs.clone(),
-                input.clone(),
-                handle.clone(),
-                demo_queue.clone(),
-            ),
-        );
+        cmds.borrow_mut()
+            .insert_or_replace(
+                "startdemos",
+                cmd_startdemos(
+                    conn.clone(),
+                    vfs.clone(),
+                    input.clone(),
+                    handle.clone(),
+                    demo_queue.clone(),
+                ),
+            )
+            .unwrap();
 
         let music_player = Rc::new(RefCell::new(MusicPlayer::new(vfs.clone(), handle.clone())));
         cmds.borrow_mut()
-            .insert_or_replace("music", cmd_music(music_player.clone()));
+            .insert_or_replace("music", cmd_music(music_player.clone()))
+            .unwrap();
         cmds.borrow_mut()
-            .insert_or_replace("music_stop", cmd_music_stop(music_player.clone()));
+            .insert_or_replace("music_stop", cmd_music_stop(music_player.clone()))
+            .unwrap();
         cmds.borrow_mut()
-            .insert_or_replace("music_pause", cmd_music_pause(music_player.clone()));
+            .insert_or_replace("music_pause", cmd_music_pause(music_player.clone()))
+            .unwrap();
         cmds.borrow_mut()
-            .insert_or_replace("music_resume", cmd_music_resume(music_player.clone()));
+            .insert_or_replace("music_resume", cmd_music_resume(music_player.clone()))
+            .unwrap();
 
         Client {
             vfs,
