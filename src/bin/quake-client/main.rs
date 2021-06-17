@@ -25,10 +25,12 @@ mod trace;
 
 use std::{
     cell::{Ref, RefCell, RefMut},
+    fs::File,
     io::{Cursor, Read, Write},
     net::SocketAddr,
-    path::Path,
-    rc::Rc, fs::File,
+    path::{Path, PathBuf},
+    process::exit,
+    rc::Rc,
 };
 
 use game::Game;
@@ -78,28 +80,49 @@ struct ClientProgram {
 }
 
 impl ClientProgram {
-    pub async fn new(
-        window: Window,
-        trace: bool,
-    ) -> ClientProgram {
+    pub async fn new(window: Window, base_dir: Option<PathBuf>, trace: bool) -> ClientProgram {
         let mut vfs = Vfs::new();
 
-        // add basedir first
-        vfs.add_directory(common::DEFAULT_BASEDIR).unwrap();
+        let mut game_dir = base_dir.unwrap_or_else(|| common::default_base_dir());
+        game_dir.push("id1");
 
-        // then add PAK archives
+        if !game_dir.is_dir() {
+            log::error!(concat!(
+                "`id1/` directory does not exist! Use the `--base-dir` option with the name of the",
+                " directory which contains `id1/`."
+            ));
+
+            exit(1);
+        }
+
+        vfs.add_directory(&game_dir).unwrap();
+
+        // ...then add PAK archives.
+        let mut num_paks = 0;
+        let mut pak_path = game_dir;
         for vfs_id in 0..common::MAX_PAKFILES {
-            // TODO: check `-basedir` command line argument
-            let basedir = common::DEFAULT_BASEDIR;
-            let path_string = format!("{}/pak{}.pak", basedir, vfs_id);
-            let path = Path::new(&path_string);
+            // Add the file name.
+            pak_path.push(format!("pak{}.pak", vfs_id));
 
-            // keep adding PAKs until we don't find one or we hit MAX_PAKFILES
-            if !path.exists() {
-                break;
+            // Keep adding PAKs until we don't find one or we hit MAX_PAKFILES.
+            if !pak_path.exists() {
+                // If the lowercase path doesn't exist, try again with uppercase.
+                pak_path.pop();
+                pak_path.push(format!("PAK{}.PAK", vfs_id));
+                if !pak_path.exists() {
+                    break;
+                }
             }
 
-            vfs.add_pakfile(path).unwrap();
+            vfs.add_pakfile(&pak_path).unwrap();
+            num_paks += 1;
+
+            // Remove the file name, leaving the game directory.
+            pak_path.pop();
+        }
+
+        if num_paks == 0 {
+            log::warn!("No PAK files found.");
         }
 
         let cvars = Rc::new(RefCell::new(CvarRegistry::new()));
@@ -358,6 +381,9 @@ struct Opt {
 
     #[structopt(long)]
     demo: Option<String>,
+
+    #[structopt(long)]
+    base_dir: Option<PathBuf>,
 }
 
 fn main() {
@@ -389,7 +415,7 @@ fn main() {
     };
 
     let client_program =
-        futures::executor::block_on(ClientProgram::new(window, opt.trace));
+        futures::executor::block_on(ClientProgram::new(window, opt.base_dir, opt.trace));
 
     // TODO: make dump_demo part of top-level binary and allow choosing file name
     if let Some(ref demo) = opt.dump_demo {
