@@ -624,7 +624,8 @@ impl GameInput {
                         action_states.borrow_mut()[action as usize] = state_bool;
                         String::new()
                     }),
-                );
+                )
+                .unwrap();
             }
         }
 
@@ -647,18 +648,16 @@ impl GameInput {
 
                     // bind (key) [command]
                     2 => match BindInput::from_str(args[0]) {
-                        Ok(input) => {
-                            match BindTarget::from_str(args[1]) {
-                                Ok(target) => {
-                                    bindings.borrow_mut().insert(input, target);
-                                    debug!("Bound {:?} to {:?}", input, args[1]);
-                                    String::new()
-                                }
-                                Err(_) => {
-                                    format!("\"{}\" isn't a valid bind target", args[1])
-                                }
+                        Ok(input) => match BindTarget::from_str(args[1]) {
+                            Ok(target) => {
+                                bindings.borrow_mut().insert(input, target);
+                                debug!("Bound {:?} to {:?}", input, args[1]);
+                                String::new()
                             }
-                        }
+                            Err(_) => {
+                                format!("\"{}\" isn't a valid bind target", args[1])
+                            }
+                        },
 
                         Err(_) => format!("\"{}\" isn't a valid key", args[0]),
                     },
@@ -666,7 +665,8 @@ impl GameInput {
                     _ => "bind [key] (command): attach a command to a key".to_owned(),
                 }
             }),
-        );
+        )
+        .unwrap();
 
         // "unbindall"
         let bindings = self.bindings.clone();
@@ -679,7 +679,8 @@ impl GameInput {
                 }
                 _ => "unbindall: delete all keybindings".to_owned(),
             }),
-        );
+        )
+        .unwrap();
 
         // "impulse"
         let impulse = self.impulse.clone();
@@ -689,14 +690,18 @@ impl GameInput {
                 println!("args: {}", args.len());
                 match args.len() {
                     1 => match u8::from_str(args[0]) {
-                        Ok(i) => {impulse.set(i); String::new()},
+                        Ok(i) => {
+                            impulse.set(i);
+                            String::new()
+                        }
                         Err(_) => "Impulse must be a number between 0 and 255".to_owned(),
                     },
 
                     _ => "usage: impulse [number]".to_owned(),
                 }
             }),
-        );
+        )
+        .unwrap();
     }
 
     // must be called every frame!

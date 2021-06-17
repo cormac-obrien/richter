@@ -21,6 +21,7 @@
 use std::{
     cell::{Ref, RefCell},
     collections::{HashMap, VecDeque},
+    fmt::Write,
     iter::FromIterator,
     rc::Rc,
 };
@@ -36,11 +37,9 @@ pub enum ConsoleError {
     CmdError(String),
     #[error("Could not parse cvar as a number: {name} = \"{value}\"")]
     CvarParseFailed { name: String, value: String },
-    #[error(
-        "Command already registered: {0} (to replace existing definition, use `insert_or_replace`)"
-    )]
+    #[error("A command named \"{0}\" already exists")]
     DuplicateCommand(String),
-    #[error("Cvar already registered: {0}")]
+    #[error("A cvar named \"{0}\" already exists")]
     DuplicateCvar(String),
     #[error("No such command: {0}")]
     NoSuchCommand(String),
@@ -50,15 +49,31 @@ pub enum ConsoleError {
 
 type Cmd = Box<dyn Fn(&[&str]) -> String>;
 
+fn insert_name<S>(names: &mut Vec<String>, name: S) -> Result<usize, usize>
+where
+    S: AsRef<str>,
+{
+    let name = name.as_ref();
+    match names.binary_search_by(|item| item.as_str().cmp(name)) {
+        Ok(i) => Err(i),
+        Err(i) => {
+            names.insert(i, name.to_owned());
+            Ok(i)
+        }
+    }
+}
+
 /// Stores console commands.
 pub struct CmdRegistry {
     cmds: HashMap<String, Cmd>,
+    names: Rc<RefCell<Vec<String>>>,
 }
 
 impl CmdRegistry {
-    pub fn new() -> CmdRegistry {
+    pub fn new(names: Rc<RefCell<Vec<String>>>) -> CmdRegistry {
         CmdRegistry {
             cmds: HashMap::new(),
+            names,
         }
     }
 
@@ -70,9 +85,14 @@ impl CmdRegistry {
         S: AsRef<str>,
     {
         let name = name.as_ref();
+
         match self.cmds.get(name) {
             Some(_) => Err(ConsoleError::DuplicateCommand(name.to_owned()))?,
             None => {
+                if insert_name(&mut self.names.borrow_mut(), name).is_err() {
+                    return Err(ConsoleError::DuplicateCvar(name.into()));
+                }
+
                 self.cmds.insert(name.to_owned(), cmd);
             }
         }
@@ -81,11 +101,22 @@ impl CmdRegistry {
     }
 
     /// Registers a new command with the given name, or replaces one if the name is in use.
-    pub fn insert_or_replace<S>(&mut self, name: S, cmd: Cmd)
+    pub fn insert_or_replace<S>(&mut self, name: S, cmd: Cmd) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
-        self.cmds.insert(name.as_ref().to_owned(), cmd);
+        let name = name.as_ref();
+
+        // If the name isn't registered as a command and it exists in the name
+        // table, it's a cvar.
+        if !self.cmds.contains_key(name) && insert_name(&mut self.names.borrow_mut(), name).is_err()
+        {
+            return Err(ConsoleError::DuplicateCvar(name.into()));
+        }
+
+        self.cmds.insert(name.into(), cmd);
+
+        Ok(())
     }
 
     /// Removes the command with the given name.
@@ -95,10 +126,17 @@ impl CmdRegistry {
     where
         S: AsRef<str>,
     {
-        match self.cmds.remove(name.as_ref()) {
-            Some(_) => Ok(()),
-            None => Err(ConsoleError::NoSuchCommand(name.as_ref().to_string()))?,
+        if self.cmds.remove(name.as_ref()).is_none() {
+            return Err(ConsoleError::NoSuchCommand(name.as_ref().to_string()))?;
         }
+
+        let mut names = self.names.borrow_mut();
+        match names.binary_search_by(|item| item.as_str().cmp(name.as_ref())) {
+            Ok(i) => drop(names.remove(i)),
+            Err(_) => unreachable!("name in map but not in list: {}", name.as_ref()),
+        }
+
+        Ok(())
     }
 
     /// Executes a command.
@@ -121,6 +159,10 @@ impl CmdRegistry {
         S: AsRef<str>,
     {
         self.cmds.contains_key(name.as_ref())
+    }
+
+    pub fn names(&self) -> Rc<RefCell<Vec<String>>> {
+        self.names.clone()
     }
 }
 
@@ -145,13 +187,15 @@ struct Cvar {
 
 pub struct CvarRegistry {
     cvars: RefCell<HashMap<String, Cvar>>,
+    names: Rc<RefCell<Vec<String>>>,
 }
 
 impl CvarRegistry {
     /// Construct a new empty `CvarRegistry`.
-    pub fn new() -> CvarRegistry {
+    pub fn new(names: Rc<RefCell<Vec<String>>>) -> CvarRegistry {
         CvarRegistry {
             cvars: RefCell::new(HashMap::new()),
+            names,
         }
     }
 
@@ -170,8 +214,12 @@ impl CvarRegistry {
 
         let mut cvars = self.cvars.borrow_mut();
         match cvars.get(name) {
-            Some(_) => Err(ConsoleError::DuplicateCvar(name.to_owned()))?,
+            Some(_) => Err(ConsoleError::DuplicateCvar(name.into()))?,
             None => {
+                if insert_name(&mut self.names.borrow_mut(), name).is_err() {
+                    return Err(ConsoleError::DuplicateCommand(name.into()));
+                }
+
                 cvars.insert(
                     name.to_owned(),
                     Cvar {
@@ -541,6 +589,40 @@ impl Console {
             )
             .unwrap();
 
+        let find_names = cmds.borrow().names();
+        cmds.borrow_mut()
+            .insert(
+                "find",
+                Box::new(move |args| match args.len() {
+                    1 => {
+                        let names = find_names.borrow_mut();
+
+                        // Find the index of the first item >= the target.
+                        let start = match names.binary_search_by(|item| item.as_str().cmp(&args[0]))
+                        {
+                            Ok(i) => i,
+                            Err(i) => i,
+                        };
+
+                        // Take every item starting with the target.
+                        let it = (&names[start..])
+                            .iter()
+                            .take_while(move |item| item.starts_with(&args[0]))
+                            .map(|s| s.as_str());
+
+                        let mut output = String::new();
+                        for name in it {
+                            write!(&mut output, "{}\n", name).unwrap();
+                        }
+
+                        output
+                    }
+
+                    _ => "usage: find <cvar or command>".into(),
+                }),
+            )
+            .unwrap();
+
         Console {
             cmds,
             cvars,
@@ -593,6 +675,7 @@ impl Console {
         S: AsRef<str>,
     {
         self.print_impl(s, None);
+        self.print_impl("\n", None);
     }
 
     pub fn println_alert<S>(&self, s: S)
@@ -703,7 +786,7 @@ impl Console {
                                         arg_0,
                                         self.cvars.borrow().get(arg_0).unwrap()
                                     );
-                                    self.print(msg);
+                                    self.println(msg);
                                 }
                             }
                         } else {

@@ -527,15 +527,14 @@ impl WorldRenderer {
         }
 
         let viewmodel_orig = camera.origin();
-        let mut viewmodel_angles = camera.angles();
-        viewmodel_angles.pitch = -viewmodel_angles.roll;
-        viewmodel_angles.yaw = -viewmodel_angles.yaw;
-        viewmodel_angles.roll = -viewmodel_angles.pitch;
+        let cam_angles = camera.angles();
         let viewmodel_mat = Matrix4::from_translation(Vector3::new(
             -viewmodel_orig.y,
             viewmodel_orig.z,
             -viewmodel_orig.x,
-        )) * viewmodel_angles.mat4_wgpu();
+        )) * Matrix4::from_angle_y(cam_angles.yaw)
+            * Matrix4::from_angle_x(-cam_angles.pitch)
+            * Matrix4::from_angle_z(cam_angles.roll);
         match self.entity_renderers[viewmodel_id] {
             EntityRenderer::Alias(ref alias) => {
                 pass.set_pipeline(state.alias_pipeline().pipeline());
