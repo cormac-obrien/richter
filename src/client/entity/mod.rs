@@ -187,11 +187,11 @@ impl ClientEntity {
         self.model_id
     }
 
-    pub fn get_frame_id(&self) -> usize {
+    pub fn frame_id(&self) -> usize {
         self.frame_id
     }
 
-    pub fn get_skin_id(&self) -> usize {
+    pub fn skin_id(&self) -> usize {
         self.skin_id
     }
 }

@@ -22,7 +22,7 @@ use crate::common::parse::quoted;
 use nom::{
     bytes::complete::tag,
     character::complete::newline,
-    combinator::map,
+    combinator::{all_consuming, map},
     multi::many0,
     sequence::{delimited, separated_pair, terminated},
 };
@@ -45,6 +45,11 @@ pub fn entity(input: &str) -> nom::IResult<&str, HashMap<&str, &str>> {
     )(input)
 }
 
-pub fn entities(input: &str) -> nom::IResult<&str, Vec<HashMap<&str, &str>>> {
-    many0(entity)(input)
+pub fn entities(input: &str) -> Result<Vec<HashMap<&str, &str>>, failure::Error> {
+    let input = input.strip_suffix('\0').unwrap_or(input);
+    match all_consuming(many0(entity))(input) {
+        Ok(("", entities)) => Ok(entities),
+        Ok(_) => unreachable!(),
+        Err(e) => bail!("parse failed: {}", e),
+    }
 }

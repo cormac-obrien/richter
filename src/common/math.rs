@@ -391,7 +391,7 @@ impl Hyperplane {
             n if n == Vector3::unit_x() => Self::axis_x(dist),
             n if n == Vector3::unit_y() => Self::axis_y(dist),
             n if n == Vector3::unit_z() => Self::axis_z(dist),
-            _ => Self::normal(normal.normalize(), dist),
+            _ => Self::from_normal(normal.normalize(), dist),
         }
     }
 
@@ -429,10 +429,22 @@ impl Hyperplane {
     ///
     /// This function will force the hyperplane alignment to be represented as a normal even if it
     /// is aligned along an axis.
-    pub fn normal(normal: Vector3<f32>, dist: f32) -> Hyperplane {
+    pub fn from_normal(normal: Vector3<f32>, dist: f32) -> Hyperplane {
         Hyperplane {
             alignment: Alignment::Normal(normal.normalize()),
             dist,
+        }
+    }
+
+    /// Returns the surface normal of this plane.
+    pub fn normal(&self) -> Vector3<f32> {
+        match self.alignment {
+            Alignment::Axis(ax) => match ax {
+                Axis::X => Vector3::unit_x(),
+                Axis::Y => Vector3::unit_y(),
+                Axis::Z => Vector3::unit_z(),
+            },
+            Alignment::Normal(normal) => normal,
         }
     }
 
@@ -712,21 +724,21 @@ mod test {
 
     #[test]
     fn test_hyperplane_point_dist_x_no_axis() {
-        let plane = Hyperplane::normal(Vector3::unit_x(), 1.0);
+        let plane = Hyperplane::from_normal(Vector3::unit_x(), 1.0);
         assert_eq!(plane.point_dist(Vector3::unit_x() * 2.0), 1.0);
         assert_eq!(plane.point_dist(Vector3::zero()), -1.0);
     }
 
     #[test]
     fn test_hyperplane_point_dist_y_no_axis() {
-        let plane = Hyperplane::normal(Vector3::unit_y(), 1.0);
+        let plane = Hyperplane::from_normal(Vector3::unit_y(), 1.0);
         assert_eq!(plane.point_dist(Vector3::unit_y() * 2.0), 1.0);
         assert_eq!(plane.point_dist(Vector3::zero()), -1.0);
     }
 
     #[test]
     fn test_hyperplane_point_dist_z_no_axis() {
-        let plane = Hyperplane::normal(Vector3::unit_z(), 1.0);
+        let plane = Hyperplane::from_normal(Vector3::unit_z(), 1.0);
         assert_eq!(plane.point_dist(Vector3::unit_z() * 2.0), 1.0);
         assert_eq!(plane.point_dist(Vector3::zero()), -1.0);
     }

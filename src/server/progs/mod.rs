@@ -93,40 +93,28 @@
 //! arg_sizes: [u8; 8],    // sizes of each argument
 //! ```
 
-mod functions;
-mod globals;
+pub mod functions;
+pub mod globals;
 mod ops;
+mod string_table;
 
 use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
+    cell::RefCell,
     convert::TryInto,
     error::Error,
     fmt,
-    io::{BufReader, Cursor, Read, Seek, SeekFrom},
+    io::{Read, Seek, SeekFrom},
     rc::Rc,
 };
 
-use crate::{
-    common::{console::CvarRegistry, vfs::Vfs},
-    server::{
-        world::{EntityError, EntityTypeDef, FieldAddrFloat, World},
-        Server,
-    },
-};
+use crate::server::world::{EntityError, EntityTypeDef};
 
 use byteorder::{LittleEndian, ReadBytesExt};
-use cgmath::Vector3;
 use num::FromPrimitive;
-use rand;
 
 use self::{
     functions::{BuiltinFunctionId, FunctionDef, FunctionKind, Statement, MAX_ARGS},
-    globals::{
-        GLOBAL_ADDR_ARG_0, GLOBAL_ADDR_ARG_1, GLOBAL_ADDR_ARG_2, GLOBAL_ADDR_ARG_3,
-        GLOBAL_ADDR_RETURN, GLOBAL_STATIC_COUNT, GLOBAL_STATIC_START,
-    },
-    ops::Opcode,
+    globals::{GLOBAL_ADDR_ARG_0, GLOBAL_STATIC_COUNT},
 };
 pub use self::{
     functions::{FunctionId, Functions},
@@ -134,6 +122,8 @@ pub use self::{
         GlobalAddrEntity, GlobalAddrFloat, GlobalAddrFunction, GlobalAddrVector, Globals,
         GlobalsError,
     },
+    ops::Opcode,
+    string_table::StringTable,
 };
 
 const VERSION: i32 = 6;
@@ -194,19 +184,7 @@ impl fmt::Display for ProgsError {
     }
 }
 
-impl Error for ProgsError {
-    fn description(&self) -> &str {
-        use self::ProgsError::*;
-        match *self {
-            Io(ref err) => err.description(),
-            Globals(ref err) => err.description(),
-            Entity(ref err) => err.description(),
-            CallStackOverflow => "Call stack overflow",
-            LocalStackOverflow => "Local stack overflow",
-            Other(ref msg) => &msg,
-        }
-    }
-}
+impl Error for ProgsError {}
 
 impl From<::std::io::Error> for ProgsError {
     fn from(error: ::std::io::Error) -> Self {
@@ -299,6 +277,11 @@ pub struct GlobalDef {
     name_id: StringId,
 }
 
+/// An entity field definition.
+///
+/// These definitions can be used to look up entity fields by name. This is
+/// required for custom fields defined in QuakeC code; their offsets are not
+/// known at compile time.
 #[derive(Debug)]
 pub struct FieldDef {
     pub type_: Type,
@@ -306,111 +289,21 @@ pub struct FieldDef {
     pub name_id: StringId,
 }
 
-#[derive(Debug)]
-pub struct StringTable {
-    byte_count: Cell<usize>,
-    lump: String,
-    table: RefCell<HashMap<StringId, String>>,
-}
-
-impl StringTable {
-    pub fn new(data: Vec<u8>) -> StringTable {
-        StringTable {
-            byte_count: Cell::new(data.len()),
-            lump: String::from_utf8(data).unwrap(),
-            table: RefCell::new(HashMap::new()),
-        }
-    }
-
-    pub fn find<S>(&self, target: S) -> Option<StringId>
-    where
-        S: AsRef<str>,
-    {
-        let target = target.as_ref();
-
-        if let Some(id) = self.lump.find(target) {
-            return Some(StringId(id));
-        }
-
-        match self.table.borrow().iter().find(|&(_, &ref v)| v == target) {
-            Some((k, _)) => Some(*k),
-            None => None,
-        }
-    }
-
-    pub fn get(&self, id: StringId) -> Option<String> {
-        if id.0 < self.lump.len() {
-            let mut nul_byte = id.0;
-
-            for i in id.0..self.lump.len() {
-                if self.lump.as_bytes()[i] == 0 {
-                    nul_byte = i;
-                    break;
-                }
-            }
-
-            Some(
-                ::std::str::from_utf8(&self.lump.as_bytes()[id.0..nul_byte])
-                    .unwrap()
-                    .to_owned(),
-            )
-        } else {
-            match self.table.borrow().get(&id) {
-                Some(s) => Some(s.to_owned()),
-                None => None,
-            }
-        }
-    }
-
-    pub fn insert<S>(&self, value: S) -> StringId
-    where
-        S: AsRef<str>,
-    {
-        let s = value.as_ref().to_owned();
-        let id = StringId(self.byte_count.get());
-        let len = s.len();
-
-        debug!("StringTable: inserting {}", s);
-        match self.table.borrow_mut().insert(id, s) {
-            Some(_) => panic!("duplicate ID in string table"),
-            None => (),
-        }
-
-        self.byte_count.set(self.byte_count.get() + len);
-
-        id
-    }
-
-    pub fn id_from_i32(&self, value: i32) -> Result<StringId, ProgsError> {
-        if value < 0 {
-            return Err(ProgsError::with_msg("id < 0"));
-        }
-
-        let id = StringId(value as usize);
-
-        if id.0 < self.lump.len() || self.table.borrow().contains_key(&id) {
-            Ok(id)
-        } else {
-            Err(ProgsError::with_msg(format!("no string with ID {}", value)))
-        }
-    }
+/// The values returned by loading a `progs.dat` file.
+pub struct LoadProgs {
+    pub cx: ExecutionContext,
+    pub globals: Globals,
+    pub entity_def: Rc<EntityTypeDef>,
+    pub string_table: Rc<RefCell<StringTable>>,
 }
 
 /// Loads all data from a `progs.dat` file.
 ///
 /// This returns objects representing the necessary context to execute QuakeC bytecode.
-pub fn load(
-    data: &[u8],
-) -> Result<
-    (
-        ExecutionContext,
-        Globals,
-        Rc<EntityTypeDef>,
-        Rc<StringTable>,
-    ),
-    ProgsError,
-> {
-    let mut src = BufReader::new(Cursor::new(data));
+pub fn load<R>(mut src: R) -> Result<LoadProgs, ProgsError>
+where
+    R: Read + Seek,
+{
     assert!(src.read_i32::<LittleEndian>()? == VERSION);
     assert!(src.read_i32::<LittleEndian>()? == CRC);
 
@@ -439,7 +332,7 @@ pub fn load(
     (&mut src)
         .take(string_lump.count as u64)
         .read_to_end(&mut strings)?;
-    let string_table = Rc::new(StringTable::new(strings));
+    let string_table = Rc::new(RefCell::new(StringTable::new(strings)));
 
     assert_eq!(
         src.seek(SeekFrom::Current(0))?,
@@ -480,15 +373,19 @@ pub fn load(
         // throw away profile variable
         let _ = src.read_i32::<LittleEndian>()?;
 
-        let name_id = string_table.id_from_i32(src.read_i32::<LittleEndian>()?)?;
-        let srcfile_id = string_table.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let name_id = string_table
+            .borrow()
+            .id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let srcfile_id = string_table
+            .borrow()
+            .id_from_i32(src.read_i32::<LittleEndian>()?)?;
 
         let argc = src.read_i32::<LittleEndian>()?;
         let mut argsz = [0; MAX_ARGS];
         src.read(&mut argsz)?;
 
         function_defs.push(FunctionDef {
-            kind: kind,
+            kind,
             arg_start: arg_start as usize,
             locals: locals as usize,
             name_id,
@@ -536,7 +433,9 @@ pub fn load(
     for _ in 0..globaldef_lump.count {
         let type_ = src.read_u16::<LittleEndian>()?;
         let offset = src.read_u16::<LittleEndian>()?;
-        let name_id = string_table.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let name_id = string_table
+            .borrow()
+            .id_from_i32(src.read_i32::<LittleEndian>()?)?;
         globaldefs.push(GlobalDef {
             save: type_ & SAVE_GLOBAL != 0,
             type_: Type::from_u16(type_ & !SAVE_GLOBAL).unwrap(),
@@ -558,7 +457,9 @@ pub fn load(
     for _ in 0..fielddef_lump.count {
         let type_ = src.read_u16::<LittleEndian>()?;
         let offset = src.read_u16::<LittleEndian>()?;
-        let name_id = string_table.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let name_id = string_table
+            .borrow()
+            .id_from_i32(src.read_i32::<LittleEndian>()?)?;
 
         if type_ & SAVE_GLOBAL != 0 {
             return Err(ProgsError::with_msg(
@@ -606,7 +507,7 @@ pub fn load(
 
     let functions_rc = Rc::new(functions);
 
-    let execution_context = ExecutionContext::create(string_table.clone(), functions_rc.clone());
+    let cx = ExecutionContext::create(string_table.clone(), functions_rc.clone());
 
     let globals = Globals::new(
         string_table.clone(),
@@ -614,12 +515,18 @@ pub fn load(
         addrs.into_boxed_slice(),
     );
 
-    let entity_type_def = Rc::new(EntityTypeDef::new(
+    let entity_def = Rc::new(EntityTypeDef::new(
+        string_table.clone(),
         ent_addr_count,
         field_defs.into_boxed_slice(),
     )?);
 
-    Ok((execution_context, globals, entity_type_def, string_table))
+    Ok(LoadProgs {
+        cx,
+        globals,
+        entity_def,
+        string_table,
+    })
 }
 
 #[derive(Debug)]
@@ -628,8 +535,10 @@ struct StackFrame {
     func_id: FunctionId,
 }
 
+/// A QuakeC VM context.
+#[derive(Debug)]
 pub struct ExecutionContext {
-    string_table: Rc<StringTable>,
+    string_table: Rc<RefCell<StringTable>>,
     functions: Rc<Functions>,
     pc: usize,
     current_function: FunctionId,
@@ -638,7 +547,10 @@ pub struct ExecutionContext {
 }
 
 impl ExecutionContext {
-    pub fn create(string_table: Rc<StringTable>, functions: Rc<Functions>) -> ExecutionContext {
+    pub fn create(
+        string_table: Rc<RefCell<StringTable>>,
+        functions: Rc<Functions>,
+    ) -> ExecutionContext {
         ExecutionContext {
             string_table,
             functions,
@@ -649,11 +561,30 @@ impl ExecutionContext {
         }
     }
 
-    fn enter_function(&mut self, globals: &mut Globals, f: FunctionId) -> Result<(), ProgsError> {
+    pub fn call_stack_depth(&self) -> usize {
+        self.call_stack.len()
+    }
+
+    pub fn find_function_by_name<S: AsRef<str>>(
+        &mut self,
+        name: S,
+    ) -> Result<FunctionId, ProgsError> {
+        self.functions.find_function_by_name(name)
+    }
+
+    pub fn function_def(&self, id: FunctionId) -> Result<&FunctionDef, ProgsError> {
+        self.functions.get_def(id)
+    }
+
+    pub fn enter_function(
+        &mut self,
+        globals: &mut Globals,
+        f: FunctionId,
+    ) -> Result<(), ProgsError> {
         let def = self.functions.get_def(f)?;
         debug!(
             "Calling QuakeC function {}",
-            self.string_table.get(def.name_id).unwrap()
+            self.string_table.borrow().get(def.name_id).unwrap()
         );
 
         // save stack frame
@@ -697,11 +628,11 @@ impl ExecutionContext {
         Ok(())
     }
 
-    fn leave_function(&mut self, globals: &mut Globals) -> Result<(), ProgsError> {
+    pub fn leave_function(&mut self, globals: &mut Globals) -> Result<(), ProgsError> {
         let def = self.functions.get_def(self.current_function)?;
         debug!(
             "Returning from QuakeC function {}",
-            self.string_table.get(def.name_id).unwrap()
+            self.string_table.borrow().get(def.name_id).unwrap()
         );
 
         for i in (0..def.locals).rev() {
@@ -719,1172 +650,12 @@ impl ExecutionContext {
         Ok(())
     }
 
-    pub fn execute_program(
-        &mut self,
-        globals: &mut Globals,
-        world: &mut World,
-        cvars: &mut CvarRegistry,
-        server: &mut Server,
-        vfs: &Vfs,
-        f: FunctionId,
-    ) -> Result<(), ProgsError> {
-        let mut runaway = 100000;
-
-        // this allows us to call execute_program() recursively with the same local and call stacks
-        let exit_depth = self.call_stack.len();
-
-        self.enter_function(globals, f)?;
-
-        while self.call_stack.len() != exit_depth {
-            runaway -= 1;
-
-            if runaway == 0 {
-                panic!("runaway program");
-            }
-
-            let op = self.functions.statements[self.pc].opcode;
-            let a = self.functions.statements[self.pc].arg1;
-            let b = self.functions.statements[self.pc].arg2;
-            let c = self.functions.statements[self.pc].arg3;
-
-            debug!(
-                "    pc={:>08} {:<9} {:>5} {:>5} {:>5}",
-                self.pc,
-                format!("{:?}", op),
-                a,
-                b,
-                c
-            );
-
-            use self::Opcode::*;
-            match op {
-                MulF => mul_f(globals, a, b, c)?,
-                MulV => mul_v(globals, a, b, c)?,
-                MulFV => mul_fv(globals, a, b, c)?,
-                MulVF => mul_vf(globals, a, b, c)?,
-                Div => div(globals, a, b, c)?,
-                AddF => add_f(globals, a, b, c)?,
-                AddV => add_v(globals, a, b, c)?,
-                SubF => sub_f(globals, a, b, c)?,
-                SubV => sub_v(globals, a, b, c)?,
-                EqF => eq_f(globals, a, b, c)?,
-                EqV => eq_v(globals, a, b, c)?,
-                EqS => eq_s(globals, a, b, c)?,
-                EqEnt => eq_ent(globals, a, b, c)?,
-                EqFnc => eq_fnc(globals, a, b, c)?,
-                NeF => ne_f(globals, a, b, c)?,
-                NeV => ne_v(globals, a, b, c)?,
-                NeS => ne_s(globals, a, b, c)?,
-                NeEnt => ne_ent(globals, a, b, c)?,
-                NeFnc => ne_fnc(globals, a, b, c)?,
-                Le => le(globals, a, b, c)?,
-                Ge => ge(globals, a, b, c)?,
-                Lt => lt(globals, a, b, c)?,
-                Gt => gt(globals, a, b, c)?,
-                LoadF => load_f(globals, world, a, b, c)?,
-                LoadV => load_v(globals, world, a, b, c)?,
-                LoadS => load_s(globals, world, a, b, c)?,
-                LoadEnt => load_ent(globals, world, a, b, c)?,
-                LoadFld => panic!("load_fld not implemented"),
-                LoadFnc => load_fnc(globals, world, a, b, c)?,
-                Address => address(globals, world, a, b, c)?,
-                StoreF => store_f(globals, a, b, c)?,
-                StoreV => store_v(globals, a, b, c)?,
-                StoreS => store_s(globals, a, b, c)?,
-                StoreEnt => store_ent(globals, a, b, c)?,
-                StoreFld => store_fld(globals, a, b, c)?,
-                StoreFnc => store_fnc(globals, a, b, c)?,
-                StorePF => storep_f(globals, world, a, b, c)?,
-                StorePV => storep_v(globals, world, a, b, c)?,
-                StorePS => storep_s(globals, world, a, b, c)?,
-                StorePEnt => storep_ent(globals, world, a, b, c)?,
-                StorePFld => panic!("storep_fld not implemented"),
-                StorePFnc => storep_fnc(globals, world, a, b, c)?,
-                NotF => not_f(globals, a, b, c)?,
-                NotV => not_v(globals, a, b, c)?,
-                NotS => not_s(globals, a, b, c)?,
-                NotEnt => not_ent(globals, a, b, c)?,
-                NotFnc => not_fnc(globals, a, b, c)?,
-                And => and(globals, a, b, c)?,
-                Or => or(globals, a, b, c)?,
-                BitAnd => bit_and(globals, a, b, c)?,
-                BitOr => bit_or(globals, a, b, c)?,
-
-                If => {
-                    let cond = globals.get_float(a)? != 0.0;
-                    debug!("If: cond == {}", cond);
-
-                    if cond {
-                        self.pc = (self.pc as isize + b as isize) as usize;
-                        continue;
-                    }
-                }
-
-                IfNot => {
-                    let cond = globals.get_float(a)? != 0.0;
-                    debug!("IfNot: cond == {}", cond);
-
-                    if !cond {
-                        self.pc = (self.pc as isize + b as isize) as usize;
-                        continue;
-                    }
-                }
-
-                State => {
-                    let self_id = globals.get_entity_id(GlobalAddrEntity::Self_ as i16)?;
-                    let self_ent = world.try_get_entity_mut(self_id)?;
-                    let next_think_time = globals.get_float(GlobalAddrFloat::Time as i16)? + 0.1;
-
-                    self_ent.put_float(next_think_time, FieldAddrFloat::NextThink as i16)?;
-
-                    let frame_id = globals.get_float(a)?;
-                    self_ent.put_float(frame_id, FieldAddrFloat::FrameId as i16)?;
-                }
-
-                Goto => {
-                    self.pc = (self.pc as isize + a as isize) as usize;
-
-                    continue;
-                }
-
-                Call0 | Call1 | Call2 | Call3 | Call4 | Call5 | Call6 | Call7 | Call8 => {
-                    // TODO: pass to equivalent of PF_VarString
-                    let _arg_count = op as usize - Opcode::Call0 as usize;
-
-                    let f_to_call = globals.get_function_id(a)?;
-                    if f_to_call.0 == 0 {
-                        panic!("NULL function");
-                    }
-
-                    let name_id = self.functions.get_def(f_to_call)?.name_id;
-                    let name = self.string_table.get(name_id).unwrap();
-
-                    if let FunctionKind::BuiltIn(b) = self.functions.get_def(f_to_call)?.kind {
-                        debug!("Calling built-in function {}", name);
-                        use self::functions::BuiltinFunctionId::*;
-                        match b {
-                            MakeVectors => globals.make_vectors()?,
-
-                            // goal: `world.set_entity_origin(e_id, origin)`
-                            SetOrigin => {
-                                let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
-                                let origin = globals.get_vector(GLOBAL_ADDR_ARG_1 as i16)?;
-                                world.set_entity_origin(e_id, Vector3::from(origin))?;
-                            }
-
-                            // goal: `world.set_entity_model(e_id, model, server)`
-                            SetModel => {
-                                let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
-                                let model_name_id =
-                                    globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
-
-                                world.set_entity_model(e_id, model_name_id, server)?;
-                            }
-
-                            SetSize => {
-                                let e_id = globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
-                                let mins = globals.get_vector(GLOBAL_ADDR_ARG_1 as i16)?;
-                                let maxs = globals.get_vector(GLOBAL_ADDR_ARG_2 as i16)?;
-                                world.set_entity_size(e_id, mins.into(), maxs.into())?;
-                            }
-                            Break => unimplemented!(),
-                            Random => {
-                                globals.put_float(rand::random(), GLOBAL_ADDR_RETURN as i16)?;
-                            }
-                            Sound => unimplemented!(),
-                            Normalize => unimplemented!(),
-                            Error => unimplemented!(),
-                            ObjError => unimplemented!(),
-                            VLen => globals.v_len()?,
-                            VecToYaw => globals.vec_to_yaw()?,
-
-                            Spawn => {
-                                globals.put_entity_id(
-                                    world.spawn_entity()?,
-                                    GLOBAL_ADDR_RETURN as i16,
-                                )?;
-                            }
-
-                            Remove => {
-                                world.remove_entity(
-                                    globals.get_entity_id(GLOBAL_ADDR_ARG_0 as i16)?,
-                                )?;
-                            }
-                            TraceLine => unimplemented!(),
-                            CheckClient => unimplemented!(),
-
-                            // goal: `world.find_entity(e_id)`
-                            Find => unimplemented!(),
-                            PrecacheSound => {
-                                // TODO: disable precaching after server is active
-                                // TODO: precaching doesn't actually load yet
-                                let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
-                                server.precache_sound(s_id);
-                            }
-                            PrecacheModel => {
-                                // TODO: disable precaching after server is active
-                                // TODO: precaching doesn't actually load yet
-                                let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
-                                if !server.model_precache_lookup(s_id).is_ok() {
-                                    server.precache_model(s_id);
-                                    world.add_model(vfs, s_id)?;
-                                }
-                            }
-                            StuffCmd => unimplemented!(),
-                            FindRadius => unimplemented!(),
-                            BPrint => unimplemented!(),
-                            SPrint => unimplemented!(),
-                            DPrint => {
-                                let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
-                                let string = self.string_table.get(s_id).unwrap();
-                                debug!("DPRINT: {}", string);
-                            }
-                            FToS => unimplemented!(),
-                            VToS => unimplemented!(),
-                            CoreDump => unimplemented!(),
-                            TraceOn => unimplemented!(),
-                            TraceOff => unimplemented!(),
-                            EPrint => unimplemented!(),
-                            WalkMove => unimplemented!(),
-
-                            DropToFloor => {
-                                let e_id = globals.get_entity_id(GlobalAddrEntity::Self_ as i16)?;
-                                if world.drop_entity_to_floor(e_id)? {
-                                    globals.put_float(1.0, GLOBAL_ADDR_RETURN as i16)?;
-                                } else {
-                                    globals.put_float(0.0, GLOBAL_ADDR_RETURN as i16)?;
-                                }
-                            }
-                            LightStyle => {
-                                let index = match globals.get_float(GLOBAL_ADDR_ARG_0 as i16)?
-                                    as i32
-                                {
-                                    i if i < 0 => {
-                                        return Err(ProgsError::with_msg("negative lightstyle ID"))
-                                    }
-                                    i => i as usize,
-                                };
-                                let val = globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
-                                server.set_lightstyle(index, val);
-                            }
-                            RInt => globals.r_int()?,
-                            Floor => globals.floor()?,
-                            Ceil => globals.ceil()?,
-                            CheckBottom => unimplemented!(),
-                            PointContents => unimplemented!(),
-                            FAbs => globals.f_abs()?,
-                            Aim => unimplemented!(),
-                            Cvar => {
-                                let s_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
-                                let s = self.string_table.get(s_id).unwrap();
-                                let f = cvars.get_value(s).unwrap();
-                                globals.put_float(f, GLOBAL_ADDR_RETURN as i16)?;
-                            }
-                            LocalCmd => unimplemented!(),
-                            NextEnt => unimplemented!(),
-                            Particle => unimplemented!(),
-                            ChangeYaw => unimplemented!(),
-                            VecToAngles => unimplemented!(),
-
-                            // goal: `server.write_byte(b)`
-                            WriteByte => unimplemented!(),
-
-                            // goal: `server.write_char(c)`
-                            WriteChar => unimplemented!(),
-
-                            // goal: `server.write_short(s)`
-                            WriteShort => unimplemented!(),
-
-                            // goal: `server.write_long(l)`
-                            WriteLong => unimplemented!(),
-
-                            // goal: `server.write_coord(v)`
-                            WriteCoord => unimplemented!(),
-
-                            // goal: `server.write_angle(a)`
-                            WriteAngle => unimplemented!(),
-
-                            // goal: `server.write_string(s_id)`
-                            WriteString => unimplemented!(),
-
-                            // goal: `server.write_entity(e_id)`
-                            WriteEntity => unimplemented!(),
-
-                            MoveToGoal => unimplemented!(),
-                            PrecacheFile => unimplemented!(),
-                            MakeStatic => unimplemented!(),
-                            ChangeLevel => unimplemented!(),
-                            CvarSet => {
-                                let var_id = globals.get_string_id(GLOBAL_ADDR_ARG_0 as i16)?;
-                                let var = self.string_table.get(var_id).unwrap();
-                                let val_id = globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
-                                let val = self.string_table.get(val_id).unwrap();
-                                cvars.set(var, val).unwrap();
-                            }
-                            CenterPrint => unimplemented!(),
-                            AmbientSound => {
-                                let _pos = globals.get_vector(GLOBAL_ADDR_ARG_0 as i16)?;
-                                let name = globals.get_string_id(GLOBAL_ADDR_ARG_1 as i16)?;
-                                let _volume = globals.get_float(GLOBAL_ADDR_ARG_2 as i16)?;
-                                let _attenuation = globals.get_float(GLOBAL_ADDR_ARG_3 as i16)?;
-
-                                // TODO: replace with `?` syntax once `server` has a proper error type
-                                let _sound_index = match server.sound_precache_lookup(name) {
-                                    Ok(i) => i,
-                                    Err(_) => {
-                                        return Err(ProgsError::with_msg("sound not precached"))
-                                    }
-                                };
-
-                                // TODO: write to server signon packet
-                            }
-                            PrecacheModel2 => unimplemented!(),
-                            PrecacheSound2 => unimplemented!(),
-                            PrecacheFile2 => unimplemented!(),
-                            SetSpawnArgs => unimplemented!(),
-                        }
-                        debug!("Returning from built-in function {}", name);
-                    } else {
-                        self.enter_function(globals, f_to_call)?;
-                        continue;
-                    }
-                }
-
-                Done | Return => {
-                    let val1 = globals.get_bytes(a)?;
-                    let val2 = globals.get_bytes(b)?;
-                    let val3 = globals.get_bytes(c)?;
-                    globals.put_bytes(val1, GLOBAL_ADDR_RETURN as i16)?;
-                    globals.put_bytes(val2, (GLOBAL_ADDR_RETURN + 1) as i16)?;
-                    globals.put_bytes(val3, (GLOBAL_ADDR_RETURN + 2) as i16)?;
-
-                    self.leave_function(globals)?;
-                }
-            }
-
-            self.pc += 1;
-        }
-
-        Ok(())
+    pub fn load_statement(&self) -> Statement {
+        self.functions.statements[self.pc].clone()
     }
 
-    pub fn execute_program_by_name<S>(
-        &mut self,
-        globals: &mut Globals,
-        world: &mut World,
-        cvars: &mut CvarRegistry,
-        server: &mut Server,
-        vfs: &Vfs,
-        name: S,
-    ) -> Result<(), ProgsError>
-    where
-        S: AsRef<str>,
-    {
-        let func_id = self.functions.find_function_by_name(name)?;
-        self.execute_program(globals, world, cvars, server, vfs, func_id)?;
-        Ok(())
+    /// Performs an unconditional relative jump.
+    pub fn jump_relative(&mut self, rel: i16) {
+        self.pc = (self.pc as isize + rel as isize) as usize;
     }
-}
-
-// MUL_F: Float multiplication
-fn mul_f(globals: &mut Globals, f1_id: i16, f2_id: i16, prod_id: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_id)?;
-    let f2 = globals.get_float(f2_id)?;
-    globals.put_float(f1 * f2, prod_id)?;
-
-    Ok(())
-}
-
-// MUL_V: Vector dot-product
-fn mul_v(globals: &mut Globals, v1_id: i16, v2_id: i16, dot_id: i16) -> Result<(), ProgsError> {
-    let v1 = globals.get_vector(v1_id)?;
-    let v2 = globals.get_vector(v2_id)?;
-
-    let mut dot = 0.0;
-
-    for c in 0..3 {
-        dot += v1[c] * v2[c];
-    }
-    globals.put_float(dot, dot_id)?;
-
-    Ok(())
-}
-
-// MUL_FV: Component-wise multiplication of vector by scalar
-fn mul_fv(globals: &mut Globals, f_id: i16, v_id: i16, prod_id: i16) -> Result<(), ProgsError> {
-    let f = globals.get_float(f_id)?;
-    let v = globals.get_vector(v_id)?;
-
-    let mut prod = [0.0; 3];
-    for c in 0..prod.len() {
-        prod[c] = v[c] * f;
-    }
-
-    globals.put_vector(prod, prod_id)?;
-
-    Ok(())
-}
-
-// MUL_VF: Component-wise multiplication of vector by scalar
-fn mul_vf(globals: &mut Globals, v_id: i16, f_id: i16, prod_id: i16) -> Result<(), ProgsError> {
-    let v = globals.get_vector(v_id)?;
-    let f = globals.get_float(f_id)?;
-
-    let mut prod = [0.0; 3];
-    for c in 0..prod.len() {
-        prod[c] = v[c] * f;
-    }
-
-    globals.put_vector(prod, prod_id)?;
-
-    Ok(())
-}
-
-// DIV: Float division
-fn div(globals: &mut Globals, f1_id: i16, f2_id: i16, quot_id: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_id)?;
-    let f2 = globals.get_float(f2_id)?;
-    globals.put_float(f1 / f2, quot_id)?;
-
-    Ok(())
-}
-
-// ADD_F: Float addition
-fn add_f(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, sum_ofs: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_ofs)?;
-    let f2 = globals.get_float(f2_ofs)?;
-    globals.put_float(f1 + f2, sum_ofs)?;
-
-    Ok(())
-}
-
-// ADD_V: Vector addition
-fn add_v(globals: &mut Globals, v1_id: i16, v2_id: i16, sum_id: i16) -> Result<(), ProgsError> {
-    let v1 = globals.get_vector(v1_id)?;
-    let v2 = globals.get_vector(v2_id)?;
-
-    let mut sum = [0.0; 3];
-    for c in 0..sum.len() {
-        sum[c] = v1[c] + v2[c];
-    }
-
-    globals.put_vector(sum, sum_id)?;
-
-    Ok(())
-}
-
-// SUB_F: Float subtraction
-fn sub_f(globals: &mut Globals, f1_id: i16, f2_id: i16, diff_id: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_id)?;
-    let f2 = globals.get_float(f2_id)?;
-    globals.put_float(f1 - f2, diff_id)?;
-
-    Ok(())
-}
-
-// SUB_V: Vector subtraction
-fn sub_v(globals: &mut Globals, v1_id: i16, v2_id: i16, diff_id: i16) -> Result<(), ProgsError> {
-    let v1 = globals.get_vector(v1_id)?;
-    let v2 = globals.get_vector(v2_id)?;
-
-    let mut diff = [0.0; 3];
-    for c in 0..diff.len() {
-        diff[c] = v1[c] - v2[c];
-    }
-
-    globals.put_vector(diff, diff_id)?;
-
-    Ok(())
-}
-
-// EQ_F: Test equality of two floats
-fn eq_f(globals: &mut Globals, f1_id: i16, f2_id: i16, eq_id: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_id)?;
-    let f2 = globals.get_float(f2_id)?;
-    globals.put_float(
-        match f1 == f2 {
-            true => 1.0,
-            false => 0.0,
-        },
-        eq_id,
-    )?;
-
-    Ok(())
-}
-
-// EQ_V: Test equality of two vectors
-fn eq_v(globals: &mut Globals, v1_id: i16, v2_id: i16, eq_id: i16) -> Result<(), ProgsError> {
-    let v1 = globals.get_vector(v1_id)?;
-    let v2 = globals.get_vector(v2_id)?;
-    globals.put_float(
-        match v1 == v2 {
-            true => 1.0,
-            false => 0.0,
-        },
-        eq_id,
-    )?;
-
-    Ok(())
-}
-
-// EQ_S: Test equality of two strings
-fn eq_s(globals: &mut Globals, s1_ofs: i16, s2_ofs: i16, eq_ofs: i16) -> Result<(), ProgsError> {
-    if s1_ofs < 0 || s2_ofs < 0 {
-        return Err(ProgsError::with_msg("eq_s: negative string offset"));
-    }
-
-    if s1_ofs == s2_ofs || globals.get_string_id(s1_ofs)? == globals.get_string_id(s2_ofs)? {
-        globals.put_float(1.0, eq_ofs)?;
-    } else {
-        globals.put_float(0.0, eq_ofs)?;
-    }
-
-    Ok(())
-}
-
-// EQ_ENT: Test equality of two entities (by identity)
-fn eq_ent(globals: &mut Globals, e1_ofs: i16, e2_ofs: i16, eq_ofs: i16) -> Result<(), ProgsError> {
-    let e1 = globals.get_entity_id(e1_ofs)?;
-    let e2 = globals.get_entity_id(e2_ofs)?;
-
-    globals.put_float(
-        match e1 == e2 {
-            true => 1.0,
-            false => 0.0,
-        },
-        eq_ofs,
-    )?;
-
-    Ok(())
-}
-
-// EQ_FNC: Test equality of two functions (by identity)
-fn eq_fnc(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, eq_ofs: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_function_id(f1_ofs)?;
-    let f2 = globals.get_function_id(f2_ofs)?;
-
-    globals.put_float(
-        match f1 == f2 {
-            true => 1.0,
-            false => 0.0,
-        },
-        eq_ofs,
-    )?;
-
-    Ok(())
-}
-
-// NE_F: Test inequality of two floats
-fn ne_f(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, ne_ofs: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_ofs)?;
-    let f2 = globals.get_float(f2_ofs)?;
-    globals.put_float(
-        match f1 != f2 {
-            true => 1.0,
-            false => 0.0,
-        },
-        ne_ofs,
-    )?;
-
-    Ok(())
-}
-
-// NE_V: Test inequality of two vectors
-fn ne_v(globals: &mut Globals, v1_ofs: i16, v2_ofs: i16, ne_ofs: i16) -> Result<(), ProgsError> {
-    let v1 = globals.get_vector(v1_ofs)?;
-    let v2 = globals.get_vector(v2_ofs)?;
-    globals.put_float(
-        match v1 != v2 {
-            true => 1.0,
-            false => 0.0,
-        },
-        ne_ofs,
-    )?;
-
-    Ok(())
-}
-
-// NE_S: Test inequality of two strings
-fn ne_s(globals: &mut Globals, s1_ofs: i16, s2_ofs: i16, ne_ofs: i16) -> Result<(), ProgsError> {
-    if s1_ofs < 0 || s2_ofs < 0 {
-        return Err(ProgsError::with_msg("eq_s: negative string offset"));
-    }
-
-    if s1_ofs != s2_ofs && globals.get_string_id(s1_ofs)? != globals.get_string_id(s2_ofs)? {
-        globals.put_float(1.0, ne_ofs)?;
-    } else {
-        globals.put_float(0.0, ne_ofs)?;
-    }
-
-    Ok(())
-}
-
-fn ne_ent(globals: &mut Globals, e1_ofs: i16, e2_ofs: i16, ne_ofs: i16) -> Result<(), ProgsError> {
-    let e1 = globals.get_entity_id(e1_ofs)?;
-    let e2 = globals.get_entity_id(e2_ofs)?;
-
-    globals.put_float(
-        match e1 != e2 {
-            true => 1.0,
-            false => 0.0,
-        },
-        ne_ofs,
-    )?;
-
-    Ok(())
-}
-
-fn ne_fnc(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, ne_ofs: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_function_id(f1_ofs)?;
-    let f2 = globals.get_function_id(f2_ofs)?;
-
-    globals.put_float(
-        match f1 != f2 {
-            true => 1.0,
-            false => 0.0,
-        },
-        ne_ofs,
-    )?;
-
-    Ok(())
-}
-
-// LE: Less than or equal to comparison
-fn le(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, le_ofs: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_ofs)?;
-    let f2 = globals.get_float(f2_ofs)?;
-    globals.put_float(
-        match f1 <= f2 {
-            true => 1.0,
-            false => 0.0,
-        },
-        le_ofs,
-    )?;
-
-    Ok(())
-}
-
-// GE: Greater than or equal to comparison
-fn ge(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, ge_ofs: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_ofs)?;
-    let f2 = globals.get_float(f2_ofs)?;
-    globals.put_float(
-        match f1 >= f2 {
-            true => 1.0,
-            false => 0.0,
-        },
-        ge_ofs,
-    )?;
-
-    Ok(())
-}
-
-// LT: Less than comparison
-fn lt(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, lt_ofs: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_ofs)?;
-    let f2 = globals.get_float(f2_ofs)?;
-    globals.put_float(
-        match f1 < f2 {
-            true => 1.0,
-            false => 0.0,
-        },
-        lt_ofs,
-    )?;
-
-    Ok(())
-}
-
-// GT: Greater than comparison
-fn gt(globals: &mut Globals, f1_ofs: i16, f2_ofs: i16, gt_ofs: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_ofs)?;
-    let f2 = globals.get_float(f2_ofs)?;
-    globals.put_float(
-        match f1 > f2 {
-            true => 1.0,
-            false => 0.0,
-        },
-        gt_ofs,
-    )?;
-
-    Ok(())
-}
-
-// LOAD_F: load float field from entity
-fn load_f(
-    globals: &mut Globals,
-    world: &World,
-    e_ofs: i16,
-    e_f: i16,
-    dest_ofs: i16,
-) -> Result<(), ProgsError> {
-    let ent_id = globals.get_entity_id(e_ofs)?;
-
-    let fld_ofs = globals.get_field_addr(e_f)?;
-
-    let f = world.try_get_entity(ent_id)?.get_float(fld_ofs.0 as i16)?;
-    globals.put_float(f, dest_ofs)?;
-
-    Ok(())
-}
-
-// LOAD_V: load vector field from entity
-fn load_v(
-    globals: &mut Globals,
-    world: &World,
-    ent_id_addr: i16,
-    ent_vector_addr: i16,
-    dest_addr: i16,
-) -> Result<(), ProgsError> {
-    let ent_id = globals.get_entity_id(ent_id_addr)?;
-    let ent_vector = globals.get_field_addr(ent_vector_addr)?;
-    let v = world
-        .try_get_entity(ent_id)?
-        .get_vector(ent_vector.0 as i16)?;
-    globals.put_vector(v, dest_addr)?;
-
-    Ok(())
-}
-
-fn load_s(
-    globals: &mut Globals,
-    world: &World,
-    ent_id_addr: i16,
-    ent_string_id_addr: i16,
-    dest_addr: i16,
-) -> Result<(), ProgsError> {
-    let ent_id = globals.get_entity_id(ent_id_addr)?;
-    let ent_string_id = globals.get_field_addr(ent_string_id_addr)?;
-    let s = world
-        .try_get_entity(ent_id)?
-        .get_string_id(ent_string_id.0 as i16)?;
-    globals.put_string_id(s, dest_addr)?;
-
-    Ok(())
-}
-
-fn load_ent(
-    globals: &mut Globals,
-    world: &World,
-    ent_id_addr: i16,
-    ent_entity_id_addr: i16,
-    dest_addr: i16,
-) -> Result<(), ProgsError> {
-    let ent_id = globals.get_entity_id(ent_id_addr)?;
-    let ent_entity_id = globals.get_field_addr(ent_entity_id_addr)?;
-    let e = world
-        .try_get_entity(ent_id)?
-        .get_entity_id(ent_entity_id.0 as i16)?;
-    globals.put_entity_id(e, dest_addr)?;
-
-    Ok(())
-}
-
-fn load_fnc(
-    globals: &mut Globals,
-    world: &World,
-    ent_id_addr: i16,
-    ent_function_id_addr: i16,
-    dest_addr: i16,
-) -> Result<(), ProgsError> {
-    let ent_id = globals.get_entity_id(ent_id_addr)?;
-    let fnc_function_id = globals.get_field_addr(ent_function_id_addr)?;
-    let f = world
-        .try_get_entity(ent_id)?
-        .get_function_id(fnc_function_id.0 as i16)?;
-    globals.put_function_id(f, dest_addr)?;
-
-    Ok(())
-}
-
-fn address(
-    globals: &mut Globals,
-    world: &World,
-    ent_id_addr: i16,
-    fld_addr_addr: i16,
-    dest_addr: i16,
-) -> Result<(), ProgsError> {
-    let ent_id = globals.get_entity_id(ent_id_addr)?;
-    let fld_addr = globals.get_field_addr(fld_addr_addr)?;
-    globals.put_entity_field(
-        world.ent_fld_addr_to_i32(EntityFieldAddr {
-            entity_id: ent_id,
-            field_addr: fld_addr,
-        }),
-        dest_addr,
-    )?;
-
-    Ok(())
-}
-
-// STORE_F
-fn store_f(
-    globals: &mut Globals,
-    src_ofs: i16,
-    dest_ofs: i16,
-    unused: i16,
-) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("Nonzero arg3 to STORE_F"));
-    }
-
-    let f = globals.get_float(src_ofs)?;
-    globals.put_float(f, dest_ofs)?;
-
-    Ok(())
-}
-
-// STORE_V
-fn store_v(
-    globals: &mut Globals,
-    src_ofs: i16,
-    dest_ofs: i16,
-    unused: i16,
-) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("Nonzero arg3 to STORE_V"));
-    }
-
-    if dest_ofs > 0 && dest_ofs < GLOBAL_STATIC_START as i16 {
-        // we have to use the reserved copy because STORE_V is used to copy function arguments (see
-        // https://github.com/id-Software/Quake-Tools/blob/master/qcc/pr_comp.c#L362) into the global
-        // argument slots.
-        for c in 0..3 {
-            globals.untyped_copy(src_ofs + c as i16, dest_ofs + c as i16)?;
-        }
-    } else {
-        for c in 0..3 {
-            let f = globals.get_float(src_ofs + c)?;
-            globals.put_float(f, dest_ofs + c)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn store_s(
-    globals: &mut Globals,
-    src_ofs: i16,
-    dest_ofs: i16,
-    unused: i16,
-) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("Nonzero arg3 to STORE_S"));
-    }
-
-    let s = globals.get_string_id(src_ofs)?;
-    globals.put_string_id(s, dest_ofs)?;
-
-    Ok(())
-}
-
-fn store_ent(
-    globals: &mut Globals,
-    src_ofs: i16,
-    dest_ofs: i16,
-    unused: i16,
-) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("Nonzero arg3 to STORE_ENT"));
-    }
-
-    let ent = globals.get_entity_id(src_ofs)?;
-    globals.put_entity_id(ent, dest_ofs)?;
-
-    Ok(())
-}
-
-fn store_fld(
-    globals: &mut Globals,
-    src_ofs: i16,
-    dest_ofs: i16,
-    unused: i16,
-) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("Nonzero arg3 to STORE_FLD"));
-    }
-
-    let fld = globals.get_field_addr(src_ofs)?;
-    globals.put_field_addr(fld, dest_ofs)?;
-
-    Ok(())
-}
-
-fn store_fnc(
-    globals: &mut Globals,
-    src_ofs: i16,
-    dest_ofs: i16,
-    unused: i16,
-) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("Nonzero arg3 to STORE_FNC"));
-    }
-
-    let fnc = globals.get_function_id(src_ofs)?;
-    globals.put_function_id(fnc, dest_ofs)?;
-
-    Ok(())
-}
-
-fn storep_f(
-    globals: &Globals,
-    world: &mut World,
-    src_float_addr: i16,
-    dst_ent_fld_addr: i16,
-    unused: i16,
-) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("storep_f: nonzero arg3"));
-    }
-
-    let f = globals.get_float(src_float_addr)?;
-    let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
-    world
-        .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_float(f, ent_fld_addr.field_addr.0 as i16)?;
-
-    Ok(())
-}
-
-fn storep_v(
-    globals: &mut Globals,
-    world: &mut World,
-    src_vector_addr: i16,
-    dst_ent_fld_addr: i16,
-    unused: i16,
-) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("storep_v: nonzero arg3"));
-    }
-
-    let v = globals.get_vector(src_vector_addr)?;
-    let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
-    world
-        .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_vector(v, ent_fld_addr.field_addr.0 as i16)?;
-
-    Ok(())
-}
-
-fn storep_s(
-    globals: &Globals,
-    world: &mut World,
-    src_string_id_addr: i16,
-    dst_ent_fld_addr: i16,
-    unused: i16,
-) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("storep_s: nonzero arg3"));
-    }
-
-    let s = globals.get_string_id(src_string_id_addr)?;
-    let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
-    world
-        .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_string_id(s, ent_fld_addr.field_addr.0 as i16)?;
-
-    Ok(())
-}
-
-fn storep_ent(
-    globals: &Globals,
-    world: &mut World,
-    src_entity_id_addr: i16,
-    dst_ent_fld_addr: i16,
-    unused: i16,
-) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("storep_ent: nonzero arg3"));
-    }
-
-    let e = globals.get_entity_id(src_entity_id_addr)?;
-    let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
-    world
-        .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_entity_id(e, ent_fld_addr.field_addr.0 as i16)?;
-
-    Ok(())
-}
-
-fn storep_fnc(
-    globals: &Globals,
-    world: &mut World,
-    src_function_id_addr: i16,
-    dst_ent_fld_addr: i16,
-    unused: i16,
-) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("storep_fnc: nonzero arg3"));
-    }
-
-    let f = globals.get_function_id(src_function_id_addr)?;
-    let ent_fld_addr = world.ent_fld_addr_from_i32(globals.get_entity_field(dst_ent_fld_addr)?);
-    world
-        .try_get_entity_mut(ent_fld_addr.entity_id)?
-        .put_function_id(f, ent_fld_addr.field_addr.0 as i16)?;
-
-    Ok(())
-}
-
-// NOT_F: Compare float to 0.0
-fn not_f(globals: &mut Globals, f_id: i16, unused: i16, not_id: i16) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("Nonzero arg2 to NOT_F"));
-    }
-
-    let f = globals.get_float(f_id)?;
-    globals.put_float(
-        match f == 0.0 {
-            true => 1.0,
-            false => 0.0,
-        },
-        not_id,
-    )?;
-
-    Ok(())
-}
-
-// NOT_V: Compare vec to { 0.0, 0.0, 0.0 }
-fn not_v(globals: &mut Globals, v_id: i16, unused: i16, not_id: i16) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("Nonzero arg2 to NOT_V"));
-    }
-
-    let v = globals.get_vector(v_id)?;
-    let zero_vec = [0.0; 3];
-    globals.put_vector(
-        match v == zero_vec {
-            true => [1.0; 3],
-            false => zero_vec,
-        },
-        not_id,
-    )?;
-
-    Ok(())
-}
-
-// NOT_S: Compare string to null string
-fn not_s(globals: &mut Globals, s_ofs: i16, unused: i16, not_ofs: i16) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("Nonzero arg2 to NOT_S"));
-    }
-
-    if s_ofs < 0 {
-        return Err(ProgsError::with_msg("not_s: negative string offset"));
-    }
-
-    let s = globals.get_string_id(s_ofs)?;
-
-    if s_ofs == 0 || s.0 == 0 {
-        globals.put_float(1.0, not_ofs)?;
-    } else {
-        globals.put_float(0.0, not_ofs)?;
-    }
-
-    Ok(())
-}
-
-// NOT_FNC: Compare function to null function (0)
-fn not_fnc(
-    globals: &mut Globals,
-    fnc_id_ofs: i16,
-    unused: i16,
-    not_ofs: i16,
-) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("Nonzero arg2 to NOT_FNC"));
-    }
-
-    let fnc_id = globals.get_function_id(fnc_id_ofs)?;
-    globals.put_float(
-        match fnc_id {
-            FunctionId(0) => 1.0,
-            _ => 0.0,
-        },
-        not_ofs,
-    )?;
-
-    Ok(())
-}
-
-// NOT_ENT: Compare entity to null entity (0)
-fn not_ent(
-    globals: &mut Globals,
-    ent_ofs: i16,
-    unused: i16,
-    not_ofs: i16,
-) -> Result<(), ProgsError> {
-    if unused != 0 {
-        return Err(ProgsError::with_msg("Nonzero arg2 to NOT_ENT"));
-    }
-
-    let ent = globals.get_entity_id(ent_ofs)?;
-    globals.put_float(
-        match ent {
-            EntityId(0) => 1.0,
-            _ => 0.0,
-        },
-        not_ofs,
-    )?;
-
-    Ok(())
-}
-
-// AND: Logical AND
-fn and(globals: &mut Globals, f1_id: i16, f2_id: i16, and_id: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_id)?;
-    let f2 = globals.get_float(f2_id)?;
-    globals.put_float(
-        match f1 != 0.0 && f2 != 0.0 {
-            true => 1.0,
-            false => 0.0,
-        },
-        and_id,
-    )?;
-
-    Ok(())
-}
-
-// OR: Logical OR
-fn or(globals: &mut Globals, f1_id: i16, f2_id: i16, or_id: i16) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_id)?;
-    let f2 = globals.get_float(f2_id)?;
-    globals.put_float(
-        match f1 != 0.0 || f2 != 0.0 {
-            true => 1.0,
-            false => 0.0,
-        },
-        or_id,
-    )?;
-
-    Ok(())
-}
-
-// BIT_AND: Bitwise AND
-fn bit_and(
-    globals: &mut Globals,
-    f1_ofs: i16,
-    f2_ofs: i16,
-    bit_and_ofs: i16,
-) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_ofs)?;
-    let f2 = globals.get_float(f2_ofs)?;
-
-    globals.put_float((f1 as i32 & f2 as i32) as f32, bit_and_ofs)?;
-
-    Ok(())
-}
-
-// BIT_OR: Bitwise OR
-fn bit_or(
-    globals: &mut Globals,
-    f1_ofs: i16,
-    f2_ofs: i16,
-    bit_or_ofs: i16,
-) -> Result<(), ProgsError> {
-    let f1 = globals.get_float(f1_ofs)?;
-    let f2 = globals.get_float(f2_ofs)?;
-
-    globals.put_float((f1 as i32 | f2 as i32) as f32, bit_or_ofs)?;
-
-    Ok(())
 }

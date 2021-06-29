@@ -1254,7 +1254,7 @@ impl ClientState {
         )
     }
 
-    pub fn lightstyle_values(&self) -> Result<ArrayVec<[f32; 64]>, ClientError> {
+    pub fn lightstyle_values(&self) -> Result<ArrayVec<f32, 64>, ClientError> {
         let mut values = ArrayVec::new();
 
         for lightstyle_id in 0..64 {

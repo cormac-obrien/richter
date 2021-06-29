@@ -53,6 +53,7 @@ pub enum PakError {
 }
 
 /// An open Pak archive.
+#[derive(Debug)]
 pub struct Pak(HashMap<String, Box<[u8]>>);
 
 impl Pak {

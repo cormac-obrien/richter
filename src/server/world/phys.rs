@@ -15,19 +15,31 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+//! Physics and collision detection.
+
 use crate::{
     common::{bsp::BspLeafContents, math::Hyperplane},
     server::progs::EntityId,
 };
 
-use cgmath::{Vector3, Zero};
+use bitflags::bitflags;
+use cgmath::{InnerSpace, Vector3, Zero};
+
+/// Velocity in units/second under which a *component* (not the entire
+/// velocity!) is instantly reduced to zero.
+///
+/// This prevents objects from sliding indefinitely at low velocity.
+const STOP_THRESHOLD: f32 = 0.1;
 
 #[derive(Copy, Clone, Debug, Eq, FromPrimitive, PartialEq)]
 pub enum MoveKind {
+    /// Does not move.
     None = 0,
     AngleNoClip = 1,
     AngleClip = 2,
+    /// Player-controlled.
     Walk = 3,
+    /// Moves in discrete steps (monsters).
     Step = 4,
     Fly = 5,
     Toss = 6,
@@ -46,40 +58,115 @@ pub enum CollideKind {
 
 #[derive(Debug)]
 pub struct Collide {
-    // the ID of the entity being moved
+    /// The ID of the entity being moved.
     pub e_id: Option<EntityId>,
 
-    // the minimum extent of the entire move
+    /// The minimum extent of the entire move.
     pub move_min: Vector3<f32>,
 
-    // the maximum extent of the entire move
+    /// The maximum extent of the entire move.
     pub move_max: Vector3<f32>,
 
-    // the minimum extent of the moving object
+    /// The minimum extent of the moving object.
     pub min: Vector3<f32>,
 
-    // the maximum extent of the moving object
+    /// The maximum extent of the moving object.
     pub max: Vector3<f32>,
 
-    // the minimum extent of the moving object when colliding with a monster
+    /// The minimum extent of the moving object when colliding with a monster.
     pub monster_min: Vector3<f32>,
 
-    // the maximum extent of the moving object when colliding with a monster
+    /// The maximum extent of the moving object when colliding with a monster.
     pub monster_max: Vector3<f32>,
 
-    // the start point of the move
+    /// The start point of the move.
     pub start: Vector3<f32>,
 
-    // the end point of the move
+    /// The end point of the move.
     pub end: Vector3<f32>,
 
-    // how this move collides with other entities
+    /// How this move collides with other entities.
     pub kind: CollideKind,
 }
 
-#[derive(Debug)]
+/// Calculates a new velocity after collision with a surface.
+///
+/// `overbounce` approximates the elasticity of the collision. A value of `1`
+/// reduces the component of `initial` antiparallel to `surface_normal` to zero,
+/// while a value of `2` reflects that component to be parallel to
+/// `surface_normal`.
+pub fn velocity_after_collision(
+    initial: Vector3<f32>,
+    surface_normal: Vector3<f32>,
+    overbounce: f32,
+) -> (Vector3<f32>, CollisionFlags) {
+    let mut flags = CollisionFlags::empty();
+
+    if surface_normal.z > 0.0 {
+        flags |= CollisionFlags::HORIZONTAL;
+    } else if surface_normal.z == 0.0 {
+        flags |= CollisionFlags::VERTICAL;
+    }
+
+    let change = (overbounce * initial.dot(surface_normal)) * surface_normal;
+    let mut out = initial - change;
+
+    for i in 0..3 {
+        if out[i].abs() < STOP_THRESHOLD {
+            out[i] = 0.0;
+        }
+    }
+
+    (out, flags)
+}
+
+/// Calculates a new velocity after collision with multiple surfaces.
+pub fn velocity_after_multi_collision(
+    initial: Vector3<f32>,
+    planes: &[Hyperplane],
+    overbounce: f32,
+) -> Option<Vector3<f32>> {
+    // Try to find a plane which produces a post-collision velocity that will
+    // not cause a subsequent collision with any of the other planes.
+    for (a, plane_a) in planes.iter().enumerate() {
+        let (velocity_a, _flags) = velocity_after_collision(initial, plane_a.normal(), overbounce);
+
+        for (b, plane_b) in planes.iter().enumerate() {
+            if a == b {
+                // Don't test a plane against itself.
+                continue;
+            }
+
+            if velocity_a.dot(plane_b.normal()) < 0.0 {
+                // New velocity would be directed into another plane.
+                break;
+            }
+        }
+
+        // This velocity is not expected to cause immediate collisions with
+        // other planes, so return it.
+        return Some(velocity_a);
+    }
+
+    if planes.len() > 2 {
+        // Quake simply gives up in this case. This is distinct from returning
+        // the zero vector, as it indicates that the trajectory has really
+        // wedged something in a corner.
+        None
+    } else {
+        // Redirect velocity along the intersection of the planes.
+        let dir = planes[0].normal().cross(planes[1].normal());
+        let scale = initial.dot(dir);
+        Some(scale * dir)
+    }
+}
+
+/// Represents the start of a collision trace.
+#[derive(Clone, Debug)]
 pub struct TraceStart {
     point: Vector3<f32>,
+    /// The ratio along the original trace length at which this (sub)trace
+    /// begins.
     ratio: f32,
 }
 
@@ -89,13 +176,15 @@ impl TraceStart {
     }
 }
 
-#[derive(Debug)]
+/// Represents the end of a trace which crossed between leaves.
+#[derive(Clone, Debug)]
 pub struct TraceEndBoundary {
-    ratio: f32,
-    plane: Hyperplane,
+    pub ratio: f32,
+    pub plane: Hyperplane,
 }
 
-#[derive(Debug)]
+/// Indicates the the nature of the end of a trace.
+#[derive(Clone, Debug)]
 pub enum TraceEndKind {
     /// This endpoint falls within a leaf.
     Terminal,
@@ -104,7 +193,8 @@ pub enum TraceEndKind {
     Boundary(TraceEndBoundary),
 }
 
-#[derive(Debug)]
+/// Represents the end of a trace.
+#[derive(Clone, Debug)]
 pub struct TraceEnd {
     point: Vector3<f32>,
     kind: TraceEndKind,
@@ -124,9 +214,13 @@ impl TraceEnd {
             kind: TraceEndKind::Boundary(TraceEndBoundary { ratio, plane }),
         }
     }
+
+    pub fn kind(&self) -> &TraceEndKind {
+        &self.kind
+    }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Trace {
     start: TraceStart,
     end: TraceEnd,
@@ -195,6 +289,7 @@ impl Trace {
         self
     }
 
+    /// Adjusts the start and end points of the trace by an offset.
     pub fn adjust(self, offset: Vector3<f32>) -> Trace {
         Trace {
             start: TraceStart {
@@ -210,18 +305,27 @@ impl Trace {
         }
     }
 
+    /// Returns the point at which the trace began.
     pub fn start_point(&self) -> Vector3<f32> {
         self.start.point
     }
 
+    /// Returns the end of this trace.
+    pub fn end(&self) -> &TraceEnd {
+        &self.end
+    }
+
+    /// Returns the point at which the trace ended.
     pub fn end_point(&self) -> Vector3<f32> {
         self.end.point
     }
 
+    /// Returns true if the entire trace is within solid leaves.
     pub fn all_solid(&self) -> bool {
         self.contents == BspLeafContents::Solid
     }
 
+    /// Returns true if the trace began in a solid leaf but ended outside it.
     pub fn start_solid(&self) -> bool {
         self.start_solid
     }
@@ -234,12 +338,32 @@ impl Trace {
         self.contents != BspLeafContents::Empty && self.contents != BspLeafContents::Solid
     }
 
+    /// Returns whether the trace ended without a collision.
     pub fn is_terminal(&self) -> bool {
         if let TraceEndKind::Terminal = self.end.kind {
             true
         } else {
             false
         }
+    }
+
+    /// Returns the ratio of travelled distance to intended distance.
+    ///
+    /// This indicates how far along the original trajectory the trace proceeded
+    /// before colliding with a different medium.
+    pub fn ratio(&self) -> f32 {
+        match &self.end.kind {
+            TraceEndKind::Terminal => 1.0,
+            TraceEndKind::Boundary(boundary) => boundary.ratio,
+        }
+    }
+}
+
+bitflags! {
+    pub struct CollisionFlags: u32 {
+        const HORIZONTAL = 1;
+        const VERTICAL = 2;
+        const STOPPED = 4;
     }
 }
 
