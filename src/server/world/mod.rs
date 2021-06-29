@@ -16,62 +16,64 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 mod entity;
-mod phys;
+pub mod phys;
 
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     rc::Rc,
 };
 
 use self::{
-    entity::{Entity, EntityFlags, EntitySolid},
-    phys::{Collide, CollideKind, MoveKind},
+    entity::Entity,
+    phys::{Collide, CollideKind},
 };
 pub use self::{
     entity::{
-        EntityError, EntityTypeDef, FieldAddrEntityId, FieldAddrFloat, FieldAddrFunctionId,
-        FieldAddrStringId, FieldAddrVector,
+        EntityError, EntityFlags, EntitySolid, EntityTypeDef, FieldAddrEntityId, FieldAddrFloat,
+        FieldAddrFunctionId, FieldAddrStringId, FieldAddrVector,
     },
-    phys::{Trace, TraceEnd, TraceStart},
+    phys::{MoveKind, Trace, TraceEnd, TraceEndKind, TraceStart},
 };
 
 use crate::{
     common::{
         bsp,
         bsp::{BspCollisionHull, BspLeafContents},
-        console::CvarRegistry,
-        engine, mdl,
+        mdl,
         model::{Model, ModelKind},
         parse, sprite,
         vfs::Vfs,
     },
-    server::{
-        progs::{
-            EntityFieldAddr, EntityId, ExecutionContext, FieldAddr, FieldDef, GlobalAddrEntity,
-            GlobalAddrFloat, GlobalAddrFunction, Globals, ProgsError, StringId, StringTable, Type,
-        },
-        Server,
+    server::progs::{
+        EntityFieldAddr, EntityId, FieldAddr, FieldDef, FunctionId, ProgsError, StringId,
+        StringTable, Type,
     },
 };
 
+use arrayvec::ArrayVec;
 use cgmath::{InnerSpace, Vector3, Zero};
-use chrono::Duration;
 
 const AREA_DEPTH: usize = 4;
+const NUM_AREA_NODES: usize = 2usize.pow(AREA_DEPTH as u32 + 1) - 1;
 const MAX_ENTITIES: usize = 600;
 
+#[derive(Debug)]
 enum AreaNodeKind {
     Branch(AreaBranch),
     Leaf,
 }
 
+#[derive(Debug)]
 struct AreaNode {
     kind: AreaNodeKind,
     triggers: HashSet<EntityId>,
     solids: HashSet<EntityId>,
 }
 
-// Apologies in advance.
+// The areas form a quadtree-like BSP tree which alternates splitting on the X
+// and Y axes.
+//
 //                               00                                X
 //               01                              02                Y
 //       03              04              05              06        X
@@ -101,8 +103,8 @@ struct AreaNode {
 
 impl AreaNode {
     /// Generate a breadth-first 2-D binary space partitioning tree with the given extents.
-    pub fn generate(mins: Vector3<f32>, maxs: Vector3<f32>) -> Vec<AreaNode> {
-        let mut nodes = Vec::with_capacity(2usize.pow(AREA_DEPTH as u32 + 1) - 1);
+    pub fn generate(mins: Vector3<f32>, maxs: Vector3<f32>) -> ArrayVec<AreaNode, NUM_AREA_NODES> {
+        let mut nodes: ArrayVec<AreaNode, NUM_AREA_NODES> = ArrayVec::new();
 
         // we generate the skeleton of the tree iteratively -- the nodes are linked but have no
         // geometric data.
@@ -136,30 +138,15 @@ impl AreaNode {
         // recursively assign geometric data to the nodes
         AreaNode::setup(&mut nodes, 0, mins, maxs);
 
-        // TODO: remove this in release versions
-        for (i, node) in nodes.iter().enumerate() {
-            match node.kind {
-                AreaNodeKind::Branch(ref b) => {
-                    debug!(
-                        "area node {}: axis = {:?} dist = {} front = {} back = {}",
-                        i, b.axis, b.dist, b.front, b.back
-                    );
-                }
-                AreaNodeKind::Leaf => debug!("area node {}: leaf", i),
-            }
-        }
         nodes
     }
 
-    fn setup(nodes: &mut Vec<AreaNode>, index: usize, mins: Vector3<f32>, maxs: Vector3<f32>) {
-        // TODO: remove this in release versions
-        debug!(
-            "node {: >2}: size = {:?} mins = {:?} maxs = {:?}",
-            index,
-            maxs - mins,
-            mins,
-            maxs
-        );
+    fn setup(
+        nodes: &mut ArrayVec<AreaNode, NUM_AREA_NODES>,
+        index: usize,
+        mins: Vector3<f32>,
+        maxs: Vector3<f32>,
+    ) {
         let size = maxs - mins;
 
         let axis;
@@ -200,6 +187,7 @@ enum AreaBranchAxis {
     Y = 1,
 }
 
+#[derive(Debug)]
 struct AreaBranch {
     axis: AreaBranchAxis,
     dist: f32,
@@ -207,22 +195,25 @@ struct AreaBranch {
     back: usize,
 }
 
+#[derive(Debug)]
 struct AreaEntity {
     entity: Entity,
     area_id: Option<usize>,
 }
 
+#[derive(Debug)]
 enum AreaEntitySlot {
     Vacant,
     Occupied(AreaEntity),
 }
 
 /// A representation of the current state of the game world.
+#[derive(Debug)]
 pub struct World {
-    string_table: Rc<StringTable>,
+    string_table: Rc<RefCell<StringTable>>,
     type_def: Rc<EntityTypeDef>,
 
-    area_nodes: Box<[AreaNode]>,
+    area_nodes: ArrayVec<AreaNode, NUM_AREA_NODES>,
     slots: Box<[AreaEntitySlot]>,
     models: Vec<Model>,
 }
@@ -231,7 +222,7 @@ impl World {
     pub fn create(
         mut brush_models: Vec<Model>,
         type_def: Rc<EntityTypeDef>,
-        string_table: Rc<StringTable>,
+        string_table: Rc<RefCell<StringTable>>,
     ) -> Result<World, ProgsError> {
         // generate area tree for world model
         let area_nodes = AreaNode::generate(brush_models[0].min(), brush_models[0].max());
@@ -247,7 +238,7 @@ impl World {
         // generate world entity
         let mut world_entity = Entity::new(string_table.clone(), type_def.clone());
         world_entity.put_string_id(
-            string_table.find(models[1].name()).unwrap(),
+            string_table.borrow_mut().find_or_insert(models[1].name()),
             FieldAddrStringId::ModelName as i16,
         )?;
         world_entity.put_float(1.0, FieldAddrFloat::ModelIndex as i16)?;
@@ -268,7 +259,7 @@ impl World {
 
         Ok(World {
             string_table,
-            area_nodes: area_nodes.into_boxed_slice(),
+            area_nodes,
             type_def,
             slots: slots.into_boxed_slice(),
             models,
@@ -276,7 +267,8 @@ impl World {
     }
 
     pub fn add_model(&mut self, vfs: &Vfs, name_id: StringId) -> Result<(), ProgsError> {
-        let name = self.string_table.get(name_id).unwrap();
+        let strs = self.string_table.borrow();
+        let name = strs.get(name_id).unwrap();
 
         if name.ends_with(".bsp") {
             let data = vfs.open(name).unwrap();
@@ -287,25 +279,24 @@ impl World {
                 ));
             }
             self.models.append(&mut brush_models);
-            Ok(())
         } else if name.ends_with(".mdl") {
             let data = vfs.open(&name).unwrap();
             let alias_model = mdl::load(data).unwrap();
             self.models
                 .push(Model::from_alias_model(&name, alias_model));
-            Ok(())
         } else if name.ends_with(".spr") {
             let data = vfs.open(&name).unwrap();
             let sprite_model = sprite::load(data);
             self.models
                 .push(Model::from_sprite_model(&name, sprite_model));
-            Ok(())
         } else {
             return Err(ProgsError::with_msg(format!(
                 "Unrecognized model type: {}",
                 name
             )));
         }
+
+        Ok(())
     }
 
     fn find_def<S>(&self, name: S) -> Result<&FieldDef, ProgsError>
@@ -318,7 +309,7 @@ impl World {
             .type_def
             .field_defs()
             .iter()
-            .find(|def| self.string_table.get(def.name_id).unwrap() == name)
+            .find(|def| self.string_table.borrow().get(def.name_id).unwrap() == name)
         {
             Some(d) => Ok(d),
             None => Err(ProgsError::with_msg(format!("no field with name {}", name))),
@@ -424,7 +415,7 @@ impl World {
                         Type::QPointer => unimplemented!(),
 
                         Type::QString => {
-                            let s_id = self.string_table.insert(val);
+                            let s_id = self.string_table.borrow_mut().insert(val);
                             ent.put_string_id(s_id, def.offset as i16)?;
                         }
 
@@ -484,7 +475,21 @@ impl World {
         Ok(())
     }
 
-    pub fn try_get_entity(&self, entity_id: EntityId) -> Result<&Entity, ProgsError> {
+    /// Returns a reference to an entity.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if `entity_id` does not refer to a valid slot or if
+    /// the slot is vacant.
+    #[inline]
+    pub fn entity(&self, entity_id: EntityId) -> &Entity {
+        match self.slots[entity_id.0 as usize] {
+            AreaEntitySlot::Vacant => panic!("no such entity: {:?}", entity_id),
+            AreaEntitySlot::Occupied(ref e) => &e.entity,
+        }
+    }
+
+    pub fn try_entity(&self, entity_id: EntityId) -> Result<&Entity, ProgsError> {
         if entity_id.0 as usize > self.slots.len() {
             return Err(ProgsError::with_msg(format!(
                 "Invalid entity ID ({})",
@@ -501,7 +506,7 @@ impl World {
         }
     }
 
-    pub fn try_get_entity_mut(&mut self, entity_id: EntityId) -> Result<&mut Entity, ProgsError> {
+    pub fn entity_mut(&mut self, entity_id: EntityId) -> Result<&mut Entity, ProgsError> {
         if entity_id.0 as usize > self.slots.len() {
             return Err(ProgsError::with_msg(format!(
                 "Invalid entity ID ({})",
@@ -518,7 +523,22 @@ impl World {
         }
     }
 
-    fn try_get_area_entity(&self, entity_id: EntityId) -> Result<&AreaEntity, ProgsError> {
+    pub fn entity_exists(&mut self, entity_id: EntityId) -> bool {
+        matches!(
+            self.slots[entity_id.0 as usize],
+            AreaEntitySlot::Occupied(_)
+        )
+    }
+
+    pub fn list_entities(&self, list: &mut Vec<EntityId>) {
+        for (id, slot) in self.slots.iter().enumerate() {
+            if let &AreaEntitySlot::Occupied(_) = slot {
+                list.push(EntityId(id));
+            }
+        }
+    }
+
+    fn area_entity(&self, entity_id: EntityId) -> Result<&AreaEntity, ProgsError> {
         if entity_id.0 as usize > self.slots.len() {
             return Err(ProgsError::with_msg(format!(
                 "Invalid entity ID ({})",
@@ -535,10 +555,7 @@ impl World {
         }
     }
 
-    fn try_get_area_entity_mut(
-        &mut self,
-        entity_id: EntityId,
-    ) -> Result<&mut AreaEntity, ProgsError> {
+    fn area_entity_mut(&mut self, entity_id: EntityId) -> Result<&mut AreaEntity, ProgsError> {
         if entity_id.0 as usize > self.slots.len() {
             return Err(ProgsError::with_msg(format!(
                 "Invalid entity ID ({})",
@@ -555,48 +572,58 @@ impl World {
         }
     }
 
-    pub fn spawn_entity(&mut self) -> Result<EntityId, ProgsError> {
-        let e_id = self.alloc_uninitialized()?;
-        self.link_entity(e_id, false)?;
-        Ok(e_id)
-    }
-
-    pub fn spawn_entity_from_map(
+    /// Lists the triggers touched by an entity.
+    ///
+    /// The triggers' IDs are stored in `touched`.
+    pub fn list_touched_triggers(
         &mut self,
-        execution_context: &mut ExecutionContext,
-        globals: &mut Globals,
-        cvars: &mut CvarRegistry,
-        server: &mut Server,
-        map: HashMap<&str, &str>,
-        vfs: &Vfs,
-    ) -> Result<EntityId, ProgsError> {
-        let classname = match map.get("classname") {
-            Some(c) => c.to_owned(),
-            None => return Err(ProgsError::with_msg("No classname for entity")),
-        };
+        touched: &mut Vec<EntityId>,
+        ent_id: EntityId,
+        area_id: usize,
+    ) -> Result<(), ProgsError> {
+        'next_trigger: for trigger_id in self.area_nodes[area_id].triggers.iter().copied() {
+            if trigger_id == ent_id {
+                // Don't trigger self.
+                continue;
+            }
 
-        let e_id = self.alloc_from_map(map)?;
+            let ent = self.entity(ent_id);
+            let trigger = self.entity(trigger_id);
 
-        // TODO: set origin, mins and maxs here if needed
+            let trigger_touch = trigger.load(FieldAddrFunctionId::Touch)?;
+            if trigger_touch == FunctionId(0) || trigger.solid()? == EntitySolid::Not {
+                continue;
+            }
 
-        // set `self` before calling spawn function
-        globals.put_entity_id(e_id, GlobalAddrEntity::Self_ as i16)?;
+            for i in 0..3 {
+                if ent.abs_min()?[i] > trigger.abs_max()?[i]
+                    || ent.abs_max()?[i] < trigger.abs_min()?[i]
+                {
+                    // Entities are not touching.
+                    continue 'next_trigger;
+                }
+            }
 
-        execution_context.execute_program_by_name(globals, self, cvars, server, vfs, classname)?;
+            touched.push(trigger_id);
+        }
 
-        // TODO: should touch triggers?
-        self.link_entity(e_id, false)?;
+        // Touch all triggers in sub-areas.
+        if let AreaNodeKind::Branch(AreaBranch { front, back, .. }) = self.area_nodes[area_id].kind
+        {
+            self.list_touched_triggers(touched, ent_id, front)?;
+            self.list_touched_triggers(touched, ent_id, back)?;
+        }
 
-        Ok(e_id)
+        Ok(())
     }
 
-    fn unlink_entity(&mut self, e_id: EntityId) -> Result<(), ProgsError> {
+    pub fn unlink_entity(&mut self, e_id: EntityId) -> Result<(), ProgsError> {
         // if this entity has been removed or freed, do nothing
         if let AreaEntitySlot::Vacant = self.slots[e_id.0 as usize] {
             return Ok(());
         }
 
-        let area_id = match self.try_get_area_entity(e_id)?.area_id {
+        let area_id = match self.area_entity(e_id)?.area_id {
             Some(i) => i,
 
             // entity not linked
@@ -609,12 +636,12 @@ impl World {
             debug!("Unlinking entity {} from area solids", e_id.0);
         }
 
-        self.try_get_area_entity_mut(e_id)?.area_id = None;
+        self.area_entity_mut(e_id)?.area_id = None;
 
         Ok(())
     }
 
-    fn link_entity(&mut self, e_id: EntityId, touch_triggers: bool) -> Result<(), ProgsError> {
+    pub fn link_entity(&mut self, e_id: EntityId) -> Result<(), ProgsError> {
         // don't link the world entity
         if e_id.0 == 0 {
             return Ok(());
@@ -631,7 +658,7 @@ impl World {
         let mut abs_max;
         let solid;
         {
-            let ent = self.try_get_entity_mut(e_id)?;
+            let ent = self.entity_mut(e_id)?;
 
             let origin = Vector3::from(ent.get_vector(FieldAddrVector::Origin as i16)?);
             let mins = Vector3::from(ent.get_vector(FieldAddrVector::Mins as i16)?);
@@ -659,10 +686,12 @@ impl World {
             ent.put_vector(abs_min.into(), FieldAddrVector::AbsMin as i16)?;
             ent.put_vector(abs_max.into(), FieldAddrVector::AbsMax as i16)?;
 
+            // Mark leaves containing entity for PVS.
             ent.leaf_count = 0;
             let model_index = ent.get_float(FieldAddrFloat::ModelIndex as i16)?;
             if model_index != 0.0 {
                 // TODO: SV_FindTouchedLeafs
+                todo!("SV_FindTouchedLeafs");
             }
 
             solid = ent.solid()?;
@@ -698,61 +727,22 @@ impl World {
         if solid == EntitySolid::Trigger {
             debug!("Linking entity {} into area {} triggers", e_id.0, node_id);
             self.area_nodes[node_id].triggers.insert(e_id);
-            self.try_get_area_entity_mut(e_id)?.area_id = Some(node_id);
+            self.area_entity_mut(e_id)?.area_id = Some(node_id);
         } else {
             debug!("Linking entity {} into area {} solids", e_id.0, node_id);
             self.area_nodes[node_id].solids.insert(e_id);
-            self.try_get_area_entity_mut(e_id)?.area_id = Some(node_id);
-        }
-
-        if touch_triggers {
-            unimplemented!();
+            self.area_entity_mut(e_id)?.area_id = Some(node_id);
         }
 
         Ok(())
     }
 
-    /// Update this entity's position and relink it into the world.
-    pub fn set_entity_origin(
-        &mut self,
-        e_id: EntityId,
-        origin: Vector3<f32>,
-    ) -> Result<(), ProgsError> {
-        {
-            let ent = self.try_get_entity_mut(e_id)?;
-            ent.put_vector(origin.into(), FieldAddrVector::Origin as i16)?;
-        }
-
-        self.link_entity(e_id, false)?;
-        Ok(())
-    }
-
-    pub fn set_entity_model(
-        &mut self,
-        e_id: EntityId,
-        model_name_id: StringId,
-        server: &Server,
-    ) -> Result<(), ProgsError> {
-        let model_index;
-        {
-            let ent = self.try_get_entity_mut(e_id)?;
-
-            ent.put_string_id(model_name_id, FieldAddrStringId::ModelName as i16)?;
-
-            // TODO: change this to `?` syntax once `server` has a proper error type
-            model_index = match server.model_precache_lookup(model_name_id) {
-                Ok(i) => i,
-                Err(_) => return Err(ProgsError::with_msg("model not precached")),
-            };
-
-            ent.put_float(model_index as f32, FieldAddrFloat::ModelIndex as i16)?;
-        }
-
-        if model_index == 0 {
+    pub fn set_entity_model(&mut self, e_id: EntityId, model_id: usize) -> Result<(), ProgsError> {
+        if model_id == 0 {
             self.set_entity_size(e_id, Vector3::zero(), Vector3::zero())?;
         } else {
-            let min = self.models[model_index].min();
-            let max = self.models[model_index].max();
+            let min = self.models[model_id].min();
+            let max = self.models[model_id].max();
             self.set_entity_size(e_id, min, max)?;
         }
 
@@ -765,7 +755,7 @@ impl World {
         min: Vector3<f32>,
         max: Vector3<f32>,
     ) -> Result<(), ProgsError> {
-        let ent = self.try_get_entity_mut(e_id)?;
+        let ent = self.entity_mut(e_id)?;
         ent.set_min_max_size(min, max)?;
         Ok(())
     }
@@ -777,46 +767,6 @@ impl World {
         Ok(())
     }
 
-    /// Moves an entity straight down until it collides with a solid surface.
-    ///
-    /// Returns `true` if the entity hit the floor, `false` otherwise.
-    ///
-    /// ## Notes
-    /// - The drop distance is limited to 256, so entities which are more than 256 units above a
-    ///   solid surface will not actually hit the ground.
-    pub fn drop_entity_to_floor(&mut self, e_id: EntityId) -> Result<bool, ProgsError> {
-        debug!("Finding floor for entity with ID {}", e_id.0);
-        let origin = self.try_get_entity(e_id)?.origin()?;
-
-        // TODO: replace magic constant
-        let end = Vector3::new(origin.x, origin.y, origin.z - 256.0);
-        let min = self.try_get_entity(e_id)?.min()?;
-        let max = self.try_get_entity(e_id)?.max()?;
-
-        let (trace, collide_entity) =
-            self.move_entity(e_id, origin, min, max, end, CollideKind::Normal)?;
-        debug!("End position after drop: {:?}", trace.end_point());
-
-        let drop_dist = 256.0;
-        let actual_dist = (trace.end_point() - origin).magnitude();
-
-        if actual_dist == drop_dist || trace.all_solid() {
-            // entity didn't hit the floor or is stuck
-            Ok(false)
-        } else {
-            // entity hit the floor. update origin, relink and set ON_GROUND flag.
-            self.try_get_entity_mut(e_id)?
-                .put_vector(trace.end_point().into(), FieldAddrVector::Origin as i16)?;
-            self.link_entity(e_id, false)?;
-            self.try_get_entity_mut(e_id)?
-                .add_flags(EntityFlags::ON_GROUND)?;
-            self.try_get_entity_mut(e_id)?
-                .put_entity_id(collide_entity, FieldAddrEntityId::Ground as i16)?;
-
-            Ok(true)
-        }
-    }
-
     // TODO: handle the offset return value internally
     pub fn hull_for_entity(
         &self,
@@ -824,20 +774,20 @@ impl World {
         min: Vector3<f32>,
         max: Vector3<f32>,
     ) -> Result<(BspCollisionHull, Vector3<f32>), ProgsError> {
-        let solid = self.try_get_entity(e_id)?.solid()?;
+        let solid = self.entity(e_id).solid()?;
         debug!("Entity solid type: {:?}", solid);
 
         match solid {
             EntitySolid::Bsp => {
-                if self.try_get_entity(e_id)?.move_kind()? != MoveKind::Push {
+                if self.entity(e_id).move_kind()? != MoveKind::Push {
                     return Err(ProgsError::with_msg(format!(
                         "Brush entities must have MoveKind::Push (has {:?})",
-                        self.try_get_entity(e_id)?.move_kind()?
+                        self.entity(e_id).move_kind()
                     )));
                 }
 
                 let size = max - min;
-                match self.models[self.try_get_entity(e_id)?.model_index()?].kind() {
+                match self.models[self.entity(e_id).model_index()?].kind() {
                     &ModelKind::Brush(ref bmodel) => {
                         let hull_index;
 
@@ -855,7 +805,7 @@ impl World {
 
                         let hull = bmodel.hull(hull_index).unwrap();
 
-                        let offset = hull.min() - min + self.try_get_entity(e_id)?.origin()?;
+                        let offset = hull.min() - min + self.entity(e_id).origin()?;
 
                         Ok((hull, offset))
                     }
@@ -867,79 +817,18 @@ impl World {
 
             _ => {
                 let hull = BspCollisionHull::for_bounds(
-                    self.try_get_entity(e_id)?.min()?,
-                    self.try_get_entity(e_id)?.max()?,
+                    self.entity(e_id).min()?,
+                    self.entity(e_id).max()?,
                 )
                 .unwrap();
-                let offset = self.try_get_entity(e_id)?.origin()?;
+                let offset = self.entity(e_id).origin()?;
 
                 Ok((hull, offset))
             }
         }
     }
 
-    pub fn physics(
-        &mut self,
-        globals: &mut Globals,
-        execution_context: &mut ExecutionContext,
-        cvars: &mut CvarRegistry,
-        server: &mut Server,
-        vfs: &Vfs,
-        sv_time: Duration,
-    ) -> Result<(), ProgsError> {
-        globals.put_entity_id(EntityId(0), GlobalAddrEntity::Self_ as i16)?;
-        globals.put_entity_id(EntityId(0), GlobalAddrEntity::Other as i16)?;
-        globals.put_float(
-            engine::duration_to_f32(sv_time),
-            GlobalAddrFloat::Time as i16,
-        )?;
-        let start_frame = globals.get_function_id(GlobalAddrFunction::StartFrame as i16)?;
-        execution_context.execute_program(globals, self, cvars, server, vfs, start_frame)?;
-
-        for i in 0..self.slots.len() {
-            if let AreaEntitySlot::Vacant = self.slots[i] {
-                continue;
-            }
-
-            // check force_retouch
-            if globals.get_float(GlobalAddrFloat::ForceRetouch as i16)? != 0.0 {
-                self.link_entity(EntityId(i), true)?;
-            }
-
-            if unimplemented!() {
-                // TODO: process client entities
-            } else {
-                match self.try_get_entity(EntityId(i))?.move_kind()? {
-                    MoveKind::Push => unimplemented!(),
-                    MoveKind::None => unimplemented!(),
-                    MoveKind::NoClip => unimplemented!(),
-                    MoveKind::Step => unimplemented!(),
-
-                    // all airborne entities have the same physics
-                    _ => unimplemented!(),
-                }
-            }
-
-            match globals.get_float(GlobalAddrFloat::ForceRetouch as i16)? {
-                f if f > 0.0 => globals.put_float(f - 1.0, GlobalAddrFloat::ForceRetouch as i16)?,
-                _ => (),
-            }
-        }
-
-        // TODO: increase sv.time by host_frametime
-        unimplemented!();
-    }
-
-    // TODO: rename arguments when implementing
-    pub fn physics_player(
-        &mut self,
-        _globals: &mut Globals,
-        _server: &Server,
-        _ent_id: EntityId,
-    ) -> Result<(), ProgsError> {
-        unimplemented!();
-    }
-
+    // TODO: come up with a better name. This doesn't actually move the entity!
     pub fn move_entity(
         &mut self,
         e_id: EntityId,
@@ -948,18 +837,18 @@ impl World {
         max: Vector3<f32>,
         end: Vector3<f32>,
         kind: CollideKind,
-    ) -> Result<(Trace, EntityId), ProgsError> {
+    ) -> Result<(Trace, Option<EntityId>), ProgsError> {
         debug!(
             "start={:?} min={:?} max={:?} end={:?}",
             start, min, max, end
         );
 
         debug!("Collision test: Entity {} with world entity", e_id.0);
-        let trace = self.collide_move_with_entity(EntityId(0), start, min, max, end)?;
+        let world_trace = self.collide_move_with_entity(EntityId(0), start, min, max, end)?;
 
         debug!(
             "End position after collision test with world hull: {:?}",
-            trace.end_point()
+            world_trace.end_point()
         );
 
         // if this is a rocket or a grenade, expand the monster collision box
@@ -987,10 +876,16 @@ impl World {
             kind,
         };
 
-        self.collide(&collide)?;
+        let (collide_trace, collide_ent) = self.collide(&collide)?;
 
-        // XXX: set this to the right entity
-        Ok((trace, EntityId(0)))
+        if collide_trace.all_solid()
+            || collide_trace.start_solid()
+            || collide_trace.ratio() < world_trace.ratio()
+        {
+            Ok((collide_trace, collide_ent))
+        } else {
+            Ok((world_trace, Some(EntityId(0))))
+        }
     }
 
     pub fn collide(&self, collide: &Collide) -> Result<(Trace, Option<EntityId>), ProgsError> {
@@ -1020,7 +915,7 @@ impl World {
                 }
             }
 
-            match self.try_get_entity(*touch)?.solid()? {
+            match self.entity(*touch).solid()? {
                 // if the other entity has no collision, skip it
                 EntitySolid::Not => continue,
 
@@ -1042,17 +937,15 @@ impl World {
 
             // if bounding boxes never intersect, skip this entity
             for i in 0..3 {
-                if collide.move_min[i] > self.try_get_entity(*touch)?.abs_max()?[i]
-                    || collide.move_max[i] < self.try_get_entity(*touch)?.abs_min()?[i]
+                if collide.move_min[i] > self.entity(*touch).abs_max()?[i]
+                    || collide.move_max[i] < self.entity(*touch).abs_min()?[i]
                 {
                     continue;
                 }
             }
 
             if let Some(e) = collide.e_id {
-                if self.try_get_entity(e)?.size()?[0] != 0.0
-                    && self.try_get_entity(*touch)?.size()?[0] == 0.0
-                {
+                if self.entity(e).size()?[0] != 0.0 && self.entity(*touch).size()?[0] == 0.0 {
                     continue;
                 }
             }
@@ -1063,20 +956,14 @@ impl World {
 
             if let Some(e) = collide.e_id {
                 // don't collide against owner or owned entities
-                if self.try_get_entity(*touch)?.owner()? == e
-                    || self.try_get_entity(e)?.owner()? == *touch
-                {
+                if self.entity(*touch).owner()? == e || self.entity(e).owner()? == *touch {
                     continue;
                 }
             }
 
             // select bounding boxes based on whether or not candidate is a monster
             let tmp_trace;
-            if self
-                .try_get_entity(*touch)?
-                .flags()?
-                .contains(EntityFlags::MONSTER)
-            {
+            if self.entity(*touch).flags()?.contains(EntityFlags::MONSTER) {
                 tmp_trace = self.collide_move_with_entity(
                     *touch,
                     collide.start,

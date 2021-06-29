@@ -81,49 +81,7 @@ struct ClientProgram {
 
 impl ClientProgram {
     pub async fn new(window: Window, base_dir: Option<PathBuf>, trace: bool) -> ClientProgram {
-        let mut vfs = Vfs::new();
-
-        let mut game_dir = base_dir.unwrap_or_else(|| common::default_base_dir());
-        game_dir.push("id1");
-
-        if !game_dir.is_dir() {
-            log::error!(concat!(
-                "`id1/` directory does not exist! Use the `--base-dir` option with the name of the",
-                " directory which contains `id1/`."
-            ));
-
-            exit(1);
-        }
-
-        vfs.add_directory(&game_dir).unwrap();
-
-        // ...then add PAK archives.
-        let mut num_paks = 0;
-        let mut pak_path = game_dir;
-        for vfs_id in 0..common::MAX_PAKFILES {
-            // Add the file name.
-            pak_path.push(format!("pak{}.pak", vfs_id));
-
-            // Keep adding PAKs until we don't find one or we hit MAX_PAKFILES.
-            if !pak_path.exists() {
-                // If the lowercase path doesn't exist, try again with uppercase.
-                pak_path.pop();
-                pak_path.push(format!("PAK{}.PAK", vfs_id));
-                if !pak_path.exists() {
-                    break;
-                }
-            }
-
-            vfs.add_pakfile(&pak_path).unwrap();
-            num_paks += 1;
-
-            // Remove the file name, leaving the game directory.
-            pak_path.pop();
-        }
-
-        if num_paks == 0 {
-            log::warn!("No PAK files found.");
-        }
+        let vfs = Vfs::with_base_dir(base_dir.unwrap_or(common::default_base_dir()));
 
         let con_names = Rc::new(RefCell::new(Vec::new()));
 

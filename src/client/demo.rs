@@ -1,7 +1,4 @@
-use std::{
-    io,
-    ops::Range,
-};
+use std::{io, ops::Range};
 
 use crate::common::{
     net::{self, NetError},
@@ -71,7 +68,7 @@ impl DemoServer {
     pub fn new(file: &mut VirtualFile) -> Result<DemoServer, DemoServerError> {
         let mut dem_reader = BufReader::new(file);
 
-        let mut buf = ArrayVec::<[u8; 3]>::new();
+        let mut buf = ArrayVec::<u8, 3>::new();
         // copy CD track number (terminated by newline) into buffer
         for i in 0..buf.capacity() {
             match dem_reader.read_u8()? {

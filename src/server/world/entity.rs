@@ -15,19 +15,22 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::{convert::TryInto, error::Error, fmt, rc::Rc};
+use std::{cell::RefCell, convert::TryInto, error::Error, fmt, rc::Rc};
 
 use crate::{
-    common::net::EntityState,
+    common::{engine::duration_to_f32, net::EntityState},
     server::{
         progs::{EntityId, FieldDef, FunctionId, ProgsError, StringId, StringTable, Type},
         world::phys::MoveKind,
     },
 };
 
+use arrayvec::ArrayString;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use cgmath::Vector3;
+use chrono::Duration;
 use num::FromPrimitive;
+use uluru::LRUCache;
 
 pub const MAX_ENT_LEAVES: usize = 16;
 
@@ -62,15 +65,7 @@ impl fmt::Display for EntityError {
     }
 }
 
-impl Error for EntityError {
-    fn description(&self) -> &str {
-        match *self {
-            EntityError::Io(ref err) => err.description(),
-            EntityError::Address(_) => "Invalid address",
-            EntityError::Other(ref msg) => &msg,
-        }
-    }
-}
+impl Error for EntityError {}
 
 impl From<::std::io::Error> for EntityError {
     fn from(error: ::std::io::Error) -> Self {
@@ -78,7 +73,19 @@ impl From<::std::io::Error> for EntityError {
     }
 }
 
-#[derive(Debug, FromPrimitive)]
+/// A trait which covers addresses of typed values.
+pub trait FieldAddr {
+    /// The type of value referenced by this address.
+    type Value;
+
+    /// Loads the value at this address.
+    fn load(&self, ent: &Entity) -> Result<Self::Value, EntityError>;
+
+    /// Stores a value at this address.
+    fn store(&self, ent: &mut Entity, value: Self::Value) -> Result<(), EntityError>;
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, FromPrimitive)]
 pub enum FieldAddrFloat {
     ModelIndex = 0,
     AbsMinX = 1,
@@ -87,7 +94,9 @@ pub enum FieldAddrFloat {
     AbsMaxX = 4,
     AbsMaxY = 5,
     AbsMaxZ = 6,
+    /// Used by mobile level geometry such as moving platforms.
     LocalTime = 7,
+    /// Determines the movement behavior of an entity. The value must be a variant of `MoveKind`.
     MoveKind = 8,
     Solid = 9,
     OriginX = 10,
@@ -108,26 +117,42 @@ pub enum FieldAddrFloat {
     PunchAngleX = 25,
     PunchAngleY = 26,
     PunchAngleZ = 27,
+    /// The index of the entity's animation frame.
     FrameId = 30,
+    /// The index of the entity's skin.
     SkinId = 31,
+    /// Effects flags applied to the entity. See `EntityEffects`.
     Effects = 32,
+    /// Minimum extent in local coordinates, X-coordinate.
     MinsX = 33,
+    /// Minimum extent in local coordinates, Y-coordinate.
     MinsY = 34,
+    /// Minimum extent in local coordinates, Z-coordinate.
     MinsZ = 35,
+    /// Maximum extent in local coordinates, X-coordinate.
     MaxsX = 36,
+    /// Maximum extent in local coordinates, Y-coordinate.
     MaxsY = 37,
+    /// Maximum extent in local coordinates, Z-coordinate.
     MaxsZ = 38,
     SizeX = 39,
     SizeY = 40,
     SizeZ = 41,
+    /// The next server time at which the entity should run its think function.
     NextThink = 46,
+    /// The entity's remaining health.
     Health = 48,
+    /// The number of kills scored by the entity.
     Frags = 49,
     Weapon = 50,
     WeaponFrame = 52,
+    /// The entity's remaining ammunition for its selected weapon.
     CurrentAmmo = 53,
+    /// The entity's remaining shotgun shells.
     AmmoShells = 54,
+    /// The entity's remaining shotgun shells.
     AmmoNails = 55,
+    /// The entity's remaining rockets/grenades.
     AmmoRockets = 56,
     AmmoCells = 57,
     Items = 58,
@@ -165,7 +190,21 @@ pub enum FieldAddrFloat {
     Sounds = 100,
 }
 
-#[derive(Debug, FromPrimitive)]
+impl FieldAddr for FieldAddrFloat {
+    type Value = f32;
+
+    #[inline]
+    fn load(&self, ent: &Entity) -> Result<Self::Value, EntityError> {
+        ent.get_float(*self as i16)
+    }
+
+    #[inline]
+    fn store(&self, ent: &mut Entity, value: Self::Value) -> Result<(), EntityError> {
+        ent.put_float(value, *self as i16)
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, FromPrimitive)]
 pub enum FieldAddrVector {
     AbsMin = 1,
     AbsMax = 4,
@@ -183,7 +222,21 @@ pub enum FieldAddrVector {
     MoveDirection = 96,
 }
 
-#[derive(Debug, FromPrimitive)]
+impl FieldAddr for FieldAddrVector {
+    type Value = [f32; 3];
+
+    #[inline]
+    fn load(&self, ent: &Entity) -> Result<Self::Value, EntityError> {
+        ent.get_vector(*self as i16)
+    }
+
+    #[inline]
+    fn store(&self, ent: &mut Entity, value: Self::Value) -> Result<(), EntityError> {
+        ent.put_vector(value, *self as i16)
+    }
+}
+
+#[derive(Copy, Clone, Debug, FromPrimitive)]
 pub enum FieldAddrStringId {
     ClassName = 28,
     ModelName = 29,
@@ -198,8 +251,22 @@ pub enum FieldAddrStringId {
     Noise3Name = 104,
 }
 
-#[derive(Debug, FromPrimitive)]
+impl FieldAddr for FieldAddrStringId {
+    type Value = StringId;
+
+    fn load(&self, ent: &Entity) -> Result<Self::Value, EntityError> {
+        ent.get_int(*self as i16)
+            .map(|val| StringId(val.try_into().unwrap()))
+    }
+
+    fn store(&self, ent: &mut Entity, value: Self::Value) -> Result<(), EntityError> {
+        ent.put_int(value.0.try_into().unwrap(), *self as i16)
+    }
+}
+
+#[derive(Copy, Clone, Debug, FromPrimitive)]
 pub enum FieldAddrEntityId {
+    /// The entity this entity is standing on.
     Ground = 47,
     Chain = 60,
     Enemy = 75,
@@ -209,12 +276,38 @@ pub enum FieldAddrEntityId {
     Owner = 95,
 }
 
-#[derive(Debug, FromPrimitive)]
+impl FieldAddr for FieldAddrEntityId {
+    type Value = EntityId;
+
+    fn load(&self, ent: &Entity) -> Result<Self::Value, EntityError> {
+        ent.entity_id(*self as i16)
+    }
+
+    fn store(&self, ent: &mut Entity, value: Self::Value) -> Result<(), EntityError> {
+        ent.put_entity_id(value, *self as i16)
+    }
+}
+
+#[derive(Copy, Clone, Debug, FromPrimitive)]
 pub enum FieldAddrFunctionId {
     Touch = 42,
     Use = 43,
     Think = 44,
     Blocked = 45,
+}
+
+impl FieldAddr for FieldAddrFunctionId {
+    type Value = FunctionId;
+
+    #[inline]
+    fn load(&self, ent: &Entity) -> Result<Self::Value, EntityError> {
+        ent.function_id(*self as i16)
+    }
+
+    #[inline]
+    fn store(&self, ent: &mut Entity, value: Self::Value) -> Result<(), EntityError> {
+        ent.put_function_id(value, *self as i16)
+    }
 }
 
 bitflags! {
@@ -259,13 +352,24 @@ fn vector_addr(addr: usize) -> Result<FieldAddrVector, ProgsError> {
     }
 }
 
+#[derive(Debug)]
+struct FieldDefCacheEntry {
+    name: ArrayString<64>,
+    index: usize,
+}
+
+#[derive(Debug)]
 pub struct EntityTypeDef {
+    string_table: Rc<RefCell<StringTable>>,
     addr_count: usize,
     field_defs: Box<[FieldDef]>,
+
+    name_cache: RefCell<LRUCache<FieldDefCacheEntry, 16>>,
 }
 
 impl EntityTypeDef {
     pub fn new(
+        string_table: Rc<RefCell<StringTable>>,
         addr_count: usize,
         field_defs: Box<[FieldDef]>,
     ) -> Result<EntityTypeDef, EntityError> {
@@ -277,8 +381,10 @@ impl EntityTypeDef {
         }
 
         Ok(EntityTypeDef {
+            string_table,
             addr_count,
             field_defs,
+            name_cache: RefCell::new(LRUCache::default()),
         })
     }
 
@@ -288,6 +394,37 @@ impl EntityTypeDef {
 
     pub fn field_defs(&self) -> &[FieldDef] {
         self.field_defs.as_ref()
+    }
+
+    /// Locate a field definition given its name.
+    pub fn find<S>(&self, name: S) -> Option<&FieldDef>
+    where
+        S: AsRef<str>,
+    {
+        let name = name.as_ref();
+
+        if let Some(cached) = self
+            .name_cache
+            .borrow_mut()
+            .find(|entry| &entry.name == name)
+        {
+            return Some(&self.field_defs[cached.index]);
+        }
+
+        let name_id = self.string_table.borrow().find(name)?;
+
+        let (index, def) = self
+            .field_defs
+            .iter()
+            .enumerate()
+            .find(|(_, def)| def.name_id == name_id)?;
+
+        self.name_cache.borrow_mut().insert(FieldDefCacheEntry {
+            name: ArrayString::from(name).unwrap(),
+            index,
+        });
+
+        Some(def)
     }
 }
 
@@ -300,8 +437,9 @@ pub enum EntitySolid {
     Bsp = 4,
 }
 
+#[derive(Debug)]
 pub struct Entity {
-    string_table: Rc<StringTable>,
+    string_table: Rc<RefCell<StringTable>>,
     type_def: Rc<EntityTypeDef>,
     addrs: Box<[[u8; 4]]>,
 
@@ -311,7 +449,7 @@ pub struct Entity {
 }
 
 impl Entity {
-    pub fn new(string_table: Rc<StringTable>, type_def: Rc<EntityTypeDef>) -> Entity {
+    pub fn new(string_table: Rc<RefCell<StringTable>>, type_def: Rc<EntityTypeDef>) -> Entity {
         let mut addrs = Vec::with_capacity(type_def.addr_count);
         for _ in 0..type_def.addr_count {
             addrs.push([0; 4]);
@@ -350,6 +488,13 @@ impl Entity {
             }
             None => return Ok(()),
         }
+    }
+
+    pub fn field_def<S>(&self, name: S) -> Option<&FieldDef>
+    where
+        S: AsRef<str>,
+    {
+        self.type_def.find(name)
     }
 
     /// Returns a reference to the memory at the given address.
@@ -416,6 +561,22 @@ impl Entity {
         Ok(())
     }
 
+    #[inline]
+    pub fn load<F>(&self, field: F) -> Result<F::Value, EntityError>
+    where
+        F: FieldAddr,
+    {
+        field.load(self)
+    }
+
+    #[inline]
+    pub fn store<F>(&mut self, field: F, value: F::Value) -> Result<(), EntityError>
+    where
+        F: FieldAddr,
+    {
+        field.store(self, value)
+    }
+
     /// Loads an `i32` from the given virtual address.
     pub fn get_int(&self, addr: i16) -> Result<i32, EntityError> {
         Ok(self.get_addr(addr)?.read_i32::<LittleEndian>()?)
@@ -465,7 +626,7 @@ impl Entity {
     }
 
     /// Loads a `StringId` from the given virtual address.
-    pub fn get_string_id(&self, addr: i16) -> Result<StringId, EntityError> {
+    pub fn string_id(&self, addr: i16) -> Result<StringId, EntityError> {
         self.type_check(addr as usize, Type::QString)?;
 
         Ok(StringId(
@@ -483,7 +644,7 @@ impl Entity {
     }
 
     /// Loads an `EntityId` from the given virtual address.
-    pub fn get_entity_id(&self, addr: i16) -> Result<EntityId, EntityError> {
+    pub fn entity_id(&self, addr: i16) -> Result<EntityId, EntityError> {
         self.type_check(addr as usize, Type::QEntity)?;
 
         match self.get_addr(addr)?.read_i32::<LittleEndian>()? {
@@ -502,7 +663,7 @@ impl Entity {
     }
 
     /// Loads a `FunctionId` from the given virtual address.
-    pub fn get_function_id(&self, addr: i16) -> Result<FunctionId, EntityError> {
+    pub fn function_id(&self, addr: i16) -> Result<FunctionId, EntityError> {
         self.type_check(addr as usize, Type::QFunction)?;
         Ok(FunctionId(
             self.get_addr(addr)?.read_i32::<LittleEndian>()? as usize
@@ -584,6 +745,44 @@ impl Entity {
         Ok(self.get_vector(FieldAddrVector::Size as i16)?.into())
     }
 
+    pub fn velocity(&self) -> Result<Vector3<f32>, EntityError> {
+        Ok(self.get_vector(FieldAddrVector::Velocity as i16)?.into())
+    }
+
+    /// Applies gravity to the entity.
+    ///
+    /// The effect depends on the provided value of the `sv_gravity` cvar, the
+    /// amount of time being simulated, and the entity's own `gravity` field
+    /// value.
+    pub fn apply_gravity(
+        &mut self,
+        sv_gravity: f32,
+        frame_time: Duration,
+    ) -> Result<(), EntityError> {
+        let ent_gravity = match self.field_def("gravity") {
+            Some(def) => self.get_float(def.offset as i16)?,
+            None => 1.0,
+        };
+
+        let mut vel = self.velocity()?;
+        vel.z -= ent_gravity * sv_gravity * duration_to_f32(frame_time);
+        self.store(FieldAddrVector::Velocity, vel.into())?;
+
+        Ok(())
+    }
+
+    /// Limits the entity's velocity by clamping each component (not the
+    /// magnitude!) to an absolute value of `sv_maxvelocity`.
+    pub fn limit_velocity(&mut self, sv_maxvelocity: f32) -> Result<(), EntityError> {
+        let mut vel = self.velocity()?;
+        for c in &mut vel[..] {
+            *c = c.clamp(-sv_maxvelocity, sv_maxvelocity);
+        }
+        self.put_vector(vel.into(), FieldAddrVector::Velocity as i16)?;
+
+        Ok(())
+    }
+
     pub fn move_kind(&self) -> Result<MoveKind, EntityError> {
         let move_kind_f = self.get_float(FieldAddrFloat::MoveKind as i16)?;
         let move_kind_i = move_kind_f as i32;
@@ -614,6 +813,6 @@ impl Entity {
     }
 
     pub fn owner(&self) -> Result<EntityId, EntityError> {
-        Ok(self.get_entity_id(FieldAddrEntityId::Owner as i16)?)
+        Ok(self.entity_id(FieldAddrEntityId::Owner as i16)?)
     }
 }

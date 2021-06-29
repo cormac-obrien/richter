@@ -169,6 +169,7 @@ impl CmdRegistry {
 /// A configuration variable.
 ///
 /// Cvars are the primary method of configuring the game.
+#[derive(Debug)]
 struct Cvar {
     // Value of this variable
     val: String,
@@ -185,6 +186,7 @@ struct Cvar {
     default: String,
 }
 
+#[derive(Debug)]
 pub struct CvarRegistry {
     cvars: RefCell<HashMap<String, Cvar>>,
     names: Rc<RefCell<Vec<String>>>,

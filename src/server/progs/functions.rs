@@ -15,15 +15,15 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use crate::server::progs::{ops::Opcode, ProgsError, StringId, StringTable};
-
-use std::{convert::TryInto, rc::Rc};
+use std::{cell::RefCell, convert::TryInto, rc::Rc};
 
 use num::FromPrimitive;
 
+use crate::server::progs::{ops::Opcode, ProgsError, StringId, StringTable};
+
 pub const MAX_ARGS: usize = 8;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[repr(C)]
 pub struct Statement {
     pub opcode: Opcode,
@@ -158,8 +158,9 @@ pub struct FunctionDef {
     pub argsz: [u8; MAX_ARGS],
 }
 
+#[derive(Debug)]
 pub struct Functions {
-    pub string_table: Rc<StringTable>,
+    pub string_table: Rc<RefCell<StringTable>>,
     pub defs: Box<[FunctionDef]>,
     pub statements: Box<[Statement]>,
 }
@@ -196,7 +197,10 @@ impl Functions {
         S: AsRef<str>,
     {
         for (i, def) in self.defs.iter().enumerate() {
-            let f_name = self.string_table.get(def.name_id).unwrap();
+            let strs = self.string_table.borrow();
+            let f_name = strs.get(def.name_id).ok_or_else(|| {
+                ProgsError::with_msg(format!("No string with ID {:?}", def.name_id))
+            })?;
             if f_name == name.as_ref() {
                 return Ok(FunctionId(i));
             }

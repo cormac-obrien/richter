@@ -514,12 +514,12 @@ impl WorldRenderer {
                         Clear,
                         Clear,
                     );
-                    alias.record_draw(state, pass, time, ent.get_frame_id(), ent.get_skin_id());
+                    alias.record_draw(state, pass, time, ent.frame_id(), ent.skin_id());
                 }
                 EntityRenderer::Sprite(ref sprite) => {
                     pass.set_pipeline(state.sprite_pipeline().pipeline());
                     SpritePipeline::set_push_constants(pass, Clear, Clear, Clear);
-                    sprite.record_draw(state, pass, ent.get_frame_id(), time);
+                    sprite.record_draw(state, pass, ent.frame_id(), time);
                 }
                 _ => warn!("non-brush renderers not implemented!"),
                 // _ => unimplemented!(),

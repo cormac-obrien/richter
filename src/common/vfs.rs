@@ -17,7 +17,7 @@
 
 use std::{
     fs::File,
-    io::{self, Cursor, Read, Seek, SeekFrom},
+    io::{self, BufReader, Cursor, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
@@ -33,11 +33,13 @@ pub enum VfsError {
     NoSuchFile(String),
 }
 
+#[derive(Debug)]
 enum VfsComponent {
     Pak(Pak),
     Directory(PathBuf),
 }
 
+#[derive(Debug)]
 pub struct Vfs {
     components: Vec<VfsComponent>,
 }
@@ -47,6 +49,55 @@ impl Vfs {
         Vfs {
             components: Vec::new(),
         }
+    }
+
+    /// Initializes the virtual filesystem using a base directory.
+    pub fn with_base_dir(base_dir: PathBuf) -> Vfs {
+        let mut vfs = Vfs::new();
+
+        let mut game_dir = base_dir;
+        game_dir.push("id1");
+
+        if !game_dir.is_dir() {
+            log::error!(concat!(
+                "`id1/` directory does not exist! Use the `--base-dir` option with the name of the",
+                " directory which contains `id1/`."
+            ));
+
+            std::process::exit(1);
+        }
+
+        vfs.add_directory(&game_dir).unwrap();
+
+        // ...then add PAK archives.
+        let mut num_paks = 0;
+        let mut pak_path = game_dir;
+        for vfs_id in 0..crate::common::MAX_PAKFILES {
+            // Add the file name.
+            pak_path.push(format!("pak{}.pak", vfs_id));
+
+            // Keep adding PAKs until we don't find one or we hit MAX_PAKFILES.
+            if !pak_path.exists() {
+                // If the lowercase path doesn't exist, try again with uppercase.
+                pak_path.pop();
+                pak_path.push(format!("PAK{}.PAK", vfs_id));
+                if !pak_path.exists() {
+                    break;
+                }
+            }
+
+            vfs.add_pakfile(&pak_path).unwrap();
+            num_paks += 1;
+
+            // Remove the file name, leaving the game directory.
+            pak_path.pop();
+        }
+
+        if num_paks == 0 {
+            log::warn!("No PAK files found.");
+        }
+
+        vfs
     }
 
     pub fn add_pakfile<P>(&mut self, path: P) -> Result<(), VfsError>
@@ -87,7 +138,7 @@ impl Vfs {
                     full_path.push(vp);
 
                     if let Ok(f) = File::open(full_path) {
-                        return Ok(VirtualFile::FileBacked(f));
+                        return Ok(VirtualFile::FileBacked(BufReader::new(f)));
                     }
                 }
             }
@@ -99,7 +150,7 @@ impl Vfs {
 
 pub enum VirtualFile<'a> {
     PakBacked(Cursor<&'a [u8]>),
-    FileBacked(File),
+    FileBacked(BufReader<File>),
 }
 
 impl<'a> Read for VirtualFile<'a> {

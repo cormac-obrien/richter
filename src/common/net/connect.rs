@@ -433,7 +433,7 @@ impl ConnectPacket for ResponsePlayerInfo {
     {
         writer.write_u8(self.player_id)?;
         writer.write(self.player_name.as_bytes())?;
-        writer.write_u8(0)?;
+        writer.write_u8(0)?; // NUL-terminate
         writer.write_i32::<LittleEndian>(self.colors)?;
         writer.write_i32::<LittleEndian>(self.frags)?;
         writer.write_i32::<LittleEndian>(self.connect_duration)?;
