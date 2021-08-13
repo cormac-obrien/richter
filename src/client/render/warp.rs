@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 use crate::common::math;
 
-use cgmath::{InnerSpace, Vector2, Vector3};
+use cgmath::Vector3;
 
 // TODO: make this a cvar
 const SUBDIVIDE_SIZE: f32 = 32.0;

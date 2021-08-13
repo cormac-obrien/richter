@@ -225,7 +225,7 @@ impl GlyphRenderer {
             .chunks_exact(GLYPH_WIDTH * GLYPH_HEIGHT)
             .enumerate()
             .map(|(id, indices)| {
-                let (diffuse_data, _) = state.palette().translate(&indices);
+                let (diffuse_data, _) = state.palette().translate(indices);
                 state.create_texture(
                     Some(&format!("conchars[{}]", id)),
                     GLYPH_WIDTH as u32,

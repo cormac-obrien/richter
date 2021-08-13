@@ -171,7 +171,7 @@ impl Error for BspError {
     fn description(&self) -> &str {
         match *self {
             BspError::Io(ref err) => err.description(),
-            BspError::Other(ref msg) => &msg,
+            BspError::Other(ref msg) => msg,
         }
     }
 }
@@ -632,11 +632,11 @@ impl BspCollisionHull {
 
         for child in self.nodes[node_id].children.iter() {
             match child {
-                &BspCollisionNodeChild::Node(n) => {
+                BspCollisionNodeChild::Node(n) => {
                     result += &format!("    n{} -> n{}\n", node_id, n);
-                    result += &self.gen_dot_graph_recursive(rank + 1, rank_lists, leaf_names, n);
+                    result += &self.gen_dot_graph_recursive(rank + 1, rank_lists, leaf_names, *n);
                 }
-                &BspCollisionNodeChild::Contents(_) => {
+                BspCollisionNodeChild::Contents(_) => {
                     let leaf_count = leaf_names.len();
                     let leaf_name = format!("l{}", leaf_count);
                     result += &format!("    n{} -> {}\n", node_id, leaf_name);

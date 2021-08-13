@@ -79,14 +79,14 @@ impl DemoServer {
 
             if i >= buf.capacity() - 1 {
                 // CD track would be more than 2 digits long, which is impossible
-                Err(DemoServerError::InvalidCdTrack)?;
+                return Err(DemoServerError::InvalidCdTrack);
             }
         }
 
         let track_override = {
             let track_str = match std::str::from_utf8(&buf) {
                 Ok(s) => s,
-                Err(_) => Err(DemoServerError::InvalidCdTrack)?,
+                Err(_) => return Err(DemoServerError::InvalidCdTrack),
             };
 
             match track_str {
@@ -96,10 +96,10 @@ impl DemoServer {
                     Ok(track) => match track {
                         // if track is -1, allow demo to specify tracks in messages
                         -1 => None,
-                        t if t < -1 => Err(DemoServerError::InvalidCdTrack)?,
+                        t if t < -1 => return Err(DemoServerError::InvalidCdTrack),
                         _ => Some(track as u32),
                     },
-                    Err(_) => Err(DemoServerError::InvalidCdTrack)?,
+                    Err(_) => return Err(DemoServerError::InvalidCdTrack),
                 },
             }
         };

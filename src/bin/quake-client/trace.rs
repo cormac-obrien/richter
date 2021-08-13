@@ -1,11 +1,13 @@
-use std::{cell::RefCell, io::BufWriter, rc::Rc, fs::File};
+use std::{cell::RefCell, fs::File, io::BufWriter, rc::Rc};
 
 use richter::{client::trace::TraceFrame, common::console::CvarRegistry};
 
 const DEFAULT_TRACE_PATH: &'static str = "richter-trace.json";
 
 /// Implements the `trace_begin` command.
-pub fn cmd_trace_begin(trace: Rc<RefCell<Option<Vec<TraceFrame>>>>) -> Box<dyn Fn(&[&str]) -> String> {
+pub fn cmd_trace_begin(
+    trace: Rc<RefCell<Option<Vec<TraceFrame>>>>,
+) -> Box<dyn Fn(&[&str]) -> String> {
     Box::new(move |_| {
         if trace.borrow().is_some() {
             log::error!("trace already in progress");

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::FromIterator};
+use std::collections::HashMap;
 
 use crate::{
     client::{
@@ -19,7 +19,6 @@ use crate::{
     },
 };
 
-use arrayvec::ArrayVec;
 use chrono::Duration;
 use num::FromPrimitive as _;
 use strum::IntoEnumIterator as _;
@@ -96,7 +95,7 @@ impl std::fmt::Display for HudTextureId {
     }
 }
 
-const WEAPON_ID_NAMES: [&'static str; 7] = [
+const WEAPON_ID_NAMES: [&str; 7] = [
     "SHOTGUN", "SSHOTGUN", "NAILGUN", "SNAILGUN", "RLAUNCH", "SRLAUNCH", "LIGHTNG",
 ];
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive, EnumIter)]
@@ -133,7 +132,7 @@ impl std::fmt::Display for WeaponFrame {
     }
 }
 
-const AMMO_ID_NAMES: [&'static str; 4] = ["SHELLS", "NAILS", "ROCKET", "CELLS"];
+const AMMO_ID_NAMES: [&str; 4] = ["SHELLS", "NAILS", "ROCKET", "CELLS"];
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive, EnumIter)]
 enum AmmoId {
     Shells = 0,
@@ -148,7 +147,7 @@ impl std::fmt::Display for AmmoId {
     }
 }
 
-const ITEM_ID_NAMES: [&'static str; 6] = ["KEY1", "KEY2", "INVIS", "INVULN", "SUIT", "QUAD"];
+const ITEM_ID_NAMES: [&str; 6] = ["KEY1", "KEY2", "INVIS", "INVULN", "SUIT", "QUAD"];
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive, EnumIter)]
 enum ItemId {
     Key1 = 0,
@@ -428,7 +427,7 @@ impl HudRenderer {
             for (chr_id, chr) in ammo_str.chars().enumerate() {
                 if chr != ' ' {
                     glyph_cmds.push(GlyphRendererCommand::Glyph {
-                        glyph_id: 18 + chr as u8 - '0' as u8,
+                        glyph_id: 18 + chr as u8 - b'0',
                         position: ScreenPosition::Relative {
                             anchor: Anchor::BOTTOM_CENTER,
                             x_ofs: sbar_x_ofs + 8 * (6 * i + chr_id) as i32 + 10,
@@ -537,7 +536,7 @@ impl HudRenderer {
 
         // crosshair
         glyph_cmds.push(GlyphRendererCommand::Glyph {
-            glyph_id: '+' as u8,
+            glyph_id: b'+',
             position: ScreenPosition::Absolute(Anchor::CENTER),
             anchor: Anchor::TOP_LEFT,
             scale,
@@ -638,7 +637,7 @@ impl HudRenderer {
     }
 
     /// Generate render commands to draw the HUD in the specified state.
-    pub fn generate_commands<'state, 'a>(
+    pub fn generate_commands<'a>(
         &'a self,
         hud_state: &HudState<'a>,
         time: Duration,
@@ -670,7 +669,7 @@ impl HudRenderer {
 
                 let output = console.output();
                 for (id, line) in output.recent_lines(console_timeout, 100, 10).enumerate() {
-                    for (chr_id, chr) in line.into_iter().enumerate() {
+                    for (chr_id, chr) in line.iter().enumerate() {
                         glyph_cmds.push(GlyphRendererCommand::Glyph {
                             glyph_id: *chr as u8,
                             position: ScreenPosition::Relative {
@@ -695,7 +694,7 @@ impl HudRenderer {
                 // TODO: dedup this code
                 let output = console.output();
                 for (id, line) in output.recent_lines(console_timeout, 100, 10).enumerate() {
-                    for (chr_id, chr) in line.into_iter().enumerate() {
+                    for (chr_id, chr) in line.iter().enumerate() {
                         glyph_cmds.push(GlyphRendererCommand::Glyph {
                             glyph_id: *chr as u8,
                             position: ScreenPosition::Relative {

@@ -205,7 +205,7 @@ impl Wad {
 
     pub fn open_conchars(&self) -> Result<QPic, Error> {
         match self.files.get("CONCHARS") {
-            Some(ref data) => {
+            Some(data) => {
                 let width = 128;
                 let height = 128;
                 let indices = Vec::from(&data[..(width * height) as usize]);
@@ -226,7 +226,7 @@ impl Wad {
         S: AsRef<str>,
     {
         if name.as_ref() == "CONCHARS" {
-            Err(WadErrorKind::ConcharsUseDedicatedFunction)?
+            return Err(WadErrorKind::ConcharsUseDedicatedFunction.into());
         }
 
         match self.files.get(name.as_ref()) {

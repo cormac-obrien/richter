@@ -23,18 +23,18 @@ pub use music::MusicPlayer;
 
 use std::{
     cell::{Cell, RefCell},
-    io::{self, BufReader, Cursor, Read},
+    io::{self, Cursor, Read},
 };
 
 use crate::common::vfs::{Vfs, VfsError};
 
 use cgmath::{InnerSpace, Vector3};
+use chrono::Duration;
 use rodio::{
     source::{Buffered, SamplesConverter},
     Decoder, OutputStreamHandle, Sink, Source,
 };
 use thiserror::Error;
-use chrono::Duration;
 
 pub const DISTANCE_ATTENUATION_FACTOR: f32 = 0.001;
 const MAX_ENTITY_CHANNELS: usize = 128;
@@ -103,8 +103,7 @@ impl Listener {
         let decay = (emitter_origin - self.origin.get()).magnitude()
             * attenuation
             * DISTANCE_ATTENUATION_FACTOR;
-        let volume = ((1.0 - decay) * base_volume).max(0.0);
-        volume
+        ((1.0 - decay) * base_volume).max(0.0)
     }
 }
 
@@ -147,8 +146,8 @@ impl StaticSound {
         listener: &Listener,
     ) -> StaticSound {
         // TODO: handle PlayError once PR accepted
-        let sink = Sink::try_new(&stream).unwrap();
-        let infinite = src.0.clone().repeat_infinite();
+        let sink = Sink::try_new(stream).unwrap();
+        let infinite = src.0.repeat_infinite();
         sink.append(infinite);
         sink.set_volume(listener.attenuate(origin, volume, attenuation));
 
@@ -339,13 +338,7 @@ impl EntityMixer {
         let chan_id = self.find_free_channel(ent_id, ent_channel);
         let new_channel = Channel::new(self.stream.clone());
 
-        new_channel.play(
-            src.clone(),
-            origin,
-            listener,
-            volume,
-            attenuation,
-        );
+        new_channel.play(src, origin, listener, volume, attenuation);
         self.channels[chan_id] = Some(EntityChannel {
             start_time: time,
             ent_id,

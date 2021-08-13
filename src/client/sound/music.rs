@@ -54,7 +54,7 @@ impl MusicPlayer {
                 .or_else(|_| self.vfs.open(format!("music/{}.wav", name)))
                 .or_else(|_| self.vfs.open(format!("music/{}.mp3", name)))
                 .or_else(|_| self.vfs.open(format!("music/{}.ogg", name)))
-                .or(Err(SoundError::NoSuchTrack(name.to_owned())))?
+                .map_err(|_| SoundError::NoSuchTrack(name.to_owned()))?
         } else {
             self.vfs.open(name)?
         };

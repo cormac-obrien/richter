@@ -129,7 +129,7 @@ impl<'a> RenderPassBuilder<'a> {
 /// A render target consists of a series of color attachments and an optional depth-stencil
 /// attachment.
 pub trait RenderTarget {
-    fn render_pass_builder<'a>(&'a self) -> RenderPassBuilder<'a>;
+    fn render_pass_builder(&self) -> RenderPassBuilder;
 }
 
 /// A trait describing a render target with a built-in resolve attachment.
@@ -227,7 +227,7 @@ impl InitialPassTarget {
 }
 
 impl RenderTarget for InitialPassTarget {
-    fn render_pass_builder<'a>(&'a self) -> RenderPassBuilder {
+    fn render_pass_builder(&self) -> RenderPassBuilder {
         RenderPassBuilder {
             color_attachments: vec![
                 wgpu::RenderPassColorAttachment {
@@ -306,7 +306,7 @@ impl DeferredPassTarget {
 }
 
 impl RenderTarget for DeferredPassTarget {
-    fn render_pass_builder<'a>(&'a self) -> RenderPassBuilder {
+    fn render_pass_builder(&self) -> RenderPassBuilder {
         RenderPassBuilder {
             color_attachments: vec![wgpu::RenderPassColorAttachment {
                 view: self.color_view(),
@@ -365,7 +365,7 @@ impl FinalPassTarget {
 }
 
 impl RenderTarget for FinalPassTarget {
-    fn render_pass_builder<'a>(&'a self) -> RenderPassBuilder {
+    fn render_pass_builder(&self) -> RenderPassBuilder {
         RenderPassBuilder {
             color_attachments: vec![wgpu::RenderPassColorAttachment {
                 view: &self.color_view,

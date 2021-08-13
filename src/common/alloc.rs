@@ -104,7 +104,7 @@ impl<T> LinkedSlab<T> {
         // move contents out to avoid double mutable borrow of self.
         // neither LinkedList::new() nor Slab::new() allocates any memory, so
         // this is free.
-        let mut allocated = mem::replace(&mut self.allocated, LinkedList::new());
+        let mut allocated = mem::take(&mut self.allocated);
         let mut slab = mem::replace(&mut self.slab, Slab::new());
 
         allocated.drain_filter(|k| {
@@ -163,11 +163,11 @@ mod tests {
         }
 
         values.retain(|v| v % 2 == 0);
-        let mut expected: HashSet<i32> = HashSet::from_iter(values.into_iter());
+        let expected: HashSet<i32> = HashSet::from_iter(values.into_iter());
 
         linked_slab.retain(|_, v| *v % 2 == 0);
 
-        let mut actual = HashSet::from_iter(linked_slab.iter().map(|v| *v));
+        let actual = HashSet::from_iter(linked_slab.iter().copied());
 
         assert_eq!(expected, actual);
     }

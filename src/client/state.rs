@@ -35,7 +35,7 @@ use rand::{
 };
 use rodio::OutputStreamHandle;
 
-const CACHED_SOUND_NAMES: &[&'static str] = &[
+const CACHED_SOUND_NAMES: &[&str] = &[
     "hknight/hit.wav",
     "weapons/r_exp3.wav",
     "weapons/ric1.wav",
@@ -198,7 +198,7 @@ impl ClientState {
                     models.push(bmodel);
                     model_names.insert(name, id);
                 }
-            } else if !mod_name.starts_with("*") {
+            } else if !mod_name.starts_with('*') {
                 // model names starting with * are loaded from the world BSP
                 debug!("Loading model {}", mod_name);
                 let id = models.len();
@@ -209,7 +209,7 @@ impl ClientState {
             // TODO: send keepalive message?
         }
 
-        let mut sounds = vec![AudioSource::load(&vfs, "misc/null.wav")?];
+        let mut sounds = vec![AudioSource::load(vfs, "misc/null.wav")?];
         for ref snd_name in sound_precache {
             debug!("Loading sound {}: {}", sounds.len(), snd_name);
             sounds.push(AudioSource::load(vfs, snd_name)?);
@@ -752,7 +752,7 @@ impl ClientState {
     pub fn spawn_entities(&mut self, id: usize, baseline: EntityState) -> Result<(), ClientError> {
         // don't clobber existing entities
         if id < self.entities.len() {
-            Err(ClientError::EntityExists(id))?;
+            return Err(ClientError::EntityExists(id));
         }
 
         // spawn intermediate entities (uninitialized)
@@ -1190,7 +1190,7 @@ impl ClientState {
         // against both max_players and the current number of
         // entities
         if entity_id > self.max_players && entity_id >= self.entities.len() {
-            Err(ClientError::InvalidViewEntity(entity_id))?;
+            return Err(ClientError::InvalidViewEntity(entity_id));
         }
         self.view.set_entity_id(entity_id);
         Ok(())
@@ -1261,7 +1261,7 @@ impl ClientState {
             match self.light_styles.get(&lightstyle_id) {
                 Some(ls) => {
                     let float_time = engine::duration_to_f32(self.time);
-                    let frame = if ls.len() == 0 {
+                    let frame = if ls.is_empty() {
                         None
                     } else {
                         Some((float_time * 10.0) as usize % ls.len())
@@ -1269,12 +1269,12 @@ impl ClientState {
 
                     values.push(match frame {
                         // 'z' - 'a' = 25, so divide by 12.5 to get range [0, 2]
-                        Some(f) => (ls.as_bytes()[f] - 'a' as u8) as f32 / 12.5,
+                        Some(f) => (ls.as_bytes()[f] - b'a') as f32 / 12.5,
                         None => 1.0,
                     })
                 }
 
-                None => Err(ClientError::NoSuchLightmapAnimation(lightstyle_id as usize))?,
+                None => return Err(ClientError::NoSuchLightmapAnimation(lightstyle_id as usize)),
             }
         }
 

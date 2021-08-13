@@ -423,7 +423,7 @@ impl QuadRenderer {
         uniforms
     }
 
-    pub fn record_draw<'pass, 'cmds>(
+    pub fn record_draw<'pass>(
         &'pass self,
         state: &'pass GraphicsState,
         pass: &mut wgpu::RenderPass<'pass>,

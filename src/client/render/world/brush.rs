@@ -356,15 +356,10 @@ pub struct BrushRendererBuilder {
 impl BrushRendererBuilder {
     pub fn new(bsp_model: &BspModel, worldmodel: bool) -> BrushRendererBuilder {
         BrushRendererBuilder {
-            bsp_data: bsp_model.bsp_data().clone(),
+            bsp_data: bsp_model.bsp_data(),
             face_range: bsp_model.face_id..bsp_model.face_id + bsp_model.face_count,
             leaves: if worldmodel {
-                Some(
-                    bsp_model
-                        .iter_leaves()
-                        .map(|leaf| BrushLeaf::from(leaf))
-                        .collect(),
-                )
+                Some(bsp_model.iter_leaves().map(BrushLeaf::from).collect())
             } else {
                 None
             },
@@ -398,7 +393,7 @@ impl BrushRendererBuilder {
             }
         }
 
-        if tex.name().starts_with("*") {
+        if tex.name().starts_with('*') {
             // tessellate the surface so we can do texcoord warping
             let verts = warp::subdivide(no_collinear);
             let normal = (verts[0] - verts[1]).cross(verts[2] - verts[1]).normalize();
@@ -410,7 +405,7 @@ impl BrushRendererBuilder {
                         ((vert.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32),
                         ((vert.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32),
                     ],
-                    lightmap_texcoord: calculate_lightmap_texcoords(vert.into(), face, texinfo),
+                    lightmap_texcoord: calculate_lightmap_texcoords(vert, face, texinfo),
                     lightmap_anim: face.light_styles,
                 })
             }
@@ -441,11 +436,7 @@ impl BrushRendererBuilder {
                             ((vert.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32),
                             ((vert.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32),
                         ],
-                        lightmap_texcoord: calculate_lightmap_texcoords(
-                            (*vert).into(),
-                            face,
-                            texinfo,
-                        ),
+                        lightmap_texcoord: calculate_lightmap_texcoords(*vert, face, texinfo),
                         lightmap_anim: face.light_styles,
                     });
                 }
@@ -567,7 +558,7 @@ impl BrushRendererBuilder {
 
         let kind = if name.starts_with("sky") {
             TextureKind::Sky
-        } else if name.starts_with("*") {
+        } else if name.starts_with('*') {
             TextureKind::Warp
         } else {
             TextureKind::Normal
@@ -663,7 +654,7 @@ impl BrushRendererBuilder {
             // update the corresponding texture chain
             self.texture_chains
                 .entry(face_tex_id)
-                .or_insert(Vec::new())
+                .or_insert_with(Vec::new)
                 .push(face_id);
 
             // generate face bind group

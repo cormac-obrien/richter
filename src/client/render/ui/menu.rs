@@ -317,7 +317,7 @@ impl MenuRenderer {
             }
             MenuBodyView::Dynamic => {
                 self.cmd_draw_body_dynamic(
-                    &active_menu.items(),
+                    active_menu.items(),
                     cursor_pos,
                     time,
                     scale,

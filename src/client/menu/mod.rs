@@ -115,7 +115,7 @@ impl Menu {
     pub fn next(&self) -> Result<(), Error> {
         let m = self.active_submenu()?;
 
-        let s = m.state.get().clone();
+        let s = m.state.get();
         if let MenuState::Active { index } = s {
             m.state.replace(MenuState::Active {
                 index: (index + 1) % m.items.len(),
@@ -131,7 +131,7 @@ impl Menu {
     pub fn prev(&self) -> Result<(), Error> {
         let m = self.active_submenu()?;
 
-        let s = m.state.get().clone();
+        let s = m.state.get();
         if let MenuState::Active { index } = s {
             m.state.replace(MenuState::Active {
                 index: (index - 1) % m.items.len(),
@@ -148,7 +148,7 @@ impl Menu {
         let m = self.active_submenu()?;
 
         if let MenuState::Active { index } = m.state.get() {
-            return Ok(&m.items[index].item);
+            Ok(&m.items[index].item)
         } else {
             bail!("Active menu in invalid state (invariant violation)")
         }
@@ -217,10 +217,7 @@ impl Menu {
 
     /// Return `true` if the root menu is active, `false` otherwise.
     pub fn at_root(&self) -> bool {
-        match self.state.get() {
-            MenuState::Active { .. } => true,
-            _ => false,
-        }
+        matches!(self.state.get(), MenuState::Active { .. })
     }
 
     /// Deactivate the active menu and activate its parent
@@ -234,7 +231,7 @@ impl Menu {
 
         match m_parent {
             Some(mp) => {
-                let s = mp.state.get().clone();
+                let s = mp.state.get();
                 match s {
                     MenuState::InSubMenu { index } => mp.state.replace(MenuState::Active { index }),
                     _ => unreachable!(),
@@ -405,30 +402,21 @@ mod test {
     }
 
     fn is_inactive(state: &MenuState) -> bool {
-        match state {
-            MenuState::Inactive => true,
-            _ => false,
-        }
+        matches!(state, MenuState::Inactive)
     }
 
     fn is_active(state: &MenuState) -> bool {
-        match state {
-            MenuState::Active { .. } => true,
-            _ => false,
-        }
+        matches!(state, MenuState::Active { .. })
     }
 
     fn is_insubmenu(state: &MenuState) -> bool {
-        match state {
-            MenuState::InSubMenu { .. } => true,
-            _ => false,
-        }
+        matches!(state, MenuState::InSubMenu { .. })
     }
 
     #[test]
     fn test_menu_builder() {
         let action_target = Rc::new(Cell::new(false));
-        let action_target_handle = action_target.clone();
+        let action_target_handle = action_target;
 
         let _m = MenuBuilder::new()
             .add_action("action", Box::new(move || action_target_handle.set(true)))

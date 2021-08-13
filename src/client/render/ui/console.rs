@@ -64,7 +64,7 @@ impl ConsoleRenderer {
 
         // draw input line
         glyph_cmds.push(GlyphRendererCommand::Glyph {
-            glyph_id: ']' as u8,
+            glyph_id: b']',
             position: ScreenPosition::Relative {
                 anchor: console_anchor,
                 x_ofs: PAD_LEFT,

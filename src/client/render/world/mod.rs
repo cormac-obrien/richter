@@ -350,7 +350,7 @@ impl WorldRenderer {
 
                     ModelKind::Sprite(ref smodel) => {
                         entity_renderers
-                            .push(EntityRenderer::Sprite(SpriteRenderer::new(&state, smodel)));
+                            .push(EntityRenderer::Sprite(SpriteRenderer::new(state, smodel)));
                     }
 
                     _ => {
@@ -478,7 +478,7 @@ impl WorldRenderer {
             &[self.world_uniform_block.offset()],
         );
         self.worldmodel_renderer
-            .record_draw(state, pass, &bump, time, camera, 0);
+            .record_draw(state, pass, bump, time, camera, 0);
 
         // draw entities
         info!("Drawing entities");
@@ -489,7 +489,7 @@ impl WorldRenderer {
                 &[self.entity_uniform_blocks.borrow()[ent_pos].offset()],
             );
 
-            match self.renderer_for_entity(&ent) {
+            match self.renderer_for_entity(ent) {
                 EntityRenderer::Brush(ref bmodel) => {
                     pass.set_pipeline(state.brush_pipeline().pipeline());
                     BrushPipeline::set_push_constants(
@@ -501,7 +501,7 @@ impl WorldRenderer {
                         Clear,
                         Clear,
                     );
-                    bmodel.record_draw(state, pass, &bump, time, camera, ent.frame_id);
+                    bmodel.record_draw(state, pass, bump, time, camera, ent.frame_id);
                 }
                 EntityRenderer::Alias(ref alias) => {
                     pass.set_pipeline(state.alias_pipeline().pipeline());
@@ -556,7 +556,7 @@ impl WorldRenderer {
         log::debug!("Drawing particles");
         state
             .particle_pipeline()
-            .record_draw(pass, &bump, camera, particles);
+            .record_draw(pass, bump, camera, particles);
     }
 
     fn renderer_for_entity(&self, ent: &ClientEntity) -> &EntityRenderer {
