@@ -5,8 +5,6 @@ pub mod layout;
 pub mod menu;
 pub mod quad;
 
-use std::cell::RefCell;
-
 use crate::{
     client::{
         menu::Menu,
@@ -16,13 +14,12 @@ use crate::{
                 glyph::{GlyphRenderer, GlyphRendererCommand},
                 hud::{HudRenderer, HudState},
                 menu::MenuRenderer,
-                quad::{QuadRenderer, QuadRendererCommand, QuadUniforms},
+                quad::{QuadRenderer, QuadRendererCommand},
             },
-            uniform::{self, DynamicUniformBufferBlock},
             Extent2d, GraphicsState,
         },
     },
-    common::{console::Console, util::any_slice_as_bytes},
+    common::console::Console,
 };
 
 use cgmath::{Matrix4, Vector2};

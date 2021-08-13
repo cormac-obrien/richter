@@ -87,7 +87,7 @@ impl CmdRegistry {
         let name = name.as_ref();
 
         match self.cmds.get(name) {
-            Some(_) => Err(ConsoleError::DuplicateCommand(name.to_owned()))?,
+            Some(_) => return Err(ConsoleError::DuplicateCommand(name.to_owned())),
             None => {
                 if insert_name(&mut self.names.borrow_mut(), name).is_err() {
                     return Err(ConsoleError::DuplicateCvar(name.into()));
@@ -127,7 +127,7 @@ impl CmdRegistry {
         S: AsRef<str>,
     {
         if self.cmds.remove(name.as_ref()).is_none() {
-            return Err(ConsoleError::NoSuchCommand(name.as_ref().to_string()))?;
+            return Err(ConsoleError::NoSuchCommand(name.as_ref().to_string()));
         }
 
         let mut names = self.names.borrow_mut();
@@ -149,7 +149,7 @@ impl CmdRegistry {
         let cmd = self
             .cmds
             .get(name.as_ref())
-            .ok_or(ConsoleError::NoSuchCommand(name.as_ref().to_string()))?;
+            .ok_or_else(|| ConsoleError::NoSuchCommand(name.as_ref().to_string()))?;
 
         Ok(cmd(args))
     }
@@ -216,7 +216,7 @@ impl CvarRegistry {
 
         let mut cvars = self.cvars.borrow_mut();
         match cvars.get(name) {
-            Some(_) => Err(ConsoleError::DuplicateCvar(name.into()))?,
+            Some(_) => return Err(ConsoleError::DuplicateCvar(name.into())),
             None => {
                 if insert_name(&mut self.names.borrow_mut(), name).is_err() {
                     return Err(ConsoleError::DuplicateCommand(name.into()));
@@ -291,7 +291,7 @@ impl CvarRegistry {
             .cvars
             .borrow()
             .get(name.as_ref())
-            .ok_or(ConsoleError::NoSuchCvar(name.as_ref().to_owned()))?
+            .ok_or_else(|| ConsoleError::NoSuchCvar(name.as_ref().to_owned()))?
             .val
             .clone())
     }
@@ -304,7 +304,7 @@ impl CvarRegistry {
         let mut cvars = self.cvars.borrow_mut();
         let cvar = cvars
             .get_mut(name)
-            .ok_or(ConsoleError::NoSuchCvar(name.to_owned()))?;
+            .ok_or_else(|| ConsoleError::NoSuchCvar(name.to_owned()))?;
 
         // try parsing as f32
         let val_string = cvar.val.clone();
@@ -316,10 +316,12 @@ impl CvarRegistry {
                 cvar.val.parse::<f32>()
             }
         }
-        .or(Err(ConsoleError::CvarParseFailed {
-            name: name.to_owned(),
-            value: val_string.clone(),
-        }))?;
+        .or_else(|_| {
+            Err(ConsoleError::CvarParseFailed {
+                name: name.to_owned(),
+                value: val_string.clone(),
+            })
+        })?;
 
         Ok(val)
     }
@@ -332,7 +334,7 @@ impl CvarRegistry {
         let mut cvars = self.cvars.borrow_mut();
         let mut cvar = cvars
             .get_mut(name.as_ref())
-            .ok_or(ConsoleError::NoSuchCvar(name.as_ref().to_owned()))?;
+            .ok_or_else(|| ConsoleError::NoSuchCvar(name.as_ref().to_owned()))?;
         cvar.val = value.as_ref().to_owned();
         if cvar.notify {
             // TODO: update userinfo/serverinfo
@@ -375,8 +377,8 @@ impl ConsoleInput {
     /// Sets the content of the `ConsoleInput` to `Text`.
     ///
     /// This also moves the cursor to the end of the line.
-    pub fn set_text(&mut self, text: &Vec<char>) {
-        self.text = text.clone();
+    pub fn set_text(&mut self, text: &[char]) {
+        self.text = text.to_owned();
         self.curs = self.text.len();
     }
 
@@ -454,7 +456,7 @@ impl History {
 
     // TODO: handle case where history is empty
     pub fn line_up(&mut self) -> Option<Vec<char>> {
-        if self.lines.len() == 0 || self.curs >= self.lines.len() {
+        if self.lines.is_empty() || self.curs >= self.lines.len() {
             None
         } else {
             self.curs += 1;
@@ -600,7 +602,7 @@ impl Console {
                         let names = find_names.borrow_mut();
 
                         // Find the index of the first item >= the target.
-                        let start = match names.binary_search_by(|item| item.as_str().cmp(&args[0]))
+                        let start = match names.binary_search_by(|item| item.as_str().cmp(args[0]))
                         {
                             Ok(i) => i,
                             Err(i) => i,
@@ -614,7 +616,7 @@ impl Console {
 
                         let mut output = String::new();
                         for name in it {
-                            write!(&mut output, "{}\n", name).unwrap();
+                            writeln!(&mut output, "{}", name).unwrap();
                         }
 
                         output
@@ -628,7 +630,7 @@ impl Console {
         Console {
             cmds,
             cvars,
-            aliases: aliases.clone(),
+            aliases,
             input: ConsoleInput::new(),
             hist: History::new(),
             buffer: RefCell::new(String::new()),
@@ -643,9 +645,9 @@ impl Console {
         S: AsRef<str>,
     {
         let mut buf = self.out_buffer.borrow_mut();
-        let mut it = s.as_ref().chars();
+        let it = s.as_ref().chars();
 
-        while let Some(c) = it.next() {
+        for c in it {
             if c == '\n' {
                 // Flush and clear the line buffer.
                 self.output
@@ -766,8 +768,7 @@ impl Console {
                     }
 
                     None => {
-                        let tail_args: Vec<&str> =
-                            args.iter().map(|s| s.as_ref()).skip(1).collect();
+                        let tail_args: Vec<&str> = args.iter().copied().skip(1).collect();
 
                         if self.cmds.borrow().contains(arg_0) {
                             match self.cmds.borrow_mut().exec(arg_0, &tail_args) {
@@ -813,7 +814,7 @@ impl Console {
         self.buffer.borrow_mut().push_str(text.as_ref());
 
         // in case the last line doesn't end with a newline
-        self.buffer.borrow_mut().push_str("\n");
+        self.buffer.borrow_mut().push('\n');
     }
 
     pub fn output(&self) -> Ref<ConsoleOutput> {

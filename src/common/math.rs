@@ -267,13 +267,13 @@ impl std::ops::Mul<f32> for Angles {
 pub fn clamp_deg(val: Deg<f32>, min: Deg<f32>, max: Deg<f32>) -> Deg<f32> {
     assert!(min <= max);
 
-    return if val < min {
+    if val < min {
         min
     } else if val > max {
         max
     } else {
         val
-    };
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -673,10 +673,10 @@ mod test {
     #[test]
     fn test_hyperplane_side_arbitrary() {
         // test 16 hyperplanes around the origin
-        for x_comp in [1.0, -1.0].into_iter() {
-            for y_comp in [1.0, -1.0].into_iter() {
-                for z_comp in [1.0, -1.0].into_iter() {
-                    for dist in [1, -1].into_iter() {
+        for x_comp in [1.0, -1.0].iter() {
+            for y_comp in [1.0, -1.0].iter() {
+                for z_comp in [1.0, -1.0].iter() {
+                    for dist in [1, -1].iter() {
                         let base_vector = Vector3::new(*x_comp, *y_comp, *z_comp);
                         let plane = Hyperplane::new(base_vector, *dist as f32);
                         assert_eq!(

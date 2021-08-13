@@ -37,7 +37,6 @@ use crate::common::{
 use super::{BspTextureFrame, BspTextureKind};
 use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::{InnerSpace, Vector3};
-use chrono::Duration;
 use failure::ResultExt as _;
 use num::FromPrimitive;
 use thiserror::Error;
@@ -194,10 +193,10 @@ impl BspFileTable {
             *section = BspFileSection::read_from(reader)?;
             let section_id = BspFileSectionId::from_usize(id).unwrap();
             if section.size % section_id.element_size() != 0 {
-                Err(BspFileError::InvalidSectionSize {
+                return Err(BspFileError::InvalidSectionSize {
                     section: section_id,
                     size: section.size,
-                })?
+                });
             }
         }
 
@@ -267,7 +266,7 @@ where
 {
     // convert texture name from NUL-terminated to str
     let mut tex_name_bytes = [0u8; TEX_NAME_MAX];
-    reader.read(&mut tex_name_bytes)?;
+    reader.read_exact(&mut tex_name_bytes)?;
     let len = tex_name_bytes
         .iter()
         .enumerate()
@@ -545,7 +544,7 @@ where
         // recognize textures of the form +[frame][stem], where:
         // - frame is in [0-9A-Za-z]
         // - stem is the remainder of the string
-        match file_texture.name.strip_prefix("+") {
+        match file_texture.name.strip_prefix('+') {
             Some(rest) => {
                 let (frame, stem) = rest.split_at(1);
 
@@ -562,13 +561,16 @@ where
                             alternate: Vec::new(),
                         });
 
-                match frame.chars().nth(0).unwrap() {
+                match frame.chars().next().unwrap() {
                     '0'..='9' => anims.primary.push((file_texture_id, file_texture)),
                     // guaranteed to be lowercase by load_texture
                     'a'..='j' => anims.alternate.push((file_texture_id, file_texture)),
-                    _ => Err(BspFileError::InvalidTextureFrameSpecifier(
-                        file_texture.name.clone(),
-                    ))?,
+                    _ => {
+                        return Err(BspFileError::InvalidTextureFrameSpecifier(
+                            file_texture.name.clone(),
+                        )
+                        .into())
+                    }
                 };
             }
 
@@ -603,8 +605,8 @@ where
         },
     ) in anim_file_textures.into_iter()
     {
-        if pri.len() == 0 {
-            Err(BspFileError::EmptyPrimaryAnimation(name.to_owned()))?;
+        if pri.is_empty() {
+            return Err(BspFileError::EmptyPrimaryAnimation(name).into());
         }
 
         // TODO: ensure one-to-one frame specifiers
@@ -824,7 +826,7 @@ where
 
     let hull_2 = BspCollisionHull {
         planes: planes_rc.clone(),
-        nodes: collision_nodes_rc.clone(),
+        nodes: collision_nodes_rc,
         node_id: 0,
         node_count: collision_node_count,
         mins: Vector3::new(-32.0, -32.0, -24.0),
@@ -874,7 +876,7 @@ where
         let facelist_id = reader.read_u16::<LittleEndian>()? as usize;
         let facelist_count = reader.read_u16::<LittleEndian>()? as usize;
         let mut sounds = [0u8; NUM_AMBIENTS];
-        reader.read(&mut sounds)?;
+        reader.read_exact(&mut sounds)?;
         leaves.push(BspLeaf {
             contents,
             vis_offset,
@@ -1014,7 +1016,7 @@ where
     };
 
     let bsp_data = Rc::new(BspData {
-        planes: planes_rc.clone(),
+        planes: planes_rc,
         textures: textures.into_boxed_slice(),
         vertices: vertices.into_boxed_slice(),
         visibility: vis_data.into_boxed_slice(),

@@ -99,8 +99,6 @@ use crate::{
     },
     common::{
         console::{Console, CvarRegistry},
-        model::Model,
-        net::SignOnStage,
         vfs::Vfs,
         wad::Wad,
     },
@@ -108,8 +106,8 @@ use crate::{
 
 use super::ConnectionState;
 use bumpalo::Bump;
-use cgmath::{Deg, InnerSpace, Vector3, Zero};
-use chrono::{DateTime, Duration, Utc};
+use cgmath::{Deg, Vector3, Zero};
+use chrono::{DateTime, Utc};
 use failure::Error;
 
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -122,8 +120,8 @@ const FULLBRIGHT_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Un
 const LIGHTMAP_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
 /// Create a `wgpu::TextureDescriptor` appropriate for the provided texture data.
-pub fn texture_descriptor<'a>(
-    label: Option<&'a str>,
+pub fn texture_descriptor(
+    label: Option<&str>,
     width: u32,
     height: u32,
     format: wgpu::TextureFormat,
@@ -234,7 +232,7 @@ pub struct Extent2d {
     pub height: u32,
 }
 
-impl std::convert::Into<wgpu::Extent3d> for Extent2d {
+impl Into<wgpu::Extent3d> for Extent2d {
     fn into(self) -> wgpu::Extent3d {
         wgpu::Extent3d {
             width: self.width,
@@ -370,7 +368,7 @@ impl GraphicsState {
                     wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &entity_uniform_buffer.borrow().buffer(),
+                            buffer: entity_uniform_buffer.borrow().buffer(),
                             offset: 0,
                             size: Some(
                                 NonZeroU64::new(size_of::<EntityUniforms>() as u64).unwrap(),
@@ -858,7 +856,7 @@ impl ClientRenderer {
             }
 
             self.ui_renderer.render_pass(
-                &gfx_state,
+                gfx_state,
                 &mut final_pass,
                 Extent2d { width, height },
                 // use client time when in game, renderer time otherwise

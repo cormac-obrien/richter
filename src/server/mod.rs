@@ -351,7 +351,7 @@ impl LevelState {
             model_precache.precache(string_table.borrow().get(model_name).unwrap());
         }
 
-        let world = World::create(models, entity_def.clone(), string_table.clone()).unwrap();
+        let world = World::create(models, entity_def, string_table.clone()).unwrap();
         let entity_list = parse::entities(&entmap).unwrap();
 
         let mut level = LevelState {

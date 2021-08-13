@@ -257,16 +257,16 @@ impl Globals {
         match self.defs.iter().find(|def| def.offset as usize == addr) {
             Some(d) => {
                 if type_ == d.type_ {
-                    return Ok(());
+                    Ok(())
                 } else if type_ == Type::QFloat && d.type_ == Type::QVector {
-                    return Ok(());
+                    Ok(())
                 } else if type_ == Type::QVector && d.type_ == Type::QFloat {
-                    return Ok(());
+                    Ok(())
                 } else {
-                    return Err(GlobalsError::with_msg("type check failed"));
+                    Err(GlobalsError::with_msg("type check failed"))
                 }
             }
-            None => return Ok(()),
+            None => Ok(()),
         }
     }
 
@@ -483,9 +483,7 @@ impl Globals {
         let src = self.get_addr(src_addr)?.to_owned();
         let dst = self.get_addr_mut(dst_addr)?;
 
-        for i in 0..4 {
-            dst[i] = src[i]
-        }
+        dst[..4].clone_from_slice(&src[..4]);
 
         Ok(())
     }

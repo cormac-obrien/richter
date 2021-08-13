@@ -30,8 +30,8 @@ pub enum AnchorCoord {
 }
 
 impl AnchorCoord {
-    pub fn to_value(&self, max: u32) -> i32 {
-        match *self {
+    pub fn to_value(self, max: u32) -> i32 {
+        match self {
             AnchorCoord::Zero => 0,
             AnchorCoord::Center => max as i32 / 2,
             AnchorCoord::Max => max as i32,
@@ -99,7 +99,7 @@ impl Anchor {
         }
     }
 
-    pub fn to_xy(&self, width: u32, height: u32) -> (i32, i32) {
+    pub fn to_xy(self, width: u32, height: u32) -> (i32, i32) {
         (self.x.to_value(width), self.y.to_value(height))
     }
 }
@@ -123,8 +123,8 @@ pub enum ScreenPosition {
 }
 
 impl ScreenPosition {
-    pub fn to_xy(&self, display_width: u32, display_height: u32, scale: f32) -> (i32, i32) {
-        match *self {
+    pub fn to_xy(self, display_width: u32, display_height: u32, scale: f32) -> (i32, i32) {
+        match self {
             ScreenPosition::Absolute(Anchor {
                 x: anchor_x,
                 y: anchor_y,
@@ -175,13 +175,13 @@ pub enum Size {
 
 impl Size {
     pub fn to_wh(
-        &self,
+        self,
         texture_width: u32,
         texture_height: u32,
         display_width: u32,
         display_height: u32,
     ) -> (u32, u32) {
-        match *self {
+        match self {
             Size::Absolute { width, height } => (width, height),
             Size::Scale { factor } => (
                 (texture_width as f32 * factor) as u32,

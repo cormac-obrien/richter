@@ -251,7 +251,7 @@ impl AliasRenderer {
                         let mut tri = [Vector3::zero(); 3];
                         let mut texcoords = [[0.0; 2]; 3];
                         for (i, index) in polygon.indices().iter().enumerate() {
-                            tri[i] = static_keyframe.vertices()[*index as usize].into();
+                            tri[i] = static_keyframe.vertices()[*index as usize];
 
                             let texcoord = &alias_model.texcoords()[*index as usize];
                             let s = if !polygon.faces_front() && texcoord.is_on_seam() {
@@ -292,7 +292,7 @@ impl AliasRenderer {
                             let mut tri = [Vector3::zero(); 3];
                             let mut texcoords = [[0.0; 2]; 3];
                             for (i, index) in polygon.indices().iter().enumerate() {
-                                tri[i] = frame.vertices()[*index as usize].into();
+                                tri[i] = frame.vertices()[*index as usize];
 
                                 let texcoord = &alias_model.texcoords()[*index as usize];
                                 let s = if !polygon.faces_front() && texcoord.is_on_seam() {

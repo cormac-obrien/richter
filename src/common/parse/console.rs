@@ -68,11 +68,9 @@ pub fn basic_arg(input: &str) -> nom::IResult<&str, &str> {
     // consume characters not matching any of the patterns
     loop {
         let remaining = input.split_at(match_len).1;
-        let terminator = patterns.iter().fold(false, |found_match: bool, p| {
-            found_match || remaining.starts_with(*p)
-        });
+        let terminator = patterns.iter().any(|p| remaining.starts_with(*p));
 
-        let chr = match remaining.chars().nth(0) {
+        let chr = match remaining.chars().next() {
             Some(c) => c,
             None => break,
         };

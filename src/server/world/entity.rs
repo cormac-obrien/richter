@@ -474,11 +474,11 @@ impl Entity {
         {
             Some(d) => {
                 if type_ == d.type_ {
-                    return Ok(());
+                    Ok(())
                 } else if type_ == Type::QFloat && d.type_ == Type::QVector {
-                    return Ok(());
+                    Ok(())
                 } else if type_ == Type::QVector && d.type_ == Type::QFloat {
-                    return Ok(());
+                    Ok(())
                 } else {
                     return Err(EntityError::with_msg(format!(
                         "type check failed: addr={} expected={:?} actual={:?}",
@@ -486,7 +486,7 @@ impl Entity {
                     )));
                 }
             }
-            None => return Ok(()),
+            None => Ok(()),
         }
     }
 
@@ -813,6 +813,6 @@ impl Entity {
     }
 
     pub fn owner(&self) -> Result<EntityId, EntityError> {
-        Ok(self.entity_id(FieldAddrEntityId::Owner as i16)?)
+        self.entity_id(FieldAddrEntityId::Owner as i16)
     }
 }

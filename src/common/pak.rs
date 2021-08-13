@@ -66,20 +66,22 @@ impl Pak {
 
         let mut infile = fs::File::open(path)?;
         let mut magic = [0u8; 4];
-        infile.read(&mut magic)?;
+        infile.read_exact(&mut magic)?;
 
         if magic != PAK_MAGIC {
-            Err(PakError::InvalidMagicNumber(magic))?;
+            return Err(PakError::InvalidMagicNumber(magic));
         }
 
         // Locate the file table
         let table_offset = match infile.read_i32::<LittleEndian>()? {
-            o if o <= 0 => Err(PakError::InvalidTableOffset(o))?,
+            o if o <= 0 => return Err(PakError::InvalidTableOffset(o)),
             o => o as u32,
         };
 
         let table_size = match infile.read_i32::<LittleEndian>()? {
-            s if s <= 0 || s as usize % PAK_ENTRY_SIZE != 0 => Err(PakError::InvalidTableSize(s))?,
+            s if s <= 0 || s as usize % PAK_ENTRY_SIZE != 0 => {
+                return Err(PakError::InvalidTableSize(s))
+            }
             s => s as u32,
         };
 
@@ -90,24 +92,21 @@ impl Pak {
             infile.seek(SeekFrom::Start(entry_offset))?;
 
             let mut path_bytes = [0u8; 56];
-            infile.read(&mut path_bytes)?;
+            infile.read_exact(&mut path_bytes)?;
 
             let file_offset = match infile.read_i32::<LittleEndian>()? {
-                o if o <= 0 => Err(PakError::InvalidFileOffset(o))?,
+                o if o <= 0 => return Err(PakError::InvalidFileOffset(o)),
                 o => o as u32,
             };
 
             let file_size = match infile.read_i32::<LittleEndian>()? {
-                s if s <= 0 => Err(PakError::InvalidFileSize(s))?,
+                s if s <= 0 => return Err(PakError::InvalidFileSize(s)),
                 s => s as u32,
             };
 
-            let last = path_bytes
-                .iter()
-                .position(|b| *b == 0)
-                .ok_or(PakError::FileNameTooLong(
-                    String::from_utf8_lossy(&path_bytes).into_owned(),
-                ))?;
+            let last = path_bytes.iter().position(|b| *b == 0).ok_or_else(|| {
+                PakError::FileNameTooLong(String::from_utf8_lossy(&path_bytes).into_owned())
+            })?;
             let path = String::from_utf8(path_bytes[0..last].to_vec())?;
             infile.seek(SeekFrom::Start(file_offset as u64))?;
 
@@ -142,10 +141,10 @@ impl Pak {
         self.0
             .get(path)
             .map(|s| s.as_ref())
-            .ok_or(PakError::NoSuchFile(path.to_owned()))
+            .ok_or_else(|| PakError::NoSuchFile(path.to_owned()))
     }
 
-    pub fn iter<'a>(&self) -> Iter<String, impl AsRef<[u8]>> {
+    pub fn iter(&self) -> Iter<String, impl AsRef<[u8]>> {
         self.0.iter()
     }
 }

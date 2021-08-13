@@ -68,7 +68,7 @@ where
 {
     let src = src.as_ref();
 
-    let components: Vec<_> = src.split(" ").collect();
+    let components: Vec<_> = src.split(' ').collect();
     if components.len() != 3 {
         return None;
     }
@@ -97,7 +97,7 @@ where
 {
     let src = src.as_ref();
 
-    let components: Vec<_> = src.split(" ").collect();
+    let components: Vec<_> = src.split(' ').collect();
     if components.len() != 3 {
         return None;
     }

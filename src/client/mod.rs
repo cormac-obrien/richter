@@ -81,7 +81,7 @@ const MAX_STATS: usize = 32;
 const DEFAULT_SOUND_PACKET_VOLUME: u8 = 255;
 const DEFAULT_SOUND_PACKET_ATTENUATION: f32 = 1.0;
 
-const CONSOLE_DIVIDER: &'static str = "\
+const CONSOLE_DIVIDER: &str = "\
 \n\n\
 \x1D\x1E\x1E\x1E\x1E\x1E\x1E\x1E\
 \x1E\x1E\x1E\x1E\x1E\x1E\x1E\x1E\
@@ -468,7 +468,7 @@ impl Connection {
                 } => {
                     // check protocol version
                     if protocol_version != net::PROTOCOL_VERSION as i32 {
-                        Err(ClientError::UnrecognizedProtocol(protocol_version))?;
+                        return Err(ClientError::UnrecognizedProtocol(protocol_version));
                     }
 
                     console.println(CONSOLE_DIVIDER);
@@ -507,7 +507,7 @@ impl Connection {
 
                 ServerCmd::SetView { ent_id } => {
                     if ent_id <= 0 {
-                        Err(ClientError::InvalidViewEntity(ent_id as usize))?;
+                        return Err(ClientError::InvalidViewEntity(ent_id as usize));
                     }
 
                     self.state.set_view_entity(ent_id as usize)?;
@@ -585,7 +585,7 @@ impl Connection {
                     angles,
                 } => {
                     if self.state.static_entities.len() >= MAX_STATIC_ENTITIES {
-                        Err(ClientError::TooManyStaticEntities)?;
+                        return Err(ClientError::TooManyStaticEntities);
                     }
                     self.state
                         .static_entities
@@ -781,7 +781,7 @@ impl Connection {
         {
             // respond to the server
             if qsock.can_send() && !compose.is_empty() {
-                qsock.begin_send_msg(&compose)?;
+                qsock.begin_send_msg(compose)?;
                 compose.clear();
             }
         }
@@ -1293,8 +1293,8 @@ where
     let port = match response.ok_or(ClientError::NoResponse)? {
         Response::Accept(accept) => {
             // validate port number
-            if accept.port < 0 || accept.port >= std::u16::MAX as i32 {
-                Err(ClientError::InvalidConnectPort(accept.port))?;
+            if accept.port < 0 || accept.port >= u16::MAX as i32 {
+                return Err(ClientError::InvalidConnectPort(accept.port));
             }
 
             debug!("Connection accepted on port {}", accept.port);
@@ -1302,11 +1302,11 @@ where
         }
 
         // our request was rejected.
-        Response::Reject(reject) => Err(ClientError::ConnectionRejected(reject.message))?,
+        Response::Reject(reject) => return Err(ClientError::ConnectionRejected(reject.message)),
 
         // the server sent back a response that doesn't make sense here (i.e. something other
         // than an Accept or Reject).
-        _ => Err(ClientError::InvalidConnectResponse)?,
+        _ => return Err(ClientError::InvalidConnectResponse),
     };
 
     let mut new_addr = server_addr;
@@ -1337,7 +1337,7 @@ fn cmd_connect(
     stream: OutputStreamHandle,
 ) -> Box<dyn Fn(&[&str]) -> String> {
     Box::new(move |args| {
-        if args.len() < 1 {
+        if args.is_empty() {
             // TODO: print to console
             return "usage: connect <server_ip>:<server_port>".to_owned();
         }
@@ -1427,7 +1427,7 @@ fn cmd_startdemos(
     demo_queue: Rc<RefCell<VecDeque<String>>>,
 ) -> Box<dyn Fn(&[&str]) -> String> {
     Box::new(move |args| {
-        if args.len() == 0 {
+        if args.is_empty() {
             return "usage: startdemos [DEMOS]".to_owned();
         }
 

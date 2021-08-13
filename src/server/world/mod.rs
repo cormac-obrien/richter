@@ -349,7 +349,7 @@ impl World {
 
     fn find_vacant_slot(&self) -> Result<usize, ()> {
         for (i, slot) in self.slots.iter().enumerate() {
-            if let &AreaEntitySlot::Vacant = slot {
+            if let AreaEntitySlot::Vacant = slot {
                 return Ok(i);
             }
         }
@@ -388,24 +388,24 @@ impl World {
             debug!(".{} = {}", key, val);
             match *key {
                 // ignore keys starting with an underscore
-                k if k.starts_with("_") => (),
+                k if k.starts_with('_') => (),
 
                 "angle" => {
                     // this is referred to in the original source as "anglehack" -- essentially,
                     // only the yaw (Y) value is given. see
                     // https://github.com/id-Software/Quake/blob/master/WinQuake/pr_edict.c#L826-L834
-                    let def = self.find_def("angles")?.clone();
+                    let def = self.find_def("angles")?;
                     ent.put_vector([0.0, val.parse().unwrap(), 0.0], def.offset as i16)?;
                 }
 
                 "light" => {
                     // more fun hacks brought to you by Carmack & Friends
-                    let def = self.find_def("light_lev")?.clone();
+                    let def = self.find_def("light_lev")?;
                     ent.put_float(val.parse().unwrap(), def.offset as i16)?;
                 }
 
                 k => {
-                    let def = self.find_def(k)?.clone();
+                    let def = self.find_def(k)?;
 
                     match def.type_ {
                         // void has no value, skip it
@@ -532,7 +532,7 @@ impl World {
 
     pub fn list_entities(&self, list: &mut Vec<EntityId>) {
         for (id, slot) in self.slots.iter().enumerate() {
-            if let &AreaEntitySlot::Occupied(_) = slot {
+            if let AreaEntitySlot::Occupied(_) = slot {
                 list.push(EntityId(id));
             }
         }
@@ -727,12 +727,11 @@ impl World {
         if solid == EntitySolid::Trigger {
             debug!("Linking entity {} into area {} triggers", e_id.0, node_id);
             self.area_nodes[node_id].triggers.insert(e_id);
-            self.area_entity_mut(e_id)?.area_id = Some(node_id);
         } else {
             debug!("Linking entity {} into area {} solids", e_id.0, node_id);
             self.area_nodes[node_id].solids.insert(e_id);
-            self.area_entity_mut(e_id)?.area_id = Some(node_id);
         }
+        self.area_entity_mut(e_id)?.area_id = Some(node_id);
 
         Ok(())
     }
@@ -788,7 +787,7 @@ impl World {
 
                 let size = max - min;
                 match self.models[self.entity(e_id).model_index()?].kind() {
-                    &ModelKind::Brush(ref bmodel) => {
+                    ModelKind::Brush(ref bmodel) => {
                         let hull_index;
 
                         // TODO: replace these magic constants
@@ -809,9 +808,9 @@ impl World {
 
                         Ok((hull, offset))
                     }
-                    _ => Err(ProgsError::with_msg(format!(
-                        "Non-brush entities may not have MoveKind::Push"
-                    ))),
+                    _ => Err(ProgsError::with_msg(
+                        "Non-brush entities may not have MoveKind::Push".to_string(),
+                    )),
                 }
             }
 

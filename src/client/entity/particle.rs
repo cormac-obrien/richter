@@ -79,7 +79,7 @@ impl ColorRamp {
     /// If the animation has already completed by `elapsed`, returns `None`.
     pub fn color(&self, elapsed: Duration, frame_skip: usize) -> Option<u8> {
         let frame = (engine::duration_to_f32(elapsed) * self.fps) as usize + frame_skip;
-        self.ramp.get(frame).map(|c| *c)
+        self.ramp.get(frame).copied()
     }
 }
 
@@ -708,7 +708,7 @@ mod tests {
                 expire: Duration::seconds(*t),
             })
             .collect();
-        let mut after_update: Vec<Particle> = Vec::new();
+        let after_update: Vec<Particle> = Vec::new();
         list.update(Duration::seconds(5), Duration::milliseconds(17), 10.0);
         after_update
             .iter()

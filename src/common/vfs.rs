@@ -19,6 +19,7 @@ use std::{
     fs::File,
     io::{self, BufReader, Cursor, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
+    process,
 };
 
 use crate::common::pak::{Pak, PakError};
@@ -64,7 +65,7 @@ impl Vfs {
                 " directory which contains `id1/`."
             ));
 
-            std::process::exit(1);
+            process::exit(1);
         }
 
         vfs.add_directory(&game_dir).unwrap();

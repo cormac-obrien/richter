@@ -29,6 +29,7 @@ use chrono::Duration;
 use num::FromPrimitive;
 use thiserror::Error;
 
+#[allow(clippy::identity_op)]
 pub const MAGIC: i32 =
     ('I' as i32) << 0 | ('D' as i32) << 8 | ('P' as i32) << 16 | ('O' as i32) << 24;
 pub const VERSION: i32 = 6;
@@ -325,12 +326,12 @@ where
 
     let magic = reader.read_i32::<LittleEndian>()?;
     if magic != MAGIC {
-        Err(MdlFileError::InvalidMagicNumber(magic))?;
+        return Err(MdlFileError::InvalidMagicNumber(magic));
     }
 
     let version = reader.read_i32::<LittleEndian>()?;
     if version != VERSION {
-        Err(MdlFileError::UnrecognizedVersion(version))?;
+        return Err(MdlFileError::UnrecognizedVersion(version));
     }
 
     let scale: Vector3<f32> = read_f32_3(&mut reader)?.into();
@@ -340,30 +341,30 @@ where
     let texture_count = reader.read_i32::<LittleEndian>()?;
     let texture_width = reader.read_i32::<LittleEndian>()?;
     if texture_width <= 0 {
-        Err(MdlFileError::InvalidTextureWidth(texture_width))?;
+        return Err(MdlFileError::InvalidTextureWidth(texture_width));
     }
     let texture_height = reader.read_i32::<LittleEndian>()?;
     if texture_height <= 0 {
-        Err(MdlFileError::InvalidTextureHeight(texture_height))?;
+        return Err(MdlFileError::InvalidTextureHeight(texture_height));
     }
     let vertex_count = reader.read_i32::<LittleEndian>()?;
     if vertex_count <= 0 {
-        Err(MdlFileError::InvalidVertexCount(vertex_count))?;
+        return Err(MdlFileError::InvalidVertexCount(vertex_count));
     }
     let poly_count = reader.read_i32::<LittleEndian>()?;
     if poly_count <= 0 {
-        Err(MdlFileError::InvalidPolygonCount(poly_count))?;
+        return Err(MdlFileError::InvalidPolygonCount(poly_count));
     }
     let keyframe_count = reader.read_i32::<LittleEndian>()?;
     if keyframe_count <= 0 {
-        Err(MdlFileError::InvalidKeyframeCount(keyframe_count))?;
+        return Err(MdlFileError::InvalidKeyframeCount(keyframe_count));
     }
 
     let _sync_type = SyncType::from_i32(reader.read_i32::<LittleEndian>()?);
 
     let flags_bits = reader.read_i32::<LittleEndian>()?;
     if flags_bits < 0 || flags_bits > u8::MAX as i32 {
-        Err(MdlFileError::InvalidFlags(flags_bits))?;
+        return Err(MdlFileError::InvalidFlags(flags_bits));
     }
     let flags =
         ModelFlags::from_bits(flags_bits as u8).ok_or(MdlFileError::InvalidFlags(flags_bits))?;
@@ -424,7 +425,7 @@ where
                 })
             }
 
-            k => Err(MdlFileError::InvalidTextureKind(k))?,
+            k => return Err(MdlFileError::InvalidTextureKind(k)),
         };
 
         textures.push(texture);
@@ -435,13 +436,13 @@ where
         let is_on_seam = match reader.read_i32::<LittleEndian>()? {
             0 => false,
             0x20 => true,
-            x => Err(MdlFileError::InvalidSeamFlag(x))?,
+            x => return Err(MdlFileError::InvalidSeamFlag(x)),
         };
 
         let s = reader.read_i32::<LittleEndian>()?;
         let t = reader.read_i32::<LittleEndian>()?;
         if s < 0 || t < 0 {
-            Err(MdlFileError::InvalidTexcoord([s, t]))?;
+            return Err(MdlFileError::InvalidTexcoord([s, t]));
         }
 
         texcoords.push(Texcoord {
@@ -456,7 +457,7 @@ where
         let faces_front = match reader.read_i32::<LittleEndian>()? {
             0 => false,
             1 => true,
-            x => Err(MdlFileError::InvalidFrontFacing(x))?,
+            x => return Err(MdlFileError::InvalidFrontFacing(x)),
         };
 
         let mut indices = [0; 3];
@@ -481,7 +482,7 @@ where
 
                 let name = {
                     let mut bytes: [u8; 16] = [0; 16];
-                    reader.read(&mut bytes)?;
+                    reader.read_exact(&mut bytes)?;
                     let len = bytes
                         .iter()
                         .position(|b| *b == 0)
@@ -532,7 +533,7 @@ where
 
                     let name = {
                         let mut bytes: [u8; 16] = [0; 16];
-                        reader.read(&mut bytes)?;
+                        reader.read_exact(&mut bytes)?;
                         let len = bytes
                             .iter()
                             .position(|b| *b == 0)

@@ -382,7 +382,7 @@ where
 
         let argc = src.read_i32::<LittleEndian>()?;
         let mut argsz = [0; MAX_ARGS];
-        src.read(&mut argsz)?;
+        src.read_exact(&mut argsz)?;
 
         function_defs.push(FunctionDef {
             kind,
@@ -492,7 +492,7 @@ where
     let mut addrs = Vec::with_capacity(globals_lump.count);
     for _ in 0..globals_lump.count {
         let mut block = [0; 4];
-        src.read(&mut block)?;
+        src.read_exact(&mut block)?;
 
         // TODO: handle endian conversions (BigEndian systems should use BigEndian internally)
         addrs.push(block);
@@ -507,7 +507,7 @@ where
 
     let functions_rc = Rc::new(functions);
 
-    let cx = ExecutionContext::create(string_table.clone(), functions_rc.clone());
+    let cx = ExecutionContext::create(string_table.clone(), functions_rc);
 
     let globals = Globals::new(
         string_table.clone(),

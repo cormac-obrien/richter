@@ -68,9 +68,9 @@ impl<T> DynamicUniformBuffer<T>
 where
     T: Pod,
 {
-    pub fn new<'b>(device: &'b wgpu::Device) -> DynamicUniformBuffer<T> {
+    pub fn new(device: &wgpu::Device) -> DynamicUniformBuffer<T> {
         // TODO: is this something we can enforce at compile time?
-        assert!(align_of::<T>() % DYNAMIC_UNIFORM_BUFFER_ALIGNMENT == 0);
+        assert_eq!(align_of::<T>() % DYNAMIC_UNIFORM_BUFFER_ALIGNMENT, 0);
 
         let inner = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("dynamic uniform buffer"),
@@ -79,8 +79,7 @@ where
             mapped_at_creation: false,
         });
 
-        let mut update_buf = Vec::with_capacity(DYNAMIC_UNIFORM_BUFFER_SIZE as usize);
-        update_buf.resize(DYNAMIC_UNIFORM_BUFFER_SIZE as usize, 0);
+        let update_buf = vec![0; DYNAMIC_UNIFORM_BUFFER_SIZE as usize];
 
         DynamicUniformBuffer {
             _rc: RefCell::new(Rc::new(())),

@@ -340,11 +340,7 @@ impl Trace {
 
     /// Returns whether the trace ended without a collision.
     pub fn is_terminal(&self) -> bool {
-        if let TraceEndKind::Terminal = self.end.kind {
-            true
-        } else {
-            false
-        }
+        matches!(self.end.kind, TraceEndKind::Terminal)
     }
 
     /// Returns the ratio of travelled distance to intended distance.

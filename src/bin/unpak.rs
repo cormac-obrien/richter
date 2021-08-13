@@ -22,7 +22,7 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     path::PathBuf,
-    process::exit,
+    process,
 };
 
 use richter::common::pak::Pak;
@@ -55,14 +55,14 @@ fn main() {
 
     if opt.version {
         println!("{}", VERSION);
-        exit(0);
+        process::exit(0);
     }
 
     let pak = match Pak::new(&opt.input_pak) {
         Ok(p) => p,
         Err(why) => {
             println!("Couldn't open {:#?}: {}", &opt.input_pak, why);
-            exit(1);
+            process::exit(1);
         }
     };
 
@@ -79,7 +79,7 @@ fn main() {
             if !p.exists() {
                 if let Err(why) = fs::create_dir_all(p) {
                     println!("Couldn't create parent directories: {}", why);
-                    exit(1);
+                    process::exit(1);
                 }
             }
         }
@@ -88,7 +88,7 @@ fn main() {
             Ok(f) => f,
             Err(why) => {
                 println!("Couldn't open {}: {}", path.to_str().unwrap(), why);
-                exit(1);
+                process::exit(1);
             }
         };
 
@@ -97,7 +97,7 @@ fn main() {
             Ok(_) => (),
             Err(why) => {
                 println!("Couldn't write to {}: {}", path.to_str().unwrap(), why);
-                exit(1);
+                process::exit(1);
             }
         }
     }

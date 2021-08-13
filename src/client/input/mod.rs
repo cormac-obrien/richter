@@ -63,7 +63,7 @@ impl Input {
 
             game_input: GameInput::new(console.clone()),
             console_input: ConsoleInput::new(console.clone()),
-            menu_input: MenuInput::new(menu.clone(), console.clone()),
+            menu_input: MenuInput::new(menu, console),
         }
     }
 

@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::common::console::{CvarRegistry, ConsoleError};
+use crate::common::console::{ConsoleError, CvarRegistry};
 
 pub fn register_cvars(cvars: &CvarRegistry) -> Result<(), ConsoleError> {
     cvars.register("cl_anglespeedkey", "1.5")?;

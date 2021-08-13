@@ -20,7 +20,7 @@ impl BlitPipeline {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
+                    resource: wgpu::BindingResource::Sampler(sampler),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -84,7 +84,7 @@ impl BlitPipeline {
     }
 
     pub fn blit<'a>(&'a self, state: &'a GraphicsState, pass: &mut wgpu::RenderPass<'a>) {
-        pass.set_pipeline(&self.pipeline());
+        pass.set_pipeline(self.pipeline());
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_vertex_buffer(0, state.quad_pipeline().vertex_buffer().slice(..));
         pass.draw(0..6, 0..1);

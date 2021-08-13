@@ -41,7 +41,7 @@ use winit::{
 
 const ACTION_COUNT: usize = 19;
 
-static INPUT_NAMES: [&'static str; 79] = [
+static INPUT_NAMES: [&str; 79] = [
     ",",
     ".",
     "/",
@@ -400,7 +400,7 @@ impl FromStr for BindInput {
 
         for (i, name) in INPUT_NAMES.iter().enumerate() {
             if upper == *name {
-                return Ok(INPUT_VALUES[i].clone());
+                return Ok(INPUT_VALUES[i]);
             }
         }
 
@@ -443,7 +443,7 @@ impl FromStr for BindTarget {
         match parse::action(s) {
             // first, check if this is an action
             Ok((_, (trigger, action_str))) => {
-                let action = match Action::from_str(&action_str) {
+                let action = match Action::from_str(action_str) {
                     Ok(a) => a,
                     _ => return Ok(BindTarget::ConsoleInput { text: s.to_owned() }),
                 };
@@ -543,7 +543,7 @@ impl GameInput {
     where
         I: Into<BindInput>,
     {
-        self.bindings.borrow().get(&input.into()).map(|t| t.clone())
+        self.bindings.borrow().get(&input.into()).cloned()
     }
 
     pub fn handle_event<T>(&mut self, outer_event: Event<T>) {

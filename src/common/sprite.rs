@@ -24,6 +24,7 @@ use cgmath::Vector3;
 use chrono::Duration;
 use num::FromPrimitive;
 
+#[allow(clippy::identity_op)]
 const MAGIC: u32 = ('I' as u32) << 0 | ('D' as u32) << 8 | ('S' as u32) << 16 | ('P' as u32) << 24;
 const VERSION: u32 = 1;
 
