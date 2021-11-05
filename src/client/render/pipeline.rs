@@ -157,8 +157,8 @@ pub trait Pipeline {
             wgpu::PUSH_CONSTANT_ALIGNMENT,
         );
         assert!(
-            vpc_size + spc_size + fpc_size < max_pc_size,
-            "Combined size of push constants must be less than push constant size limit of {}",
+            vpc_size + spc_size + fpc_size <= max_pc_size,
+            "Combined size of push constants must be less or equal than push constant size limit of {}",
             max_pc_size
         );
     }
