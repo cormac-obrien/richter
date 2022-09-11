@@ -7,3 +7,4 @@ target
 *.pak.d
 .#*
 id1
+.vscode
