@@ -255,18 +255,11 @@ impl Globals {
     /// `origin_X` will have the same address).
     pub fn type_check(&self, addr: usize, type_: Type) -> Result<(), GlobalsError> {
         match self.defs.iter().find(|def| def.offset as usize == addr) {
-            Some(d) => {
-                if type_ == d.type_ {
-                    return Ok(());
-                } else if type_ == Type::QFloat && d.type_ == Type::QVector {
-                    return Ok(());
-                } else if type_ == Type::QVector && d.type_ == Type::QFloat {
-                    return Ok(());
-                } else {
-                    return Err(GlobalsError::with_msg("type check failed"));
-                }
-            }
-            None => return Ok(()),
+            Some(d) if type_ == d.type_ => Ok(()),
+            Some(d) if type_ == Type::QFloat && d.type_ == Type::QVector => Ok(()),
+            Some(d) if type_ == Type::QVector && d.type_ == Type::QFloat => Ok(()),
+            Some(_) => Err(GlobalsError::with_msg("type check failed")),
+            None => Ok(()),
         }
     }
 
