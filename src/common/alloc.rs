@@ -1,17 +1,17 @@
-use std::{collections::LinkedList, mem};
+use std::mem;
 
 use slab::Slab;
 
-/// A slab allocator with a linked list of allocations.
+/// A slab allocator with a vector of allocations.
 ///
-/// This allocator trades O(1) random access by key, a property of
-/// [`Slab`](slab::Slab), for the ability to iterate only those entries that are
-/// actually allocated. This significantly reduces the cost of `retain()`: where
+/// This enhances [`Slab`](slab::Slab) with a vector to keep track of active allocations,
+/// which enables efficient iteration and `retain()` operations over all active allocations.
+/// This significantly reduces the cost of `Slab::retain()`: where
 /// `Slab::retain` is O(capacity) regardless of how many values are allocated,
 /// [`LinkedSlab::retain`](LinkedSlab::retain) is O(n) in the number of values.
 pub struct LinkedSlab<T> {
     slab: Slab<T>,
-    allocated: LinkedList<usize>,
+    allocated: Vec<usize>,
 }
 
 impl<T> LinkedSlab<T> {
@@ -22,7 +22,7 @@ impl<T> LinkedSlab<T> {
     pub fn with_capacity(capacity: usize) -> LinkedSlab<T> {
         LinkedSlab {
             slab: Slab::with_capacity(capacity),
-            allocated: LinkedList::new(),
+            allocated: Vec::new(),
         }
     }
 
@@ -73,7 +73,7 @@ impl<T> LinkedSlab<T> {
     /// This operation is O(1).
     pub fn insert(&mut self, val: T) -> usize {
         let key = self.slab.insert(val);
-        self.allocated.push_front(key);
+        self.allocated.push(key);
         key
     }
 
@@ -83,7 +83,7 @@ impl<T> LinkedSlab<T> {
     ///
     /// Note that this operation is O(n) in the number of allocated values.
     pub fn remove(&mut self, key: usize) -> T {
-        self.allocated.drain_filter(|k| *k == key);
+        self.allocated.retain_mut(|k| *k != key);
         self.slab.remove(key)
     }
 
@@ -102,12 +102,10 @@ impl<T> LinkedSlab<T> {
         F: FnMut(usize, &mut T) -> bool,
     {
         // move contents out to avoid double mutable borrow of self.
-        // neither LinkedList::new() nor Slab::new() allocates any memory, so
-        // this is free.
-        let mut allocated = mem::replace(&mut self.allocated, LinkedList::new());
+        // Slab::new() doesn't allocate any memory, so this is free.
         let mut slab = mem::replace(&mut self.slab, Slab::new());
 
-        allocated.drain_filter(|k| {
+        self.allocated.retain_mut(|k| {
             let retain = match slab.get_mut(*k) {
                 Some(ref mut v) => f(*k, v),
                 None => true,
@@ -117,12 +115,11 @@ impl<T> LinkedSlab<T> {
                 slab.remove(*k);
             }
 
-            !retain
+            retain
         });
 
-        // put them back
+        // put it back
         self.slab = slab;
-        self.allocated = allocated;
     }
 }
 
@@ -163,11 +160,11 @@ mod tests {
         }
 
         values.retain(|v| v % 2 == 0);
-        let mut expected: HashSet<i32> = HashSet::from_iter(values.into_iter());
+        let expected: HashSet<i32> = HashSet::from_iter(values.into_iter());
 
         linked_slab.retain(|_, v| *v % 2 == 0);
 
-        let mut actual = HashSet::from_iter(linked_slab.iter().map(|v| *v));
+        let actual = HashSet::from_iter(linked_slab.iter().map(|v| *v));
 
         assert_eq!(expected, actual);
     }
