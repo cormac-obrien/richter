@@ -2,7 +2,7 @@
 name = "richter"
 version = "0.1.0"
 authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 arrayvec = "0.7"
