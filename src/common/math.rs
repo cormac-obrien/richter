@@ -673,23 +673,23 @@ mod test {
     #[test]
     fn test_hyperplane_side_arbitrary() {
         // test 16 hyperplanes around the origin
-        for x_comp in [1.0, -1.0].into_iter() {
-            for y_comp in [1.0, -1.0].into_iter() {
-                for z_comp in [1.0, -1.0].into_iter() {
-                    for dist in [1, -1].into_iter() {
-                        let base_vector = Vector3::new(*x_comp, *y_comp, *z_comp);
-                        let plane = Hyperplane::new(base_vector, *dist as f32);
+        for x_comp in [1.0, -1.0] {
+            for y_comp in [1.0, -1.0] {
+                for z_comp in [1.0, -1.0] {
+                    for dist in [1, -1] {
+                        let base_vector = Vector3::new(x_comp, y_comp, z_comp);
+                        let plane = Hyperplane::new(base_vector, dist as f32);
                         assert_eq!(
                             plane.point_side(Vector3::zero()),
-                            match *dist {
+                            match dist {
                                 1 => HyperplaneSide::Negative,
                                 -1 => HyperplaneSide::Positive,
                                 _ => unreachable!(),
                             }
                         );
                         assert_eq!(
-                            plane.point_side(base_vector * 2.0 * *dist as f32),
-                            match *dist {
+                            plane.point_side(base_vector * 2.0 * dist as f32),
+                            match dist {
                                 1 => HyperplaneSide::Positive,
                                 -1 => HyperplaneSide::Negative,
                                 _ => unreachable!(),

@@ -66,7 +66,7 @@ impl Pak {
 
         let mut infile = fs::File::open(path)?;
         let mut magic = [0u8; 4];
-        infile.read(&mut magic)?;
+        infile.read_exact(&mut magic)?;
 
         if magic != PAK_MAGIC {
             Err(PakError::InvalidMagicNumber(magic))?;
@@ -90,7 +90,7 @@ impl Pak {
             infile.seek(SeekFrom::Start(entry_offset))?;
 
             let mut path_bytes = [0u8; 56];
-            infile.read(&mut path_bytes)?;
+            infile.read_exact(&mut path_bytes)?;
 
             let file_offset = match infile.read_i32::<LittleEndian>()? {
                 o if o <= 0 => Err(PakError::InvalidFileOffset(o))?,

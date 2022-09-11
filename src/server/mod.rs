@@ -852,7 +852,6 @@ impl LevelState {
             frame_time
         };
 
-        drop(ent);
         if !move_time.is_zero() {
             self.move_push(ent_id, frame_time, move_time)?;
         }

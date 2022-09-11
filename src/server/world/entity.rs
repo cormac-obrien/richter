@@ -472,21 +472,14 @@ impl Entity {
             .iter()
             .find(|def| def.type_ != Type::QVoid && def.offset as usize == addr)
         {
-            Some(d) => {
-                if type_ == d.type_ {
-                    return Ok(());
-                } else if type_ == Type::QFloat && d.type_ == Type::QVector {
-                    return Ok(());
-                } else if type_ == Type::QVector && d.type_ == Type::QFloat {
-                    return Ok(());
-                } else {
-                    return Err(EntityError::with_msg(format!(
-                        "type check failed: addr={} expected={:?} actual={:?}",
-                        addr, type_, d.type_
-                    )));
-                }
-            }
-            None => return Ok(()),
+            Some(d) if type_ == d.type_ => Ok(()),
+            Some(d) if type_ == Type::QFloat && d.type_ == Type::QVector => Ok(()),
+            Some(d) if type_ == Type::QVector && d.type_ == Type::QFloat => Ok(()),
+            Some(d) => Err(EntityError::with_msg(format!(
+                "type check failed: addr={} expected={:?} actual={:?}",
+                addr, type_, d.type_
+            ))),
+            None => Ok(()),
         }
     }
 

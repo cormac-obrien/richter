@@ -267,7 +267,7 @@ where
 {
     // convert texture name from NUL-terminated to str
     let mut tex_name_bytes = [0u8; TEX_NAME_MAX];
-    reader.read(&mut tex_name_bytes)?;
+    reader.read_exact(&mut tex_name_bytes)?;
     let len = tex_name_bytes
         .iter()
         .enumerate()
@@ -874,7 +874,7 @@ where
         let facelist_id = reader.read_u16::<LittleEndian>()? as usize;
         let facelist_count = reader.read_u16::<LittleEndian>()? as usize;
         let mut sounds = [0u8; NUM_AMBIENTS];
-        reader.read(&mut sounds)?;
+        reader.read_exact(&mut sounds)?;
         leaves.push(BspLeaf {
             contents,
             vis_offset,

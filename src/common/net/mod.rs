@@ -1520,12 +1520,12 @@ impl ServerCmd {
             ServerCmd::Time { time } => writer.write_f32::<LittleEndian>(time)?,
 
             ServerCmd::Print { ref text } => {
-                writer.write(text.as_bytes())?;
+                writer.write_all(text.as_bytes())?;
                 writer.write_u8(0)?;
             }
 
             ServerCmd::StuffText { ref text } => {
-                writer.write(text.as_bytes())?;
+                writer.write_all(text.as_bytes())?;
                 writer.write_u8(0)?;
             }
 
@@ -1543,17 +1543,17 @@ impl ServerCmd {
                 writer.write_u8(max_clients)?;
                 writer.write_u8(game_type as u8)?;
 
-                writer.write(message.as_bytes())?;
+                writer.write_all(message.as_bytes())?;
                 writer.write_u8(0)?;
 
                 for model_name in model_precache.iter() {
-                    writer.write(model_name.as_bytes())?;
+                    writer.write_all(model_name.as_bytes())?;
                     writer.write_u8(0)?;
                 }
                 writer.write_u8(0)?;
 
                 for sound_name in sound_precache.iter() {
-                    writer.write(sound_name.as_bytes())?;
+                    writer.write_all(sound_name.as_bytes())?;
                     writer.write_u8(0)?;
                 }
                 writer.write_u8(0)?;
@@ -1561,7 +1561,7 @@ impl ServerCmd {
 
             ServerCmd::LightStyle { id, ref value } => {
                 writer.write_u8(id)?;
-                writer.write(value.as_bytes())?;
+                writer.write_all(value.as_bytes())?;
                 writer.write_u8(0)?;
             }
 
@@ -1570,7 +1570,7 @@ impl ServerCmd {
                 ref new_name,
             } => {
                 writer.write_u8(player_id)?;
-                writer.write(new_name.as_bytes())?;
+                writer.write_all(new_name.as_bytes())?;
                 writer.write_u8(0)?;
             }
 
@@ -1795,7 +1795,7 @@ impl ServerCmd {
             }
 
             ServerCmd::CenterPrint { ref text } => {
-                writer.write(text.as_bytes())?;
+                writer.write_all(text.as_bytes())?;
                 writer.write_u8(0)?;
             }
 
@@ -1816,7 +1816,7 @@ impl ServerCmd {
             ServerCmd::Intermission => (),
 
             ServerCmd::Finale { ref text } => {
-                writer.write(text.as_bytes())?;
+                writer.write_all(text.as_bytes())?;
                 writer.write_u8(0)?;
             }
 
@@ -1828,7 +1828,7 @@ impl ServerCmd {
             ServerCmd::SellScreen => (),
 
             ServerCmd::Cutscene { ref text } => {
-                writer.write(text.as_bytes())?;
+                writer.write_all(text.as_bytes())?;
                 writer.write_u8(0)?;
             }
 
@@ -1966,7 +1966,7 @@ impl ClientCmd {
                 writer.write_u8(impulse)?;
             }
             ClientCmd::StringCmd { ref cmd } => {
-                writer.write(cmd.as_bytes())?;
+                writer.write_all(cmd.as_bytes())?;
                 writer.write_u8(0)?;
             }
         }

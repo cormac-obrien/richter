@@ -29,7 +29,6 @@ use std::{
     io::{Cursor, Read, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
-    process::exit,
     rc::Rc,
 };
 
@@ -57,7 +56,7 @@ use structopt::StructOpt;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget},
-    window::Window,
+    window::{CursorGrabMode, Window},
 };
 
 struct ClientProgram {
@@ -161,30 +160,32 @@ impl ClientProgram {
         // implements "exec" command
         let exec_vfs = vfs.clone();
         let exec_console = console.clone();
-        cmds.borrow_mut().insert_or_replace(
-            "exec",
-            Box::new(move |args| {
-                match args.len() {
-                    // exec (filename): execute a script file
-                    1 => {
-                        let mut script_file = match exec_vfs.open(args[0]) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                return format!("Couldn't exec {}: {:?}", args[0], e);
-                            }
-                        };
+        cmds.borrow_mut()
+            .insert_or_replace(
+                "exec",
+                Box::new(move |args| {
+                    match args.len() {
+                        // exec (filename): execute a script file
+                        1 => {
+                            let mut script_file = match exec_vfs.open(args[0]) {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    return format!("Couldn't exec {}: {:?}", args[0], e);
+                                }
+                            };
 
-                        let mut script = String::new();
-                        script_file.read_to_string(&mut script).unwrap();
+                            let mut script = String::new();
+                            script_file.read_to_string(&mut script).unwrap();
 
-                        exec_console.borrow().stuff_text(script);
-                        String::new()
+                            exec_console.borrow().stuff_text(script);
+                            String::new()
+                        }
+
+                        _ => format!("exec (filename): execute a script file"),
                     }
-
-                    _ => format!("exec (filename): execute a script file"),
-                }
-            }),
-        ).unwrap();
+                }),
+            )
+            .unwrap();
 
         // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
         console.borrow().stuff_text("exec quake.rc\n");
@@ -292,7 +293,7 @@ impl Program for ClientProgram {
 
         match self.input.borrow().focus() {
             InputFocus::Game => {
-                if let Err(e) = self.window.set_cursor_grab(true) {
+                if let Err(e) = self.window.set_cursor_grab(CursorGrabMode::Locked) {
                     // This can happen if the window is running in another
                     // workspace. It shouldn't be considered an error.
                     log::debug!("Couldn't grab cursor: {}", e);
@@ -302,7 +303,7 @@ impl Program for ClientProgram {
             }
 
             _ => {
-                if let Err(e) = self.window.set_cursor_grab(false) {
+                if let Err(e) = self.window.set_cursor_grab(CursorGrabMode::None) {
                     log::debug!("Couldn't release cursor: {}", e);
                 };
                 self.window.set_cursor_visible(true);
