@@ -32,7 +32,7 @@ use failure::Error;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use winit::{
-    dpi::LogicalPosition,
+    dpi::PhysicalPosition,
     event::{
         DeviceEvent, ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta,
         VirtualKeyCode as Key, WindowEvent,
@@ -48,8 +48,8 @@ lazy_static! {
         map.insert(",", BindInput::Key(Key::Comma));
         map.insert(".", BindInput::Key(Key::Period));
         map.insert("/", BindInput::Key(Key::Slash));
-        map.insert("+", BindInput::Key(Key::Add));
-        map.insert("-", BindInput::Key(Key::Subtract));
+        map.insert("+", BindInput::Key(Key::Plus));
+        map.insert("-", BindInput::Key(Key::Minus));
         map.insert("=", BindInput::Key(Key::Equals));
         map.insert("0", BindInput::Key(Key::Key0));
         map.insert("1", BindInput::Key(Key::Key1));
@@ -272,7 +272,7 @@ impl ::std::convert::From<MouseScrollDelta> for MouseWheel {
                 }
             }
 
-            MouseScrollDelta::PixelDelta(LogicalPosition { y, .. }) => {
+            MouseScrollDelta::PixelDelta(PhysicalPosition { y, .. }) => {
                 if y > 0.0 {
                     MouseWheel::Up
                 } else {

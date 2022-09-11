@@ -88,7 +88,7 @@ where
             }
 
             Event::MainEventsCleared => self.frame(),
-            Event::Suspended | Event::Resumed => unimplemented!(),
+            Event::Suspended | Event::Resumed => {}
             Event::LoopDestroyed => {
                 // TODO:
                 // - host_writeconfig

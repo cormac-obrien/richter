@@ -33,7 +33,5 @@ strum_macros = "0.18.0"
 thiserror = "1.0"
 uluru = "2"
 wgpu = "0.8"
+winit = "0.27.2"
 
-# "winit" = "0.22.2"
-# necessary until winit/#1524 is merged
-winit = { git = "https://github.com/chemicstry/winit", branch = "optional_drag_and_drop" }
