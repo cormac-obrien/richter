@@ -41,169 +41,97 @@ use winit::{
 
 const ACTION_COUNT: usize = 19;
 
-static INPUT_NAMES: [&'static str; 79] = [
-    ",",
-    ".",
-    "/",
-    "0",
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-    "A",
-    "ALT",
-    "B",
-    "BACKSPACE",
-    "C",
-    "CTRL",
-    "D",
-    "DEL",
-    "DOWNARROW",
-    "E",
-    "END",
-    "ENTER",
-    "ESCAPE",
-    "F",
-    "F1",
-    "F10",
-    "F11",
-    "F12",
-    "F2",
-    "F3",
-    "F4",
-    "F5",
-    "F6",
-    "F7",
-    "F8",
-    "F9",
-    "G",
-    "H",
-    "HOME",
-    "I",
-    "INS",
-    "J",
-    "K",
-    "L",
-    "LEFTARROW",
-    "M",
-    "MOUSE1",
-    "MOUSE2",
-    "MOUSE3",
-    "MWHEELDOWN",
-    "MWHEELUP",
-    "N",
-    "O",
-    "P",
-    "PGDN",
-    "PGUP",
-    "Q",
-    "R",
-    "RIGHTARROW",
-    "S",
-    "SEMICOLON",
-    "SHIFT",
-    "SPACE",
-    "T",
-    "TAB",
-    "U",
-    "UPARROW",
-    "V",
-    "W",
-    "X",
-    "Y",
-    "Z",
-    "[",
-    "\\",
-    "]",
-    "`",
-];
+lazy_static! {
+    static ref INPUT_MAP: HashMap<&'static str, BindInput> = {
+        let mut map = HashMap::new();
 
-static INPUT_VALUES: [BindInput; 79] = [
-    BindInput::Key(Key::Comma),
-    BindInput::Key(Key::Period),
-    BindInput::Key(Key::Slash),
-    BindInput::Key(Key::Key0),
-    BindInput::Key(Key::Key1),
-    BindInput::Key(Key::Key2),
-    BindInput::Key(Key::Key3),
-    BindInput::Key(Key::Key4),
-    BindInput::Key(Key::Key5),
-    BindInput::Key(Key::Key6),
-    BindInput::Key(Key::Key7),
-    BindInput::Key(Key::Key8),
-    BindInput::Key(Key::Key9),
-    BindInput::Key(Key::A),
-    BindInput::Key(Key::LAlt),
-    BindInput::Key(Key::B),
-    BindInput::Key(Key::Back),
-    BindInput::Key(Key::C),
-    BindInput::Key(Key::LControl),
-    BindInput::Key(Key::D),
-    BindInput::Key(Key::Delete),
-    BindInput::Key(Key::Down),
-    BindInput::Key(Key::E),
-    BindInput::Key(Key::End),
-    BindInput::Key(Key::Return),
-    BindInput::Key(Key::Escape),
-    BindInput::Key(Key::F),
-    BindInput::Key(Key::F1),
-    BindInput::Key(Key::F10),
-    BindInput::Key(Key::F11),
-    BindInput::Key(Key::F12),
-    BindInput::Key(Key::F2),
-    BindInput::Key(Key::F3),
-    BindInput::Key(Key::F4),
-    BindInput::Key(Key::F5),
-    BindInput::Key(Key::F6),
-    BindInput::Key(Key::F7),
-    BindInput::Key(Key::F8),
-    BindInput::Key(Key::F9),
-    BindInput::Key(Key::G),
-    BindInput::Key(Key::H),
-    BindInput::Key(Key::Home),
-    BindInput::Key(Key::I),
-    BindInput::Key(Key::Insert),
-    BindInput::Key(Key::J),
-    BindInput::Key(Key::K),
-    BindInput::Key(Key::L),
-    BindInput::Key(Key::Left),
-    BindInput::Key(Key::M),
-    BindInput::MouseButton(MouseButton::Left),
-    BindInput::MouseButton(MouseButton::Right),
-    BindInput::MouseButton(MouseButton::Middle),
-    BindInput::MouseWheel(MouseWheel::Down),
-    BindInput::MouseWheel(MouseWheel::Up),
-    BindInput::Key(Key::N),
-    BindInput::Key(Key::O),
-    BindInput::Key(Key::P),
-    BindInput::Key(Key::PageDown),
-    BindInput::Key(Key::PageUp),
-    BindInput::Key(Key::Q),
-    BindInput::Key(Key::R),
-    BindInput::Key(Key::Right),
-    BindInput::Key(Key::S),
-    BindInput::Key(Key::Semicolon),
-    BindInput::Key(Key::LShift),
-    BindInput::Key(Key::Space),
-    BindInput::Key(Key::T),
-    BindInput::Key(Key::Tab),
-    BindInput::Key(Key::U),
-    BindInput::Key(Key::Up),
-    BindInput::Key(Key::V),
-    BindInput::Key(Key::W),
-    BindInput::Key(Key::X),
-    BindInput::Key(Key::Y),
-    BindInput::Key(Key::Z),
-    BindInput::Key(Key::LBracket),
-    BindInput::Key(Key::Backslash),
-    BindInput::Key(Key::RBracket),
-    BindInput::Key(Key::Grave),
-];
+        map.insert(",", BindInput::Key(Key::Comma));
+        map.insert(".", BindInput::Key(Key::Period));
+        map.insert("/", BindInput::Key(Key::Slash));
+        map.insert("+", BindInput::Key(Key::Add));
+        map.insert("-", BindInput::Key(Key::Subtract));
+        map.insert("=", BindInput::Key(Key::Equals));
+        map.insert("0", BindInput::Key(Key::Key0));
+        map.insert("1", BindInput::Key(Key::Key1));
+        map.insert("2", BindInput::Key(Key::Key2));
+        map.insert("3", BindInput::Key(Key::Key3));
+        map.insert("4", BindInput::Key(Key::Key4));
+        map.insert("5", BindInput::Key(Key::Key5));
+        map.insert("6", BindInput::Key(Key::Key6));
+        map.insert("7", BindInput::Key(Key::Key7));
+        map.insert("8", BindInput::Key(Key::Key8));
+        map.insert("9", BindInput::Key(Key::Key9));
+        map.insert("A", BindInput::Key(Key::A));
+        map.insert("ALT", BindInput::Key(Key::LAlt));
+        map.insert("B", BindInput::Key(Key::B));
+        map.insert("BACKSPACE", BindInput::Key(Key::Back));
+        map.insert("C", BindInput::Key(Key::C));
+        map.insert("CTRL", BindInput::Key(Key::LControl));
+        map.insert("D", BindInput::Key(Key::D));
+        map.insert("DEL", BindInput::Key(Key::Delete));
+        map.insert("DOWNARROW", BindInput::Key(Key::Down));
+        map.insert("E", BindInput::Key(Key::E));
+        map.insert("END", BindInput::Key(Key::End));
+        map.insert("ENTER", BindInput::Key(Key::Return));
+        map.insert("ESCAPE", BindInput::Key(Key::Escape));
+        map.insert("F", BindInput::Key(Key::F));
+        map.insert("F1", BindInput::Key(Key::F1));
+        map.insert("F10", BindInput::Key(Key::F10));
+        map.insert("F11", BindInput::Key(Key::F11));
+        map.insert("F12", BindInput::Key(Key::F12));
+        map.insert("F2", BindInput::Key(Key::F2));
+        map.insert("F3", BindInput::Key(Key::F3));
+        map.insert("F4", BindInput::Key(Key::F4));
+        map.insert("F5", BindInput::Key(Key::F5));
+        map.insert("F6", BindInput::Key(Key::F6));
+        map.insert("F7", BindInput::Key(Key::F7));
+        map.insert("F8", BindInput::Key(Key::F8));
+        map.insert("F9", BindInput::Key(Key::F9));
+        map.insert("G", BindInput::Key(Key::G));
+        map.insert("H", BindInput::Key(Key::H));
+        map.insert("HOME", BindInput::Key(Key::Home));
+        map.insert("I", BindInput::Key(Key::I));
+        map.insert("INS", BindInput::Key(Key::Insert));
+        map.insert("J", BindInput::Key(Key::J));
+        map.insert("K", BindInput::Key(Key::K));
+        map.insert("L", BindInput::Key(Key::L));
+        map.insert("LEFTARROW", BindInput::Key(Key::Left));
+        map.insert("M", BindInput::Key(Key::M));
+        map.insert("MOUSE1", BindInput::MouseButton(MouseButton::Left));
+        map.insert("MOUSE2", BindInput::MouseButton(MouseButton::Right));
+        map.insert("MOUSE3", BindInput::MouseButton(MouseButton::Middle));
+        map.insert("MWHEELDOWN", BindInput::MouseWheel(MouseWheel::Down));
+        map.insert("MWHEELUP", BindInput::MouseWheel(MouseWheel::Up));
+        map.insert("N", BindInput::Key(Key::N));
+        map.insert("O", BindInput::Key(Key::O));
+        map.insert("P", BindInput::Key(Key::P));
+        map.insert("PAUSE", BindInput::Key(Key::Pause));
+        map.insert("PGDN", BindInput::Key(Key::PageDown));
+        map.insert("PGUP", BindInput::Key(Key::PageUp));
+        map.insert("Q", BindInput::Key(Key::Q));
+        map.insert("R", BindInput::Key(Key::R));
+        map.insert("RIGHTARROW", BindInput::Key(Key::Right));
+        map.insert("S", BindInput::Key(Key::S));
+        map.insert("SEMICOLON", BindInput::Key(Key::Semicolon));
+        map.insert("SHIFT", BindInput::Key(Key::LShift));
+        map.insert("SPACE", BindInput::Key(Key::Space));
+        map.insert("T", BindInput::Key(Key::T));
+        map.insert("TAB", BindInput::Key(Key::Tab));
+        map.insert("U", BindInput::Key(Key::U));
+        map.insert("UPARROW", BindInput::Key(Key::Up));
+        map.insert("V", BindInput::Key(Key::V));
+        map.insert("W", BindInput::Key(Key::W));
+        map.insert("X", BindInput::Key(Key::X));
+        map.insert("Y", BindInput::Key(Key::Y));
+        map.insert("Z", BindInput::Key(Key::Z));
+        map.insert("[", BindInput::Key(Key::LBracket));
+        map.insert("\\", BindInput::Key(Key::Backslash));
+        map.insert("]", BindInput::Key(Key::RBracket));
+        map.insert("`", BindInput::Key(Key::Grave));
+
+        map
+    };
+}
 
 /// A unique identifier for an in-game action.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, EnumIter)]
@@ -398,10 +326,8 @@ impl FromStr for BindInput {
     fn from_str(src: &str) -> Result<BindInput, Error> {
         let upper = src.to_uppercase();
 
-        for (i, name) in INPUT_NAMES.iter().enumerate() {
-            if upper == *name {
-                return Ok(INPUT_VALUES[i].clone());
-            }
+        if let Some(value) = INPUT_MAP.get(upper.as_str()) {
+            return Ok(value.clone());
         }
 
         bail!("\"{}\" isn't a valid key", src);
@@ -411,9 +337,9 @@ impl FromStr for BindInput {
 impl ToString for BindInput {
     fn to_string(&self) -> String {
         // this could be a binary search but it's unlikely to affect performance much
-        for (i, input) in INPUT_VALUES.iter().enumerate() {
+        for (i, input) in INPUT_MAP.iter() {
             if self == input {
-                return INPUT_NAMES[i].to_owned();
+                return i.to_string();
             }
         }
 
