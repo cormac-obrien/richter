@@ -255,6 +255,7 @@ impl<'win> ClientProgram<'win> {
         );
 
         swap_chain_output.present();
+        self.window.request_redraw();
     }
 }
 

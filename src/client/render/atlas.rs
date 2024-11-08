@@ -293,6 +293,7 @@ impl TextureAtlasBuilder {
         );
         let cmd_buffer = encoder.finish();
         queue.submit(&[cmd_buffer]);
+        device.poll(wgpu::Maintain::Wait);
 
         Ok(TextureAtlas {
             atlas: diffuse_texture,

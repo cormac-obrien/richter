@@ -111,7 +111,9 @@ impl<P> winit::application::ApplicationHandler for Host<P>
 where
     P: Program,
 {
-    fn resumed(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {}
+    fn resumed(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        log::info!("EventLoop resumed");
+    }
 
     fn window_event(
         &mut self,
@@ -119,7 +121,6 @@ where
         window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        log::debug!("Host -> window_event: {event:?}");
         match event {
             WindowEvent::CloseRequested => {
                 self.program.shutdown();
