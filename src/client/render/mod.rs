@@ -71,7 +71,7 @@ use std::{
     borrow::Cow,
     cell::{Cell, Ref, RefCell, RefMut},
     mem::size_of,
-    num::{NonZeroU32, NonZeroU64, NonZeroU8},
+    num::NonZeroU64,
     rc::Rc,
 };
 
@@ -99,8 +99,6 @@ use crate::{
     },
     common::{
         console::{Console, CvarRegistry},
-        model::Model,
-        net::SignOnStage,
         vfs::Vfs,
         wad::Wad,
     },
@@ -108,8 +106,8 @@ use crate::{
 
 use super::ConnectionState;
 use bumpalo::Bump;
-use cgmath::{Deg, InnerSpace, Vector3, Zero};
-use chrono::{DateTime, Duration, Utc};
+use cgmath::{Deg, Vector3, Zero};
+use chrono::{DateTime, Utc};
 use failure::Error;
 
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -121,32 +119,10 @@ const DIFFUSE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Un
 const FULLBRIGHT_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const LIGHTMAP_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
-/// Create a `wgpu::TextureDescriptor` appropriate for the provided texture data.
-pub fn texture_descriptor<'a>(
-    label: Option<&'a str>,
-    width: u32,
-    height: u32,
-    format: wgpu::TextureFormat,
-) -> wgpu::TextureDescriptor {
-    wgpu::TextureDescriptor {
-        label,
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsage::COPY_DST | wgpu::TextureUsage::SAMPLED,
-    }
-}
-
-pub fn create_texture<'a>(
+pub fn create_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    label: Option<&'a str>,
+    label: Option<&str>,
     width: u32,
     height: u32,
     data: &TextureData,
@@ -157,17 +133,34 @@ pub fn create_texture<'a>(
         width,
         height
     );
-    let texture = device.create_texture(&texture_descriptor(label, width, height, data.format()));
+
+    let desc = wgpu::TextureDescriptor {
+        label,
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: data.format(),
+        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[data.format()],
+    };
+
+    let texture = device.create_texture(&desc);
     queue.write_texture(
         wgpu::ImageCopyTexture {
             texture: &texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
         },
         data.data(),
         wgpu::ImageDataLayout {
             offset: 0,
-            bytes_per_row: NonZeroU32::new(width * data.stride()),
+            bytes_per_row: Some(width * data.stride()),
             rows_per_image: None,
         },
         wgpu::Extent3d {
@@ -308,7 +301,7 @@ impl GraphicsState {
         let frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frame uniform buffer"),
             size: size_of::<world::FrameUniforms>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let entity_uniform_buffer = RefCell::new(DynamicUniformBuffer::new(&device));
@@ -322,10 +315,10 @@ impl GraphicsState {
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Nearest,
             // TODO: these are the OpenGL defaults; see if there's a better choice for us
-            lod_min_clamp: -1000.0,
+            lod_min_clamp: 0.0,
             lod_max_clamp: 1000.0,
             compare: None,
-            anisotropy_clamp: NonZeroU8::new(16),
+            anisotropy_clamp: 1,
             ..Default::default()
         });
 
@@ -336,12 +329,12 @@ impl GraphicsState {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Linear,
             // TODO: these are the OpenGL defaults; see if there's a better choice for us
-            lod_min_clamp: -1000.0,
+            lod_min_clamp: 0.0,
             lod_max_clamp: 1000.0,
             compare: None,
-            anisotropy_clamp: NonZeroU8::new(16),
+            anisotropy_clamp: 16,
             ..Default::default()
         });
 
@@ -370,7 +363,7 @@ impl GraphicsState {
                     wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &entity_uniform_buffer.borrow().buffer(),
+                            buffer: entity_uniform_buffer.borrow().buffer(),
                             offset: 0,
                             size: Some(
                                 NonZeroU64::new(size_of::<EntityUniforms>() as u64).unwrap(),
@@ -504,7 +497,7 @@ impl GraphicsState {
             self.final_pass_target = FinalPassTarget::new(self.device(), size, sample_count);
             self.blit_pipeline.rebuild(
                 &self.device,
-                &mut *self.compiler.borrow_mut(),
+                &mut self.compiler.borrow_mut(),
                 self.final_pass_target.resolve_view(),
             )
         }
@@ -841,24 +834,22 @@ impl ClientRenderer {
 
             if let Some(Connection {
                 state: ref cl_state,
-                ref conn_state,
+                conn_state: ConnectionState::Connected(_),
                 ..
             }) = conn
             {
                 // only postprocess if client is in the game
-                if let ConnectionState::Connected(_) = conn_state {
-                    self.postprocess_renderer
-                        .rebuild(gfx_state, gfx_state.deferred_pass_target.color_view());
-                    self.postprocess_renderer.record_draw(
-                        gfx_state,
-                        &mut final_pass,
-                        cl_state.color_shift(),
-                    );
-                }
+                self.postprocess_renderer
+                    .rebuild(gfx_state, gfx_state.deferred_pass_target.color_view());
+                self.postprocess_renderer.record_draw(
+                    gfx_state,
+                    &mut final_pass,
+                    cl_state.color_shift(),
+                );
             }
 
             self.ui_renderer.render_pass(
-                &gfx_state,
+                gfx_state,
                 &mut final_pass,
                 Extent2d { width, height },
                 // use client time when in game, renderer time otherwise

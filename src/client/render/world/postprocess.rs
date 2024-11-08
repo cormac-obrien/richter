@@ -33,7 +33,7 @@ impl PostProcessPipeline {
                     color_shift: [0.0; 4],
                 })
             },
-            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
         PostProcessPipeline {
@@ -71,20 +71,17 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     // sampler
     wgpu::BindGroupLayoutEntry {
         binding: 0,
-        visibility: wgpu::ShaderStage::FRAGMENT,
-        ty: wgpu::BindingType::Sampler {
-            filtering: true,
-            comparison: false,
-        },
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
         count: None,
     },
     // color buffer
     wgpu::BindGroupLayoutEntry {
         binding: 1,
-        visibility: wgpu::ShaderStage::FRAGMENT,
+        visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Texture {
             view_dimension: wgpu::TextureViewDimension::D2,
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
             multisampled: true,
         },
         count: None,
@@ -92,7 +89,7 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     // PostProcessUniforms
     wgpu::BindGroupLayoutEntry {
         binding: 2,
-        visibility: wgpu::ShaderStage::FRAGMENT,
+        visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
             has_dynamic_offset: false,
@@ -121,14 +118,14 @@ impl Pipeline for PostProcessPipeline {
     fn vertex_shader() -> &'static str {
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/postprocess.vert"
+            "/shaders/postprocess.vert.glsl"
         ))
     }
 
     fn fragment_shader() -> &'static str {
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/postprocess.frag"
+            "/shaders/postprocess.frag.glsl"
         ))
     }
 
@@ -136,7 +133,7 @@ impl Pipeline for PostProcessPipeline {
         QuadPipeline::primitive_state()
     }
 
-    fn color_target_states() -> Vec<wgpu::ColorTargetState> {
+    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
         QuadPipeline::color_target_states()
     }
 

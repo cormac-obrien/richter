@@ -56,7 +56,7 @@ impl Capture {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("capture buffer"),
             size: (row_width * capture_size.height * BYTES_PER_PIXEL) as u64,
-            usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::MAP_READ,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
 
@@ -78,7 +78,7 @@ impl Capture {
                 buffer: &self.buffer,
                 layout: wgpu::ImageDataLayout {
                     offset: 0,
-                    bytes_per_row: Some(NonZeroU32::new(self.row_width * BYTES_PER_PIXEL).unwrap()),
+                    bytes_per_row: Some(self.row_width * BYTES_PER_PIXEL),
                     rows_per_image: None,
                 },
             },
@@ -95,9 +95,8 @@ impl Capture {
             // map the buffer
             // TODO: maybe make this async so we don't force the whole program to block
             let slice = self.buffer.slice(..);
-            let map_future = slice.map_async(wgpu::MapMode::Read);
+            slice.map_async(wgpu::MapMode::Read, |r| r.unwrap());
             device.poll(wgpu::Maintain::Wait);
-            futures::executor::block_on(map_future).unwrap();
 
             // copy pixel data
             let mapped = slice.get_mapped_range();

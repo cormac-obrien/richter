@@ -77,16 +77,6 @@ impl<T> LinkedSlab<T> {
         key
     }
 
-    /// Remove and return the value associated with the given key.
-    ///
-    /// The key is then released and may be associated with future stored values.
-    ///
-    /// Note that this operation is O(n) in the number of allocated values.
-    pub fn remove(&mut self, key: usize) -> T {
-        self.allocated.drain_filter(|k| *k == key);
-        self.slab.remove(key)
-    }
-
     /// Return `true` if a value is associated with the given key.
     pub fn contains(&self, key: usize) -> bool {
         self.slab.contains(key)
@@ -107,7 +97,7 @@ impl<T> LinkedSlab<T> {
         let mut allocated = mem::replace(&mut self.allocated, LinkedList::new());
         let mut slab = mem::replace(&mut self.slab, Slab::new());
 
-        allocated.drain_filter(|k| {
+        allocated.retain(|k| {
             let retain = match slab.get_mut(*k) {
                 Some(ref mut v) => f(*k, v),
                 None => true,
@@ -163,11 +153,11 @@ mod tests {
         }
 
         values.retain(|v| v % 2 == 0);
-        let mut expected: HashSet<i32> = HashSet::from_iter(values.into_iter());
+        let expected: HashSet<i32> = HashSet::from_iter(values.into_iter());
 
         linked_slab.retain(|_, v| *v % 2 == 0);
 
-        let mut actual = HashSet::from_iter(linked_slab.iter().map(|v| *v));
+        let actual = HashSet::from_iter(linked_slab.iter().map(|v| *v));
 
         assert_eq!(expected, actual);
     }

@@ -75,7 +75,7 @@ where
         let inner = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("dynamic uniform buffer"),
             size: DYNAMIC_UNIFORM_BUFFER_SIZE,
-            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 

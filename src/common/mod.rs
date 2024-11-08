@@ -35,8 +35,6 @@ pub mod util;
 pub mod vfs;
 pub mod wad;
 
-use std::path::PathBuf;
-
 pub fn default_base_dir() -> std::path::PathBuf {
     match std::env::current_dir() {
         Ok(cwd) => cwd,

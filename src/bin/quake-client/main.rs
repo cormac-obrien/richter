@@ -56,22 +56,21 @@ use richter::{
 use structopt::StructOpt;
 use winit::{
     event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget},
-    window::Window,
+    event_loop::{ControlFlow, EventLoop},
+    window::{Window, WindowAttributes},
 };
 
-struct ClientProgram {
+struct ClientProgram<'win> {
     vfs: Rc<Vfs>,
     cvars: Rc<RefCell<CvarRegistry>>,
     cmds: Rc<RefCell<CmdRegistry>>,
     console: Rc<RefCell<Console>>,
     menu: Rc<RefCell<Menu>>,
 
-    window: Window,
+    window: &'win Window,
     window_dimensions_changed: bool,
 
-    surface: wgpu::Surface,
-    swap_chain: RefCell<wgpu::SwapChain>,
+    surface: wgpu::Surface<'win>,
     gfx_state: RefCell<GraphicsState>,
     ui_renderer: Rc<UiRenderer>,
 
@@ -79,8 +78,8 @@ struct ClientProgram {
     input: Rc<RefCell<Input>>,
 }
 
-impl ClientProgram {
-    pub async fn new(window: Window, base_dir: Option<PathBuf>, trace: bool) -> ClientProgram {
+impl<'win> ClientProgram<'win> {
+    pub async fn new(window: &'win Window, base_dir: Option<PathBuf>, trace: bool) -> ClientProgram<'win> {
         let vfs = Vfs::with_base_dir(base_dir.unwrap_or(common::default_base_dir()));
 
         let con_names = Rc::new(RefCell::new(Vec::new()));
@@ -102,12 +101,18 @@ impl ClientProgram {
         )));
         input.borrow_mut().bind_defaults();
 
-        let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
-        let surface = unsafe { instance.create_surface(&window) };
+        let instance_desc = wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
+            ..Default::default()
+        };
+        let instance = wgpu::Instance::new(instance_desc);
+
+        let surface = unsafe { instance.create_surface(window).unwrap() };
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
             })
             .await
             .unwrap();
@@ -115,16 +120,17 @@ impl ClientProgram {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    features: wgpu::Features::PUSH_CONSTANTS
-                        | wgpu::Features::SAMPLED_TEXTURE_BINDING_ARRAY
-                        | wgpu::Features::SAMPLED_TEXTURE_ARRAY_DYNAMIC_INDEXING
-                        | wgpu::Features::SAMPLED_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
-                    limits: wgpu::Limits {
+                    required_features: wgpu::Features::DEPTH_CLIP_CONTROL
+                        | wgpu::Features::PUSH_CONSTANTS
+                        | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+                        | wgpu::Features::TEXTURE_BINDING_ARRAY,
+                    required_limits: wgpu::Limits {
                         max_sampled_textures_per_shader_stage: 256,
                         max_uniform_buffer_binding_size: 65536,
                         max_push_constant_size: 256,
                         ..Default::default()
                     },
+                    memory_hints: wgpu::MemoryHints::Performance,
                 },
                 if trace {
                     Some(Path::new("./trace/"))
@@ -135,16 +141,6 @@ impl ClientProgram {
             .await
             .unwrap();
         let size: Extent2d = window.inner_size().into();
-        let swap_chain = RefCell::new(device.create_swap_chain(
-            &surface,
-            &wgpu::SwapChainDescriptor {
-                usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
-                format: DIFFUSE_ATTACHMENT_FORMAT,
-                width: size.width,
-                height: size.height,
-                present_mode: wgpu::PresentMode::Immediate,
-            },
-        ));
 
         let vfs = Rc::new(vfs);
 
@@ -210,7 +206,6 @@ impl ClientProgram {
             window,
             window_dimensions_changed: false,
             surface,
-            swap_chain,
             gfx_state: RefCell::new(gfx_state),
             ui_renderer,
             game,
@@ -221,25 +216,37 @@ impl ClientProgram {
     /// Builds a new swap chain with the specified present mode and the window's current dimensions.
     fn recreate_swap_chain(&self, present_mode: wgpu::PresentMode) {
         let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
-        let swap_chain = self.gfx_state.borrow().device().create_swap_chain(
-            &self.surface,
-            &wgpu::SwapChainDescriptor {
-                usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
-                format: DIFFUSE_ATTACHMENT_FORMAT,
-                width,
-                height,
-                present_mode,
-            },
-        );
-        let _ = self.swap_chain.replace(swap_chain);
+        let state =  self.gfx_state.borrow();
+        let device = state.device();
+        self.surface.configure(device, &wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: DIFFUSE_ATTACHMENT_FORMAT,
+            width,
+            height,
+            present_mode,
+            alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+            view_formats: vec![DIFFUSE_ATTACHMENT_FORMAT],
+            desired_maximum_frame_latency: 2,
+        });
     }
 
     fn render(&mut self) {
-        let swap_chain_output = self.swap_chain.borrow_mut().get_current_frame().unwrap();
+        let swap_chain_output = self.surface.get_current_texture().unwrap();
+        let view = swap_chain_output.texture.create_view(&wgpu::TextureViewDescriptor {
+            label: "swapchain_output".into(),
+            format: DIFFUSE_ATTACHMENT_FORMAT.into(),
+            dimension: wgpu::TextureViewDimension::D2.into(),
+            aspect: wgpu::TextureAspect::All,
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: 0,
+            array_layer_count: None,
+        });
+
         let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
         self.game.render(
             &self.gfx_state.borrow(),
-            &swap_chain_output.output.view,
+            &view,
             width,
             height,
             &self.console.borrow(),
@@ -248,12 +255,10 @@ impl ClientProgram {
     }
 }
 
-impl Program for ClientProgram {
-    fn handle_event<T>(
+impl<'win> Program for ClientProgram<'win> {
+    fn handle_event(
         &mut self,
-        event: Event<T>,
-        _target: &EventLoopWindowTarget<T>,
-        _control_flow: &mut ControlFlow,
+        event: Event<()>,
     ) {
         match event {
             Event::WindowEvent {
@@ -271,7 +276,7 @@ impl Program for ClientProgram {
         // recreate swapchain if needed
         if self.window_dimensions_changed {
             self.window_dimensions_changed = false;
-            self.recreate_swap_chain(wgpu::PresentMode::Immediate);
+            self.recreate_swap_chain(wgpu::PresentMode::AutoNoVsync);
         }
 
         let size: Extent2d = self.window.inner_size().into();
@@ -292,7 +297,7 @@ impl Program for ClientProgram {
 
         match self.input.borrow().focus() {
             InputFocus::Game => {
-                if let Err(e) = self.window.set_cursor_grab(true) {
+                if let Err(e) = self.window.set_cursor_grab(winit::window::CursorGrabMode::Locked) {
                     // This can happen if the window is running in another
                     // workspace. It shouldn't be considered an error.
                     log::debug!("Couldn't grab cursor: {}", e);
@@ -302,7 +307,7 @@ impl Program for ClientProgram {
             }
 
             _ => {
-                if let Err(e) = self.window.set_cursor_grab(false) {
+                if let Err(e) = self.window.set_cursor_grab(winit::window::CursorGrabMode::None) {
                     log::debug!("Couldn't release cursor: {}", e);
                 };
                 self.window.set_cursor_visible(true);
@@ -350,32 +355,30 @@ fn main() {
     env_logger::init();
     let opt = Opt::from_args();
 
-    let event_loop = EventLoop::new();
-    let window = {
+    let event_loop = EventLoop::new().unwrap();
+    let window_attrs = {
         #[cfg(target_os = "windows")]
         {
             use winit::platform::windows::WindowBuilderExtWindows as _;
-            winit::window::WindowBuilder::new()
+            Window::default_attributes()
                 // disable file drag-and-drop so cpal and winit play nice
                 .with_drag_and_drop(false)
                 .with_title("Richter client")
                 .with_inner_size(winit::dpi::PhysicalSize::<u32>::from((1366u32, 768)))
-                .build(&event_loop)
-                .unwrap()
         }
 
         #[cfg(not(target_os = "windows"))]
         {
-            winit::window::WindowBuilder::new()
+            Window::default_attributes()
                 .with_title("Richter client")
                 .with_inner_size(winit::dpi::PhysicalSize::<u32>::from((1366u32, 768)))
-                .build(&event_loop)
-                .unwrap()
         }
     };
 
+    let window = event_loop.create_window(window_attrs).unwrap();
+
     let client_program =
-        futures::executor::block_on(ClientProgram::new(window, opt.base_dir, opt.trace));
+        futures::executor::block_on(ClientProgram::new(&window, opt.base_dir, opt.trace));
 
     // TODO: make dump_demo part of top-level binary and allow choosing file name
     if let Some(ref demo) = opt.dump_demo {
@@ -431,7 +434,6 @@ fn main() {
 
     let mut host = Host::new(client_program);
 
-    event_loop.run(move |event, _target, control_flow| {
-        host.handle_event(event, _target, control_flow);
-    });
+    event_loop.run_app(&mut host).unwrap();
+
 }

@@ -56,7 +56,7 @@ impl GlyphPipeline {
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("quad instance buffer"),
             size: (MAX_INSTANCES * size_of::<GlyphInstance>()) as u64,
-            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -94,17 +94,14 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     // sampler
     wgpu::BindGroupLayoutEntry {
         binding: 0,
-        visibility: wgpu::ShaderStage::FRAGMENT,
-        ty: wgpu::BindingType::Sampler {
-            filtering: true,
-            comparison: false,
-        },
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
         count: None,
     },
     // glyph texture array
     wgpu::BindGroupLayoutEntry {
         binding: 1,
-        visibility: wgpu::ShaderStage::FRAGMENT,
+        visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Texture {
             view_dimension: wgpu::TextureViewDimension::D2,
             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -124,11 +121,17 @@ impl Pipeline for GlyphPipeline {
     }
 
     fn vertex_shader() -> &'static str {
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/glyph.vert"))
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/glyph.vert.glsl"
+        ))
     }
 
     fn fragment_shader() -> &'static str {
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/glyph.frag"))
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/glyph.frag.glsl"
+        ))
     }
 
     fn primitive_state() -> wgpu::PrimitiveState {
@@ -142,7 +145,7 @@ impl Pipeline for GlyphPipeline {
         }]
     }
 
-    fn color_target_states() -> Vec<wgpu::ColorTargetState> {
+    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
         QuadPipeline::color_target_states()
     }
 
@@ -154,12 +157,12 @@ impl Pipeline for GlyphPipeline {
         vec![
             wgpu::VertexBufferLayout {
                 array_stride: size_of::<QuadVertex>() as u64,
-                step_mode: wgpu::InputStepMode::Vertex,
+                step_mode: wgpu::VertexStepMode::Vertex,
                 attributes: &VERTEX_BUFFER_ATTRIBUTES[0],
             },
             wgpu::VertexBufferLayout {
                 array_stride: size_of::<GlyphInstance>() as u64,
-                step_mode: wgpu::InputStepMode::Instance,
+                step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &VERTEX_BUFFER_ATTRIBUTES[1],
             },
         ]

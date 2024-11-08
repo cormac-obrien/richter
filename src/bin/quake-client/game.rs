@@ -170,6 +170,7 @@ impl Game {
                     texture: gfx_state.final_pass_target().resolve_attachment(),
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
                 },
             );
             cap

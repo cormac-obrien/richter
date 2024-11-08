@@ -23,18 +23,18 @@ pub use music::MusicPlayer;
 
 use std::{
     cell::{Cell, RefCell},
-    io::{self, BufReader, Cursor, Read},
+    io::{self, Cursor, Read},
 };
 
 use crate::common::vfs::{Vfs, VfsError};
 
 use cgmath::{InnerSpace, Vector3};
+use chrono::Duration;
 use rodio::{
     source::{Buffered, SamplesConverter},
     Decoder, OutputStreamHandle, Sink, Source,
 };
 use thiserror::Error;
-use chrono::Duration;
 
 pub const DISTANCE_ATTENUATION_FACTOR: f32 = 0.001;
 const MAX_ENTITY_CHANNELS: usize = 128;
@@ -339,13 +339,7 @@ impl EntityMixer {
         let chan_id = self.find_free_channel(ent_id, ent_channel);
         let new_channel = Channel::new(self.stream.clone());
 
-        new_channel.play(
-            src.clone(),
-            origin,
-            listener,
-            volume,
-            attenuation,
-        );
+        new_channel.play(src.clone(), origin, listener, volume, attenuation);
         self.channels[chan_id] = Some(EntityChannel {
             start_time: time,
             ent_id,

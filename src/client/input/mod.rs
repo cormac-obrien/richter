@@ -67,7 +67,7 @@ impl Input {
         }
     }
 
-    pub fn handle_event<T>(&mut self, event: Event<T>) -> Result<(), Error> {
+    pub fn handle_event(&mut self, event: Event<()>) -> Result<(), Error> {
         match event {
             // we're polling for hardware events, so we have to check window focus ourselves
             Event::WindowEvent {

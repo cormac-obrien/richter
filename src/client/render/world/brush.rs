@@ -119,7 +119,7 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[&[wgpu::BindGroupLayoutEntry]] = &[
         // diffuse texture, updated once per face
         wgpu::BindGroupLayoutEntry {
             binding: 0,
-            visibility: wgpu::ShaderStage::FRAGMENT,
+            visibility: wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Texture {
                 view_dimension: wgpu::TextureViewDimension::D2,
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -130,7 +130,7 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[&[wgpu::BindGroupLayoutEntry]] = &[
         // fullbright texture
         wgpu::BindGroupLayoutEntry {
             binding: 1,
-            visibility: wgpu::ShaderStage::FRAGMENT,
+            visibility: wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Texture {
                 view_dimension: wgpu::TextureViewDimension::D2,
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -144,7 +144,7 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[&[wgpu::BindGroupLayoutEntry]] = &[
         wgpu::BindGroupLayoutEntry {
             count: NonZeroU32::new(4),
             binding: 0,
-            visibility: wgpu::ShaderStage::FRAGMENT,
+            visibility: wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Texture {
                 view_dimension: wgpu::TextureViewDimension::D2,
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -180,11 +180,17 @@ impl Pipeline for BrushPipeline {
     }
 
     fn vertex_shader() -> &'static str {
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/brush.vert"))
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/brush.vert.glsl"
+        ))
     }
 
     fn fragment_shader() -> &'static str {
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/brush.frag"))
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/brush.frag.glsl"
+        ))
     }
 
     // NOTE: if any of the binding indices are changed, they must also be changed in
@@ -208,7 +214,7 @@ impl Pipeline for BrushPipeline {
         WorldPipelineBase::primitive_state()
     }
 
-    fn color_target_states() -> Vec<wgpu::ColorTargetState> {
+    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
         WorldPipelineBase::color_target_states()
     }
 
@@ -220,7 +226,7 @@ impl Pipeline for BrushPipeline {
     fn vertex_buffer_layouts() -> Vec<wgpu::VertexBufferLayout<'static>> {
         vec![wgpu::VertexBufferLayout {
             array_stride: size_of::<BrushVertex>() as u64,
-            step_mode: wgpu::InputStepMode::Vertex,
+            step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &VERTEX_ATTRIBUTES[..],
         }]
     }
@@ -410,7 +416,7 @@ impl BrushRendererBuilder {
                         ((vert.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32),
                         ((vert.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32),
                     ],
-                    lightmap_texcoord: calculate_lightmap_texcoords(vert.into(), face, texinfo),
+                    lightmap_texcoord: calculate_lightmap_texcoords(vert, face, texinfo),
                     lightmap_anim: face.light_styles,
                 })
             }
@@ -433,19 +439,15 @@ impl BrushRendererBuilder {
                 let tri = &[v1, v2, v3];
 
                 // skip collinear points
-                for vert in tri.iter() {
+                for &vert in tri.iter() {
                     self.vertices.push(BrushVertex {
-                        position: (*vert).into(),
+                        position: vert.into(),
                         normal: normal.into(),
                         diffuse_texcoord: [
                             ((vert.dot(texinfo.s_vector) + texinfo.s_offset) / tex.width() as f32),
                             ((vert.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32),
                         ],
-                        lightmap_texcoord: calculate_lightmap_texcoords(
-                            (*vert).into(),
-                            face,
-                            texinfo,
-                        ),
+                        lightmap_texcoord: calculate_lightmap_texcoords(vert, face, texinfo),
                         lightmap_anim: face.light_styles,
                     });
                 }
@@ -481,7 +483,7 @@ impl BrushRendererBuilder {
             vertices: face_vert_id as u32..self.vertices.len() as u32,
             min,
             max,
-            texture_id: texinfo.tex_id as usize,
+            texture_id: texinfo.tex_id,
             lightmap_ids,
             light_styles: face.light_styles,
             draw_flag: Cell::new(true),
@@ -663,7 +665,7 @@ impl BrushRendererBuilder {
             // update the corresponding texture chain
             self.texture_chains
                 .entry(face_tex_id)
-                .or_insert(Vec::new())
+                .or_default()
                 .push(face_id);
 
             // generate face bind group
@@ -677,7 +679,7 @@ impl BrushRendererBuilder {
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
                 contents: unsafe { any_slice_as_bytes(self.vertices.as_slice()) },
-                usage: wgpu::BufferUsage::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX,
             });
 
         Ok(BrushRenderer {

@@ -32,16 +32,16 @@ use failure::Error;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use winit::{
-    dpi::LogicalPosition,
+    dpi::PhysicalPosition,
     event::{
-        DeviceEvent, ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta,
-        VirtualKeyCode as Key, WindowEvent,
+        DeviceEvent, ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
     },
+    keyboard::{KeyCode as Key, PhysicalKey},
 };
 
 const ACTION_COUNT: usize = 19;
 
-static INPUT_NAMES: [&'static str; 79] = [
+static INPUT_NAMES: [&str; 79] = [
     ",",
     ".",
     "/",
@@ -127,30 +127,30 @@ static INPUT_VALUES: [BindInput; 79] = [
     BindInput::Key(Key::Comma),
     BindInput::Key(Key::Period),
     BindInput::Key(Key::Slash),
-    BindInput::Key(Key::Key0),
-    BindInput::Key(Key::Key1),
-    BindInput::Key(Key::Key2),
-    BindInput::Key(Key::Key3),
-    BindInput::Key(Key::Key4),
-    BindInput::Key(Key::Key5),
-    BindInput::Key(Key::Key6),
-    BindInput::Key(Key::Key7),
-    BindInput::Key(Key::Key8),
-    BindInput::Key(Key::Key9),
-    BindInput::Key(Key::A),
-    BindInput::Key(Key::LAlt),
-    BindInput::Key(Key::B),
-    BindInput::Key(Key::Back),
-    BindInput::Key(Key::C),
-    BindInput::Key(Key::LControl),
-    BindInput::Key(Key::D),
+    BindInput::Key(Key::Digit0),
+    BindInput::Key(Key::Digit1),
+    BindInput::Key(Key::Digit2),
+    BindInput::Key(Key::Digit3),
+    BindInput::Key(Key::Digit4),
+    BindInput::Key(Key::Digit5),
+    BindInput::Key(Key::Digit6),
+    BindInput::Key(Key::Digit7),
+    BindInput::Key(Key::Digit8),
+    BindInput::Key(Key::Digit9),
+    BindInput::Key(Key::KeyA),
+    BindInput::Key(Key::AltLeft),
+    BindInput::Key(Key::KeyB),
+    BindInput::Key(Key::Backspace),
+    BindInput::Key(Key::KeyC),
+    BindInput::Key(Key::ControlLeft),
+    BindInput::Key(Key::KeyD),
     BindInput::Key(Key::Delete),
-    BindInput::Key(Key::Down),
-    BindInput::Key(Key::E),
+    BindInput::Key(Key::ArrowDown),
+    BindInput::Key(Key::KeyE),
     BindInput::Key(Key::End),
-    BindInput::Key(Key::Return),
+    BindInput::Key(Key::Enter),
     BindInput::Key(Key::Escape),
-    BindInput::Key(Key::F),
+    BindInput::Key(Key::KeyF),
     BindInput::Key(Key::F1),
     BindInput::Key(Key::F10),
     BindInput::Key(Key::F11),
@@ -163,46 +163,46 @@ static INPUT_VALUES: [BindInput; 79] = [
     BindInput::Key(Key::F7),
     BindInput::Key(Key::F8),
     BindInput::Key(Key::F9),
-    BindInput::Key(Key::G),
-    BindInput::Key(Key::H),
+    BindInput::Key(Key::KeyG),
+    BindInput::Key(Key::KeyH),
     BindInput::Key(Key::Home),
-    BindInput::Key(Key::I),
+    BindInput::Key(Key::KeyI),
     BindInput::Key(Key::Insert),
-    BindInput::Key(Key::J),
-    BindInput::Key(Key::K),
-    BindInput::Key(Key::L),
-    BindInput::Key(Key::Left),
-    BindInput::Key(Key::M),
+    BindInput::Key(Key::KeyJ),
+    BindInput::Key(Key::KeyK),
+    BindInput::Key(Key::KeyL),
+    BindInput::Key(Key::ArrowLeft),
+    BindInput::Key(Key::KeyM),
     BindInput::MouseButton(MouseButton::Left),
     BindInput::MouseButton(MouseButton::Right),
     BindInput::MouseButton(MouseButton::Middle),
     BindInput::MouseWheel(MouseWheel::Down),
     BindInput::MouseWheel(MouseWheel::Up),
-    BindInput::Key(Key::N),
-    BindInput::Key(Key::O),
-    BindInput::Key(Key::P),
+    BindInput::Key(Key::KeyN),
+    BindInput::Key(Key::KeyO),
+    BindInput::Key(Key::KeyP),
     BindInput::Key(Key::PageDown),
     BindInput::Key(Key::PageUp),
-    BindInput::Key(Key::Q),
-    BindInput::Key(Key::R),
-    BindInput::Key(Key::Right),
-    BindInput::Key(Key::S),
+    BindInput::Key(Key::KeyQ),
+    BindInput::Key(Key::KeyR),
+    BindInput::Key(Key::ArrowRight),
+    BindInput::Key(Key::KeyS),
     BindInput::Key(Key::Semicolon),
-    BindInput::Key(Key::LShift),
+    BindInput::Key(Key::ShiftLeft),
     BindInput::Key(Key::Space),
-    BindInput::Key(Key::T),
+    BindInput::Key(Key::KeyT),
     BindInput::Key(Key::Tab),
-    BindInput::Key(Key::U),
-    BindInput::Key(Key::Up),
-    BindInput::Key(Key::V),
-    BindInput::Key(Key::W),
-    BindInput::Key(Key::X),
-    BindInput::Key(Key::Y),
-    BindInput::Key(Key::Z),
-    BindInput::Key(Key::LBracket),
+    BindInput::Key(Key::KeyU),
+    BindInput::Key(Key::ArrowUp),
+    BindInput::Key(Key::KeyV),
+    BindInput::Key(Key::KeyW),
+    BindInput::Key(Key::KeyX),
+    BindInput::Key(Key::KeyY),
+    BindInput::Key(Key::KeyZ),
+    BindInput::Key(Key::BracketLeft),
     BindInput::Key(Key::Backslash),
-    BindInput::Key(Key::RBracket),
-    BindInput::Key(Key::Grave),
+    BindInput::Key(Key::BracketRight),
+    BindInput::Key(Key::Backquote),
 ];
 
 /// A unique identifier for an in-game action.
@@ -297,9 +297,9 @@ impl FromStr for Action {
     }
 }
 
-impl ToString for Action {
-    fn to_string(&self) -> String {
-        String::from(match *self {
+impl std::fmt::Display for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match *self {
             Action::Forward => "forward",
             Action::Back => "back",
             Action::MoveLeft => "moveleft",
@@ -319,7 +319,9 @@ impl ToString for Action {
             Action::MLook => "mlook",
             Action::ShowScores => "showscores",
             Action::ShowTeamScores => "showteamscores",
-        })
+        };
+
+        f.write_str(s)
     }
 }
 
@@ -344,7 +346,7 @@ impl ::std::convert::From<MouseScrollDelta> for MouseWheel {
                 }
             }
 
-            MouseScrollDelta::PixelDelta(LogicalPosition { y, .. }) => {
+            MouseScrollDelta::PixelDelta(PhysicalPosition { y, .. }) => {
                 if y > 0.0 {
                     MouseWheel::Up
                 } else {
@@ -504,27 +506,30 @@ impl GameInput {
 
     /// Bind the default controls.
     pub fn bind_defaults(&mut self) {
-        self.bind(Key::W, BindTarget::from_str("+forward").unwrap());
-        self.bind(Key::A, BindTarget::from_str("+moveleft").unwrap());
-        self.bind(Key::S, BindTarget::from_str("+back").unwrap());
-        self.bind(Key::D, BindTarget::from_str("+moveright").unwrap());
+        self.bind(Key::KeyW, BindTarget::from_str("+forward").unwrap());
+        self.bind(Key::KeyA, BindTarget::from_str("+moveleft").unwrap());
+        self.bind(Key::KeyS, BindTarget::from_str("+back").unwrap());
+        self.bind(Key::KeyD, BindTarget::from_str("+moveright").unwrap());
         self.bind(Key::Space, BindTarget::from_str("+jump").unwrap());
-        self.bind(Key::Up, BindTarget::from_str("+lookup").unwrap());
-        self.bind(Key::Left, BindTarget::from_str("+left").unwrap());
-        self.bind(Key::Down, BindTarget::from_str("+lookdown").unwrap());
-        self.bind(Key::Right, BindTarget::from_str("+right").unwrap());
-        self.bind(Key::LControl, BindTarget::from_str("+attack").unwrap());
-        self.bind(Key::E, BindTarget::from_str("+use").unwrap());
-        self.bind(Key::Grave, BindTarget::from_str("toggleconsole").unwrap());
-        self.bind(Key::Key1, BindTarget::from_str("impulse 1").unwrap());
-        self.bind(Key::Key2, BindTarget::from_str("impulse 2").unwrap());
-        self.bind(Key::Key3, BindTarget::from_str("impulse 3").unwrap());
-        self.bind(Key::Key4, BindTarget::from_str("impulse 4").unwrap());
-        self.bind(Key::Key5, BindTarget::from_str("impulse 5").unwrap());
-        self.bind(Key::Key6, BindTarget::from_str("impulse 6").unwrap());
-        self.bind(Key::Key7, BindTarget::from_str("impulse 7").unwrap());
-        self.bind(Key::Key8, BindTarget::from_str("impulse 8").unwrap());
-        self.bind(Key::Key9, BindTarget::from_str("impulse 9").unwrap());
+        self.bind(Key::ArrowUp, BindTarget::from_str("+lookup").unwrap());
+        self.bind(Key::ArrowLeft, BindTarget::from_str("+left").unwrap());
+        self.bind(Key::ArrowDown, BindTarget::from_str("+lookdown").unwrap());
+        self.bind(Key::ArrowRight, BindTarget::from_str("+right").unwrap());
+        self.bind(Key::ControlLeft, BindTarget::from_str("+attack").unwrap());
+        self.bind(Key::KeyE, BindTarget::from_str("+use").unwrap());
+        self.bind(
+            Key::Backquote,
+            BindTarget::from_str("toggleconsole").unwrap(),
+        );
+        self.bind(Key::Digit1, BindTarget::from_str("impulse 1").unwrap());
+        self.bind(Key::Digit2, BindTarget::from_str("impulse 2").unwrap());
+        self.bind(Key::Digit3, BindTarget::from_str("impulse 3").unwrap());
+        self.bind(Key::Digit4, BindTarget::from_str("impulse 4").unwrap());
+        self.bind(Key::Digit5, BindTarget::from_str("impulse 5").unwrap());
+        self.bind(Key::Digit6, BindTarget::from_str("impulse 6").unwrap());
+        self.bind(Key::Digit7, BindTarget::from_str("impulse 7").unwrap());
+        self.bind(Key::Digit8, BindTarget::from_str("impulse 8").unwrap());
+        self.bind(Key::Digit9, BindTarget::from_str("impulse 9").unwrap());
     }
 
     /// Bind a `BindInput` to a `BindTarget`.
@@ -543,17 +548,17 @@ impl GameInput {
     where
         I: Into<BindInput>,
     {
-        self.bindings.borrow().get(&input.into()).map(|t| t.clone())
+        self.bindings.borrow().get(&input.into()).cloned()
     }
 
-    pub fn handle_event<T>(&mut self, outer_event: Event<T>) {
+    pub fn handle_event(&mut self, outer_event: Event<()>) {
         let (input, state): (BindInput, _) = match outer_event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::KeyboardInput {
-                    input:
-                        KeyboardInput {
+                    event:
+                        KeyEvent {
                             state,
-                            virtual_keycode: Some(key),
+                            physical_key: PhysicalKey::Code(key),
                             ..
                         },
                     ..
@@ -564,15 +569,14 @@ impl GameInput {
                 _ => return,
             },
 
-            Event::DeviceEvent { event, .. } => match event {
-                DeviceEvent::MouseMotion { delta } => {
-                    self.mouse_delta.0 += delta.0;
-                    self.mouse_delta.1 += delta.1;
-                    return;
-                }
-
-                _ => return,
-            },
+            Event::DeviceEvent {
+                event: DeviceEvent::MouseMotion { delta },
+                ..
+            } => {
+                self.mouse_delta.0 += delta.0;
+                self.mouse_delta.1 += delta.1;
+                return;
+            }
 
             _ => return,
         };

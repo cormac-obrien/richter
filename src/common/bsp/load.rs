@@ -37,7 +37,6 @@ use crate::common::{
 use super::{BspTextureFrame, BspTextureKind};
 use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::{InnerSpace, Vector3};
-use chrono::Duration;
 use failure::ResultExt as _;
 use num::FromPrimitive;
 use thiserror::Error;
@@ -64,15 +63,6 @@ const MAX_VISLIST: usize = 0x100000;
 const TEX_NAME_MAX: usize = 16;
 
 const NUM_AMBIENTS: usize = 4;
-const MAX_TEXTURE_FRAMES: usize = 10;
-const TEXTURE_FRAME_LEN_MS: i64 = 200;
-
-const ASCII_0: usize = '0' as usize;
-const ASCII_9: usize = '9' as usize;
-const ASCII_CAPITAL_A: usize = 'A' as usize;
-const ASCII_CAPITAL_J: usize = 'J' as usize;
-const ASCII_SMALL_A: usize = 'a' as usize;
-const ASCII_SMALL_J: usize = 'j' as usize;
 
 #[derive(Error, Debug)]
 pub enum BspFileError {

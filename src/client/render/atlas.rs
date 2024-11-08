@@ -255,7 +255,7 @@ impl TextureAtlasBuilder {
 
         let (rgba, fullbright) = palette.translate(&atlas.indexed);
 
-        let diffuse_buffer = device.create_buffer_with_data(&rgba, wgpu::BufferUsage::COPY_SRC);
+        let diffuse_buffer = device.create_buffer_with_data(&rgba, wgpu::BufferUsages::COPY_SRC);
         let diffuse_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: None,
             size: wgpu::Extent3d {
@@ -268,7 +268,7 @@ impl TextureAtlasBuilder {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsage::NONE,
+            usage: wgpu::TextureUsages::NONE,
         });
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });

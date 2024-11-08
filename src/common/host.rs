@@ -23,18 +23,10 @@ use std::cell::{Ref, RefMut};
 use crate::common::{console::CvarRegistry, engine};
 
 use chrono::{DateTime, Duration, Utc};
-use winit::{
-    event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoopWindowTarget},
-};
+use winit::event::{Event, WindowEvent};
 
 pub trait Program: Sized {
-    fn handle_event<T>(
-        &mut self,
-        event: Event<T>,
-        _target: &EventLoopWindowTarget<T>,
-        control_flow: &mut ControlFlow,
-    );
+    fn handle_event(&mut self, event: Event<()>);
 
     fn frame(&mut self, frame_duration: Duration);
     fn shutdown(&mut self);
@@ -72,30 +64,11 @@ where
         }
     }
 
-    pub fn handle_event<T>(
-        &mut self,
-        event: Event<T>,
-        _target: &EventLoopWindowTarget<T>,
-        control_flow: &mut ControlFlow,
-    ) {
+    pub fn handle_event(&mut self, event: Event<()>) {
         match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                self.program.shutdown();
-                *control_flow = ControlFlow::Exit;
-            }
-
-            Event::MainEventsCleared => self.frame(),
             Event::Suspended | Event::Resumed => unimplemented!(),
-            Event::LoopDestroyed => {
-                // TODO:
-                // - host_writeconfig
-                // - others...
-            }
 
-            e => self.program.handle_event(e, _target, control_flow),
+            e => self.program.handle_event(e),
         }
     }
 
@@ -131,5 +104,40 @@ where
 
     pub fn uptime(&self) -> Duration {
         self.prev_frame_time.signed_duration_since(self.init_time)
+    }
+}
+
+impl<P> winit::application::ApplicationHandler for Host<P>
+where
+    P: Program,
+{
+    fn resumed(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {}
+
+    fn window_event(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        window_id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        match event {
+            WindowEvent::CloseRequested => {
+                self.program.shutdown();
+                event_loop.exit();
+            }
+            WindowEvent::RedrawRequested => self.frame(),
+            _ => self
+                .program
+                .handle_event(Event::WindowEvent { window_id, event }),
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        self.program
+            .handle_event(Event::DeviceEvent { device_id, event });
     }
 }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::FromIterator};
+use std::collections::HashMap;
 
 use crate::{
     client::{
@@ -19,7 +19,6 @@ use crate::{
     },
 };
 
-use arrayvec::ArrayVec;
 use chrono::Duration;
 use num::FromPrimitive as _;
 use strum::IntoEnumIterator as _;

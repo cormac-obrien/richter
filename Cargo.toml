@@ -2,7 +2,10 @@
 name = "richter"
 version = "0.1.0"
 authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
-edition = "2018"
+edition = "2021"
+
+[workspace]
+resolver = "2"
 
 [dependencies]
 arrayvec = "0.7"
@@ -17,24 +20,22 @@ futures = "0.3.5"
 lazy_static = "1.0.0"
 log = "0.4.1"
 nom = "5.1"
-num = "0.1.42"
-num-derive = "0.1.42"
+num = "0.4.2"
+num-derive = "0.4.2"
+num-traits = "0.2.19"
 png = "0.16"
 rand = { version = "0.7", features = ["small_rng"] }
 regex = "0.2.6"
-# rodio = "0.12"
-rodio = { git = "https://github.com/RustAudio/rodio", rev = "82b4952" }
+rodio = "0.20"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-shaderc = "0.6.2"
+shaderc = "0.8.3"
 slab = "0.4"
 structopt = "0.3.12"
 strum = "0.18.0"
 strum_macros = "0.18.0"
 thiserror = "1.0"
 uluru = "2"
-wgpu = "0.8"
+wgpu = { version = "23.0.0", features = ["spirv"] }
 
-# "winit" = "0.22.2"
-# necessary until winit/#1524 is merged
-winit = { git = "https://github.com/chemicstry/winit", branch = "optional_drag_and_drop" }
+winit = "0.30.5"

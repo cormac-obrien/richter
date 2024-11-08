@@ -20,7 +20,10 @@ use std::{cell::RefCell, rc::Rc};
 use crate::common::console::Console;
 
 use failure::Error;
-use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode as Key, WindowEvent};
+use winit::{
+    event::{Event, KeyEvent, WindowEvent},
+    keyboard::NamedKey,
+};
 
 pub struct ConsoleInput {
     console: Rc<RefCell<Console>>,
@@ -34,26 +37,35 @@ impl ConsoleInput {
     pub fn handle_event<T>(&self, event: Event<T>) -> Result<(), Error> {
         match event {
             Event::WindowEvent { event, .. } => match event {
-                WindowEvent::ReceivedCharacter(c) => self.console.borrow_mut().send_char(c),
-
-                WindowEvent::KeyboardInput {
-                    input:
-                        KeyboardInput {
-                            virtual_keycode: Some(key),
-                            state: ElementState::Pressed,
-                            ..
-                        },
-                    ..
-                } => match key {
-                    Key::Up => self.console.borrow_mut().history_up(),
-                    Key::Down => self.console.borrow_mut().history_down(),
-                    Key::Left => self.console.borrow_mut().cursor_left(),
-                    Key::Right => self.console.borrow_mut().cursor_right(),
-                    Key::Grave => self.console.borrow_mut().stuff_text("toggleconsole\n"),
-                    _ => (),
-                },
+                WindowEvent::KeyboardInput { event, .. } => {
+                    self.handle_key(event)?;
+                }
 
                 _ => (),
+            },
+
+            _ => (),
+        }
+
+        Ok(())
+    }
+
+    pub fn handle_key(&self, key_event: KeyEvent) -> Result<(), Error> {
+        match key_event.logical_key {
+            winit::keyboard::Key::Named(key) => match key {
+                NamedKey::ArrowUp => self.console.borrow_mut().history_up(),
+                NamedKey::ArrowDown => self.console.borrow_mut().history_down(),
+                NamedKey::ArrowLeft => self.console.borrow_mut().cursor_left(),
+                NamedKey::ArrowRight => self.console.borrow_mut().cursor_right(),
+                _ => (),
+            },
+
+            winit::keyboard::Key::Character(c) => match c.as_str() {
+                "`" => self.console.borrow_mut().stuff_text("toggleconsole\n"),
+                s => self
+                    .console
+                    .borrow_mut()
+                    .send_char(s.chars().next().unwrap()),
             },
 
             _ => (),

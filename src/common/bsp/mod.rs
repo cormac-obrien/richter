@@ -167,14 +167,7 @@ impl fmt::Display for BspError {
     }
 }
 
-impl Error for BspError {
-    fn description(&self) -> &str {
-        match *self {
-            BspError::Io(ref err) => err.description(),
-            BspError::Other(ref msg) => &msg,
-        }
-    }
-}
+impl Error for BspError {}
 
 impl From<::std::io::Error> for BspError {
     fn from(error: ::std::io::Error) -> Self {

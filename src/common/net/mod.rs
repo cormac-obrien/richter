@@ -92,15 +92,7 @@ impl fmt::Display for NetError {
     }
 }
 
-impl Error for NetError {
-    fn description(&self) -> &str {
-        match *self {
-            NetError::Io(ref err) => err.description(),
-            NetError::InvalidData(_) => "Invalid data",
-            NetError::Other(ref msg) => &msg,
-        }
-    }
-}
+impl Error for NetError {}
 
 impl From<::std::io::Error> for NetError {
     fn from(error: ::std::io::Error) -> Self {

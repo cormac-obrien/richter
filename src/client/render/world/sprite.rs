@@ -33,7 +33,7 @@ impl SpritePipeline {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: unsafe { any_slice_as_bytes(&VERTICES) },
-            usage: wgpu::BufferUsage::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX,
         });
 
         SpritePipeline {
@@ -92,11 +92,17 @@ impl Pipeline for SpritePipeline {
     }
 
     fn vertex_shader() -> &'static str {
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/sprite.vert"))
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/sprite.vert.glsl"
+        ))
     }
 
     fn fragment_shader() -> &'static str {
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/sprite.frag"))
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/sprite.frag.glsl"
+        ))
     }
 
     // NOTE: if any of the binding indices are changed, they must also be changed in
@@ -110,7 +116,7 @@ impl Pipeline for SpritePipeline {
                     // diffuse texture, updated once per face
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             view_dimension: wgpu::TextureViewDimension::D2,
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -127,7 +133,7 @@ impl Pipeline for SpritePipeline {
         WorldPipelineBase::primitive_state()
     }
 
-    fn color_target_states() -> Vec<wgpu::ColorTargetState> {
+    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
         WorldPipelineBase::color_target_states()
     }
 
@@ -139,7 +145,7 @@ impl Pipeline for SpritePipeline {
     fn vertex_buffer_layouts() -> Vec<wgpu::VertexBufferLayout<'static>> {
         vec![wgpu::VertexBufferLayout {
             array_stride: size_of::<SpriteVertex>() as u64,
-            step_mode: wgpu::InputStepMode::Vertex,
+            step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &VERTEX_BUFFER_ATTRIBUTES[..],
         }]
     }

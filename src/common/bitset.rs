@@ -69,7 +69,7 @@ pub struct BitSetIter<'a, const N_64: usize> {
 }
 
 impl<'a, const N_64: usize> BitSetIter<'a, N_64> {
-    fn new(blocks: &'a [u64; N_64]) -> BitSetIter<'_, N_64> {
+    fn new(blocks: &[u64; N_64]) -> BitSetIter<'_, N_64> {
         BitSetIter {
             block_index: 0,
             block_val: blocks[0],
