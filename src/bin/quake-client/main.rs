@@ -123,6 +123,7 @@ impl<'win> ClientProgram<'win> {
                     required_features: wgpu::Features::DEPTH_CLIP_CONTROL
                         | wgpu::Features::PUSH_CONSTANTS
                         | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+                        | wgpu::Features::SPIRV_SHADER_PASSTHROUGH
                         | wgpu::Features::TEXTURE_BINDING_ARRAY,
                     required_limits: wgpu::Limits {
                         max_sampled_textures_per_shader_stage: 256,
@@ -252,6 +253,8 @@ impl<'win> ClientProgram<'win> {
             &self.console.borrow(),
             &self.menu.borrow(),
         );
+
+        swap_chain_output.present();
     }
 }
 
@@ -260,6 +263,7 @@ impl<'win> Program for ClientProgram<'win> {
         &mut self,
         event: Event<()>,
     ) {
+        log::debug!("handle event {event:?}");
         match event {
             Event::WindowEvent {
                 event: WindowEvent::Resized(_),
@@ -273,6 +277,8 @@ impl<'win> Program for ClientProgram<'win> {
     }
 
     fn frame(&mut self, frame_duration: Duration) {
+        log::info!("start frame");
+
         // recreate swapchain if needed
         if self.window_dimensions_changed {
             self.window_dimensions_changed = false;
@@ -420,6 +426,7 @@ fn main() {
 
         std::process::exit(0);
     }
+
     if let Some(ref server) = opt.connect {
         client_program
             .console
@@ -435,5 +442,4 @@ fn main() {
     let mut host = Host::new(client_program);
 
     event_loop.run_app(&mut host).unwrap();
-
 }

@@ -1,4 +1,4 @@
-#version 450
+#version 460
 #define LIGHTMAP_ANIM_END (255)
 
 const uint TEXTURE_KIND_REGULAR = 0;

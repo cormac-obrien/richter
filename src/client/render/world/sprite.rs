@@ -12,6 +12,7 @@ use crate::{
 };
 
 use chrono::Duration;
+use wgpu::include_spirv_raw;
 
 pub struct SpritePipeline {
     pipeline: wgpu::RenderPipeline,
@@ -91,18 +92,12 @@ impl Pipeline for SpritePipeline {
         "sprite"
     }
 
-    fn vertex_shader() -> &'static str {
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/shaders/sprite.vert.glsl"
-        ))
+    fn vertex_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        include_spirv_raw!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/sprite.vert"))
     }
 
-    fn fragment_shader() -> &'static str {
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/shaders/sprite.frag.glsl"
-        ))
+    fn fragment_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        include_spirv_raw!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/sprite.frag"))
     }
 
     // NOTE: if any of the binding indices are changed, they must also be changed in

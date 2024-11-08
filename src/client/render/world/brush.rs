@@ -179,18 +179,12 @@ impl Pipeline for BrushPipeline {
         "brush"
     }
 
-    fn vertex_shader() -> &'static str {
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/shaders/brush.vert.glsl"
-        ))
+    fn vertex_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        wgpu::include_spirv_raw!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/brush.vert"))
     }
 
-    fn fragment_shader() -> &'static str {
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/shaders/brush.frag.glsl"
-        ))
+    fn fragment_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        wgpu::include_spirv_raw!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/brush.frag"))
     }
 
     // NOTE: if any of the binding indices are changed, they must also be changed in

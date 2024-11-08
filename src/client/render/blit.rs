@@ -84,7 +84,7 @@ impl BlitPipeline {
     }
 
     pub fn blit<'a>(&'a self, state: &'a GraphicsState, pass: &mut wgpu::RenderPass<'a>) {
-        pass.set_pipeline(&self.pipeline());
+        pass.set_pipeline(self.pipeline());
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_vertex_buffer(0, state.quad_pipeline().vertex_buffer().slice(..));
         pass.draw(0..6, 0..1);
@@ -126,18 +126,12 @@ impl Pipeline for BlitPipeline {
         }]
     }
 
-    fn vertex_shader() -> &'static str {
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/shaders/blit.vert.glsl"
-        ))
+    fn vertex_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        wgpu::include_spirv_raw!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/blit.vert"))
     }
 
-    fn fragment_shader() -> &'static str {
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/shaders/blit.frag.glsl"
-        ))
+    fn fragment_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        wgpu::include_spirv_raw!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/blit.frag"))
     }
 
     fn primitive_state() -> wgpu::PrimitiveState {

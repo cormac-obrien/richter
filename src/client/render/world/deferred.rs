@@ -170,17 +170,17 @@ impl Pipeline for DeferredPipeline {
         }]
     }
 
-    fn vertex_shader() -> &'static str {
-        include_str!(concat!(
+    fn vertex_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        wgpu::include_spirv_raw!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/deferred.vert.glsl"
+            "/shaders/deferred.vert"
         ))
     }
 
-    fn fragment_shader() -> &'static str {
-        include_str!(concat!(
+    fn fragment_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        wgpu::include_spirv_raw!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/deferred.frag.glsl"
+            "/shaders/deferred.frag"
         ))
     }
 

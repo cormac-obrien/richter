@@ -1,4 +1,4 @@
-#version 450
+#version 460
 
 // if this is changed, it must also be changed in client::entity
 const uint MAX_LIGHTS = 32;

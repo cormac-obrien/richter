@@ -24,28 +24,6 @@ use crate::common::util::{any_as_bytes, Pod};
 
 /// The `Pipeline` trait, which allows render pipelines to be defined more-or-less declaratively.
 
-fn create_shader<S>(
-    device: &wgpu::Device,
-    compiler: &mut shaderc::Compiler,
-    name: S,
-    kind: shaderc::ShaderKind,
-    source: S,
-) -> wgpu::ShaderModule
-where
-    S: AsRef<str>,
-{
-    log::debug!("creating shader {}", name.as_ref());
-    let spirv =
-        match compiler.compile_into_spirv(source.as_ref(), kind, name.as_ref(), "main", None) {
-            Ok(s) => s,
-            Err(e) => panic!("error compiling shader: {}", e),
-        };
-    device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(name.as_ref()),
-        source: wgpu::ShaderSource::SpirV(spirv.as_binary().into()),
-    })
-}
-
 pub enum PushConstantUpdate<T> {
     /// Update the push constant to a new value.
     Update(T),
@@ -75,11 +53,11 @@ pub trait Pipeline {
     /// The `BindGroupLayoutDescriptor`s describing the bindings used in the pipeline.
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>>;
 
-    /// The GLSL source of the pipeline's vertex shader.
-    fn vertex_shader() -> &'static str;
+    /// The SPIR-V source of the pipeline's vertex shader.
+    fn vertex_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static>;
 
-    /// The GLSL source of the pipeline's fragment shader.
-    fn fragment_shader() -> &'static str;
+    /// The SPIR-V source of the pipeline's fragment shader.
+    fn fragment_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static>;
 
     /// The primitive state used for rasterization in this pipeline.
     fn primitive_state() -> wgpu::PrimitiveState;
@@ -205,20 +183,11 @@ pub trait Pipeline {
             device.create_pipeline_layout(&desc)
         };
 
-        let vertex_shader = create_shader(
-            device,
-            compiler,
-            format!("{}.vert.glsl", Self::name()).as_str(),
-            shaderc::ShaderKind::Vertex,
-            Self::vertex_shader(),
-        );
-        let fragment_shader = create_shader(
-            device,
-            compiler,
-            format!("{}.frag.glsl", Self::name()).as_str(),
-            shaderc::ShaderKind::Fragment,
-            Self::fragment_shader(),
-        );
+        log::info!("compile {} vertex shader", Self::name());
+        let vertex_shader = unsafe { device.create_shader_module_spirv(&Self::vertex_shader()) };
+        log::info!("compile {} fragment shader", Self::name());
+        let fragment_shader =
+            unsafe { device.create_shader_module_spirv(&Self::fragment_shader()) };
 
         info!("create_render_pipeline");
         let constants = HashMap::new();
@@ -275,20 +244,12 @@ pub trait Pipeline {
                 Self::fragment_push_constant_range(),
             ],
         });
-        let vertex_shader = create_shader(
-            device,
-            compiler,
-            format!("{}.vert.glsl", Self::name()).as_str(),
-            shaderc::ShaderKind::Vertex,
-            Self::vertex_shader(),
-        );
-        let fragment_shader = create_shader(
-            device,
-            compiler,
-            format!("{}.frag.glsl", Self::name()).as_str(),
-            shaderc::ShaderKind::Fragment,
-            Self::fragment_shader(),
-        );
+
+        log::info!("compile {} vertex shader", Self::name());
+        let vertex_shader = unsafe { device.create_shader_module_spirv(&Self::vertex_shader()) };
+        log::info!("compile {} fragment shader", Self::name());
+        let fragment_shader =
+            unsafe { device.create_shader_module_spirv(&Self::fragment_shader()) };
 
         let constants = HashMap::new();
         let compilation_options = wgpu::PipelineCompilationOptions {

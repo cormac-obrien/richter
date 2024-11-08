@@ -1,4 +1,4 @@
-#version 450
+#version 460
 #extension GL_EXT_nonuniform_qualifier : require
 
 layout(location = 0) in vec2 f_texcoord;

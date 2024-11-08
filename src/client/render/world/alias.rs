@@ -89,18 +89,12 @@ impl Pipeline for AliasPipeline {
         "alias"
     }
 
-    fn vertex_shader() -> &'static str {
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/shaders/alias.vert.glsl"
-        ))
+    fn vertex_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        wgpu::include_spirv_raw!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/alias.vert"))
     }
 
-    fn fragment_shader() -> &'static str {
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/shaders/alias.frag.glsl"
-        ))
+    fn fragment_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        wgpu::include_spirv_raw!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/alias.frag"))
     }
 
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {

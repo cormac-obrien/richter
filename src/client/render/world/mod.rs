@@ -107,12 +107,12 @@ impl Pipeline for WorldPipelineBase {
         "world"
     }
 
-    fn vertex_shader() -> &'static str {
-        ""
+    fn vertex_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        unimplemented!()
     }
 
-    fn fragment_shader() -> &'static str {
-        ""
+    fn fragment_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        unimplemented!()
     }
 
     fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {

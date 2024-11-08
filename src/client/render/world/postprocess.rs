@@ -115,17 +115,17 @@ impl Pipeline for PostProcessPipeline {
         }]
     }
 
-    fn vertex_shader() -> &'static str {
-        include_str!(concat!(
+    fn vertex_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        wgpu::include_spirv_raw!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/postprocess.vert.glsl"
+            "/shaders/postprocess.vert"
         ))
     }
 
-    fn fragment_shader() -> &'static str {
-        include_str!(concat!(
+    fn fragment_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        wgpu::include_spirv_raw!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/postprocess.frag.glsl"
+            "/shaders/postprocess.frag"
         ))
     }
 

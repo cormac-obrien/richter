@@ -149,6 +149,7 @@ impl Game {
             .device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
+        info!("primary render");
         // render world, hud, console, menus
         self.client
             .render(
@@ -176,6 +177,7 @@ impl Game {
             cap
         });
 
+        info!("Blit to swapchain");
         // blit to swap chain
         {
             let swap_chain_target = SwapChainTarget::with_swap_chain_view(color_attachment_view);
@@ -186,7 +188,9 @@ impl Game {
 
         let command_buffer = encoder.finish();
         {
+            info!("submit");
             gfx_state.queue().submit(vec![command_buffer]);
+            info!("poll");
             gfx_state.device().poll(wgpu::Maintain::Wait);
         }
 
@@ -197,6 +201,8 @@ impl Game {
                 .unwrap()
                 .write_to_file(gfx_state.device(), path)
         });
+
+        info!("done rendering");
     }
 }
 

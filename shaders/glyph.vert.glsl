@@ -1,4 +1,4 @@
-#version 450
+#version 460
 
 // vertex rate
 layout(location = 0) in vec2 a_position;

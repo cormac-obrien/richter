@@ -119,6 +119,7 @@ where
         window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
+        log::debug!("Host -> window_event: {event:?}");
         match event {
             WindowEvent::CloseRequested => {
                 self.program.shutdown();

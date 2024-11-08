@@ -1,4 +1,4 @@
-#version 450
+#version 460
 
 const uint TEXTURE_KIND_NORMAL = 0;
 const uint TEXTURE_KIND_WARP = 1;

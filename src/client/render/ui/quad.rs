@@ -218,17 +218,17 @@ impl Pipeline for QuadPipeline {
         ]
     }
 
-    fn vertex_shader() -> &'static str {
-        include_str!(concat!(
+    fn vertex_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        wgpu::include_spirv_raw!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/quad.vert.glsl"
+            "/shaders/quad.vert"
         ))
     }
 
-    fn fragment_shader() -> &'static str {
-        include_str!(concat!(
+    fn fragment_shader() -> wgpu::ShaderModuleDescriptorSpirV<'static> {
+        wgpu::include_spirv_raw!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/quad.frag.glsl"
+            "/shaders/quad.frag"
         ))
     }
 

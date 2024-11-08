@@ -36,6 +36,6 @@ strum = "0.18.0"
 strum_macros = "0.18.0"
 thiserror = "1.0"
 uluru = "2"
-wgpu = { version = "23.0.0", features = ["spirv"] }
+wgpu = { version = "23.0.0", features = ["glsl", "spirv"] }
 
 winit = "0.30.5"
